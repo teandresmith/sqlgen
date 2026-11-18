@@ -4,10 +4,12 @@ import (
 	"github.com/teandresmith/sqlgen/sql"
 )
 
-// Bool filters boolean columns.
+// Bool filters boolean columns. In exists for boolean keys: the generated
+// client filters a list of them when it loads or writes rows by key.
 type Bool struct {
 	Eq     *bool           `json:"eq,omitempty"`
 	Neq    *bool           `json:"neq,omitempty"`
+	In     []bool          `json:"in,omitempty"`
 	Custom []sql.Condition `json:"custom,omitempty"`
 }
 
@@ -19,6 +21,9 @@ func (c Bool) Parse(col string, d sql.Dialect) []sql.Condition {
 	}
 	if c.Neq != nil {
 		conds = append(conds, sql.Where(col).Neq(*c.Neq))
+	}
+	if len(c.In) > 0 {
+		conds = append(conds, parseIn(col, d, c.In))
 	}
 	conds = append(conds, c.Custom...)
 	return conds

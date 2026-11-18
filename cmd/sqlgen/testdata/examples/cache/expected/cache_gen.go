@@ -249,8 +249,10 @@ func (c *Cache) readThroughArticle(ctx context.Context, pk int64, q *hook.QueryC
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*Article](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -506,8 +508,10 @@ func (c *Cache) readThroughOrderItem(ctx context.Context, pk OrderItemPK, q *hoo
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*OrderItem](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -763,8 +767,10 @@ func (c *Cache) readThroughProduct(ctx context.Context, pk int64, q *hook.QueryC
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*Product](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -1016,8 +1022,10 @@ func (c *Cache) readThroughProfile(ctx context.Context, pk int64, q *hook.QueryC
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*Profile](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -1269,8 +1277,10 @@ func (c *Cache) readThroughUser(ctx context.Context, pk int64, q *hook.QueryCont
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*User](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -1451,28 +1461,50 @@ func (c *Cache) Invalidate(ctx context.Context, table hook.TableName, pk any) er
 // automatically) or InvalidateTable / BuildTenantTablePattern for
 // pattern-based clears.
 func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []any) error {
-	var (
-		keys []string
-		err  error
-	)
-	switch table {
-	case TableArticles:
-		keys, err = cache.KeysFromAny(pks, c.keyForArticle)
-	case TableOrderItems:
-		keys, err = cache.KeysFromAny(pks, c.keyForOrderItem)
-	case TableProducts:
-		keys, err = cache.KeysFromAny(pks, c.keyForProduct)
-	case TableProfiles:
-		keys, err = cache.KeysFromAny(pks, c.keyForProfile)
-	case TableUsers:
-		keys, err = cache.KeysFromAny(pks, c.keyForUser)
-	default:
-		return fmt.Errorf("cache: unknown or non-cached table %q", table)
-	}
+	keys, err := c.keysFor(table, pks)
 	if err != nil {
-		return fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		return err
 	}
 	return c.invalidateKeys(ctx, table, keys)
+}
+
+// keysFor builds the cache keys for pks on a non-tenanted cached table. It
+// touches no backend, so its errors are the caller's to report.
+func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
+	switch table {
+	case TableArticles:
+		keys, err := cache.KeysFromAny(pks, c.keyForArticle)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableOrderItems:
+		keys, err := cache.KeysFromAny(pks, c.keyForOrderItem)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableProducts:
+		keys, err := cache.KeysFromAny(pks, c.keyForProduct)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableProfiles:
+		keys, err := cache.KeysFromAny(pks, c.keyForProfile)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableUsers:
+		keys, err := cache.KeysFromAny(pks, c.keyForUser)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	default:
+		return nil, fmt.Errorf("cache: unknown or non-cached table %q", table)
+	}
 }
 
 // InvalidateTable clears every cached entry for the given table, including
@@ -1771,19 +1803,31 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 			if len(affected) == 0 {
 				return nil
 			}
-			// A table the config left uncached still reaches this hook. It
-			// has nothing to evict, and the "non-cached table" error would
-			// otherwise surface out of a CallbackSync commit for a write
-			// that already succeeded.
-			if _, ok := cacheSchemaFor(table); !ok {
+			// A table the config left uncached still reaches this hook, and
+			// has nothing to evict.
+			schema, ok := cacheSchemaFor(table)
+			if !ok {
 				return nil
 			}
-			return c.InvalidateMany(ctx, table, affected)
+			keys, err := c.keysFor(table, affected)
+			if err != nil {
+				// No backend call failed, so the error policy has not seen
+				// this: report it here, without breaker feedback.
+				cache.RouteError(ctx, c.metrics, c.onError, nil, "invalidate_many", schema, table, err)
+				return nil
+			}
+			return c.invalidateKeys(ctx, table, keys)
 		}
 		return nil
 	}
 
 	viewOp := func(ctx context.Context) error {
+		// A write that affected no row changed nothing a dependent view
+		// reads, so the views keep their cached entries — the same rule the
+		// entity keys follow above.
+		if len(affected) == 0 {
+			return nil
+		}
 		patterns := c.patternsForSourceTable(table)
 		if len(patterns) == 0 {
 			return nil
@@ -1797,8 +1841,8 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 	}
 
 	if tx := database.FromContext(ctx); tx != nil && !tx.IsClosed() {
-		tx.OnCommit(entityOp)
-		tx.OnCommit(viewOp)
+		c.afterCommit(tx, entityOp)
+		c.afterCommit(tx, viewOp)
 		return
 	}
 	_ = entityOp(ctx)
@@ -1822,10 +1866,23 @@ func (c *Cache) dispatchRefresh(ctx context.Context, table hook.TableName) {
 		return c.InvalidateTable(ctx, table)
 	}
 	if tx := database.FromContext(ctx); tx != nil && !tx.IsClosed() {
-		tx.OnCommit(refreshOp)
+		c.afterCommit(tx, refreshOp)
 		return
 	}
 	_ = refreshOp(ctx)
+}
+
+// afterCommit registers op on tx.OnCommit. A failing op runs once more, as any
+// commit callback does, but its error never leaves the callback: the write has
+// committed, and every failure has already gone through the error policy, so a
+// synchronous commit must not report it to the caller.
+func (c *Cache) afterCommit(tx *database.Tx, op func(ctx context.Context) error) {
+	tx.OnCommit(func(ctx context.Context) error {
+		if err := op(ctx); err != nil {
+			_ = op(ctx)
+		}
+		return nil
+	})
 }
 
 // isCachedView reports whether table names a cached view.

@@ -44,6 +44,10 @@ type GenerateResult struct {
 	Views  []ViewContext
 	Enums  []EnumContext
 	API    *APIContext
+	// UUID is the UUID integration the package resolved (PRD §7.4), the one
+	// every generated UUID constructor is spelled with. The manifest's example
+	// lines spell uuid.UUID values with it too.
+	UUID gotype.UUIDIntegration
 
 	// WriteDirs maps each directory this run wrote into to the directory that
 	// same file would occupy in a normal run. The two are equal unless the run
@@ -205,11 +209,7 @@ func GenerateInto(schema *parser.Schema, cfg *config.RootConfig, version, writeR
 	collisions := computeNameCollisions(schema)
 	registerSchemaTypes(resolver, schema, cfg, collisions)
 
-	input := &GenerateInput{
-		Schema:   schema,
-		Config:   cfg,
-		Resolver: resolver,
-	}
+	input := &GenerateInput{Schema: schema, Config: cfg, Resolver: resolver}
 
 	tmpl, err := loadTemplatesWithResolver(dialect, resolver)
 	if err != nil {
@@ -218,6 +218,7 @@ func GenerateInto(schema *parser.Schema, cfg *config.RootConfig, version, writeR
 
 	opts := buildOptions(cfg, version, writeRoot)
 	writeDirs := map[string]string{opts.OutputDir: cfg.Output.Dir}
+	recordOutputFileDirs(writeDirs, cfg, opts.WriteRoot)
 
 	ctxs, err := buildAllContexts(input, collisions)
 	if err != nil {
@@ -306,6 +307,7 @@ func GenerateInto(schema *parser.Schema, cfg *config.RootConfig, version, writeR
 		Views:      viewContexts,
 		Enums:      ctxs.enums,
 		API:        api.ctx,
+		UUID:       ctxs.uuid,
 		Warnings:   input.Warnings,
 		WriteDirs:  writeDirs,
 	}, nil
@@ -346,14 +348,15 @@ func generateTypes(tmpl *template.Template, typeCtx TypeContext, cfg *config.Roo
 	if !hasTypes {
 		return nil, nil
 	}
-	typesPath := filepath.Join(opts.OutputDir, cfg.Output.Types.File)
+	typesPath := SandboxPath(opts.WriteRoot, outputFilePath(cfg.Output.Dir, typesFileName(cfg)))
 	typeFileCtx := TypeFileContext{
 		Package: cfg.Output.Types.Package,
-		// The Value/Scan pair the composite and extra templates emit is the
-		// only code in this file that imports anything; a file of nothing but
-		// domain aliases declares the three and has them pruned. Declaring
-		// them keeps goimports off its module-cache scan (// modelTemplateImports).
-		Imports:    []string{"database/sql/driver", "encoding/json", "fmt"},
+		// The Value/Scan pair the composite and extra templates emit needs
+		// three standard-library imports and each extras field its `import`;
+		// a file of nothing but domain aliases declares the three and has
+		// them pruned. Declaring them keeps goimports off its module-cache
+		// scan (// modelTemplateImports).
+		Imports:    typesFileImports(typeCtx.Extras),
 		Composites: typeCtx.Composites,
 		Domains:    typeCtx.Domains,
 		Extras:     typeCtx.Extras,
@@ -364,12 +367,42 @@ func generateTypes(tmpl *template.Template, typeCtx TypeContext, cfg *config.Roo
 	return []string{typesPath}, nil
 }
 
+// typesFileImports returns the types file's declared imports: the three the
+// Value/Scan pair needs plus each extras field's `import` (PRD §4.10), so the
+// package a field's type names comes from the config, not from goimports'
+// module-cache guess.
+func typesFileImports(extras []ExtraTypeContext) []string {
+	imports := []string{"database/sql/driver", "encoding/json", "fmt"}
+	for _, et := range extras {
+		for _, f := range et.Fields {
+			imports = append(imports, f.Import)
+		}
+	}
+	return UniqueImports(imports)
+}
+
 // generateClient generates the unified client file.
 func generateClient(tmpl *template.Template, tables []TableContext, views []ViewContext, cfg *config.RootConfig, cacheCtx *CacheContext, tenancyMap map[string]TenancyContext, opts *Options, version string) ([]string, error) {
 	eventsEnabled := cfg.Events != nil && cfg.Events.Enabled
 	clientCtx := BuildClientContext(tables, views, opts.Package, cfg.Output.Client.Name, eventsEnabled, cacheCtx, cfg, tenancyMap)
 	clientPath := filepath.Join(opts.OutputDir, cfg.Output.Client.File)
-	if err := renderAndWrite(tmpl, "client", clientCtx, clientCtx.Package, clientCtx.Imports, clientPath, version); err != nil {
+	body, err := executeTemplateSafe(tmpl, "client", clientCtx)
+	if err != nil {
+		return nil, fmt.Errorf("generating unified client: executing template client: %w", err)
+	}
+	// The manifest pointer rides on models_gen.go when that file is written;
+	// otherwise (file_per_table, or no tables) the client file, which every
+	// run writes, carries it.
+	var pkgDoc string
+	if cfg.Output.Layout == config.LayoutFilePerTable || len(tables) == 0 {
+		pkgDoc = manifestPackageDoc(cfg)
+	}
+	raw := withPackageDoc(pkgDoc, WrapWithPreamble(clientCtx.Package, clientCtx.Imports, []byte(body)))
+	formatted, err := Format(raw, version, clientPath)
+	if err != nil {
+		return nil, fmt.Errorf("generating unified client: %w", err)
+	}
+	if err := writeFile(clientPath, formatted); err != nil {
 		return nil, fmt.Errorf("generating unified client: %w", err)
 	}
 	return []string{clientPath}, nil
@@ -429,7 +462,7 @@ func generateEnums(tmpl *template.Template, enumContexts []EnumContext, cfg *con
 	if len(enumContexts) == 0 {
 		return nil, nil
 	}
-	enumPath := filepath.Join(opts.OutputDir, cfg.Output.Enums.File)
+	enumPath := SandboxPath(opts.WriteRoot, outputFilePath(cfg.Output.Dir, enumsFileName(cfg)))
 	// `io` is required by MarshalGQL on every emitted enum so the type
 	// satisfies gqlgen's graphql.Marshaler interface via duck typing. The
 	// import is unconditional even when API generation is off — the methods
@@ -513,6 +546,9 @@ func generateSupport(tmpl *template.Template, cfg *config.RootConfig, opts *Opti
 		return tc.Nested != nil
 	})
 	sharedCtx := BuildSharedTypesContext(opts.Package, tenancyEnabled, tenantGoType, tenantImport, hasFilterOptions, hasUpsertMany, hasNested)
+	if slices.ContainsFunc(tableContexts, tableHasDateTimeKey) {
+		sharedCtx = withDateTimeKeys(sharedCtx)
+	}
 	sharedPath := filepath.Join(opts.OutputDir, "shared_types_gen.go")
 	if err := renderAndWrite(tmpl, "shared-types", sharedCtx, sharedCtx.Package, sharedCtx.Imports, sharedPath, version); err != nil {
 		return nil, fmt.Errorf("generating shared types: %w", err)
@@ -606,7 +642,7 @@ func generateTables(tmpl *template.Template, tables []TableContext, cfg *config.
 	if cfg.Output.Layout == config.LayoutFilePerTable {
 		return generateTablesPerFile(tmpl, tables, opts, version)
 	}
-	return generateTablesSingleFile(tmpl, tables, opts, version)
+	return generateTablesSingleFile(tmpl, tables, manifestPackageDoc(cfg), opts, version)
 }
 
 // generateTablesPerFile generates one file per table.
@@ -660,8 +696,9 @@ func generateTablesPerFile(tmpl *template.Template, tables []TableContext, opts 
 	return files, nil
 }
 
-// generateTablesSingleFile renders all tables into one combined file.
-func generateTablesSingleFile(tmpl *template.Template, tables []TableContext, opts *Options, version string) ([]string, error) {
+// generateTablesSingleFile renders all tables into one combined file. A
+// non-empty pkgDoc becomes the file's package doc comment.
+func generateTablesSingleFile(tmpl *template.Template, tables []TableContext, pkgDoc string, opts *Options, version string) ([]string, error) {
 	if len(tables) == 0 {
 		return nil, nil
 	}
@@ -683,7 +720,7 @@ func generateTablesSingleFile(tmpl *template.Template, tables []TableContext, op
 
 	combined := strings.Join(allBodies, "\n\n")
 	filePath := filepath.Join(opts.OutputDir, modelsFileName)
-	raw := WrapWithPreamble(pkg, deduplicateImports(allImports), []byte(combined))
+	raw := withPackageDoc(pkgDoc, WrapWithPreamble(pkg, deduplicateImports(allImports), []byte(combined)))
 	formatted, err := Format(raw, version, filePath)
 	if err != nil {
 		return nil, fmt.Errorf("formatting %s: %w", filePath, err)
@@ -781,10 +818,46 @@ func generateViewsSingleFile(tmpl *template.Template, views []ViewContext, opts 
 	return []string{filePath}, nil
 }
 
+// outputFilePath resolves output.enums.file or output.types.file to the path
+// a normal run writes it to: relative to output.dir unless absolute (PRD
+// §4.5). An absolute file is used as written; validation keeps it in output.dir.
+func outputFilePath(outputDir, file string) string {
+	if filepath.IsAbs(file) {
+		return file
+	}
+	return filepath.Join(outputDir, file)
+}
+
+// recordOutputFileDirs adds the directories of output.enums.file and
+// output.types.file to writeDirs. An absolute file previews in a different
+// directory from output.dir, though it names the same real one, and
+// `sqlgen diff` pairs a preview file with its working-tree path only through
+// writeDirs.
+func recordOutputFileDirs(writeDirs map[string]string, cfg *config.RootConfig, writeRoot string) {
+	for _, file := range []string{enumsFileName(cfg), typesFileName(cfg)} {
+		configured := filepath.Dir(outputFilePath(cfg.Output.Dir, file))
+		writeDirs[SandboxPath(writeRoot, configured)] = configured
+	}
+}
+
+// sameDir reports whether two directory paths name the same directory,
+// comparing their absolute forms so "models" and "/repo/models" match when
+// the working directory is /repo.
+func sameDir(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return absA == absB
+}
+
 // StaleFiles returns the orphaned *_gen.go files in outputDir — those a
-// generation run producing writtenFiles would leave behind. Only *_gen.go is
-// considered, and matching is by base name, so a redirected run's writtenFiles
-// (which carry temp-dir prefixes) classify identically to a real one's.
+// generation run producing writtenFiles would leave behind. Only *_gen.go
+// directly in outputDir is considered, and only a written file in that same
+// directory protects one: a same-named file written to another directory (the
+// graph package) does not make outputDir's copy current. writtenFiles are therefore working-tree paths; a
+// redirected run maps its files back through GenerateResult.WriteDirs first.
 //
 // Split out from CleanStaleFiles so `sqlgen diff` can report the deletions a
 // run would perform without performing them, and cannot drift from what
@@ -800,7 +873,9 @@ func StaleFiles(outputDir string, writtenFiles []string) ([]string, error) {
 
 	written := make(map[string]bool, len(writtenFiles))
 	for _, f := range writtenFiles {
-		written[filepath.Base(f)] = true
+		if sameDir(filepath.Dir(f), outputDir) {
+			written[filepath.Base(f)] = true
+		}
 	}
 
 	var stale []string
@@ -1102,6 +1177,12 @@ func generateAPI(tmpl *template.Template, plan *apiPlan, cfg *config.RootConfig,
 	}
 	files = append(files, supportFiles...)
 
+	serverFiles, err := generateAPIServerFiles(tmpl, plan, g, version)
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, serverFiles...)
+
 	if apiCtx.ModelsImportPath != "" && len(apiCtx.Tables) > 0 && hasAnyInputTranslator(apiCtx) {
 		inputFile, err := generateAPIInputTranslatorFile(tmpl, apiCtx, g, resolverDir, version)
 		if err != nil {
@@ -1110,6 +1191,24 @@ func generateAPI(tmpl *template.Template, plan *apiPlan, cfg *config.RootConfig,
 		files = append(files, inputFile)
 	}
 
+	return files, nil
+}
+
+// generateAPIServerFiles emits the regenerated query-limits file and the
+// one-shot server.go that applies it (written only when absent).
+func generateAPIServerFiles(tmpl *template.Template, plan *apiPlan, g *config.GraphQLAPIConfig, version string) ([]string, error) {
+	limitsFile, err := generateAPILimitsFile(tmpl, plan.ctx, g, plan.sqlgenResolverDir, version)
+	if err != nil {
+		return nil, err
+	}
+	files := []string{limitsFile}
+	serverFile, err := generateAPIServerFile(tmpl, plan.ctx, g.Package, plan.resolverDir, plan.writeDirs[plan.resolverDir])
+	if err != nil {
+		return nil, err
+	}
+	if serverFile != "" {
+		files = append(files, serverFile)
+	}
 	return files, nil
 }
 
@@ -1334,7 +1433,7 @@ func generateAPIInputTranslatorFile(tmpl *template.Template, apiCtx *APIContext,
 	if err != nil {
 		return "", fmt.Errorf("rendering api input translators: %w", err)
 	}
-	formatted, err := FormatOnly(buildAPIInputTranslateFile(g.Package, apiCtx, body), version, path)
+	formatted, err := Format(buildAPIInputTranslateFile(g.Package, apiCtx, body), version, path)
 	if err != nil {
 		return "", fmt.Errorf("formatting api input translators: %w", err)
 	}
@@ -1370,7 +1469,7 @@ func buildAPIInputTranslateFile(pkg string, apiCtx *APIContext, body string) []b
 		b.WriteString(apiCtx.GqlgenModelImportPath)
 		b.WriteString("\"\n")
 	}
-	if nestedTranslatorsNeedSqlgenResolver(apiCtx) {
+	if inputTranslatorsNeedSqlgenResolver(apiCtx) {
 		b.WriteString("\n\t\"")
 		b.WriteString(apiCtx.SqlgenResolverImportPath)
 		b.WriteString("\"\n")
@@ -1381,14 +1480,17 @@ func buildAPIInputTranslateFile(pkg string, apiCtx *APIContext, body string) []b
 	return []byte(b.String())
 }
 
-// nestedTranslatorsNeedSqlgenResolver reports whether the rendered nested
-// translators reference the sqlgenresolver package: the conflict-target
-// translator and the increment collector both return its INVALID_INPUT error,
-// and the collector builds its IncrementOp values (PRD §26.5.1, §26.5.4).
-// Scoped so a package with no such translator keeps its import block as it
-// was — FormatOnly does not prune an unused import.
-func nestedTranslatorsNeedSqlgenResolver(apiCtx *APIContext) bool {
+// inputTranslatorsNeedSqlgenResolver reports whether the rendered translators
+// reference the sqlgenresolver package: every update-request translator
+// builds its Update<T>Request, and the nested conflict-target translator and
+// increment collector both return its INVALID_INPUT error, the collector
+// building its IncrementOp values too (PRD §26.5.1, §26.5.4). Scoped so a
+// package with no such translator declares no import it does not use.
+func inputTranslatorsNeedSqlgenResolver(apiCtx *APIContext) bool {
 	for _, t := range apiCtx.Tables {
+		if (t.Operations.Update || t.Operations.UpdateWhere) && t.HasUpdateInput {
+			return true
+		}
 		if n := t.Nested; n != nil && (n.EmitUpsert || n.IncrementOpsFunc != "") {
 			return true
 		}
@@ -1451,7 +1553,7 @@ func generateAPIMiddlewareFile(tmpl *template.Template, apiCtx *APIContext, sqlg
 	if err != nil {
 		return "", fmt.Errorf("rendering api middleware: %w", err)
 	}
-	formatted, err := FormatOnly(buildAPIMiddlewareFile(sqlgenResolverPackageName, apiCtx, body), version, path)
+	formatted, err := Format(buildAPIMiddlewareFile(sqlgenResolverPackageName, apiCtx, body), version, path)
 	if err != nil {
 		return "", fmt.Errorf("formatting api middleware: %w", err)
 	}
@@ -1463,9 +1565,10 @@ func generateAPIMiddlewareFile(tmpl *template.Template, apiCtx *APIContext, sqlg
 
 // buildAPIMiddlewareFile assembles middleware_gen.go with the explicit
 // aliased-import block for the consumer's models package, mirroring
-// buildAPIWalkerFile / buildAPIFilterFile. FormatOnly is used downstream so
-// goimports' module-cache scan does not fire while the consumer's models
-// package may not yet exist on disk during a fresh sqlgen run.
+// buildAPIWalkerFile / buildAPIFilterFile. The import set is complete, so
+// the downstream goimports pass never falls back to a module-cache scan for
+// the consumer's models package, which may not yet exist on disk during a
+// fresh sqlgen run.
 func buildAPIMiddlewareFile(pkg string, apiCtx *APIContext, body string) []byte {
 	var b strings.Builder
 	b.WriteString("package ")
@@ -1508,7 +1611,7 @@ func generateAPITranslatorFiles(tmpl *template.Template, apiCtx *APIContext, g *
 		if err != nil {
 			return nil, fmt.Errorf("rendering api comparator translators: %w", err)
 		}
-		formatted, err := FormatOnly(buildAPIComparatorTranslateFile(g.Package, apiCtx, body), version, comparatorPath)
+		formatted, err := Format(buildAPIComparatorTranslateFile(g.Package, apiCtx, body), version, comparatorPath)
 		if err != nil {
 			return nil, fmt.Errorf("formatting api comparator translators: %w", err)
 		}
@@ -1524,7 +1627,7 @@ func generateAPITranslatorFiles(tmpl *template.Template, apiCtx *APIContext, g *
 		if err != nil {
 			return nil, fmt.Errorf("rendering api sort translators: %w", err)
 		}
-		formatted, err := FormatOnly(buildAPISortTranslateFile(g.Package, apiCtx, body), version, sortPath)
+		formatted, err := Format(buildAPISortTranslateFile(g.Package, apiCtx, body), version, sortPath)
 		if err != nil {
 			return nil, fmt.Errorf("formatting api sort translators: %w", err)
 		}
@@ -1540,7 +1643,7 @@ func generateAPITranslatorFiles(tmpl *template.Template, apiCtx *APIContext, g *
 		if err != nil {
 			return nil, fmt.Errorf("rendering api filter translators: %w", err)
 		}
-		formatted, err := FormatOnly(buildAPIFilterFile(g.Package, apiCtx, body), version, filterPath)
+		formatted, err := Format(buildAPIFilterFile(g.Package, apiCtx, body), version, filterPath)
 		if err != nil {
 			return nil, fmt.Errorf("formatting api filter translators: %w", err)
 		}
@@ -1659,9 +1762,10 @@ func buildAPISortTranslateFile(pkg string, apiCtx *APIContext, body string) []by
 // buildAPIFilterFile assembles filter_translate_gen.go with the same explicit
 // aliased-import pattern used by resolvers_gen.go and field_options_gen.go —
 // the consumer's models package is pinned to cfg.Output.Package even when
-// the import path's last segment differs. FormatOnly skips goimports' module-
-// cache scan since the consumer's models package may not exist during a
-// fresh sqlgen run.
+// the import path's last segment differs. The import set is complete, so
+// the downstream goimports pass never falls back to a module-cache scan for
+// the consumer's models package, which may not exist during a fresh sqlgen
+// run.
 //
 // The filter translator does not import the comparator package directly —
 // every call into a per-family comparator translator (which lives in the
@@ -1712,10 +1816,9 @@ func comparatorTranslatorStdImports(apiCtx *APIContext) []string {
 		// form stops delegating to its base (PRD §26.4 Rule 2 makes them
 		// distinct input types) and inlines the same operand block. Gating on
 		// `!tr.Nullable` here would omit the import for a project whose only
-		// such columns are nullable, and FormatOnly rendering means goimports
-		// never repairs it — a missing import is a compile error in the
-		// consumer's project, and so is an unused one, so this must name
-		// exactly what the emitted bodies reference.
+		// such columns are nullable. goimports would back-fill it, but only
+		// through a full module-cache scan, so this names exactly what the
+		// emitted bodies reference.
 		switch tr.Family {
 		case "Time":
 			// `[]time.Time` + `comparator.Range[time.Time]`.
@@ -1792,10 +1895,10 @@ func hasAnyFilterField(apiCtx *APIContext) bool {
 // The resolvers + walker templates embed their own import blocks (instead of
 // relying on WrapWithPreamble) so they can alias the consumer's package to a
 // name that matches cfg.Output.Package even when the import path's last
-// segment differs. FormatOnly is used afterwards to keep goimports out of
-// the picture — the consumer's package may not exist in the module cache yet
-// during a fresh sqlgen run, which would trip goimports' import-resolution
-// scan.
+// segment differs. The blocks are complete, so the goimports pass afterwards
+// only prunes — the consumer's package may not exist in the module cache yet
+// during a fresh sqlgen run, and a missing import would send goimports into
+// its import-resolution scan.
 func generateAPIResolverFiles(tmpl *template.Template, apiCtx *APIContext, g *config.GraphQLAPIConfig, sqlgenResolverDir, version string) ([]string, error) {
 	_ = g
 	var files []string
@@ -1806,7 +1909,7 @@ func generateAPIResolverFiles(tmpl *template.Template, apiCtx *APIContext, g *co
 	if err != nil {
 		return nil, fmt.Errorf("rendering api resolvers: %w", err)
 	}
-	formatted, err := FormatOnly(buildResolverFile(sqlgenResolverPackageName, apiCtx, body), version, resolversPath)
+	formatted, err := Format(buildResolverFile(sqlgenResolverPackageName, apiCtx, body), version, resolversPath)
 	if err != nil {
 		return nil, fmt.Errorf("formatting api resolvers: %w", err)
 	}
@@ -1821,7 +1924,7 @@ func generateAPIResolverFiles(tmpl *template.Template, apiCtx *APIContext, g *co
 	if err != nil {
 		return nil, fmt.Errorf("rendering api field options: %w", err)
 	}
-	walkerFormatted, err := FormatOnly(buildAPIWalkerFile(sqlgenResolverPackageName, apiCtx, walkerBody), version, walkerPath)
+	walkerFormatted, err := Format(buildAPIWalkerFile(sqlgenResolverPackageName, apiCtx, walkerBody), version, walkerPath)
 	if err != nil {
 		return nil, fmt.Errorf("formatting api field options: %w", err)
 	}
@@ -2059,8 +2162,9 @@ func nestedMutationFieldNames(t APITableContext) []APIRootField {
 
 // buildAPIWalkerFile assembles field_options_gen.go with the explicit aliased
 // import block for the consumer's models package, mirroring buildResolverFile.
-// FormatOnly is used downstream to skip goimports' module-cache scan since
-// the consumer's models package may not yet exist when sqlgen runs.
+// The import set is complete, so the downstream goimports pass never falls
+// back to a module-cache scan for the consumer's models package, which may
+// not yet exist when sqlgen runs.
 func buildAPIWalkerFile(pkg string, apiCtx *APIContext, body string) []byte {
 	var b strings.Builder
 	b.WriteString("package ")
@@ -2082,8 +2186,8 @@ func buildAPIWalkerFile(pkg string, apiCtx *APIContext, body string) []byte {
 // buildResolverFile assembles the complete resolvers_gen.go source: package
 // declaration, an explicit aliased import block (consumer's models package
 // pinned to cfg.Output.Package), and the rendered template body. Imports
-// are scoped to what the rendered body actually references so FormatOnly
-// (no goimports cache scan) leaves a clean file.
+// are scoped to what the rendered body actually references so the goimports
+// pass has nothing to resolve (no module-cache scan).
 //
 // The file emits to <resolver_dir>/sqlgenresolver/resolvers_gen.go
 // with package "sqlgenresolver" and contains Q + M structs plus per-table
@@ -2120,7 +2224,7 @@ func buildResolverFile(pkg string, apiCtx *APIContext, body string) []byte {
 		// scalar emitted unparseable resolver methods like
 		// `func (q *Q) Event(ctx context.Context, id uuid.UUID) ...`
 		// against an import block that didn't reference `uuid`.
-		for _, imp := range pkArgImports(apiCtx) {
+		for _, imp := range resolverKeyImports(apiCtx) {
 			b.WriteString("\t\"")
 			b.WriteString(imp)
 			b.WriteString("\"\n")
@@ -2158,12 +2262,32 @@ func pkArgImports(apiCtx *APIContext) []string {
 	return out
 }
 
+// resolverKeyImports is pkArgImports plus what the bulk updates' re-read of
+// their matched rows spells (APIRowKeys.Imports: the comparator package, and
+// `fmt` / an element type's package when the key needs them), on the tables
+// that emit that re-read — an update_where with `_inc` / `_dec` operators,
+// and on a soft-delete table the single update and the nested update with
+// operators.
+func resolverKeyImports(apiCtx *APIContext) []string {
+	out := pkArgImports(apiCtx)
+	for _, t := range apiCtx.Tables {
+		// The bulk update with operators re-reads its rows by key, and on a
+		// soft-delete table so do the single update and the nested update
+		// with operators.
+		if t.HasUpdateInput && (t.Operations.UpdateWhere && len(t.UpdateOps) > 0 || t.HasSoftDelete) {
+			out = append(out, t.RowKeys.Imports...)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // resolverFileFeatures summarises which feature groups are referenced by the
 // rendered resolver body so buildResolverFile can scope the import block to
 // what is actually used. Each flag corresponds to one conditional import.
 type resolverFileFeatures struct {
 	HasResolverMethod bool // any query or mutation resolver method (drives `context`)
-	NeedsErrorsImport bool // any resolver branch calls errors.Is — Get, HardDelete/SoftDelete/Restore (`errors`)
+	NeedsErrorsImport bool // any resolver branch calls errors.Is — Get, SoftDelete, Restore (`errors`)
 	HasList           bool // any <T>List (Paginate) resolver (drives `sql`)
 }
 
@@ -2174,10 +2298,11 @@ func computeResolverFileFeatures(apiCtx *APIContext) resolverFileFeatures {
 		if hasAnyResolverOp(o) {
 			f.HasResolverMethod = true
 		}
-		// The Get branch collapses ErrNotFound → (nil, nil), so
-		// any table with Get enabled — not just delete-class ops — pulls in
-		// the `errors` package.
-		if o.Get || o.HardDelete || o.SoftDelete || o.Restore {
+		// The Get, SoftDelete and Restore branches collapse ErrNotFound →
+		// (nil, nil), so they pull in the `errors` package. HardDelete does
+		// not: the client's HardDelete is idempotent and never returns
+		// ErrNotFound, so its resolver maps any error straight through.
+		if o.Get || o.SoftDelete || o.Restore {
 			f.NeedsErrorsImport = true
 		}
 		if o.Paginate {
@@ -2420,8 +2545,9 @@ func ValidateGeneration(schema *parser.Schema, cfg *config.RootConfig) ([]string
 
 	// Errors accumulate: validate reports everything it can see in one pass.
 	// A failure in one stage does not stop the next unless the next needs its
-	// output — only the API context does, and it is skipped when the table
-	// contexts did not build.
+	// output — only the API context does, and it is skipped when any table
+	// failed to build. The tables that did build still reach the package-wide
+	// and cross-table checks.
 	var errs []error
 
 	tenancyMap, tenancyWarnings, err := BuildTenancyContext(cfg, schema, input.Resolver)
@@ -2430,7 +2556,10 @@ func ValidateGeneration(schema *parser.Schema, cfg *config.RootConfig) ([]string
 		errs = append(errs, fmt.Errorf("building tenancy context: %w", err))
 	}
 
-	tableContexts, err := BuildTableContexts(input, collisions)
+	// The tables that built are checked even when others fail, so one bad
+	// table does not hide the rules below on the rest.
+	tableContexts, failedTables, err := buildTableContextsPartial(input, collisions)
+	tablesBuilt := err == nil
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -2458,47 +2587,48 @@ func ValidateGeneration(schema *parser.Schema, cfg *config.RootConfig) ([]string
 		errs = append(errs, err)
 	}
 
-	if tableContexts != nil {
-		// The post-build wiring the generate path runs that can *reject* a
-		// config, mirrored here in the same order and for the same reason
-		// validate exists at all: a check that only `generate` performs is a
-		// check `validate` reports clean on. attachUUIDGeneration is the one
-		// pass deliberately left out — it rejects nothing, and validate
-		// renders no table file, so an unfilled PKAutoGenExpr is unobservable
-		// here (PRD §7.4).
-		//
-		// wireRelationshipFilters is the one that can reject a config outright
-		// (a relationship `filter:` containing `$` — PRD §11.1), and it reads
-		// the *target's* tenancy, so the two attach passes have to precede it.
-		// Running it also means the API context below sees the same
-		// FilterRelationships `generate` would build, rather than an empty set —
-		// which is what keeps a future relationship-aware §26.5.3 completeness
-		// lint from silently no-opping under validate.
-		attachTenancyToTables(tableContexts, tenancyMap)
-		attachTenancyToViews(viewContexts, tenancyMap)
-		tableContexts = deduplicateRelationshipOptionsDefs(tableContexts)
-		if err := wireRelationshipFilters(tableContexts, viewContexts); err != nil {
-			errs = append(errs, fmt.Errorf("building relationship filters: %w", err))
-		}
-		if err := validateDiscriminatorBindings(tableContexts, viewContexts, cfg.Input.Dialect, input.Resolver); err != nil {
-			errs = append(errs, fmt.Errorf("validating relationship discriminators: %w", err))
-		}
+	// The post-build wiring the generate path runs that can *reject* a
+	// config, mirrored here in the same order and for the same reason
+	// validate exists at all: a check that only `generate` performs is a
+	// check `validate` reports clean on. attachUUIDGeneration is the one
+	// pass deliberately left out — it rejects nothing, and validate
+	// renders no table file, so an unfilled PKAutoGenExpr is unobservable
+	// here (PRD §7.4).
+	//
+	// wireRelationshipFilters is the one that can reject a config outright
+	// (a relationship `filter:` containing `$` — PRD §11.1), and it reads
+	// the *target's* tenancy, so the two attach passes have to precede it.
+	// Running it also means the API context below sees the same
+	// FilterRelationships `generate` would build, rather than an empty set —
+	// which is what keeps a future relationship-aware §26.5.3 completeness
+	// lint from silently no-opping under validate.
+	attachTenancyToTables(tableContexts, tenancyMap)
+	attachTenancyToViews(viewContexts, tenancyMap)
+	tableContexts = deduplicateRelationshipOptionsDefs(tableContexts)
+	if err := wireRelationshipFilters(tableContexts, viewContexts); err != nil {
+		errs = append(errs, fmt.Errorf("building relationship filters: %w", err))
+	}
+	if err := validateDiscriminatorBindings(tableContexts, viewContexts, cfg.Input.Dialect, input.Resolver); err != nil {
+		errs = append(errs, fmt.Errorf("validating relationship discriminators: %w", err))
+	}
 
-		// PRD §9.9.4 makes ValidateNestedWriteEligibility answerable under
-		// `sqlgen validate` as well as `sqlgen generate`: an explicitly-listed
-		// ineligible edge is a hard error, and a check only `generate`
-		// performs is one `validate` reports clean on.
-		if err := ValidateNestedWriteEligibility(tableContexts, cfg, input.Resolver); err != nil {
-			errs = append(errs, fmt.Errorf("validating nested mutations: %w", err))
-		}
-		wireNestedMutations(tableContexts, cfg, input.Resolver)
-		finalizeTenancyWiring(tableContexts, viewContexts)
+	// PRD §9.9.4 makes ValidateNestedWriteEligibility answerable under
+	// `sqlgen validate` as well as `sqlgen generate`: an explicitly-listed
+	// ineligible edge is a hard error, and a check only `generate`
+	// performs is one `validate` reports clean on.
+	if err := validateNestedWriteEligibility(tableContexts, cfg, input.Resolver, failedTables); err != nil {
+		errs = append(errs, fmt.Errorf("validating nested mutations: %w", err))
+	}
+	wireNestedMutations(tableContexts, cfg, input.Resolver)
+	finalizeTenancyWiring(tableContexts, viewContexts)
 
+	if tablesBuilt {
 		// viewContexts threads in so `sqlgen validate` answers the view half of
 		// the API rules too — a view/table GraphQL type-name collision, a view
 		// whose walker disagrees with its schema type, an unresolvable
 		// `views.<n>.api.operations` preset. PRD §4.13 note 3 makes validate the
-		// place every phase-3 rule is answered without writing a file.
+		// place every phase-3 rule is answered without writing a file. It needs
+		// every table, so it is skipped when one failed to build.
 		apiCtx, err := BuildAPIContext(tableContexts, viewContexts, enumContexts, setContexts, cfg)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("building api context: %w", err))

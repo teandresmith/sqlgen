@@ -847,7 +847,8 @@ func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context
 				 WHERE pi.indexrelid = con.conindid),
 				''
 			) AS indpred,
-			COALESCE(con.conindid, 0)
+			COALESCE(con.conindid, 0),
+			con.confmatchtype::text
 		FROM pg_catalog.pg_constraint con
 		JOIN pg_catalog.pg_class c ON con.conrelid = c.oid
 		JOIN pg_catalog.pg_namespace ns ON c.relnamespace = ns.oid
@@ -858,7 +859,7 @@ func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context
 		WHERE ns.nspname = $1 AND c.relname = $2
 		  AND con.contype IN ('p', 'f', 'u', 'c')
 		GROUP BY con.oid, con.conname, con.contype, con.confrelid, con.confkey,
-		         refns.nspname, refc.relname, con.conindid
+		         refns.nspname, refc.relname, con.conindid, con.confmatchtype
 		ORDER BY con.conname`, table.Schema, table.Name)
 	if err != nil {
 		return nil, fmt.Errorf("introspect postgres constraints %s.%s: %w", table.Schema, table.Name, err)
@@ -869,7 +870,7 @@ func (pi *PostgresIntrospector) introspectConstraintsViaPgConstraint(ctx context
 
 	for rows.Next() {
 		var row pgConstraintRow
-		if err := rows.Scan(&row.name, &row.contype, &row.cols, &row.refSchema, &row.refTable, &row.refCols, &row.definition, &row.amName, &row.where, &row.indID); err != nil {
+		if err := rows.Scan(&row.name, &row.contype, &row.cols, &row.refSchema, &row.refTable, &row.refCols, &row.definition, &row.amName, &row.where, &row.indID, &row.matchType); err != nil {
 			return nil, fmt.Errorf("introspect postgres constraints %s.%s: scanning: %w", table.Schema, table.Name, err)
 		}
 		constraint, err := row.constraint(casts)
@@ -897,6 +898,7 @@ type pgConstraintRow struct {
 	refSchema, refTable, refCols string
 	definition, amName, where    string
 	indID                        int64
+	matchType                    string // confmatchtype: "f" is MATCH FULL
 }
 
 // constraint builds the row's constraint, with CHECK and predicate text in
@@ -923,6 +925,9 @@ func (r pgConstraintRow) constraint(casts map[string][]string) (parser.Constrain
 		c.ReferenceSchema = r.refSchema
 		c.ReferenceTable = r.refTable
 		c.ReferenceColumns = parsePostgresArray(r.refCols)
+		if r.matchType == "f" {
+			c.Match = parser.MatchFull
+		}
 	case "c":
 		c.Type = parser.Check
 		c.CheckExpression, err = catalogExpr(extractCheckExpression(r.definition), casts)

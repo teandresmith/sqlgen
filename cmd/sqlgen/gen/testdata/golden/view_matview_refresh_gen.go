@@ -25,11 +25,14 @@ func (c *productSummaryClient) Refresh(ctx context.Context) error {
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, false)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh product_summary: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh product_summary: %w", err)
+	}
+	return nil
 }
 
 // RefreshConcurrently recomputes the product_summary materialized view without
@@ -39,7 +42,7 @@ func (c *productSummaryClient) Refresh(ctx context.Context) error {
 // database.ErrRefreshConcurrentlyInTx before issuing any SQL.
 func (c *productSummaryClient) RefreshConcurrently(ctx context.Context) error {
 	if database.InTransaction(ctx) {
-		return fmt.Errorf("refresh product_summary: %w", database.ErrRefreshConcurrentlyInTx)
+		return fmt.Errorf("refresh concurrently product_summary: %w", database.ErrRefreshConcurrentlyInTx)
 	}
 	_, err := c.executeQuery(ctx, false, &hook.QueryContext{
 		Op: hook.OpRefresh, Table: TableProductSummaries, Schema: "public",
@@ -47,9 +50,12 @@ func (c *productSummaryClient) RefreshConcurrently(ctx context.Context) error {
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, true)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh product_summary: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh concurrently product_summary: %w", err)
+	}
+	return nil
 }

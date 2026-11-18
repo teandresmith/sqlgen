@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateSluggedRows(ctx context.Context, inputs []*gqlm
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateSluggedRow(ctx context.Context, id int, input gqlmodel.UpdateSluggedRowInput) (*models.SluggedRow, error) {
-	setIn := translateUpdateSluggedRowInput(input)
-	hasSet := hasUpdateSluggedRowSetFields(input)
-	return r.M.UpdateSluggedRow(ctx, id, setIn, hasSet)
+	return r.M.UpdateSluggedRow(ctx, id, translateUpdateSluggedRowRequest(input))
 }
 
 // UpdateSluggedRows is the resolver for the updateSluggedRows field.
 func (r *mutationResolver) UpdateSluggedRows(ctx context.Context, filter gqlmodel.SluggedRowFilter, input gqlmodel.UpdateSluggedRowInput) ([]*models.SluggedRow, error) {
-	return r.M.UpdateSluggedRows(ctx, translateSluggedRowFilter(&filter), translateUpdateSluggedRowInput(input))
+	return r.M.UpdateSluggedRows(ctx, translateSluggedRowFilter(&filter), translateUpdateSluggedRowRequest(input))
 }
 
 // UpsertSluggedRow is the resolver for the upsertSluggedRow field.

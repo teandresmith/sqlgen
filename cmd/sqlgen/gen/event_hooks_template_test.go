@@ -95,9 +95,8 @@ func TestEventHooks_tenantedTable_emitsTenantMetadata(t *testing.T) {
 		t.Errorf("tenant metadata must be captured before the publish closure is registered; got tenantIdx=%d publishIdx=%d", tenantIdx, publishIdx)
 	}
 
-	// fmt is only pulled in when at least one hook needs the stringifier.
 	if !slices.Contains(ctx.Imports, "fmt") {
-		t.Errorf("expected fmt import when any event table is tenanted; imports=%v", ctx.Imports)
+		t.Errorf("expected fmt import; imports=%v", ctx.Imports)
 	}
 }
 
@@ -205,9 +204,6 @@ func TestEventHooks_sharedTable_noTenantMetadata(t *testing.T) {
 	if strings.Contains(out, "tenantMeta") {
 		t.Errorf("non-tenanted event hook unexpectedly builds a tenantMeta map\nfull output:\n%s", out)
 	}
-	if slices.Contains(ctx.Imports, "fmt") {
-		t.Errorf("fmt must not be imported when no event table is tenanted; imports=%v", ctx.Imports)
-	}
 }
 
 // Event.Table is the bare SQL name, with the schema in Event.Schema (PRD
@@ -240,8 +236,7 @@ func TestEventHooks_tableIsTheBareSQLName(t *testing.T) {
 }
 
 // §29.6 mixed case: only the tenanted hook gets the tenant block; the
-// shared one stays clean. Also asserts fmt is imported because at least
-// one hook needs it.
+// shared one stays clean.
 func TestEventHooks_mixedTenancy_onlyTenantedHookInjects(t *testing.T) {
 	cfg := &config.RootConfig{}
 	cfg.Events = &config.EventConfig{Enabled: true}
@@ -284,7 +279,7 @@ func TestEventHooks_mixedTenancy_onlyTenantedHookInjects(t *testing.T) {
 		t.Errorf("Product (tenanted) hook missing mc.AffectedTenants read\nbody:\n%s", second)
 	}
 	if !slices.Contains(ctx.Imports, "fmt") {
-		t.Errorf("fmt must be imported when at least one hook is tenanted; imports=%v", ctx.Imports)
+		t.Errorf("fmt must be imported; imports=%v", ctx.Imports)
 	}
 }
 
@@ -737,5 +732,37 @@ func TestEventHooks_upsertManyWithoutCreateMany_stillDeclaresBatchLocals(t *test
 	// CreateMany is off, so its type assertion must not be emitted.
 	if strings.Contains(out[hookStart:], "hook.OpCreateMany") {
 		t.Errorf("hook body references hook.OpCreateMany with create_many disabled\n%s", out[hookStart:])
+	}
+}
+
+// Every hook publishes through publishEvents: PublishBatch runs under a
+// recover in publishBatchRecovered, and onError is called once, outside it.
+func TestEventHooks_publishThroughRecoveredHelper(t *testing.T) {
+	cfg := &config.RootConfig{}
+	cfg.Events = &config.EventConfig{Enabled: true}
+	tables := []gen.TableContext{{
+		StructName:        "Product",
+		TableName:         "products",
+		TableNameConstant: "TableProducts",
+		Schema:            "public",
+	}}
+	ctx := gen.BuildEventHooksContext(tables, cfg, "db", "Client", gotype.UUIDIntegrationFor(""))
+	if ctx == nil {
+		t.Fatalf("BuildEventHooksContext returned nil")
+	}
+	out := renderEventHooks(t, ctx)
+
+	for _, want := range []string{
+		"\t\t\t\tpublishEvents(ctx, publisher, onError, events)\n",
+		"\tif err := publishBatchRecovered(ctx, publisher, events); err != nil {\n\t\tonError(ctx, events, err)\n\t}\n",
+		"\t\tif r := recover(); r != nil {\n",
+		"\treturn publisher.PublishBatch(ctx, events)\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("event hooks output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "onError(ctx, events,"); n != 1 {
+		t.Errorf("onError call sites = %d, want 1 (in publishEvents, outside the recover)", n)
 	}
 }

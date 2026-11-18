@@ -140,6 +140,45 @@ func (s AuditUserSorter) SourceIP(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "source_ip", Direction: direction}
 }
 
+// BoolKeyedSorter provides type-safe sort helpers for the BoolKeyed entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BoolKeyedSorter struct{}
+
+// NewBoolKeyedSorter returns a new BoolKeyedSorter.
+func NewBoolKeyedSorter() BoolKeyedSorter { return BoolKeyedSorter{} }
+
+// K returns a sort for the k column in the given direction.
+func (s BoolKeyedSorter) K(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "k", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s BoolKeyedSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// BoolKeyedNoteSorter provides type-safe sort helpers for the BoolKeyedNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BoolKeyedNoteSorter struct{}
+
+// NewBoolKeyedNoteSorter returns a new BoolKeyedNoteSorter.
+func NewBoolKeyedNoteSorter() BoolKeyedNoteSorter { return BoolKeyedNoteSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s BoolKeyedNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// KeyedK returns a sort for the keyed_k column in the given direction.
+func (s BoolKeyedNoteSorter) KeyedK(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "keyed_k", Direction: direction}
+}
+
+// Note returns a sort for the note column in the given direction.
+func (s BoolKeyedNoteSorter) Note(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "note", Direction: direction}
+}
+
 // CategorySorter provides type-safe sort helpers for the Category entity.
 // Each method returns a sql.Sort for the corresponding column.
 type CategorySorter struct{}
@@ -278,6 +317,57 @@ func (s EventSorter) Name(direction sql.SortDirection) sql.Sort {
 // Payload returns a sort for the payload column in the given direction.
 func (s EventSorter) Payload(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "payload", Direction: direction}
+}
+
+// FingerprintSorter provides type-safe sort helpers for the Fingerprint entity.
+// Each method returns a sql.Sort for the corresponding column.
+type FingerprintSorter struct{}
+
+// NewFingerprintSorter returns a new FingerprintSorter.
+func NewFingerprintSorter() FingerprintSorter { return FingerprintSorter{} }
+
+// Digest returns a sort for the digest column in the given direction.
+func (s FingerprintSorter) Digest(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "digest", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s FingerprintSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// HostSorter provides type-safe sort helpers for the Host entity.
+// Each method returns a sql.Sort for the corresponding column.
+type HostSorter struct{}
+
+// NewHostSorter returns a new HostSorter.
+func NewHostSorter() HostSorter { return HostSorter{} }
+
+// Addr returns a sort for the addr column in the given direction.
+func (s HostSorter) Addr(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "addr", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s HostSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// HostFingerprintSorter provides type-safe sort helpers for the HostFingerprint entity.
+// Each method returns a sql.Sort for the corresponding column.
+type HostFingerprintSorter struct{}
+
+// NewHostFingerprintSorter returns a new HostFingerprintSorter.
+func NewHostFingerprintSorter() HostFingerprintSorter { return HostFingerprintSorter{} }
+
+// FingerprintDigest returns a sort for the fingerprint_digest column in the given direction.
+func (s HostFingerprintSorter) FingerprintDigest(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "fingerprint_digest", Direction: direction}
+}
+
+// HostAddr returns a sort for the host_addr column in the given direction.
+func (s HostFingerprintSorter) HostAddr(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "host_addr", Direction: direction}
 }
 
 // KeyOnlyRowSorter provides type-safe sort helpers for the KeyOnlyRow entity.
@@ -701,6 +791,45 @@ func (s TagSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
 }
 
+// TimeKeyedSorter provides type-safe sort helpers for the TimeKeyed entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TimeKeyedSorter struct{}
+
+// NewTimeKeyedSorter returns a new TimeKeyedSorter.
+func NewTimeKeyedSorter() TimeKeyedSorter { return TimeKeyedSorter{} }
+
+// At returns a sort for the at column in the given direction.
+func (s TimeKeyedSorter) At(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "at", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s TimeKeyedSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// TimeKeyedNoteSorter provides type-safe sort helpers for the TimeKeyedNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TimeKeyedNoteSorter struct{}
+
+// NewTimeKeyedNoteSorter returns a new TimeKeyedNoteSorter.
+func NewTimeKeyedNoteSorter() TimeKeyedNoteSorter { return TimeKeyedNoteSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s TimeKeyedNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// KeyedAt returns a sort for the keyed_at column in the given direction.
+func (s TimeKeyedNoteSorter) KeyedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "keyed_at", Direction: direction}
+}
+
+// Note returns a sort for the note column in the given direction.
+func (s TimeKeyedNoteSorter) Note(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "note", Direction: direction}
+}
+
 // UserCategorySorter provides type-safe sort helpers for the UserCategory entity.
 // Each method returns a sql.Sort for the corresponding column.
 type UserCategorySorter struct{}
@@ -778,4 +907,106 @@ func (s WarehouseSorter) RelatedIDS(direction sql.SortDirection) sql.Sort {
 // TagIDS returns a sort for the tag_ids column in the given direction.
 func (s WarehouseSorter) TagIDS(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "tag_ids", Direction: direction}
+}
+
+// WidthBigSorter provides type-safe sort helpers for the WidthBig entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthBigSorter struct{}
+
+// NewWidthBigSorter returns a new WidthBigSorter.
+func NewWidthBigSorter() WidthBigSorter { return WidthBigSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthBigSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// WidthLinkSorter provides type-safe sort helpers for the WidthLink entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthLinkSorter struct{}
+
+// NewWidthLinkSorter returns a new WidthLinkSorter.
+func NewWidthLinkSorter() WidthLinkSorter { return WidthLinkSorter{} }
+
+// BigID returns a sort for the big_id column in the given direction.
+func (s WidthLinkSorter) BigID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "big_id", Direction: direction}
+}
+
+// SmallID returns a sort for the small_id column in the given direction.
+func (s WidthLinkSorter) SmallID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "small_id", Direction: direction}
+}
+
+// WidthNarrowChildSorter provides type-safe sort helpers for the WidthNarrowChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthNarrowChildSorter struct{}
+
+// NewWidthNarrowChildSorter returns a new WidthNarrowChildSorter.
+func NewWidthNarrowChildSorter() WidthNarrowChildSorter { return WidthNarrowChildSorter{} }
+
+// BigID returns a sort for the big_id column in the given direction.
+func (s WidthNarrowChildSorter) BigID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "big_id", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthNarrowChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// WidthScopedChildSorter provides type-safe sort helpers for the WidthScopedChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthScopedChildSorter struct{}
+
+// NewWidthScopedChildSorter returns a new WidthScopedChildSorter.
+func NewWidthScopedChildSorter() WidthScopedChildSorter { return WidthScopedChildSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthScopedChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Scope returns a sort for the scope column in the given direction.
+func (s WidthScopedChildSorter) Scope(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "scope", Direction: direction}
+}
+
+// SmallID returns a sort for the small_id column in the given direction.
+func (s WidthScopedChildSorter) SmallID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "small_id", Direction: direction}
+}
+
+// WidthSmallSorter provides type-safe sort helpers for the WidthSmall entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthSmallSorter struct{}
+
+// NewWidthSmallSorter returns a new WidthSmallSorter.
+func NewWidthSmallSorter() WidthSmallSorter { return WidthSmallSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthSmallSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Scope returns a sort for the scope column in the given direction.
+func (s WidthSmallSorter) Scope(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "scope", Direction: direction}
+}
+
+// WidthWideChildSorter provides type-safe sort helpers for the WidthWideChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthWideChildSorter struct{}
+
+// NewWidthWideChildSorter returns a new WidthWideChildSorter.
+func NewWidthWideChildSorter() WidthWideChildSorter { return WidthWideChildSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthWideChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// SmallID returns a sort for the small_id column in the given direction.
+func (s WidthWideChildSorter) SmallID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "small_id", Direction: direction}
 }

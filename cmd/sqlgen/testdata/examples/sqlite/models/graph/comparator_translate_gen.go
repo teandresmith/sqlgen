@@ -48,6 +48,9 @@ func translateBooleanComparator(in *gqlmodel.BooleanComparator) *comparator.Bool
 	if in.Neq != nil {
 		out.Neq = in.Neq
 	}
+	if len(in.In) > 0 {
+		out.In = append([]bool(nil), in.In...)
+	}
 	return out
 }
 
@@ -158,6 +161,28 @@ func translateDecimalComparator(in *gqlmodel.DecimalComparator) *comparator.Stri
 	return out
 }
 
+// translateNullableBooleanComparator translates a GraphQL NullableBooleanComparator into a
+// *comparator.NullableBool for the model layer's filter struct.
+func translateNullableBooleanComparator(in *gqlmodel.NullableBooleanComparator) *comparator.NullableBool {
+	if in == nil {
+		return nil
+	}
+	out := &comparator.NullableBool{}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if len(in.In) > 0 {
+		out.In = append([]bool(nil), in.In...)
+	}
+	if in.IsNull != nil {
+		out.Null = in.IsNull
+	}
+	return out
+}
+
 // translateNullableBytesComparator translates a GraphQL NullableBytesComparator into a
 // *comparator.NullableOpaque[[]byte] for the model layer's filter struct.
 //
@@ -264,6 +289,43 @@ func translateNullableDecimalComparator(in *gqlmodel.NullableDecimalComparator) 
 			xs = append(xs, v.String())
 		}
 		out.Nin = xs
+	}
+	if in.IsNull != nil {
+		out.Null = in.IsNull
+	}
+	return out
+}
+
+// translateNullableIDComparator translates a GraphQL NullableIDComparator into a
+// *comparator.NullableID for the model layer's filter struct.
+func translateNullableIDComparator(in *gqlmodel.NullableIDComparator) *comparator.NullableID {
+	if in == nil {
+		return nil
+	}
+	out := &comparator.NullableID{}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if in.Gt != nil {
+		out.Gt = in.Gt
+	}
+	if in.Gte != nil {
+		out.Gte = in.Gte
+	}
+	if in.Lt != nil {
+		out.Lt = in.Lt
+	}
+	if in.Lte != nil {
+		out.Lte = in.Lte
+	}
+	if len(in.In) > 0 {
+		out.In = append([]string(nil), in.In...)
+	}
+	if len(in.Nin) > 0 {
+		out.Nin = append([]string(nil), in.Nin...)
 	}
 	if in.IsNull != nil {
 		out.Null = in.IsNull

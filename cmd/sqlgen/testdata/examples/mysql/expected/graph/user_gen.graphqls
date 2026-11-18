@@ -132,13 +132,13 @@ input UserSort {
 input CreateUserInput {
   name: String!
   email: String!
-  role: UsersRoleEnum!
-  permissions: [UsersPermissionsSetValue!]!
+  role: UsersRoleEnum
+  permissions: [UsersPermissionsSetValue!]
   age: Int
   bio: String
-  isActive: Boolean!
+  isActive: Boolean
   balance: Float!
-  loginCount: Int!
+  loginCount: Int
   avatar: Bytes
   metadata: JSON
   rating: Float
@@ -148,8 +148,8 @@ input CreateUserInput {
   bigUnsigned: Int
   birthDate: Time
   lastLogin: Time
-  createdAt: Time!
-  updatedAt: Time!
+  createdAt: Time
+  updatedAt: Time
 }
 input UpdateUserInput {
   name: String
@@ -241,10 +241,10 @@ input UserOrdersUpdateNested {
 }
 
 input UserOrdersCreateInput {
-  status: OrdersStatusEnum!
+  status: OrdersStatusEnum
   total: Float!
   notes: String
-  orderedAt: Time!
+  orderedAt: Time
 }
 
 input UserProfileCreateNested {
@@ -258,7 +258,7 @@ input UserProfileUpdateNested {
 input UserProfileCreateInput {
   website: String
   githubHandle: String
-  verified: Boolean!
+  verified: Boolean
   preferences: JSON
 }
 

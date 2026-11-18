@@ -51,9 +51,9 @@ input DefaultOnlyRowSort {
   direction: SortDirection!
 }
 input CreateDefaultOnlyRowInput {
-  label: String!
-  hits: Int!
-  active: Boolean!
+  label: String
+  hits: Int
+  active: Boolean
 }
 input UpdateDefaultOnlyRowInput {
   label: String

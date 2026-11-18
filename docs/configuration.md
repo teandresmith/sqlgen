@@ -126,7 +126,6 @@ output:
 | `paths` | []string | `["."]` | — | SQL files or directories to parse. Used when `source` is `files` or `both`; ignored under `database`, with a warning when set explicitly. |
 | `views` | []string | `[]` | — | Paths to view annotation files or directories. Parsed only as views, never as DDL. |
 | `schema` | string | `*` | — | PostgreSQL only: the schema an unqualified table name or `REFERENCES` target resolves to. `*` resolves to `public`. It does not filter which schemas are parsed; `introspect.schemas` filters introspection. Ignored with a warning on MySQL/SQLite. |
-| `parse_mode` | string | `strict` | `strict`, `merge` | How duplicate table definitions across files are handled. |
 | `connection` | object | — | — | Required when `source` is `database` or `both`. |
 | `introspect` | object | — | — | Schema/table filtering for introspection. Ignored with a warning under `source: files`. |
 
@@ -184,10 +183,10 @@ exclude_tables:
 |-------|------|---------|--------------|-------------|
 | `driver` | string | `pgx` | `pgx`, `stdlib` | Go database driver the generated code imports. |
 | `dir` | string | `.` | — | Default output directory for all artifacts. |
-| `package` | string | derived from `dir` | — | Default Go package name. |
+| `package` | string | derived from `dir` | — | Default Go package name. Derived from the last element of the absolute `dir`, lowercased with `-` turned into `_`, so `dir: .` run from `/src/models` gives `models`. |
 | `layout` | string | `single_file` | `single_file`, `file_per_table` | File layout strategy for tables. |
-| `enums` | object | — | — | Override output location for enums (`file`, `package`). |
-| `types` | object | — | — | Override output location for composite/domain types (`file`, `package`). |
+| `enums` | object | — | — | Override the enums file name (`file`, `package`); the file must stay directly in `dir` and `package` must equal `output.package`. |
+| `types` | object | — | — | Override the composite/domain types file name (`file`, `package`); the file must stay directly in `dir` and `package` must equal `output.package`. |
 | `client` | object | — | — | Unified client settings (`name` — default `Client`, `file` — default `client_gen.go`). |
 
 > `pgx` is only compatible with `dialect: postgres`. Use `stdlib` for MySQL and SQLite, and for
@@ -227,7 +226,8 @@ generation:
 ```
 
 Detection runs in priority order — `deleted_at`, `deleted_datetime`, `is_deleted`, `deleted_flag`,
-`deleted`. Three column types are supported:
+`deleted`. An explicit empty list (`soft_delete_columns: []`) turns detection off; leaving the key
+out keeps the default list. `update_columns: []` works the same way. Three column types are supported:
 
 | Type | On soft delete | On restore | Compatible SQL types |
 |------|----------------|------------|----------------------|

@@ -36,6 +36,8 @@ overrides:
       import: uuid
 
 generation:
+  nested_mutations:
+    enabled: true
   soft_delete_columns:
     - name: deleted_at
       type: timestamp
@@ -50,9 +52,28 @@ views:
       enabled: false
 
 tables:
+  # The time-keyed nested target, both edges listed so a change that made
+  # either ineligible fails generation (see schema.sql).
+  moment_owners:
+    nested_mutations:
+      relationships:
+        - name: Moments
+  moment_tags:
+    nested_mutations:
+      relationships:
+        - name: Moments
   workspaces:
     tenancy:
       enabled: false
+    # A declared list relationship into a tenanted view: the shared
+    # workspaces table gets a ProductStats member on WorkspaceFilter, compiled
+    # from ProductStatFilter and scoped to the resolved tenant inside the
+    # subquery like a tenanted table target.
+    relationships:
+      - name: ProductStats
+        type: one_to_many
+        table: product_stats
+        fk: workspace_id
   products: {}
   order_items:
     cursor_keys:

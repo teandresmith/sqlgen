@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -30,13 +31,19 @@ type FindReferencingInput struct {
 	Table string `json:"table" jsonschema:"the SQL table name, e.g. users"`
 }
 
-// Reference is one inbound foreign-key reference to a table. All fields are
-// strings so the value is comparable and usable as a dedup key.
+// Reference is one inbound foreign-key reference to a table. FKColumns is the
+// FK's column list in its declared order, one item for a single-column key.
 type Reference struct {
-	Entity           string `json:"entity"`
-	RelationshipName string `json:"relationship_name"`
-	Kind             string `json:"kind"`
-	FKColumn         string `json:"fk_column"`
+	Entity           string   `json:"entity"`
+	RelationshipName string   `json:"relationship_name"`
+	Kind             string   `json:"kind"`
+	FKColumns        []string `json:"fk_columns"`
+}
+
+// dedupKey is the reference's full tuple, FKColumns compared whole. `\x00`
+// cannot appear in an identifier, so no two tuples share a key.
+func (r Reference) dedupKey() string {
+	return strings.Join(append([]string{r.Entity, r.RelationshipName, r.Kind}, r.FKColumns...), "\x00")
 }
 
 // FindReferencingOutput wraps the references.
@@ -52,10 +59,10 @@ type FindReferencingOutput struct {
 func findReferencing(d *toolDeps, in FindReferencingInput) (FindReferencingOutput, error) {
 	table := strings.TrimSpace(in.Table)
 	out := FindReferencingOutput{References: []Reference{}}
-	seen := make(map[Reference]bool)
+	seen := make(map[string]bool)
 	add := func(r Reference) {
-		if !seen[r] {
-			seen[r] = true
+		if k := r.dedupKey(); !seen[k] {
+			seen[k] = true
 			out.References = append(out.References, r)
 		}
 	}
@@ -69,24 +76,24 @@ func findReferencing(d *toolDeps, in FindReferencingInput) (FindReferencingOutpu
 		for _, r := range e.Relationships {
 			switch {
 			case r.FK != nil:
-				// The FK column lives in r.FK.Table; the referenced table is the
+				// The FK columns live in r.FK.Table; the referenced table is the
 				// other endpoint. The referencing entity is the one holding the
-				// column.
+				// columns.
 				referenced, refEntity := e.Table, r.TargetEntity
 				if fkOnEntity(r.FK, e) {
 					referenced, refEntity = targetTableOf(r.TargetEntity), e.Name
 				}
 				if referenced == table {
-					add(Reference{Entity: refEntity, RelationshipName: r.Name, Kind: string(r.Kind), FKColumn: r.FK.Column})
+					add(Reference{Entity: refEntity, RelationshipName: r.Name, Kind: string(r.Kind), FKColumns: r.FK.Columns})
 				}
 			case r.Junction != nil:
 				// The junction references this entity's table via LocalFK and the
 				// target's table via TargetFK.
 				if table == e.Table {
-					add(Reference{Entity: r.TargetEntity, RelationshipName: r.Name, Kind: string(r.Kind), FKColumn: r.Junction.LocalFK})
+					add(Reference{Entity: r.TargetEntity, RelationshipName: r.Name, Kind: string(r.Kind), FKColumns: r.Junction.LocalFK.Columns})
 				}
 				if tt := targetTableOf(r.TargetEntity); tt != "" && table == tt {
-					add(Reference{Entity: e.Name, RelationshipName: r.Name, Kind: string(r.Kind), FKColumn: r.Junction.TargetFK})
+					add(Reference{Entity: e.Name, RelationshipName: r.Name, Kind: string(r.Kind), FKColumns: r.Junction.TargetFK.Columns})
 				}
 			}
 		}
@@ -108,16 +115,17 @@ func fkOnEntity(fk *manifest.FK, e *manifest.Entity) bool {
 
 // lessReference orders references on every field, so two references that
 // differ only in Kind still have a defined order — findReferencing dedups on
-// the full Reference struct, so the sort key must be just as wide to keep the
-// output byte-stable under the unstable sort.Slice (MCP.md §6.5).
+// the full tuple, so the sort key must be just as wide to keep the output
+// byte-stable under the unstable sort.Slice (MCP.md §6.5). FKColumns compares
+// as a whole list.
 func lessReference(a, b Reference) bool {
 	switch {
 	case a.Entity != b.Entity:
 		return a.Entity < b.Entity
 	case a.RelationshipName != b.RelationshipName:
 		return a.RelationshipName < b.RelationshipName
-	case a.FKColumn != b.FKColumn:
-		return a.FKColumn < b.FKColumn
+	case !slices.Equal(a.FKColumns, b.FKColumns):
+		return slices.Compare(a.FKColumns, b.FKColumns) < 0
 	default:
 		return a.Kind < b.Kind
 	}

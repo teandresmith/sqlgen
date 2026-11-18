@@ -42,12 +42,15 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:lineitem:{order_id}:{product_id}",
       "invalidates_on": [
-        "Create",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "Increment",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -150,22 +153,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*LineItemFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [
-          "tenancy.ErrMissing"
-        ],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"line_items\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -195,6 +182,22 @@
         ],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"line_items\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*LineItemFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"line_items\" WHERE <filter>"
         }
       },
       {
@@ -285,54 +288,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateLineItemInput"
-          },
-          {
-            "name": "target",
-            "type": "LineItemConflictTarget"
-          }
-        ],
-        "returns": "*LineItem",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "One method over the generated LineItemConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"line_items\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateLineItemInput"
-          },
-          {
-            "name": "target",
-            "type": "LineItemConflictTarget"
-          }
-        ],
-        "returns": "[]*LineItem",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same LineItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"line_items\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -400,6 +355,54 @@
         "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"line_items\" SET <set> WHERE <filter> RETURNING \"order_id\", \"product_id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateLineItemInput"
+          },
+          {
+            "name": "target",
+            "type": "LineItemConflictTarget"
+          }
+        ],
+        "returns": "*LineItem",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "One method over the generated LineItemConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"line_items\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateLineItemInput"
+          },
+          {
+            "name": "target",
+            "type": "LineItemConflictTarget"
+          }
+        ],
+        "returns": "[]*LineItem",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same LineItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"line_items\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {
@@ -516,5 +519,14 @@
       "WorkspaceID"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.LineItems().Get(ctx, models.LineItemPK{OrderID: 1, ProductID: 1})",
+      "rows, err := client.LineItems().GetMany(ctx, &models.GetLineItemsInput{Filter: &models.LineItemFilter{Quantity: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+    ],
+    "write": [
+      "created, err := client.LineItems().Create(ctx, &models.CreateLineItemInput{OrderID: 1, ProductID: 1, Quantity: 1})",
+      "updated, err := client.LineItems().Update(ctx, models.LineItemPK{OrderID: 1, ProductID: 1}, &models.UpdateLineItemInput{WorkspaceID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

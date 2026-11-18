@@ -8,6 +8,7 @@ import (
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	parserpkg "github.com/teandresmith/sqlgen/parser"
+	"github.com/teandresmith/sqlgen/sql"
 )
 
 // Enum comparators, monomorphized per enum (PRD §26.4 Rule 1). Previously an
@@ -449,5 +450,98 @@ func TestEnumComparator_nonSchemaEnumDropsFilterField(t *testing.T) {
 	if !addr.Readable || !addr.Sortable {
 		t.Errorf("dropping the filter projection also dropped the read/sort surface: readable=%v sortable=%v",
 			addr.Readable, addr.Sortable)
+	}
+}
+
+// An enum key's filter expressions take the key's own type, as the filter field
+// does, and the resolvers name that type through the models package.
+func TestEnumKey_FollowsTheFilterField(t *testing.T) {
+	schema := &parserpkg.Schema{
+		Enums: []parserpkg.Enum{{Name: "kind", Schema: "public", Values: []string{"a", "b"}}},
+		Tables: []parserpkg.Table{{
+			Name: "things",
+			Columns: []parserpkg.Column{
+				{Name: "kind", Type: "kind", PrimaryKey: true},
+				{Name: "hits", Type: "integer"},
+			},
+		}},
+	}
+	in, _ := enumFixtureInput(t, schema)
+	tables, err := gen.BuildTableContexts(in, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts: %v", err)
+	}
+	pk := tables[0].PKColumns[0]
+	fm := gen.FuncMap(sql.NewPostgresDialect())
+	eq := fm["pkFilterExpr"].(func(gen.ColumnContext, string) string)(pk, "id")
+	if want := "&comparator.Enum[Kind]{Eq: new(id)}"; eq != want {
+		t.Errorf("pkFilterExpr = %q, want %q", eq, want)
+	}
+	for _, tt := range []struct {
+		nullable bool
+		want     string
+	}{
+		{false, "&comparator.Enum[Kind]{In: ids}"},
+		{true, "&comparator.NullableEnum[Kind]{Enum: comparator.Enum[Kind]{In: ids}}"},
+	} {
+		if got := fm["pkFilterInExpr"].(func(gen.ColumnContext, string, bool) string)(pk, "ids", tt.nullable); got != tt.want {
+			t.Errorf("pkFilterInExpr(nullable=%v) = %q, want %q", tt.nullable, got, tt.want)
+		}
+	}
+	if fm["pkIsStringType"].(func(any) bool)(pk) {
+		t.Error("pkIsStringType = true, want the key's own type on comparator.Enum")
+	}
+
+	apiCtx := enumFixtureContext(t, schema)
+	apiCtx.ModelsPackage = "models"
+	apiCtx.ModelsImportPath = "example.com/foo/gen"
+	apiCtx.ClientName = "Client"
+	body := extractFunc(t, renderResolvers(t, apiCtx), "UpdateThings")
+	for _, want := range []string{
+		"keys := make([]models.Kind, 0, len(matched))",
+		"keys = append(keys, row.Kind)",
+		"Filter: &models.ThingFilter{Kind: &comparator.Enum[models.Kind]{In: keys}},",
+	} {
+		mustContain(t, body, want)
+	}
+}
+
+// An enum primary-key argument, alone or as a composite member, names its type
+// through the models package in the resolver helpers and the seed files, and
+// reaches the client call unconverted. Neither file is in the models package.
+func TestEnumKey_ResolverArgsNameTheModelsType(t *testing.T) {
+	schema := &parserpkg.Schema{
+		Enums: []parserpkg.Enum{{Name: "kind", Schema: "public", Values: []string{"a", "b"}}},
+		Tables: []parserpkg.Table{
+			{Name: "things", Columns: []parserpkg.Column{
+				{Name: "kind", Type: "kind", PrimaryKey: true},
+				{Name: "label", Type: "text"},
+			}},
+			{Name: "pairs", Columns: []parserpkg.Column{
+				{Name: "kind", Type: "kind", PrimaryKey: true},
+				{Name: "slot", Type: "integer", PrimaryKey: true},
+				{Name: "note", Type: "text"},
+			}},
+		},
+	}
+	apiCtx := enumFixtureContext(t, schema)
+	apiCtx.ModelsImportPath = "example.com/foo/gen"
+	apiCtx.ClientName = "Client"
+	resolvers := renderResolvers(t, apiCtx)
+	for _, want := range []string{
+		"func (q *Q) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)",
+		"q.Client.Things().Get(ctx, kind, func(",
+		"func (m *M) DeleteThing(ctx context.Context, kind models.Kind) (",
+		"func (q *Q) Pair(ctx context.Context, kind models.Kind, slot int) (*models.Pair, error)",
+		"q.Client.Pairs().Get(ctx, models.PairPK{Kind: kind, Slot: int32(slot)}, func(",
+	} {
+		mustContain(t, resolvers, want)
+	}
+	seeds := renderSeeds(t, apiCtx)
+	for _, want := range []string{
+		"func (r *queryResolver) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)",
+		"func (r *queryResolver) Pair(ctx context.Context, kind models.Kind, slot int) (*models.Pair, error)",
+	} {
+		mustContain(t, seeds, want)
 	}
 }

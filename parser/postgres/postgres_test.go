@@ -3724,3 +3724,48 @@ CREATE TYPE comp AS (a int, b text);
 		})
 	}
 }
+
+// A FOREIGN KEY records MATCH FULL however it is declared, and MATCH SIMPLE
+// otherwise.
+func TestForeignKeyMatchType(t *testing.T) {
+	s := parsePGSchema(t, `
+		CREATE TABLE p (a int, b int, PRIMARY KEY (a, b));
+		CREATE TABLE c (
+			x int REFERENCES p (a) MATCH FULL,
+			y int,
+			z int,
+			CONSTRAINT c_full FOREIGN KEY (y, z) REFERENCES p (a, b) MATCH FULL,
+			CONSTRAINT c_simple FOREIGN KEY (z, y) REFERENCES p (a, b) MATCH SIMPLE,
+			CONSTRAINT c_default FOREIGN KEY (y, x) REFERENCES p (a, b)
+		);
+		ALTER TABLE c ADD CONSTRAINT c_altered FOREIGN KEY (x, z) REFERENCES p (a, b) MATCH FULL;
+	`)
+	got := make(map[string]parser.MatchType)
+	for _, c := range s.Tables[1].Constraints {
+		if c.Type == parser.ForeignKey {
+			got[c.Name] = c.Match
+		}
+	}
+	want := map[string]parser.MatchType{
+		"c_x_fkey":  parser.MatchFull,
+		"c_full":    parser.MatchFull,
+		"c_simple":  parser.MatchSimple,
+		"c_default": parser.MatchSimple,
+		"c_altered": parser.MatchFull,
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("FOREIGN KEY match types mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// PostgreSQL rejects MATCH PARTIAL, so the parser does too.
+func TestForeignKeyMatchPartialIsAnError(t *testing.T) {
+	p := postgres.New("")
+	err := p.Parse("base.sql", []byte(`
+		CREATE TABLE p (a int, b int, PRIMARY KEY (a, b));
+		CREATE TABLE c (y int, z int, FOREIGN KEY (y, z) REFERENCES p (a, b) MATCH PARTIAL);
+	`))
+	if err == nil {
+		t.Fatal("Parse() of MATCH PARTIAL succeeded, want an error")
+	}
+}

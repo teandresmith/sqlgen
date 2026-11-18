@@ -5,12 +5,17 @@ import (
 	"time"
 )
 
-// resetCustomState restores package-level layout state between tests.
+// initialOutputLayout is the output layout the package starts with, captured at
+// package initialization before any test changes it.
+var initialOutputLayout = outputLayout
+
+// resetCustomState restores package-level layout state between tests: no
+// registered layouts, and the output layout the package started with.
 func resetCustomState(t *testing.T) {
 	t.Helper()
 	layoutMu.Lock()
 	customLayouts = nil
-	outputLayout = time.RFC3339Nano
+	outputLayout = initialOutputLayout
 	layoutMu.Unlock()
 }
 
@@ -148,9 +153,18 @@ func TestDateTimeValue(t *testing.T) {
 		t.Fatalf("Value() type = %T, want string", val)
 	}
 
-	want := refTime.Format(time.RFC3339Nano)
+	const want = "2024-03-15T10:30:45Z"
 	if got != want {
-		t.Errorf("Value() = %q, want %q", got, want)
+		t.Errorf("Value() = %q, want the RFC 3339 text %q", got, want)
+	}
+
+	offset := DateTime{Time: time.Date(2024, 3, 15, 10, 30, 45, 0, time.FixedZone("", 5*60*60))}
+	val, err = offset.Value()
+	if err != nil {
+		t.Fatalf("Value() unexpected error: %v", err)
+	}
+	if got, want := val, "2024-03-15T10:30:45+05:00"; got != want {
+		t.Errorf("Value() of a +05:00 time = %v, want the RFC 3339 text %q", got, want)
 	}
 }
 

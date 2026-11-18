@@ -215,7 +215,7 @@ func TestReservedFieldName_Relationship(t *testing.T) {
 				Type:        parser.OneToMany,
 				SourceTable: "users",
 				TargetTable: "column",
-				FKColumn:    "user_id",
+				Key:         []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -231,6 +231,101 @@ func TestReservedFieldName_Relationship(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "tables.users.exclude_relationships") {
 		t.Errorf("BuildTableContexts() error = %q, want it to name the exclusion escape hatch", err)
+	}
+}
+
+// TestReservedFieldName_ListRelationship pins the <T>Filter half of the
+// relationship domain: a list relationship (O2M, M2M) also lands on <T>Filter
+// as a relationship filter member, so its field name may not be one that
+// filter already declares — And, Or, ToConditions, and PKs on a composite-PK
+// parent. A to-one relationship never reaches <T>Filter, so the filter-owned
+// names stay free for it.
+func TestReservedFieldName_ListRelationship(t *testing.T) {
+	schema := func(compositeParent bool) *parser.Schema {
+		parentCols := []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}}
+		childCols := []parser.Column{
+			{Name: "id", Type: "uuid", PrimaryKey: true},
+			{Name: "user_id", Type: "uuid"},
+		}
+		if compositeParent {
+			parentCols = append(parentCols, parser.Column{Name: "seq", Type: "integer", PrimaryKey: true})
+			childCols = append(childCols, parser.Column{Name: "user_seq", Type: "integer"})
+		}
+		return &parser.Schema{
+			Tables: []parser.Table{
+				{Name: "users", Columns: parentCols},
+				{Name: "posts", Columns: childCols},
+				{
+					Name: "badges",
+					Columns: []parser.Column{
+						{Name: "id", Type: "uuid", PrimaryKey: true},
+						{Name: "user_id", Type: "uuid", Unique: true},
+					},
+				},
+				{
+					Name:    "groups",
+					Columns: []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}},
+				},
+				{
+					Name: "user_groups",
+					Columns: []parser.Column{
+						{Name: "user_id", Type: "uuid", PrimaryKey: true},
+						{Name: "group_id", Type: "uuid", PrimaryKey: true},
+					},
+				},
+			},
+		}
+	}
+	o2m := func(name string) config.TableRelationship {
+		return config.TableRelationship{Name: name, Type: "one_to_many", Table: "posts", FK: config.KeyColumns{"user_id"}}
+	}
+
+	tests := []struct {
+		name            string
+		compositeParent bool
+		rel             config.TableRelationship
+		wantOwner       string
+	}{
+		{name: "And on a one-to-many relationship", rel: o2m("And"), wantOwner: "UserFilter (field And)"},
+		{name: "Or on a one-to-many relationship", rel: o2m("Or"), wantOwner: "UserFilter (field Or)"},
+		{name: "ToConditions on a one-to-many relationship", rel: o2m("ToConditions"), wantOwner: "UserFilter (method ToConditions)"},
+		{
+			name: "And on a many-to-many relationship",
+			rel: config.TableRelationship{
+				Name: "And", Type: "many_to_many", Table: "groups", Junction: "user_groups",
+				JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"group_id"},
+			},
+			wantOwner: "UserFilter (field And)",
+		},
+		{name: "PKs on a one-to-many relationship of a composite-PK parent", compositeParent: true, rel: o2m("PKs"), wantOwner: "UserFilter (field PKs)"},
+		{name: "PKs on a one-to-many relationship of a single-PK parent", rel: o2m("PKs")},
+		{
+			name: "And on a one-to-one relationship",
+			rel:  config.TableRelationship{Name: "And", Type: "one_to_one", Table: "badges", FK: config.KeyColumns{"user_id"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := testInput(schema(tt.compositeParent))
+			input.Config.Tables["users"] = config.TableConfig{
+				Relationships: []config.TableRelationship{tt.rel},
+			}
+			_, err := gen.BuildTableContexts(input, nil)
+			if tt.wantOwner == "" {
+				if err != nil {
+					t.Fatalf("BuildTableContexts() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("BuildTableContexts() error = nil, want relationship %q rejected", tt.rel.Name)
+			}
+			want := `relationship "` + tt.rel.Name + `" resolves to Go field name "` + tt.rel.Name + `", which the generated ` + tt.wantOwner + " already declares"
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("BuildTableContexts() error = %q, want it to contain %q", err, want)
+			}
+		})
 	}
 }
 

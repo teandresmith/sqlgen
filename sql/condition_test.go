@@ -171,6 +171,25 @@ func TestConditionBuilder_NilOperand(t *testing.T) {
 	}
 }
 
+// TestConditionBuilder_NilEqNeqIsNullCondition: Eq(nil) and Neq(nil) return
+// the very conditions IsNull and IsNotNull return, Column and Value included.
+func TestConditionBuilder_NilEqNeqIsNullCondition(t *testing.T) {
+	tests := []struct {
+		name      string
+		got, want sql.Condition
+	}{
+		{"Eq nil is IsNull", sql.Where("c").Eq(nil), sql.Where("c").IsNull()},
+		{"Neq nil is IsNotNull", sql.Where("c").Neq(nil), sql.Where("c").IsNotNull()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if diff := cmp.Diff(tt.want, tt.got); diff != "" {
+				t.Errorf("Where(\"c\"): %s mismatch (-want +got):\n%s", tt.name, diff)
+			}
+		})
+	}
+}
+
 // TestConditionBuilder_TypedNilOperandBinds: a typed nil is not nil as an any,
 // so Eq and Neq bind it rather than testing for NULL. Eq(nil) matches the NULL
 // rows; Eq((*int)(nil)) matches none.

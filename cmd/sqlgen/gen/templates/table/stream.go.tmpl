@@ -106,9 +106,13 @@ func (c *{{ .StructName | toCamelCase }}Client) Stream(ctx context.Context, inpu
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *{{ .StructName }}, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream {{ .TableName }}: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -140,7 +144,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Stream(ctx context.Context, inpu
 			// resolved before the conditions are built rather than appended after them.
 			filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
 			if filterErr != nil {
-				emit(nil, fmt.Errorf("stream {{ .TableName }}: %w", filterErr))
+				emit(nil, filterErr)
 				return nil, nil
 			}
 {{- end }}
@@ -160,7 +164,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Stream(ctx context.Context, inpu
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
-					emit(nil, fmt.Errorf("stream {{ .TableName }}: resolve tenant: %w", err))
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
 					return nil, nil
 				}
 				if apply {
@@ -177,7 +181,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Stream(ctx context.Context, inpu
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream {{ .TableName }}: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -200,7 +204,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Stream(ctx context.Context, inpu
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream {{ .TableName }}: %w", err))
 		}
 	}
 }

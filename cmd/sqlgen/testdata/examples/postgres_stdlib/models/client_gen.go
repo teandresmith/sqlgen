@@ -58,24 +58,32 @@ func WithQueryHook(h hook.QueryHook) ClientOption {
 // All entity clients share the same querier and configuration.
 // The Client is safe for concurrent use after construction.
 type Client struct {
-	querier         database.Querier
-	opts            clientOptions
-	article         *articleClient
-	auditUser       *auditUserClient
-	category        *categoryClient
-	categoryStat    *categoryStatClient
-	event           *eventClient
-	order           *orderClient
-	orderItem       *orderItemClient
-	product         *productClient
-	productSummary  *productSummaryClient
-	productTagLabel *productTagLabelClient
-	profile         *profileClient
-	publicUser      *publicUserClient
-	tag             *tagClient
-	userCategory    *userCategoryClient
-	warehouse       *warehouseClient
-	warehouseRole   *warehouseRoleClient
+	querier          database.Querier
+	opts             clientOptions
+	article          *articleClient
+	auditUser        *auditUserClient
+	category         *categoryClient
+	categoryStat     *categoryStatClient
+	cycle            *cycleClient
+	event            *eventClient
+	order            *orderClient
+	orderItem        *orderItemClient
+	product          *productClient
+	productSummary   *productSummaryClient
+	productTagLabel  *productTagLabelClient
+	profile          *profileClient
+	publicUser       *publicUserClient
+	tag              *tagClient
+	task             *taskClient
+	userCategory     *userCategoryClient
+	warehouse        *warehouseClient
+	warehouseRole    *warehouseRoleClient
+	widthBig         *widthBigClient
+	widthLink        *widthLinkClient
+	widthNarrowChild *widthNarrowChildClient
+	widthScopedChild *widthScopedChildClient
+	widthSmall       *widthSmallClient
+	widthWideChild   *widthWideChildClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -89,24 +97,32 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	}
 
 	c := &Client{
-		querier:         querier,
-		opts:            options,
-		article:         newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		auditUser:       newAuditUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		category:        newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		categoryStat:    newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		event:           newEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		order:           newOrderClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		orderItem:       newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		product:         newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		productSummary:  newProductSummaryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		productTagLabel: newProductTagLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		profile:         newProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		publicUser:      newPublicUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		tag:             newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		userCategory:    newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		warehouse:       newWarehouseClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		warehouseRole:   newWarehouseRoleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		querier:          querier,
+		opts:             options,
+		article:          newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		auditUser:        newAuditUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		category:         newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		categoryStat:     newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		cycle:            newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		event:            newEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		order:            newOrderClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		orderItem:        newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		product:          newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		productSummary:   newProductSummaryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		productTagLabel:  newProductTagLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		profile:          newProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		publicUser:       newPublicUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		tag:              newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		task:             newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		userCategory:     newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		warehouse:        newWarehouseClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		warehouseRole:    newWarehouseRoleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthBig:         newWidthBigClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthLink:        newWidthLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthNarrowChild: newWidthNarrowChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthScopedChild: newWidthScopedChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthSmall:       newWidthSmallClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthWideChild:   newWidthWideChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 	}
 
 	// Push the configured CallbackMode down to every entity client that can
@@ -118,6 +134,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.order.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
 	c.publicUser.callbackMode = options.callbackMode
+	c.widthBig.callbackMode = options.callbackMode
+	c.widthSmall.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
@@ -131,6 +149,13 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.publicUser.categoryClient = c.category
 	c.publicUser.profileClient = c.profile
 	c.publicUser.userCategoryClient = c.userCategory
+	c.widthBig.widthNarrowChildClient = c.widthNarrowChild
+	c.widthBig.widthSmallClient = c.widthSmall
+	c.widthBig.widthLinkClient = c.widthLink
+	c.widthSmall.widthScopedChildClient = c.widthScopedChild
+	c.widthSmall.widthWideChildClient = c.widthWideChild
+	c.widthSmall.widthBigClient = c.widthBig
+	c.widthSmall.widthLinkClient = c.widthLink
 
 	return c
 }
@@ -153,6 +178,11 @@ func (c *Client) Categories() CategoryClient {
 // CategoryStat returns the CategoryStatClient for CategoryStat operations.
 func (c *Client) CategoryStat() CategoryStatClient {
 	return c.categoryStat
+}
+
+// Cycles returns the CycleClient for Cycle operations.
+func (c *Client) Cycles() CycleClient {
+	return c.cycle
 }
 
 // Events returns the EventClient for Event operations.
@@ -200,6 +230,11 @@ func (c *Client) Tags() TagClient {
 	return c.tag
 }
 
+// Tasks returns the TaskClient for Task operations.
+func (c *Client) Tasks() TaskClient {
+	return c.task
+}
+
 // UserCategories returns the UserCategoryClient for UserCategory operations.
 func (c *Client) UserCategories() UserCategoryClient {
 	return c.userCategory
@@ -213,6 +248,36 @@ func (c *Client) Warehouses() WarehouseClient {
 // WarehouseRole returns the WarehouseRoleClient for WarehouseRole operations.
 func (c *Client) WarehouseRole() WarehouseRoleClient {
 	return c.warehouseRole
+}
+
+// WidthBigs returns the WidthBigClient for WidthBig operations.
+func (c *Client) WidthBigs() WidthBigClient {
+	return c.widthBig
+}
+
+// WidthLinks returns the WidthLinkClient for WidthLink operations.
+func (c *Client) WidthLinks() WidthLinkClient {
+	return c.widthLink
+}
+
+// WidthNarrowChildren returns the WidthNarrowChildClient for WidthNarrowChild operations.
+func (c *Client) WidthNarrowChildren() WidthNarrowChildClient {
+	return c.widthNarrowChild
+}
+
+// WidthScopedChildren returns the WidthScopedChildClient for WidthScopedChild operations.
+func (c *Client) WidthScopedChildren() WidthScopedChildClient {
+	return c.widthScopedChild
+}
+
+// WidthSmalls returns the WidthSmallClient for WidthSmall operations.
+func (c *Client) WidthSmalls() WidthSmallClient {
+	return c.widthSmall
+}
+
+// WidthWideChildren returns the WidthWideChildClient for WidthWideChild operations.
+func (c *Client) WidthWideChildren() WidthWideChildClient {
+	return c.widthWideChild
 }
 
 // Begin starts a new transaction with the given name.

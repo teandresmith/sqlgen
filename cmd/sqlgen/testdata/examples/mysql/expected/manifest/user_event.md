@@ -59,19 +59,6 @@ mysql:
 SELECT `action`, `id`, `user_id` FROM `user_events` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserEventFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `user_events` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -96,6 +83,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `user_events` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserEventFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `user_events` WHERE <filter>
 ```
 
 ### Paginate
@@ -156,36 +156,6 @@ mysql:
 INSERT INTO `user_events` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateUserEventInput`, `target UserEventConflictTarget`
-- Returns: `*UserEvent`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserEventConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `user_events` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserEventInput`, `target UserEventConflictTarget`
-- Returns: `[]*UserEvent`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserEventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `user_events` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateUserEventInput`
@@ -229,6 +199,36 @@ mysql:
 
 ```sql
 UPDATE `user_events` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateUserEventInput`, `target UserEventConflictTarget`
+- Returns: `*UserEvent`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserEventConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `user_events` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserEventInput`, `target UserEventConflictTarget`
+- Returns: `[]*UserEvent`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserEventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `user_events` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### HardDelete
@@ -291,3 +291,17 @@ Type `UserEventFilter`.
 Type `UserEventSort`.
 
 Fields: Action, ID, UserID
+
+## Read examples
+
+```go
+row, err := client.UserEvents().Get(ctx, 1)
+rows, err := client.UserEvents().GetMany(ctx, &models.GetUserEventsInput{Filter: &models.UserEventFilter{Action: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserEvents().Create(ctx, &models.CreateUserEventInput{Action: "example"})
+updated, err := client.UserEvents().Update(ctx, 1, &models.UpdateUserEventInput{UserID: omittable.Set(new(int64(1)))})
+```

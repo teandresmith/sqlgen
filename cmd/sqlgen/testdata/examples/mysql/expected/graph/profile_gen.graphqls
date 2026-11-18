@@ -64,7 +64,7 @@ input CreateProfileInput {
   userID: Int!
   website: String
   githubHandle: String
-  verified: Boolean!
+  verified: Boolean
   preferences: JSON
 }
 input UpdateProfileInput {

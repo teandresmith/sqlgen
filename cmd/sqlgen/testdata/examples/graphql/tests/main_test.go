@@ -208,7 +208,7 @@ func gqlExecData(t *testing.T, query string, variables map[string]any, out any) 
 // test's int-PK assertions are stable.
 func truncateAll(t *testing.T) {
 	t.Helper()
-	const stmt = `TRUNCATE TABLE order_items, orders, profiles, user_credentials, user_sessions, user_badges, products, user_categories, workspace_settings, workspace_notes, events, asset_document_links, documents, assets, users, categories, scalar_probes, numeric_widths, filter_probes RESTART IDENTITY CASCADE`
+	const stmt = `TRUNCATE TABLE order_items, orders, profiles, user_credentials, user_sessions, user_badges, products, user_categories, workspace_settings, workspace_notes, events, asset_document_links, documents, assets, users, categories, scalar_probes, numeric_widths, filter_probes, task_labels, task_reports, tasks, labels, cycles RESTART IDENTITY CASCADE`
 	if _, err := testPool.Exec(context.Background(), stmt); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}

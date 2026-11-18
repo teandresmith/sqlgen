@@ -56,7 +56,7 @@ input CategorySort {
 input CreateCategoryInput {
   name: String!
   description: String
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateCategoryInput {
   name: String

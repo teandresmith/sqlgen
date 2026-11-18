@@ -1,6 +1,11 @@
 package gen_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -468,4 +473,240 @@ func TestEventHooks_failClosed_keepsUnredactedOpsExplicit(t *testing.T) {
 			t.Errorf("fail-closed output missing %q\nfull output:\n%s", w, out)
 		}
 	}
+}
+
+// Event.PK is never redacted: on a table that redacts every input shape and
+// its filter, each published event still carries the affected row's key as the
+// mutation reported it — nothing reassigns it or routes it through a helper.
+func TestEventHooks_redactedTable_publishesPKUnredacted(t *testing.T) {
+	cfg := &config.RootConfig{}
+	cfg.Events = &config.EventConfig{Enabled: true}
+
+	ctx := gen.BuildEventHooksContext([]gen.TableContext{filterableRedactedTable()}, cfg, "db", "Client", gotype.UUIDIntegrationFor(""))
+	if ctx == nil {
+		t.Fatalf("BuildEventHooksContext returned nil with events enabled")
+	}
+	if !ctx.HasRedactedTables || len(ctx.FilterRedactors) == 0 {
+		t.Fatalf("control: fixture redacts nothing (HasRedactedTables=%v, FilterRedactors=%v)", ctx.HasRedactedTables, ctx.FilterRedactors)
+	}
+
+	out := renderEventHooks(t, ctx)
+	for _, w := range []string{
+		"for i, pk := range mc.AffectedPKs {",
+		"PK:        pk,",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("redacted event-hook output missing %q\nfull output:\n%s", w, out)
+		}
+	}
+	for _, banned := range []*regexp.Regexp{
+		regexp.MustCompile(`\bpk\s*=[^=]`),
+		regexp.MustCompile(`redact\w*\(\s*pk\b`),
+		regexp.MustCompile(`PK:\s*redact`),
+	} {
+		if m := banned.FindString(out); m != "" {
+			t.Errorf("event PK is touched by redaction: found %q\nfull output:\n%s", m, out)
+		}
+	}
+}
+
+// workspaceAccountsParent is an event-enabled table with nothing redacted of
+// its own whose filter reaches accounts through a relationship member.
+func workspaceAccountsParent() gen.TableContext {
+	return gen.TableContext{
+		StructName:        "Workspace",
+		TableName:         "workspaces",
+		TableNameConstant: "TableWorkspaces",
+		Schema:            "public",
+		Operations:        gen.ResolvedOperations{Create: true, HardDelete: true},
+		Columns: []gen.ColumnContext{
+			{Name: "id", Access: "public", APIReadable: true},
+			{Name: "name", Access: "public", APIReadable: true},
+		},
+		FilterFields: []gen.FilterFieldContext{
+			{FieldName: "Name", ColumnName: "name", ComparatorType: "*comparator.String", Filterable: true},
+		},
+		RelationshipFilters: []gen.RelationshipFilterContext{
+			{FieldName: "Accounts", TargetStructName: "Account", TargetTable: "accounts", TargetSchema: "public"},
+		},
+	}
+}
+
+// The filter-redaction closure spans every table, not only event-enabled
+// ones: a relationship target whose own events are disabled publishes nothing
+// itself, yet an event-enabled parent's filter can still reach its redacted
+// comparators, so the target keeps its redact<T>Filter helper and the parent
+// recurses into it.
+func TestEventHooks_filterRedactor_coversEventDisabledTarget(t *testing.T) {
+	cfg := &config.RootConfig{}
+	cfg.Events = &config.EventConfig{Enabled: true}
+	cfg.Tables = map[string]config.TableConfig{
+		"accounts": {Events: &config.TableEventConfig{Enabled: new(false)}},
+	}
+
+	ctx := gen.BuildEventHooksContext([]gen.TableContext{workspaceAccountsParent(), filterableRedactedTable()}, cfg, "db", "Client", gotype.UUIDIntegrationFor(""))
+	if ctx == nil {
+		t.Fatalf("BuildEventHooksContext returned nil")
+	}
+	for _, et := range ctx.Tables {
+		if et.StructName == "Account" {
+			t.Fatalf("control: accounts has events disabled but got an event hook")
+		}
+	}
+
+	want := []gen.FilterRedactorContext{
+		{StructName: "Account", RedactedFields: []string{"PasswordHash", "RecoveryCode"}},
+		{
+			StructName:          "Workspace",
+			RelationshipMembers: []gen.FilterRedactorMember{{FieldName: "Accounts", TargetStructName: "Account"}},
+		},
+	}
+	if diff := cmp.Diff(want, ctx.FilterRedactors); diff != "" {
+		t.Errorf("FilterRedactors mismatch (-want +got):\n%s", diff)
+	}
+
+	out := renderEventHooks(t, ctx)
+	for _, w := range []string{
+		"func redactAccountFilter(f *AccountFilter) *AccountFilter {",
+		"out.PasswordHash = nil",
+		"out.RecoveryCode = nil",
+		"func redactWorkspaceFilter(f *WorkspaceFilter) *WorkspaceFilter {",
+		"out.Accounts = redactAccountFilter(out.Accounts)",
+		"inputVal = redactWorkspaceFilter(in)",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("event-disabled target closure output missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// redactFilterProbe drives the rendered redact<T>Filter helpers against
+// stand-in filter types. Comparators are pointers on the real filters, so a
+// *string stands in for each; the helpers touch nothing else.
+const redactFilterProbe = `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+type AccountFilter struct {
+	Email, InternalScore, PasswordHash, RecoveryCode *string
+	And, Or                                          []*AccountFilter
+}
+
+type WorkspaceFilter struct {
+	Name     *string
+	Accounts *AccountFilter
+	And, Or  []*WorkspaceFilter
+}
+
+HELPERS
+
+func main() {
+	v := func(s string) *string { return &s }
+	inner := &AccountFilter{PasswordHash: v("and"), RecoveryCode: v("and")}
+	orMember := &AccountFilter{PasswordHash: v("or")}
+	accounts := &AccountFilter{PasswordHash: v("top"), RecoveryCode: v("top"), And: []*AccountFilter{inner}, Or: []*AccountFilter{orMember}}
+	nested := &WorkspaceFilter{Accounts: &AccountFilter{PasswordHash: v("nested")}}
+	nestedAccounts := nested.Accounts
+	caller := &WorkspaceFilter{Name: v("n"), Accounts: accounts, And: []*WorkspaceFilter{nested}}
+
+	got := redactWorkspaceFilter(caller)
+
+	var failures []string
+	check := func(ok bool, msg string) {
+		if !ok {
+			failures = append(failures, msg)
+		}
+	}
+	// The caller's filter graph is untouched at every level.
+	check(caller.Accounts == accounts, "caller.Accounts was replaced")
+	check(accounts.PasswordHash != nil && accounts.RecoveryCode != nil, "caller's relationship member was cleared")
+	check(accounts.And[0] == inner && inner.PasswordHash != nil && inner.RecoveryCode != nil, "caller's nested And member was mutated")
+	check(accounts.Or[0] == orMember && orMember.PasswordHash != nil, "caller's nested Or member was mutated")
+	check(caller.And[0] == nested && nested.Accounts == nestedAccounts && nestedAccounts.PasswordHash != nil, "caller's own And member was mutated")
+	// Each level of the result is a new value carrying the redaction.
+	check(got != caller, "top level returned the caller's pointer")
+	check(got.Accounts != accounts && got.Accounts.PasswordHash == nil && got.Accounts.RecoveryCode == nil, "relationship member is not a redacted clone")
+	check(got.Accounts.And[0] != inner && got.Accounts.And[0].PasswordHash == nil, "nested And member is not a redacted clone")
+	check(got.Accounts.Or[0] != orMember && got.Accounts.Or[0].PasswordHash == nil, "nested Or member is not a redacted clone")
+	check(got.And[0] != nested && got.And[0].Accounts != nestedAccounts && got.And[0].Accounts.PasswordHash == nil, "own And member is not a redacted clone")
+
+	for _, f := range failures {
+		fmt.Println(f)
+	}
+	if len(failures) > 0 {
+		os.Exit(1)
+	}
+}
+`
+
+// extractTopLevelFunc returns the top-level function declaration that starts with
+// header in src, through its closing brace.
+func extractTopLevelFunc(t *testing.T, src, header string) string {
+	t.Helper()
+	start := strings.Index(src, header)
+	if start < 0 {
+		t.Fatalf("rendered output has no %q", header)
+	}
+	end := strings.Index(src[start:], "\n}\n")
+	if end < 0 {
+		t.Fatalf("function %q is unterminated", header)
+	}
+	return src[start : start+end+2]
+}
+
+// The caller's filter is never mutated: the rendered redact<T>Filter helpers
+// are compiled and run over a filter graph with relationship, And and Or
+// members, and every level of the caller's graph must survive unchanged while
+// the result carries the redaction on new values.
+func TestEventHooks_filterRedactor_neverMutatesCallerFilter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles and runs the rendered helpers; skipped in short mode")
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not on PATH")
+	}
+
+	cfg := &config.RootConfig{}
+	cfg.Events = &config.EventConfig{Enabled: true}
+	ctx := gen.BuildEventHooksContext([]gen.TableContext{workspaceAccountsParent(), filterableRedactedTable()}, cfg, "db", "Client", gotype.UUIDIntegrationFor(""))
+	if ctx == nil {
+		t.Fatalf("BuildEventHooksContext returned nil")
+	}
+	out := renderEventHooks(t, ctx)
+	helpers := extractTopLevelFunc(t, out, "func redactAccountFilter(") + "\n" + extractTopLevelFunc(t, out, "func redactWorkspaceFilter(")
+
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"go.mod":  "module redactprobe\n" + goDirective(),
+		"main.go": strings.Replace(redactFilterProbe, "HELPERS", helpers, 1),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	cmd := exec.Command(goBin, "run", ".") //nolint:gosec // the go binary from PATH, run on a test-written temp module
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local")
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("redact<T>Filter probe failed: %v\n%s\nhelpers:\n%s", err, combined, helpers)
+	}
+}
+
+// goDirective returns the go.mod go line for the running toolchain, so the
+// probe module accepts whatever syntax the templates emit; a development
+// toolchain gets none.
+func goDirective() string {
+	v, ok := strings.CutPrefix(runtime.Version(), "go")
+	if !ok {
+		return ""
+	}
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return "\ngo " + parts[0] + "." + parts[1] + "\n"
 }

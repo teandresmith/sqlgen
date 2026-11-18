@@ -118,7 +118,12 @@
       "target_entity": "Post",
       "fk": {
         "table": "posts",
-        "column": "author_id"
+        "columns": [
+          "author_id"
+        ],
+        "references": [
+          "id"
+        ]
       }
     }
   ],

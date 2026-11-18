@@ -4,6 +4,7 @@ package stdlib
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/teandresmith/sqlgen/database"
@@ -31,7 +32,7 @@ func New(db *sql.DB) database.Querier {
 func (a *stdlibAdapter) Exec(ctx context.Context, query string, arguments ...any) (database.Result, error) {
 	res, err := a.db.ExecContext(ctx, query, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("exec: %w", err)
@@ -43,7 +44,7 @@ func (a *stdlibAdapter) Exec(ctx context.Context, query string, arguments ...any
 func (a *stdlibAdapter) Query(ctx context.Context, query string, args ...any) (database.Rows, error) {
 	r, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("query: %w", err)
@@ -72,7 +73,7 @@ func (a *stdlibAdapter) Begin(ctx context.Context, name string, opts ...database
 func (a *stdlibAdapter) WithSession(ctx context.Context, fn func(session database.Querier) error) (err error) {
 	conn, err := a.db.Conn(ctx)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return mapped
 		}
 		return fmt.Errorf("pinning session: %w", err)
@@ -105,6 +106,9 @@ func beginTx(ctx context.Context, b txBeginner, name string, opts []database.TxO
 
 	tx, err := b.BeginTx(ctx, sqlOpts)
 	if err != nil {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
+			err = mapped
+		}
 		return nil, fmt.Errorf("beginning stdlib transaction: %w", err)
 	}
 
@@ -144,7 +148,7 @@ type sessionConn struct {
 func (c *sessionConn) Exec(ctx context.Context, query string, arguments ...any) (database.Result, error) {
 	res, err := c.conn.ExecContext(ctx, query, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("session exec: %w", err)
@@ -156,7 +160,7 @@ func (c *sessionConn) Exec(ctx context.Context, query string, arguments ...any) 
 func (c *sessionConn) Query(ctx context.Context, query string, args ...any) (database.Rows, error) {
 	r, err := c.conn.QueryContext(ctx, query, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("session query: %w", err)
@@ -186,7 +190,7 @@ type txConn struct {
 func (c *txConn) Exec(ctx context.Context, query string, arguments ...any) (database.Result, error) {
 	res, err := c.tx.ExecContext(ctx, query, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("tx exec: %w", err)
@@ -198,7 +202,7 @@ func (c *txConn) Exec(ctx context.Context, query string, arguments ...any) (data
 func (c *txConn) Query(ctx context.Context, query string, args ...any) (database.Rows, error) {
 	r, err := c.tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("tx query: %w", err)
@@ -301,7 +305,10 @@ func (r *rows) Err() error {
 // is reported by COMMIT, not by the statement that caused it.
 func (c *txConn) Commit(ctx context.Context) error {
 	if err := c.tx.Commit(); err != nil {
-		if ok, mapped := MapError(err); ok {
+		if errors.Is(err, sql.ErrTxDone) {
+			return txDoneErr(ctx, err)
+		}
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return mapped
 		}
 		return fmt.Errorf("stdlib commit: %w", err)
@@ -309,10 +316,28 @@ func (c *txConn) Commit(ctx context.Context) error {
 	return nil
 }
 
-// Rollback rolls back the underlying stdlib transaction.
+// Rollback rolls back the underlying stdlib transaction. database/sql marks
+// its transaction done before calling the driver, so a failed ROLLBACK still
+// ends it and is reported wrapped as database.ErrTxDone. sql.ErrTxDone means
+// database/sql had already rolled the transaction back, as it does when the
+// context the transaction was begun with ends, so it reports success.
 func (c *txConn) Rollback(ctx context.Context) error {
 	if err := c.tx.Rollback(); err != nil {
-		return fmt.Errorf("stdlib rollback: %w", err)
+		if errors.Is(err, sql.ErrTxDone) {
+			return nil
+		}
+		return fmt.Errorf("stdlib rollback: %w: %w", database.ErrTxDone, err)
 	}
 	return nil
+}
+
+// txDoneErr reports a COMMIT of a transaction database/sql had already ended.
+// database/sql rolls a transaction back itself when the context it was begun
+// with is done, so when ctx has ended that is the cause, and it is wrapped in
+// place of sql.ErrTxDone.
+func txDoneErr(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = ctxErr
+	}
+	return fmt.Errorf("stdlib commit: %w: %w", database.ErrTxDone, err)
 }

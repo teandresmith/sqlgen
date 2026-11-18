@@ -30,6 +30,7 @@ Before starting implementation work, check `docs/tracker/STATUS.md` for current 
 
 | Command | Purpose |
 |---------|---------|
+| `/design <topic> [--name STEM] [--retrofit DOC.md] [--dry-run]` | Write a design note from `docs/design/templates/design.md` — measured current state, options, and a §6 behavior contract (new behaviors + regression guards, each tied to a test) that `/phase` and `/implement` carry forward |
 | `/phase <N>` | Break down Phase N into tasks (generates `docs/tracker/phase-N.md`) |
 | `/implement <N.X> [--skip-review]` | Implement sub-item N.X — reads spec, writes code + tests, updates tracker, runs auto-review subagent |
 | `/verify <N.X \| FIX-NNN>` | Verify a sub-item or resolved fix against the PRD — checks requirements, tests, guidelines, runs an independent reviewer pass, and auto-logs FAIL/PARTIAL/MISSING items as severity-tagged FIX entries |
@@ -39,9 +40,10 @@ Before starting implementation work, check `docs/tracker/STATUS.md` for current 
 | `/fix-vet <FIX-NNN… \| --all \| --phase N> [--refresh] [--jobs K] [--dry-run]` | Vet open fixes before implementing — fact-check the entry, reproduce, prototype in a throwaway worktree, fail-first; records a `**Vetted:**` verdict and saves `.claude/prototypes/FIX-NNN.patch`; batches ruling questions |
 | `/fix-implement FIX-NNN [--skip-review]` | Implement a tracked fix — loads guidelines, fixes code, runs tests, resolves, runs auto-review subagent; starts from a fresh vetted prototype when one exists |
 | `/fix-loop [--max N] [--only FIX-NNN…] [--context-limit P] [--skip-final-sweep] [--dry-run]` | Drain the vetted fix queue hands-off — one subagent per fix runs `/fix-implement --skip-review` + `/verify`, the orchestrator checks and commits each fix, parks design questions and asks them in one batch at the end; stops only on failures |
-| `/close-phase N [--dry-run] [--skip-integration]` | Run the closure sweep for phase N — verifies all sub-items complete, triages open FIXes by severity, runs the full test sweep, freezes versioned artifacts, updates STATUS.md + sibling design docs |
+| `/close-phase N [--dry-run]` | Run the closure sweep for phase N — verifies all sub-items complete, triages open FIXes by severity, runs the full test sweep, freezes versioned artifacts, updates STATUS.md + sibling design docs |
 
 Workflow for each sub-item:
+0. `/design <topic>` — design note with its behavior contract (once per feature, before the phase is added)
 1. `/phase N` — break down the phase (once per phase)
 2. `/implement N.X` — write the code and tests
 3. `/verify N.X` — confirm PRD compliance

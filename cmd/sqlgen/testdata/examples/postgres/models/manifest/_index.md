@@ -2,7 +2,7 @@
 
 - **Dialect:** postgres
 - **Generator:** sqlgen dev
-- **Schema version:** 0.1.0
+- **Schema version:** 0.2.0
 
 Features: audit_columns, cache, events, soft_delete, views
 
@@ -15,12 +15,17 @@ Features: audit_columns, cache, events, soft_delete, views
 | AssetDocumentLink | `asset_document_links` | table | [asset_document_link.md](asset_document_link.md) | Junction table for m2m sub-categorized polymorphism |
 | AuditNote | `notes` | table | [audit_note.md](audit_note.md) |  |
 | AuditUser | `users` | table | [audit_user.md](audit_user.md) | Audit log of user account changes |
+| BoolKeyed | `bool_keyed` | table | [bool_keyed.md](bool_keyed.md) |  |
+| BoolKeyedNote | `bool_keyed_notes` | table | [bool_keyed_note.md](bool_keyed_note.md) |  |
 | Category | `categories` | table | [category.md](category.md) | Product classification categories |
 | CategoryStat | `category_stats` | view | [category_stat.md](category_stat.md) |  |
 | Counter | `counters` | table | [counter.md](counter.md) | Counter rows keyed via primary_key.columns override (single-column PK) |
 | DefaultOnlyRow | `default_only_rows` | table | [default_only_row.md](default_only_row.md) |  |
 | Document | `documents` | table | [document.md](document.md) | Polymorphic child rows; entity_type sub-categorizes per-parent relationship |
 | Event | `events` | table | [event.md](event.md) | General system audit events |
+| Fingerprint | `fingerprints` | table | [fingerprint.md](fingerprint.md) |  |
+| Host | `hosts` | table | [host.md](host.md) |  |
+| HostFingerprint | `host_fingerprints` | table | [host_fingerprint.md](host_fingerprint.md) |  |
 | KeyOnlyRow | `key_only_rows` | table | [key_only_row.md](key_only_row.md) |  |
 | NoteWatcher | `note_watchers` | table | [note_watcher.md](note_watcher.md) |  |
 | Order | `orders` | table | [order.md](order.md) | Customer purchase orders |
@@ -36,7 +41,15 @@ Features: audit_columns, cache, events, soft_delete, views
 | SequenceRow | `sequence_rows` | table | [sequence_row.md](sequence_row.md) |  |
 | SluggedRow | `slugged_rows` | table | [slugged_row.md](slugged_row.md) |  |
 | Tag | `tags` | table | [tag.md](tag.md) | Content tags with boolean soft delete |
+| TimeKeyed | `time_keyed` | table | [time_keyed.md](time_keyed.md) |  |
+| TimeKeyedNote | `time_keyed_notes` | table | [time_keyed_note.md](time_keyed_note.md) |  |
 | UserCategory | `user_categories` | table | [user_category.md](user_category.md) | Junction table linking users to their preferred categories |
 | Warehouse | `warehouses` | table | [warehouse.md](warehouse.md) | Storage warehouses with type-overridden columns |
+| WidthBig | `width_bigs` | table | [width_big.md](width_big.md) |  |
+| WidthLink | `width_links` | table | [width_link.md](width_link.md) |  |
+| WidthNarrowChild | `width_narrow_children` | table | [width_narrow_child.md](width_narrow_child.md) |  |
+| WidthScopedChild | `width_scoped_children` | table | [width_scoped_child.md](width_scoped_child.md) |  |
+| WidthSmall | `width_smalls` | table | [width_small.md](width_small.md) |  |
+| WidthWideChild | `width_wide_children` | table | [width_wide_child.md](width_wide_child.md) |  |
 
 See [conventions](_conventions.md) for package-wide error sentinels, pagination, comparators, soft-delete, CallOptions, and the omittable reference.

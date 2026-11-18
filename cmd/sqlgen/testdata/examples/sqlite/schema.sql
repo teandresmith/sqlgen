@@ -232,10 +232,93 @@ CREATE TABLE owner_profiles (
     FOREIGN KEY (owner_id) REFERENCES owners(owner_key)
 );
 
+-- A many-to-many edge whose targets are not keyed on `id`: Owner.Badges
+-- fetches badges by the TEXT key `code`, and Badge.Owners fetches owners by
+-- the INTEGER key `owner_key`.
+CREATE TABLE badges (
+    code TEXT PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE owner_badges (
+    owner_id INTEGER NOT NULL REFERENCES owners(owner_key),
+    badge_code TEXT NOT NULL REFERENCES badges(code),
+    PRIMARY KEY (owner_id, badge_code)
+);
+
+-- A many-to-many edge with a BLOB key on one side: BinaryKey.Badges scans
+-- the junction's BLOB parent key, and Badge.BinaryKeys fetches binary_keys by
+-- it.
+CREATE TABLE binary_key_badges (
+    binary_key_id BLOB NOT NULL REFERENCES binary_keys(id),
+    badge_code TEXT NOT NULL REFERENCES badges(code),
+    PRIMARY KEY (binary_key_id, badge_code)
+);
+
 -- slugged_rows: `slug` is UNIQUE with a constant DEFAULT and `read_only` on the
 -- API, and every column has a DEFAULT, so a zero input supplies no column.
 CREATE TABLE slugged_rows (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL DEFAULT '',
     slug TEXT NOT NULL UNIQUE DEFAULT 'x'
+);
+
+-- time_keyed / time_keyed_notes: a datetime primary key and foreign key bind as
+-- the text the SQL builder writes, which is what a write stored.
+CREATE TABLE time_keyed (
+    at DATETIME PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE time_keyed_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    keyed_at DATETIME REFERENCES time_keyed (at),
+    note TEXT NOT NULL
+);
+
+-- bool_keyed / bool_keyed_notes: a boolean primary key and foreign key bind as
+-- bools; SQLite stores them as integers, so the text "true" matches no row.
+CREATE TABLE bool_keyed (
+    k BOOLEAN PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE bool_keyed_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    keyed_k BOOLEAN REFERENCES bool_keyed (k),
+    note TEXT NOT NULL
+);
+
+-- SQLite maps every integer type to int64, so a key of another width cannot
+-- arise here. A foreign key of another storage class can: it filters through
+-- another comparator than the column it references, and affinity still joins it.
+CREATE TABLE key_class_parents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT
+);
+
+CREATE TABLE key_class_children (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id TEXT REFERENCES key_class_parents(id)
+);
+
+CREATE TABLE key_class_real_children (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id REAL REFERENCES key_class_parents(id)
+);
+
+-- bins / bin_items: a composite foreign key into a composite primary key. Its
+-- members are nullable, so a row with one NULL member references nothing.
+CREATE TABLE bins (
+    aisle TEXT NOT NULL,
+    slot INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    PRIMARY KEY (aisle, slot)
+);
+
+CREATE TABLE bin_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aisle TEXT,
+    slot INTEGER,
+    name TEXT NOT NULL,
+    FOREIGN KEY (aisle, slot) REFERENCES bins (aisle, slot)
 );

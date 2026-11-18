@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/teandresmith/sqlgen/comparator"
@@ -265,6 +264,11 @@ func (c *userClient) Get(ctx context.Context, id int64, opts ...func(*CallOption
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[UserFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -287,7 +291,7 @@ func (c *userClient) Get(ctx context.Context, id int64, opts ...func(*CallOption
 		return users[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get user: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -309,7 +313,7 @@ func (c *userClient) GetMany(ctx context.Context, input *GetUsersInput, opts ...
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get users: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many users: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableUsers, Schema: "",
@@ -385,14 +389,14 @@ func (c *userClient) GetMany(ctx context.Context, input *GetUsersInput, opts ...
 
 			rows, err := conn.Query(ctx, result, resultArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("get users: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
 			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
 			joinColumns, err := rows.Columns()
 			if err != nil {
-				return nil, fmt.Errorf("get users columns: %w", err)
+				return nil, fmt.Errorf("columns: %w", err)
 			}
 			users, err = scanUsersWithOneToOneJoins(rows, joinColumns)
 			if err != nil {
@@ -410,7 +414,7 @@ func (c *userClient) GetMany(ctx context.Context, input *GetUsersInput, opts ...
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("get users: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
@@ -423,7 +427,7 @@ func (c *userClient) GetMany(ctx context.Context, input *GetUsersInput, opts ...
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, users, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, users, options); err != nil {
 				return nil, err
 			}
 		}
@@ -431,7 +435,7 @@ func (c *userClient) GetMany(ctx context.Context, input *GetUsersInput, opts ...
 		return users, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many users: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -457,13 +461,27 @@ func (fo *UserFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *userClient) loadRelationships(ctx context.Context, conn database.Querier, users []*User, fo *UserFieldOptions) error {
+func (c *userClient) loadRelationships(ctx context.Context, conn database.Querier, users []*User, options CallOptions[UserFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Orders != nil {
@@ -474,38 +492,50 @@ func (c *userClient) loadRelationships(ctx context.Context, conn database.Querie
 				userIDs[idx] = u.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &OrderFilter{
-				UserID: &comparator.Number[int64]{In: userIDs},
-			}
-			if fo.Orders.Filter != nil {
-				filter.And = append(filter.And, fo.Orders.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Orders.Sorts
 			if len(sorts) == 0 {
 				sorts = c.ordersDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (users) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedOrders, err := c.orderClient.GetMany(ctx, &GetOrdersInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"user_id"},
-			}, func(co *CallOptions[OrderFieldOptions]) {
-				co.FieldOptions = fo.Orders.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load user orders: %w", err)
+			var relatedOrders []*Order
+			for start := 0; start < len(userIDs); start += 16383 {
+				chunk := userIDs[start:min(start+16383, len(userIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &OrderFilter{
+					UserID: &comparator.Number[int64]{In: chunk},
+				}
+				if fo.Orders.Filter != nil {
+					filter.And = append(filter.And, fo.Orders.Filter)
+				}
+
+				loaded, err := c.orderClient.GetMany(ctx, &GetOrdersInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"user_id"},
+				}, func(co *CallOptions[OrderFieldOptions]) {
+					co.FieldOptions = fo.Orders.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load user orders: %w", err)
+				}
+				relatedOrders = append(relatedOrders, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -517,8 +547,21 @@ func (c *userClient) loadRelationships(ctx context.Context, conn database.Querie
 				key := fmt.Sprint(r.UserID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range users {
-				users[i].Orders = byFK[fmt.Sprint(users[i].ID)]
+				key := fmt.Sprint(users[i].ID)
+				rs, ok := byFK[key]
+				users[i].Orders = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load user orders: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -532,109 +575,162 @@ func (c *userClient) loadRelationships(ctx context.Context, conn database.Querie
 				userIDs[idx] = u.ID
 			}
 
-			// Step 1: Query junction table to get mapping
-			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "user_categories"}, sql.SelectOptions{
-				Columns:    []string{"user_id", "category_id"},
-				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("user_id")).In(toAnySlice(userIDs)...)},
-			})
-
-			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-			if err != nil {
-				return fmt.Errorf("load user categories junction: %w", err)
-			}
-			defer junctionRows.Close()
-
-			// Discover column positions from result (BuildSelect sorts columns alphabetically)
-			junctionCols, err := junctionRows.Columns()
-			if err != nil {
-				return fmt.Errorf("load user categories junction columns: %w", err)
-			}
-			localIdx, refIdx := 0, 1
-			for i, col := range junctionCols {
-				switch col {
-				case "user_id":
-					localIdx = i
-				case "category_id":
-					refIdx = i
-				}
-			}
-
-			// Build mapping and collect all target IDs
-			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
-			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
-				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
-				if err := junctionRows.Scan(ptrs...); err != nil {
-					return fmt.Errorf("scan user categories junction: %w", err)
-				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
-				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
-			}
-			if err := junctionRows.Err(); err != nil {
-				return fmt.Errorf("iterate user categories junction: %w", err)
-			}
-
-			if len(allTargetIDs) == 0 {
-				return nil
-			}
-
-			// Step 2: Fetch the actual entities
-			targetPKs := make([]int64, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = int64(v)
-			}
-			filter := &CategoryFilter{
-				ID: &comparator.Number[int64]{In: targetPKs},
-			}
-			if fo.Categories.Filter != nil {
-				filter.And = append(filter.And, fo.Categories.Filter)
-			}
-
 			sorts := fo.Categories.Sorts
 			if len(sorts) == 0 {
 				sorts = c.categoriesDefaultSort
 			}
 
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded targets must use a name distinct from the parent slice
-			// (users) to avoid shadowing it and mis-mapping the results
-			// onto the targets instead of the parents.
-			relatedCategories, err := c.categoryClient.GetMany(ctx, &GetCategoriesInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// Step 3 keys every loaded target on its own PK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every target onto the zero value.
-				requiredColumns: []string{"id"},
-			}, func(co *CallOptions[CategoryFieldOptions]) {
-				co.FieldOptions = fo.Categories.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load user categories: %w", err)
-			}
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(userIDs); start += 16383 {
+				chunk := userIDs[start:min(start+16383, len(userIDs))]
 
-			// Step 3: Map back to parent entities via junction mapping. The
-			// targets are walked in the order the fetch returned them, so the
-			// relationship's Sorts — the caller's, or the static `sort:` —
-			// order each parent's slice. Walking the
-			// junction rows instead would keep junction order and drop the sort.
-			parentsByTarget := make(map[string][]int, len(relatedCategories))
-			for i := range users {
-				for _, tID := range parentToTargetIDs[fmt.Sprint(users[i].ID)] {
-					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key column
+				// only; step 2 decides which targets load.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: "", Name: "user_categories"}, []sql.JoinClause{{
+						Table:   sql.Table{Schema: "", Name: "categories"},
+						Alias:   "t",
+						On:      "t." + c.dialect.QuoteIdentifier("id") + " = j." + c.dialect.QuoteIdentifier("category_id"),
+						Columns: []string{"id"},
+					}}, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{"user_id"},
+						Conditions: []sql.Condition{
+							sql.Where("j." + c.dialect.QuoteIdentifier("user_id")).In(toAnySlice(chunk)...),
+							// The builder's join is a LEFT JOIN: a junction row whose
+							// target is gone maps nothing.
+							sql.Where("t." + c.dialect.QuoteIdentifier("id")).IsNotNull(),
+						},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load user categories junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load user categories junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "j.user_id":
+							localIdx = i
+						case "t.id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var target Category
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &target.ID
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan user categories junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(target.ID)
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate user categories junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
 				}
-			}
-			for _, t := range relatedCategories {
-				for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
-					users[i].Categories = append(users[i].Categories, t)
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("user_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("category_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "user_categories"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &CategoryFilter{}
+				if fo.Categories.Filter != nil {
+					filter.And = append(filter.And, fo.Categories.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (users) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedCategories, err := c.categoryClient.GetMany(ctx, &GetCategoriesInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[CategoryFieldOptions]) {
+					co.FieldOptions = fo.Categories.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load user categories: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the column's comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
+				parentsByTarget := make(map[string][]int, len(relatedCategories))
+				matched := make(map[string]struct{}, len(parentToTargetIDs))
+				for i := start; i < start+len(chunk); i++ {
+					key := fmt.Sprint(users[i].ID)
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load user categories junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
+				}
+				for _, t := range relatedCategories {
+					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+						users[i].Categories = append(users[i].Categories, t)
+					}
 				}
 			}
 			return nil
@@ -652,7 +748,7 @@ func (c *userClient) Create(ctx context.Context, input *CreateUserInput, opts ..
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create user: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -716,7 +812,7 @@ func (c *userClient) Create(ctx context.Context, input *CreateUserInput, opts ..
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create user: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -732,7 +828,7 @@ func (c *userClient) Create(ctx context.Context, input *CreateUserInput, opts ..
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create user: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -748,7 +844,7 @@ func (c *userClient) CreateMany(ctx context.Context, inputs []*CreateUserInput, 
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many users: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -832,7 +928,7 @@ func (c *userClient) CreateMany(ctx context.Context, inputs []*CreateUserInput, 
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create users batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -855,7 +951,7 @@ func (c *userClient) CreateMany(ctx context.Context, inputs []*CreateUserInput, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many users: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -914,7 +1010,7 @@ func (c *userClient) Update(ctx context.Context, id int64, input *UpdateUserInpu
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update user: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -988,13 +1084,13 @@ func (c *userClient) Update(ctx context.Context, id int64, input *UpdateUserInpu
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update user: %w", err)
+			return nil, err
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update user rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -1011,7 +1107,7 @@ func (c *userClient) Update(ctx context.Context, id int64, input *UpdateUserInpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update user: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1027,14 +1123,16 @@ type UpdateUserItem struct {
 
 // UpdateMany partially updates multiple users and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opts ...func(*CallOptions[UserFieldOptions])) ([]*User, error) {
 	// UpdateUserItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many users: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1042,7 +1140,6 @@ func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opt
 		Op: hook.OpUpdateMany, Table: TableUsers, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -1052,74 +1149,105 @@ func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opt
 			return []*User{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateUserItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Name.Get(); ok {
-					setClauses["name"] = v
-				}
-				if v, ok := item.Input.Email.Get(); ok {
-					setClauses["email"] = v
-				}
-				if v, ok := item.Input.Role.Get(); ok {
-					setClauses["role"] = v
-				}
-				if v, ok := item.Input.Age.Get(); ok {
-					setClauses["age"] = v
-				}
-				if v, ok := item.Input.Bio.Get(); ok {
-					setClauses["bio"] = v
-				}
-				if v, ok := item.Input.IsActive.Get(); ok {
-					setClauses["is_active"] = v
-				}
-				if v, ok := item.Input.Balance.Get(); ok {
-					setClauses["balance"] = v
-				}
-				if v, ok := item.Input.LoginCount.Get(); ok {
-					setClauses["login_count"] = v
-				}
-				if v, ok := item.Input.Avatar.Get(); ok {
-					setClauses["avatar"] = v
-				}
-				if v, ok := item.Input.Score.Get(); ok {
-					setClauses["score"] = v
-				}
-				if v, ok := item.Input.CreatedAt.Get(); ok {
-					setClauses["created_at"] = v
-				}
-				if v, ok := item.Input.UpdatedAt.Get(); ok {
-					setClauses["updated_at"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_user", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+					if v, ok := item.Input.Email.Get(); ok {
+						setClauses["email"] = v
+					}
+					if v, ok := item.Input.Role.Get(); ok {
+						setClauses["role"] = v
+					}
+					if v, ok := item.Input.Age.Get(); ok {
+						setClauses["age"] = v
+					}
+					if v, ok := item.Input.Bio.Get(); ok {
+						setClauses["bio"] = v
+					}
+					if v, ok := item.Input.IsActive.Get(); ok {
+						setClauses["is_active"] = v
+					}
+					if v, ok := item.Input.Balance.Get(); ok {
+						setClauses["balance"] = v
+					}
+					if v, ok := item.Input.LoginCount.Get(); ok {
+						setClauses["login_count"] = v
+					}
+					if v, ok := item.Input.Avatar.Get(); ok {
+						setClauses["avatar"] = v
+					}
+					if v, ok := item.Input.Score.Get(); ok {
+						setClauses["score"] = v
+					}
+					if v, ok := item.Input.CreatedAt.Get(); ok {
+						setClauses["created_at"] = v
+					}
+					if v, ok := item.Input.UpdatedAt.Get(); ok {
+						setClauses["updated_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					// Auto-set updated_at to current time if not explicitly provided
+					if _, ok := item.Input.UpdatedAt.Get(); !ok {
+						setClauses["updated_at"] = time.Now()
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.ID)
-					continue
 				}
-
-				// Auto-set updated_at to current time if not explicitly provided
-				if _, ok := item.Input.UpdatedAt.Get(); !ok {
-					setClauses["updated_at"] = time.Now()
-				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
-				})
-
-				_, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update user %v: %w", item.ID, err)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1137,7 +1265,7 @@ func (c *userClient) UpdateMany(ctx context.Context, items []UpdateUserItem, opt
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many users: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1155,7 +1283,7 @@ func (c *userClient) UpdateWhere(ctx context.Context, filter *UserFilter, input 
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update users where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1237,7 +1365,7 @@ func (c *userClient) UpdateWhere(ctx context.Context, filter *UserFilter, input 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update users where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1274,7 +1402,7 @@ func (c *userClient) UpdateWhere(ctx context.Context, filter *UserFilter, input 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update users where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1295,14 +1423,25 @@ func (c *userClient) HardDelete(ctx context.Context, id int64, opts ...func(*Cal
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete user: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete user: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple users from the database.
@@ -1314,20 +1453,57 @@ func (c *userClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
-			},
-		})
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete users: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted user key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many users: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all users matching the filter.
@@ -1354,7 +1530,7 @@ func (c *userClient) HardDeleteWhere(ctx context.Context, filter *UserFilter, op
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete users where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1371,7 +1547,36 @@ func (c *userClient) HardDeleteWhere(ctx context.Context, filter *UserFilter, op
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete users where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *userClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // UserConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -1402,7 +1607,7 @@ func (c *userClient) Upsert(ctx context.Context, input *CreateUserInput, target 
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert user: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1472,7 +1677,7 @@ func (c *userClient) Upsert(ctx context.Context, input *CreateUserInput, target 
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert user: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -1488,7 +1693,7 @@ func (c *userClient) Upsert(ctx context.Context, input *CreateUserInput, target 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert user: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1546,9 +1751,9 @@ func (c *userClient) insertUpsertAndResolveID(ctx context.Context, conn database
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -1624,7 +1829,7 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many users: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1655,7 +1860,7 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert users: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -1736,7 +1941,7 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert users: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -1768,12 +1973,12 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert users batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert users batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -1785,7 +1990,7 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetUsersInput{
+		written, err := c.GetMany(ctx, &GetUsersInput{
 			Filter: &UserFilter{
 				ID: &comparator.Number[int64]{In: rowIDs},
 			},
@@ -1795,9 +2000,20 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many users: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1822,8 +2038,8 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -1970,20 +2186,23 @@ func (c *userClient) Increment(ctx context.Context, id int64, input IncrementInp
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("increment user %s: %w", input.Column, err)
+			return nil, err
 		}
 
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("increment user rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("increment user: %w", err)
+	}
+	return nil
 }
 
 // Exists returns true if a user with the given primary key exists.
@@ -2000,12 +2219,12 @@ func (c *userClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpt
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists user: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists user: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -2028,12 +2247,12 @@ func (c *userClient) ExistsWhere(ctx context.Context, filter *UserFilter, opts .
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists user where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists users where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -2057,12 +2276,12 @@ func (c *userClient) Count(ctx context.Context, filter *UserFilter, opts ...func
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count users: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count users: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -2071,6 +2290,10 @@ func (c *userClient) Count(ctx context.Context, filter *UserFilter, opts ...func
 // A nil filter paginates all users.
 func (c *userClient) Paginate(ctx context.Context, input PaginateInput[UserFilter], opts ...func(*CallOptions[UserFieldOptions])) (*PaginateResult[User], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate users: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableUsers, Schema: "",
 		Input: input, CallOptions: options,
@@ -2084,7 +2307,7 @@ func (c *userClient) Paginate(ctx context.Context, input PaginateInput[UserFilte
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate users count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -2095,7 +2318,7 @@ func (c *userClient) Paginate(ctx context.Context, input PaginateInput[UserFilte
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate users: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[User]{
@@ -2103,11 +2326,11 @@ func (c *userClient) Paginate(ctx context.Context, input PaginateInput[UserFilte
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate users: %w", err)
 	}
 	return result.(*PaginateResult[User]), nil
 }
@@ -2139,7 +2362,7 @@ func (c *userClient) Connection(ctx context.Context, input ConnectionInput[UserF
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection users count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -2183,7 +2406,7 @@ func (c *userClient) Connection(ctx context.Context, input ConnectionInput[UserF
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection users: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -2222,7 +2445,7 @@ func (c *userClient) Connection(ctx context.Context, input ConnectionInput[UserF
 		return &Connection[User]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection users: %w", err)
 	}
 	return result.(*Connection[User]), nil
 }
@@ -2494,9 +2717,13 @@ func (c *userClient) Stream(ctx context.Context, input *StreamUsersInput, opts .
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *User, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream users: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -2535,7 +2762,7 @@ func (c *userClient) Stream(ctx context.Context, input *StreamUsersInput, opts .
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream users: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -2558,7 +2785,7 @@ func (c *userClient) Stream(ctx context.Context, input *StreamUsersInput, opts .
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream users: %w", err))
 		}
 	}
 }

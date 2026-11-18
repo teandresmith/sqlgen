@@ -39,8 +39,8 @@ const (
 	// while the connection is reconnecting, so a brief broker outage does not
 	// drop publishes. It matches nats.go's own default (8 MiB), pinned here.
 	defaultReconnectBufSize = 8 * 1024 * 1024
-	// defaultDrainTimeout bounds how long Close's Drain waits for in-flight
-	// messages to flush before the connection is torn down.
+	// defaultDrainTimeout bounds how long a Connect bus's Close drains
+	// in-flight messages before the connection is torn down.
 	defaultDrainTimeout = 30 * time.Second
 )
 
@@ -100,8 +100,8 @@ type Propagator interface {
 }
 
 // WithPrefix overrides the subject prefix. The resulting subject for an
-// event is "{prefix}.{schema}.{table}" (or "{prefix}.{table}" when Schema
-// is empty).
+// event is "{prefix}.{schema}.{table}", or "{prefix}.{table}" when Schema
+// is empty (SQLite and MySQL events carry no schema).
 func WithPrefix(prefix string) Option {
 	return func(b *Bus) {
 		b.prefix = prefix
@@ -125,12 +125,12 @@ func WithActionSubjects() Option {
 }
 
 // WithSubscribeErrorHandler registers a handler invoked when a subscription
-// Handler returns a non-nil error. Core NATS is at-most-once and cannot
-// redeliver, so a handler error is otherwise discarded; registering this makes
-// the failure observable (section 28.5). The default — no handler — discards
-// the error without panicking and without redelivering, preserving the
-// zero-config behavior. On JetStream (section 28.7.1) broker redelivery
-// supersedes this.
+// fails to process a message: a Handler returns a non-nil error, a body cannot
+// be decoded (the Event is then the zero value), or an ack, nak, terminate or
+// dead-letter publish fails. Without it, each such error is logged through the
+// standard log package, so none is discarded silently (section 28.5). The
+// handler only observes: core NATS still does not redeliver, and on JetStream
+// (section 28.7.1) the nak or dead-letter routing still applies.
 func WithSubscribeErrorHandler(fn func(ctx context.Context, e event.Event, err error)) Option {
 	return func(b *Bus) {
 		b.subErrHandler = fn
@@ -140,10 +140,10 @@ func WithSubscribeErrorHandler(fn func(ctx context.Context, e event.Event, err e
 // WithRetry bounds in-process retry of a subscription Handler on core
 // (at-most-once) mode: the handler is invoked up to n times, sleeping backoff
 // between attempts, until it returns nil. If every attempt fails the final
-// error is routed to the WithSubscribeErrorHandler handler when one is set.
-// n < 1 is treated as a single attempt (no retry) and a non-positive backoff
-// sleeps not at all. Retry is a core-mode concept — JetStream redelivery
-// (section 28.7.1) supersedes it.
+// error is reported to the WithSubscribeErrorHandler handler, or logged when
+// none is set. n < 1 is treated as a single attempt (no retry) and a
+// non-positive backoff sleeps not at all. Retry is a core-mode concept —
+// JetStream redelivery (section 28.7.1) supersedes it.
 func WithRetry(n int, backoff time.Duration) Option {
 	return func(b *Bus) {
 		b.retryAttempts = n
@@ -317,6 +317,10 @@ type Bus struct {
 	conn   *nats.Conn
 	prefix string
 
+	// ownsConn is set by Connect, which dialed conn itself: Close then drains
+	// and closes it. A New(conn) bus leaves the caller's connection open.
+	ownsConn bool
+
 	// actionSubjects, when set by WithActionSubjects, appends a "{action}"
 	// segment to published subjects and derives action-qualified subscribe
 	// subjects. Set once at construction, read-only after New returns.
@@ -351,13 +355,13 @@ var (
 	_ event.Subscriber = (*Bus)(nil)
 )
 
-// subscription tracks a registered handler and its underlying subscription so it
-// can be unsubscribed later. A core subscription carries natsSub; a durable
-// JetStream subscription (created via SubscribeWith) carries jsConsume. Exactly
-// one is non-nil for a live subscription.
+// subscription tracks a registered handler and its underlying subscriptions so
+// it can be unsubscribed later. A core subscription carries natsSubs (one per
+// subject it listens on); a durable JetStream subscription (created via
+// SubscribeWith) carries jsConsume. Exactly one is set for a live subscription.
 type subscription struct {
 	bus       *Bus
-	natsSub   *nats.Subscription
+	natsSubs  []*nats.Subscription
 	jsConsume jetstream.ConsumeContext
 	opts      event.SubscribeOptions
 }
@@ -375,9 +379,9 @@ func (s *subscription) Unsubscribe() error {
 		// server-side state is intentionally left in place so it survives.
 		s.jsConsume.Stop()
 		s.jsConsume = nil
-	case s.natsSub != nil:
-		err = s.natsSub.Unsubscribe()
-		s.natsSub = nil
+	case s.natsSubs != nil:
+		err = unsubscribeAll(s.natsSubs)
+		s.natsSubs = nil
 	default:
 		return nil // already unsubscribed
 	}
@@ -420,7 +424,9 @@ func Connect(url string, opts ...ConnectOption) (*Bus, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", url, err)
 	}
-	return New(conn, opts...), nil
+	b := New(conn, opts...)
+	b.ownsConn = true
+	return b, nil
 }
 
 // connectDialOptions returns the production resilience options Connect dials
@@ -442,8 +448,8 @@ func connectDialOptions() []nats.Option {
 }
 
 // New returns a Bus that publishes and subscribes using the given NATS
-// connection. The connection is owned by the caller and must be closed
-// separately after Close returns.
+// connection. The connection is owned by the caller: Close leaves it open, and
+// the caller closes it after Close returns.
 func New(conn *nats.Conn, opts ...Option) *Bus {
 	b := &Bus{
 		conn:   conn,
@@ -539,10 +545,11 @@ func (b *Bus) PublishBatch(ctx context.Context, events []event.Event) error {
 }
 
 // Subscribe registers a handler using core NATS delivery. The subscription
-// subject is derived from opts.Tables: a single table subscribes to
-// "{prefix}.*.{table}", multiple tables or no tables subscribe to "{prefix}.>"
-// with handler-side filtering. opts.Group maps to a NATS queue group.
-// opts.Actions are applied as a post-receive filter on the decoded event.
+// subjects are derived from opts.Tables: a single table subscribes to
+// "{prefix}.*.{table}" and the schema-less "{prefix}.{table}", multiple tables
+// or no tables subscribe to "{prefix}.>" with handler-side filtering.
+// opts.Group maps to a NATS queue group. opts.Actions are applied as a
+// post-receive filter on the decoded event.
 //
 // Subscribe satisfies event.Subscriber, so its behavior is at-most-once even in
 // JetStream mode: it is a real-time core tap on the subject, with no ack and no
@@ -598,10 +605,21 @@ func (b *Bus) subscribeGuard(handler event.Handler) error {
 }
 
 // trackSub records a live subscription for Close/Unsubscribe bookkeeping.
-func (b *Bus) trackSub(sub *subscription) {
+// A Close that ran after subscribeGuard has already swept the bus's
+// subscriptions, so a sub arriving after it is released here and the call
+// fails, rather than staying live on a connection Close left open.
+func (b *Bus) trackSub(sub *subscription) error {
 	b.mu.Lock()
-	b.subs = append(b.subs, sub)
+	if !b.closed {
+		b.subs = append(b.subs, sub)
+		b.mu.Unlock()
+		return nil
+	}
 	b.mu.Unlock()
+	if sub.jsConsume != nil {
+		sub.jsConsume.Stop()
+	}
+	return errors.Join(errors.New("subscribe: natsbus is closed"), unsubscribeAll(sub.natsSubs))
 }
 
 // subscribeCore registers a core NATS subscription (at-most-once). It backs both
@@ -611,19 +629,34 @@ func (b *Bus) subscribeCore(opts event.SubscribeOptions, handler event.Handler) 
 		return nil, err
 	}
 	sub := &subscription{bus: b, opts: opts}
-	subject := b.subscribeSubject(opts)
-	natsSub, err := b.subscribeNATS(subject, opts.Group, b.msgHandler(opts, handler))
-	if err != nil {
-		return nil, fmt.Errorf("subscribe %s: %w", subject, err)
+	// A single-table subscription listens on two subjects, each dispatched on
+	// its own goroutine; the mutex keeps the Handler from running concurrently
+	// with itself, as it never does on one subject.
+	var mu sync.Mutex
+	inner := b.msgHandler(opts, handler)
+	h := func(msg *nats.Msg) {
+		mu.Lock()
+		defer mu.Unlock()
+		inner(msg)
 	}
-	sub.natsSub = natsSub
-	b.trackSub(sub)
+	for _, subject := range b.subscribeSubjects(opts) {
+		natsSub, err := b.subscribeNATS(subject, opts.Group, h)
+		if err != nil {
+			// Release the subjects already subscribed, so a failed Subscribe
+			// leaves nothing listening; their own unsubscribe error is kept.
+			return nil, errors.Join(fmt.Errorf("subscribe %s: %w", subject, err), unsubscribeAll(sub.natsSubs))
+		}
+		sub.natsSubs = append(sub.natsSubs, natsSub)
+	}
+	if err := b.trackSub(sub); err != nil {
+		return nil, err
+	}
 	return sub, nil
 }
 
 // subscribeJetStream creates (or binds) a durable JetStream consumer over the
 // bus's stream and drives the handler with explicit ack/nak. The consumer's
-// FilterSubject matches the same subject a core Subscribe would use, so the
+// filter subjects match the subjects a core Subscribe would use, so the
 // opts.Tables single-table narrowing is enforced broker-side; multi-table and
 // action filters are applied per-message via matches (a filtered-out message is
 // acked so it is not redelivered). opts.Group maps to the durable name for
@@ -634,9 +667,8 @@ func (b *Bus) subscribeJetStream(opts event.SubscribeOptions, handler event.Hand
 		durable = opts.Group // empty when no group — an unnamed (ephemeral) consumer
 	}
 	consumerCfg := jetstream.ConsumerConfig{
-		Durable:       durable,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-		FilterSubject: b.subscribeSubject(opts),
+		Durable:   durable,
+		AckPolicy: jetstream.AckExplicitPolicy,
 		// Delivery-start policy for replay/backfill. The zero value is
 		// DeliverAllPolicy, so an un-set config is byte-identical to a consumer
 		// with no start policy. OptStartTime/OptStartSeq are ignored by the
@@ -651,17 +683,29 @@ func (b *Bus) subscribeJetStream(opts event.SubscribeOptions, handler event.Hand
 	if cfg.maxDeliver > 0 {
 		consumerCfg.MaxDeliver = cfg.maxDeliver
 	}
+	if subjects := b.subscribeSubjects(opts); len(subjects) == 1 {
+		consumerCfg.FilterSubject = subjects[0]
+	} else {
+		consumerCfg.FilterSubjects = subjects
+	}
 	cons, err := b.js.CreateOrUpdateConsumer(context.Background(), b.streamCfg.Name, consumerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("subscribe consumer %s: %w", b.streamCfg.Name, err)
 	}
 	sub := &subscription{bus: b, opts: opts}
-	consumeCtx, err := cons.Consume(b.jsMsgHandler(opts, handler, cfg))
+	// Consumer-level failures (missed heartbeats, a deleted consumer) carry
+	// no message; they are reported with the zero Event.
+	consumeCtx, err := cons.Consume(b.jsMsgHandler(opts, handler, cfg),
+		jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
+			b.reportError(context.Background(), event.Event{}, fmt.Errorf("consume %s: %w", b.streamCfg.Name, err))
+		}))
 	if err != nil {
 		return nil, fmt.Errorf("consume %s: %w", b.streamCfg.Name, err)
 	}
 	sub.jsConsume = consumeCtx
-	b.trackSub(sub)
+	if err := b.trackSub(sub); err != nil {
+		return nil, err
+	}
 	return sub, nil
 }
 
@@ -672,31 +716,38 @@ func (b *Bus) subscribeJetStream(opts event.SubscribeOptions, handler event.Hand
 // that cannot be decoded is terminated (not redelivered forever); a message that
 // fails the filter is acked. On the final permitted delivery (WithMaxDeliver) a
 // failed message is instead routed to the WithDeadLetter subject and terminated.
-// When a WithSubscribeErrorHandler is registered the handler error is also
-// surfaced to it so each failed attempt is observable.
+// Each failed attempt's handler error, a decode failure, and any failed ack,
+// nak, terminate or dead-letter publish are reported through reportError.
 func (b *Bus) jsMsgHandler(opts event.SubscribeOptions, handler event.Handler, cfg subscribeConfig) jetstream.MessageHandler {
 	return func(msg jetstream.Msg) {
+		ctx := context.Background()
 		var e event.Event
 		if err := json.Unmarshal(msg.Data(), &e); err != nil {
-			_ = msg.Term()
+			b.reportError(ctx, event.Event{}, fmt.Errorf("decode event on %s: %w", msg.Subject(), err))
+			if err := msg.Term(); err != nil {
+				b.reportError(ctx, event.Event{}, fmt.Errorf("terminate undecodable message on %s: %w", msg.Subject(), err))
+			}
 			return
 		}
 		if !matches(opts, e) {
-			_ = msg.Ack()
+			if err := msg.Ack(); err != nil {
+				b.reportError(ctx, e, fmt.Errorf("ack filtered-out message: %w", err))
+			}
 			return
 		}
-		ctx := context.Background()
 		if b.propagator != nil {
 			ctx = b.propagator.Extract(ctx, msg.Headers())
 		}
 		if err := handler(ctx, e); err != nil {
-			if b.subErrHandler != nil {
-				b.subErrHandler(ctx, e, err)
+			b.reportError(ctx, e, err)
+			if err := b.nakOrDeadLetter(msg, cfg); err != nil {
+				b.reportError(ctx, e, err)
 			}
-			b.nakOrDeadLetter(msg, cfg)
 			return
 		}
-		_ = msg.Ack()
+		if err := msg.Ack(); err != nil {
+			b.reportError(ctx, e, fmt.Errorf("ack message: %w", err))
+		}
 	}
 }
 
@@ -706,37 +757,52 @@ func (b *Bus) jsMsgHandler(opts event.SubscribeOptions, handler event.Handler, c
 // (headers intact) to the dead-letter subject and terminates the message so the
 // broker stops redelivering it. Otherwise it naks (with the WithBackoff delay, if
 // any) for another redelivery attempt. If the dead-letter publish fails the
-// message is nak'd instead so it is not lost.
-func (b *Bus) nakOrDeadLetter(msg jetstream.Msg, cfg subscribeConfig) {
-	if cfg.deadLetter != "" && cfg.maxDeliver > 0 && isFinalDelivery(msg, cfg.maxDeliver) {
-		if err := b.publishDeadLetter(cfg.deadLetter, msg); err == nil {
-			_ = msg.Term()
-			return
+// message is nak'd instead so it is not lost. It returns a failed delivery
+// metadata read, the dead-letter publish error and any failed terminate or nak,
+// for the caller to report.
+func (b *Bus) nakOrDeadLetter(msg jetstream.Msg, cfg subscribeConfig) error {
+	var dlqErr, mdErr error
+	final := false
+	if cfg.deadLetter != "" {
+		final, mdErr = isFinalDelivery(msg, cfg.maxDeliver)
+	}
+	if final {
+		dlqErr = b.publishDeadLetter(cfg.deadLetter, msg)
+		if dlqErr == nil {
+			if err := msg.Term(); err != nil {
+				return fmt.Errorf("terminate dead-lettered message: %w", err)
+			}
+			return nil
 		}
 		// Fall through to nak: routing failed, so keep the message for another try.
 	}
+	var nakErr error
 	if cfg.backoff > 0 {
-		_ = msg.NakWithDelay(cfg.backoff)
+		nakErr = msg.NakWithDelay(cfg.backoff)
 	} else {
-		_ = msg.Nak()
+		nakErr = msg.Nak()
 	}
+	if nakErr != nil {
+		nakErr = fmt.Errorf("nak message: %w", nakErr)
+	}
+	return errors.Join(mdErr, dlqErr, nakErr)
 }
 
 // isFinalDelivery reports whether this delivery is the last one max-deliver
 // permits, i.e. the message would not be redelivered again after this attempt.
-// A non-positive max-deliver has no bound (never final); a missing metadata read
+// A non-positive max-deliver has no bound (never final); a failed metadata read
 // is treated as "not final" so the message is nak'd for a retry rather than
-// prematurely dead-lettered.
-func isFinalDelivery(msg jetstream.Msg, maxDeliver int) bool {
+// prematurely dead-lettered, and the read's error is returned for reporting.
+func isFinalDelivery(msg jetstream.Msg, maxDeliver int) (bool, error) {
 	if maxDeliver <= 0 {
-		return false
+		return false, nil
 	}
 	md, err := msg.Metadata()
 	if err != nil {
-		return false
+		return false, fmt.Errorf("read delivery metadata: %w", err)
 	}
 	//nolint:gosec // G115: maxDeliver is guarded > 0 just above, so the conversion cannot wrap.
-	return md.NumDelivered >= uint64(maxDeliver)
+	return md.NumDelivered >= uint64(maxDeliver), nil
 }
 
 // publishDeadLetter republishes a failed message's original envelope and headers
@@ -756,9 +822,9 @@ func (b *Bus) publishDeadLetter(subject string, msg jetstream.Msg) error {
 	return nil
 }
 
-// Close drains the connection's pending messages and unsubscribes all
-// handlers registered through this bus. The underlying *nats.Conn is not
-// closed — callers manage its lifecycle.
+// Close unsubscribes all handlers registered through this bus and flushes the
+// connection's pending publishes. A New(conn) bus leaves the caller's
+// connection open; a Connect bus drains and closes the connection it dialed.
 func (b *Bus) Close() error {
 	b.mu.Lock()
 	if b.closed {
@@ -775,9 +841,9 @@ func (b *Bus) Close() error {
 	// are then stopped below, outside the lock, keeping the network calls off it.
 	pending := make([]subscription, 0, len(subs))
 	for _, s := range subs {
-		pending = append(pending, subscription{jsConsume: s.jsConsume, natsSub: s.natsSub})
+		pending = append(pending, subscription{jsConsume: s.jsConsume, natsSubs: s.natsSubs})
 		s.jsConsume = nil
-		s.natsSub = nil
+		s.natsSubs = nil
 	}
 	b.mu.Unlock()
 
@@ -786,14 +852,20 @@ func (b *Bus) Close() error {
 		switch {
 		case s.jsConsume != nil:
 			s.jsConsume.Stop()
-		case s.natsSub != nil:
-			if err := s.natsSub.Unsubscribe(); err != nil && firstErr == nil {
+		case s.natsSubs != nil:
+			if err := unsubscribeAll(s.natsSubs); err != nil && firstErr == nil {
 				firstErr = fmt.Errorf("unsubscribe: %w", err)
 			}
 		}
 	}
-	if err := b.conn.Drain(); err != nil && firstErr == nil {
-		firstErr = fmt.Errorf("drain: %w", err)
+	if b.ownsConn {
+		if err := b.conn.Drain(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("drain: %w", err)
+		}
+		return firstErr
+	}
+	if err := b.conn.Flush(); err != nil && firstErr == nil {
+		firstErr = fmt.Errorf("flush: %w", err)
 	}
 	return firstErr
 }
@@ -829,44 +901,50 @@ func (b *Bus) envelopeVersion() string {
 	return envelopeVersion
 }
 
-// subscribeSubject returns the NATS subject used for a Subscribe call. A single
-// table filter subscribes to "{prefix}.*.{table}" to cover all schemas;
-// otherwise the wildcard "{prefix}.>" is used and tables are filtered in the
-// handler. With WithActionSubjects a trailing action token is added: a single
-// table plus a single action narrows to "{prefix}.*.{table}.{action}"
-// (broker-side action filtering), a single table with any other action set uses
-// "{prefix}.*.{table}.*", and the multi-table case stays "{prefix}.>" ('>'
-// spans the extra action token).
-func (b *Bus) subscribeSubject(opts event.SubscribeOptions) string {
-	single := len(opts.Tables) == 1
+// subscribeSubjects returns the NATS subjects used for a Subscribe call. A
+// single table filter subscribes to "{prefix}.*.{table}" to cover every schema
+// and to "{prefix}.{table}" for schema-less events; otherwise the wildcard
+// "{prefix}.>" is used and tables are filtered in the handler. With
+// WithActionSubjects a trailing action token is added to both: a single table
+// plus a single action narrows to "{prefix}.*.{table}.{action}" and
+// "{prefix}.{table}.{action}" (broker-side action filtering), a single table
+// with any other action set uses "*" for the action token, and the multi-table
+// case stays "{prefix}.>" ('>' spans the extra action token). No event's
+// subject matches more than one of a subscription's subjects, since they differ
+// in token count.
+func (b *Bus) subscribeSubjects(opts event.SubscribeOptions) []string {
+	if len(opts.Tables) != 1 {
+		return []string{b.prefix + ".>"}
+	}
+	table := opts.Tables[0]
 	if !b.actionSubjects {
-		if single {
-			return fmt.Sprintf("%s.*.%s", b.prefix, opts.Tables[0])
+		return []string{
+			fmt.Sprintf("%s.*.%s", b.prefix, table),
+			fmt.Sprintf("%s.%s", b.prefix, table),
 		}
-		return b.prefix + ".>"
 	}
-	if single {
-		action := "*"
-		if len(opts.Actions) == 1 {
-			action = string(opts.Actions[0])
-		}
-		return fmt.Sprintf("%s.*.%s.%s", b.prefix, opts.Tables[0], action)
+	action := "*"
+	if len(opts.Actions) == 1 {
+		action = string(opts.Actions[0])
 	}
-	return b.prefix + ".>"
+	return []string{
+		fmt.Sprintf("%s.*.%s.%s", b.prefix, table, action),
+		fmt.Sprintf("%s.%s.%s", b.prefix, table, action),
+	}
 }
 
 // msgHandler wraps the user handler with JSON decoding and post-receive
-// table/action filtering. Messages that fail to decode or fail the filter are
-// dropped silently. When WithContextPropagation is set, the ctx handed to the
-// handler is rebuilt from the traceparent header so it continues the producing
-// span; otherwise it is context.Background(). A handler error is retried per
-// WithRetry and, if it still fails, routed to the WithSubscribeErrorHandler
-// handler (section 28.5); with no error handler configured it is discarded
-// without panic — core NATS cannot redeliver.
+// table/action filtering. A message that fails the filter is dropped; one that
+// fails to decode is reported with the zero Event. When WithContextPropagation
+// is set, the ctx handed to the handler is rebuilt from the traceparent header
+// so it continues the producing span; otherwise it is context.Background(). A
+// handler error is retried per WithRetry and, if it still fails, reported
+// (section 28.5) — core NATS cannot redeliver.
 func (b *Bus) msgHandler(opts event.SubscribeOptions, handler event.Handler) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		var e event.Event
 		if err := json.Unmarshal(msg.Data, &e); err != nil {
+			b.reportError(context.Background(), event.Event{}, fmt.Errorf("decode event on %s: %w", msg.Subject, err))
 			return
 		}
 		if !matches(opts, e) {
@@ -876,10 +954,20 @@ func (b *Bus) msgHandler(opts event.SubscribeOptions, handler event.Handler) nat
 		if b.propagator != nil {
 			ctx = b.propagator.Extract(ctx, msg.Header)
 		}
-		if err := b.deliver(ctx, e, handler); err != nil && b.subErrHandler != nil {
-			b.subErrHandler(ctx, e, err)
+		if err := b.deliver(ctx, e, handler); err != nil {
+			b.reportError(ctx, e, err)
 		}
 	}
+}
+
+// reportError hands a subscription error to the WithSubscribeErrorHandler
+// handler, or logs it when none is set. A Handler's error is passed as-is.
+func (b *Bus) reportError(ctx context.Context, e event.Event, err error) {
+	if b.subErrHandler != nil {
+		b.subErrHandler(ctx, e, err)
+		return
+	}
+	log.Printf("natsbus: subscription error for event %q (%s): %v", e.ID, e.Table, err)
 }
 
 // deliver invokes the handler, retrying up to the configured attempt count on
@@ -917,6 +1005,18 @@ func (b *Bus) subscribeNATS(subject, group string, h nats.MsgHandler) (*nats.Sub
 		return nil, fmt.Errorf("nats subscribe: %w", err)
 	}
 	return sub, nil
+}
+
+// unsubscribeAll unsubscribes every subscription in subs, returning their
+// errors joined.
+func unsubscribeAll(subs []*nats.Subscription) error {
+	var errs []error
+	for _, s := range subs {
+		if err := s.Unsubscribe(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // isClosed reports whether Close has been called.

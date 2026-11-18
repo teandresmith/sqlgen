@@ -38,8 +38,84 @@
 | 29 | Generate Every Client Method the Schema Allows | 2 | 2 | Complete (closed 2026-10-03; normative spec PRD §4.6 Operations, with §4.13/§9/§9.8/§9.9.4/§20.2/§23.7/§26.5.1/§26.8/§26.10/§30.4.3; FIX-224 resolved; no sibling design doc) |
 | 30 | Database Introspection — CLI Wiring & Introspector Parity | 13 | 13 | Complete (closed 2026-10-08; design docs `docs/design/INTROSPECTION.md` and `docs/design/CONFIG_ENV.md` SYNCED — superseded by PRD §4.1.1/§4.2/§4.3/§5.2/§6.1/§6.3/§30.7; 11 FIXes resolved at closure, 19 carried forward vetted ready) |
 | 31 | Introspection Examples — `source: database` and `both` End to End | 5 | 5 | Complete (closed 2026-10-12; design doc `docs/design/INTROSPECTION_EXAMPLES.md` SYNCED — superseded by PRD §8.1.7 and `guidelines/TESTING.md` §10) |
+| 32 | Composite Foreign-Key Relationships | 9 | 9 | Complete (closed 2026-11-17; design doc `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` SYNCED — superseded by PRD §4.6/§4.8/§4.13/§5.3/§8.2/§8.6/§9.9/§13.1/§13.4/§25.1/§29.10/§30/Appendix A; 10 FIXes originated in the phase and were resolved within it, none carried forward) |
 
 ## Current Focus
+
+**Phase 32 (Composite Foreign-Key Relationships) closed 2026-11-17.** All 9 sub-items complete: 32.0 PRD and doc sync (design §4 written into the PRD, §9.1 re-verified); 32.1 runtime (`sql.Exists` with N correlation pairs, prefixed tuple IN, MySQL tuple IN); 32.2 parser model (`KeyPair`, `Relationship.Key` / `JunctionLocal` / `JunctionReference` / `Constraint`, `Constraint.Match` on PostgreSQL) and detection, one edge per FOREIGN KEY constraint; 32.3 `fk` / junction keys as a string or a list, manifest key lists with `constraint` at `schema_version` `0.2.0`, MCP `fk_columns`; 32.4 gen contexts (key pairs replace the `PKColumns[0]` reads, pinned and free members, FK membership for increments and PK strategy); 32.5 read templates (O2O join, chunked tuple-key O2M and M2M loaders, relationship filters correlating every pair); 32.6 nested writes through composite FKs for single-column-PK parents and targets, MATCH FULL disconnect eligibility included; 32.7 GraphQL relationship fields and filters for composite edges; 32.8 examples (`tenancy_postgres`, `mysql`, `sqlite`, and the `graphql` fixture) plus a `sqlgen-example` probe at HEAD.
+
+**32 closure sweep (landed 2026-11-17):** `make check` clean across all 8 modules under `-race` (223s; longest legs `cmd/sqlgen/cli` ~186s, `cmd/sqlgen/gen` ~178s); `make static-examples` clean across all 15 example modules and the 4 conformance dialect modules (18s); `make conformance` clean, 6256 pass / 80 untested of 6336 registry rows, 0 fail, 0 not run (829s; longest legs `cmd/sqlgen/cli` ~353s, `cmd/sqlgen` ~332s, `cmd/sqlgen/gen` ~266s, `parser/introspect` ~137s); no flakes. One registry fix during closure: `manifest.ver.0-2-0`, Phase 32's own row, was untested only for an empty Tests cell, and now names `TestEmitJSON_SchemaVersion` and `TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences`, so it passes. Accepted untested rows in the phase's PRD sections, by user direction: 16, all added by conformance seeding (2026-10-26 to 2026-11-01) and none a Phase 32 contract row: `config.generation.nested-mutations.max-depth.default` (§4.6), `manifest.json.top.schema-url-immutable` and `manifest.ver.{breaking-major,optional-minor,patch,zero-x-minor-breaking,1-0-0-freeze}` (§30.4/§30.5), `mcp.surface.{validate-manifest.error-shape,prompts.degrade}` (§31.3), and 7 open PRD-gap rows (`gap.generation.offset-nil`, `gap.manifest.{breadcrumb-flags-gate-graph,graph-dir-equals-output,entity-schema-omitted}`, `gap.mcp.validate-manifest-schema-source`, `gap.parser.rel.postgres-files-non-key-fk`, `gap.sql.empty-composition`). **FIX triage:** 25 FIXes were filed and resolved during the phase (FIX-361 to FIX-385). 10 originated in Phase 32 (FIX-363 to FIX-369, FIX-373, FIX-375, FIX-378; four of them blocking: FIX-364, FIX-365, FIX-368, FIX-369), and 15 were older defects surfaced by the composite-key work (enum, time, boolean, SET and array keys, collation, tenancy detection and GraphQL nested lists among them). 0 carried forward; the open queue is empty. **Backlog:** 292 lines, none reviewed this closure by user direction; 137 were added during Phase 32 (25 measured). **Surface delta summary (across Phase 32):** a multi-column FOREIGN KEY is now a relationship. Detection gives one edge per constraint, joined on the columns it references (the target's PK or a UNIQUE key), so the tenant pattern `(workspace_id, x_id) → x(workspace_id, id)` generates O2O, O2M and M2M edges, loaders, relationship filters, nested writes (single-column-PK parents and targets) and GraphQL fields that match on every key column and stay inside the tenant. Config `fk` / `junction_local_fk` / `junction_reference_fk` take a string or a list, the manifest records each edge's whole key and its `constraint` at `schema_version` `0.2.0`, and MCP reports `fk_columns`. The runtime gains `sql.Exists` with N correlation pairs and tuple IN on every dialect, MySQL included. **Next:** no phase is queued. Composite-PK parents and targets in nested mutations (ruling R3) are the natural follow-on phase; the backlog's 137 unreviewed Phase 32 lines are the other candidate.
+
+**Phase 32 (Composite Foreign-Key Relationships) broken down 2026-10-21.** The breakdown is in `docs/tracker/phase-32.md`: 9 sub-items. 32.0 PRD and doc sync; 32.1 runtime (N-pair `sql.Exists`, prefixed tuple IN, MySQL tuple IN); 32.2 parser model (`KeyPair`, `Relationship.Key`, `Constraint.Match`) and detection, one edge per FOREIGN KEY constraint; 32.3 config list form, manifest key lists and `schema_version` `0.2.0`, MCP `fk_columns`; 32.4 gen contexts (key pairs replace the `PKColumns[0]` relationship reads, pinned and free members, FK membership for increments and PK strategy); 32.5 read templates (tuple-key O2O/O2M/M2M loaders, chunked, and N-pair relationship filters); 32.6 nested writes through composite FKs for single-column-PK parents and targets; 32.7 GraphQL; 32.8 examples (`tenancy_postgres`, `mysql`, `sqlite`) and a `sqlgen-example` probe. Every sub-item keeps the Go goldens of existing examples byte-identical (design §4.9); a staging guard keeps edges with more than one key pair out of gen until 32.5 (reads) and 32.6 (writes). FIX-358, FIX-359 and FIX-360 landed first (`c875fec9`, `2ae215f8`, `244ce2ee`); the open FIX queue is empty. Closure via `/close-phase 32`. Work happens on branch `design/tenant-composite-fk-relationships`.
+
+**32.8 complete (2026-11-17):** examples end to end. Every sub-item of Phase 32 is complete; closure is next.
+- **Fixtures.** `tenancy_postgres` reuses the 32.6 schema (composite O2M, composite-PK target, tenant junction). `mysql` and `sqlite` gain `bins (aisle, slot)` and `bin_items`, a nullable composite FK into a composite PK. Only those two examples' goldens moved, with additions only.
+- **Tests.** Loads and relationship filters stay in the tenant as tenant A, as tenant B and under `SkipTenancy`, with rows planted across tenants so only the composite key separates them; `mysql` and `sqlite` load and filter on every key column. Five mutations of the generated code were each caught.
+- **Probe.** `sqlgen-example` at HEAD validates, generates, detects `Cycle.Tasks` and `Team.Projects`, builds, vets and passes its suite. Its v0.1.0 resolver seeds must be reseeded on upgrade; its own change waits on a sqlgen release.
+- `make check`, `make check-examples` and `make test-integration` green; the auto-review's one test-strength issue was fixed.
+
+Next: `/close-phase 32`.
+
+**32.7 complete (2026-11-17):** GraphQL.
+- **Schema.** Composite-key edges project like one-column ones: relationship fields, filter members and nested `connect` by the target's ID. No gen change was needed; the `graphql` example gained five tenanted tables (`cycles`, `tasks`, `task_reports`, `labels`, `task_labels`) and only their files plus additive shared lines moved in its goldens.
+- **Tests.** GraphQL matches the Go client per tenant, edges load without selected keys, relationship filters work through composite edges, and a cross-tenant nested `connect` is refused with `NOT_FOUND`. The every-pair filter check runs through the Go client under `SkipTenancy`, since tenancy hides it in GraphQL.
+- `make check` and `make check-examples` green; auto-review found no high-confidence issues.
+
+**32.6 complete (2026-11-10):** nested writes through composite FKs.
+- **Writes.** `connect`, `create`, `disconnect`, reparent and M2M link/unlink set and compare every key member: pinned members are verified, free members written, and the junction row keyed by the union of both key lists. The write staging guard is gone.
+- **Verified (2026-11-06).** `/verify 32.6` logged FIX-363 to FIX-373 (three blocking). `/fix-loop` landed all eleven (`1c009361` to `c88b5c7e`); composite-key nested writes now also run live on MySQL and SQLite (FIX-366), and time and enum keys filter through `comparator.Time`/`Enum` (FIX-370, FIX-371).
+- **Documented limit.** A nested `connect` or `create` compares keys byte for byte in Go, so a key that differs only in case is refused on case-insensitive collations (PRD §9.9.6, FIX-373).
+- Final sweep green at `c88b5c7e`. FIX-374 to FIX-379 are open and not yet vetted.
+
+**32.5 complete (2026-11-05):** read templates.
+- **Reads.** Composite-key O2O joins, O2M and M2M loaders and relationship filters generate, on every dialect. The read staging guard is gone; `compositeKeyWriteGuard` keeps these edges out of nested writes until 32.6.
+- **PostgreSQL tuple `IN` cap.** A key of several columns binds at most 4000 keys per statement on PostgreSQL (design §12 Q6); lists past about 7000 fail with `stack depth limit exceeded`.
+- **Nullable referenced key.** It loads through the keyed loader and is not write-eligible, ruled 2026-11-06; PRD §9.9.4 E1 and §25.1 state it (`s = C` on pgx).
+- **Conformance.** Eight new tables on every dialect; the N = 2 bind-limit rows run there (design §12 Q7).
+- No example golden moved. `make check` and `make check-examples` green.
+
+- **Verified (2026-11-06).** `/verify 32.5` passed with no FIX logged; the reviewer's coverage gaps were closed inline. The live tenant load is due at 32.8 (`TestCompositeTenantFK_LoadStaysInTenant`), accepted at `/done`.
+
+
+**32.4 complete (2026-11-05):** gen contexts.
+- **Referenced columns.** Every edge joins the columns its FK references: the O2M / M2M loaders (`RelationshipContext.ParentKey`, `TableContext.LoadKeyColumns`), the relationship filter, the O2O join and the nested writers. The two design §4.9 schemas (FK to a non-PK UNIQUE column, PK-override form) now compile, nested writers included.
+- **Pinned and free members.** Tenant column, child-PK member, or a member another FK holds is pinned. The rewrite verbs need a free member and every free member nullable; under PostgreSQL `MATCH FULL` unlinking needs every member free and `connect` with a pinned member needs `allow_reparent`. E1 checks every member; the child input drops every member.
+- **FK membership.** Composite-FK members get no increment operator; a single-column PK in a composite FK is `caller`; a declared `fk` a composite FK enforces is not `Synthetic`.
+- **E5.** An M2M whose junction references a target UNIQUE column is not write-eligible (the link step writes the target's PK); its reads work.
+- **Staging.** The guard still keeps multi-pair edges out of generation; the test seam `generateCompositeKeyEdges` reaches the context code, and 32.5 removes both.
+- **Tooling.** New `make build-generated`, part of `make check-examples`, runs the CLI tests' generated-package builds that `-short` skips.
+- No golden moved. `make check` and `make check-examples` green.
+
+**32.3 complete (2026-11-05):** config, manifest and MCP shapes.
+- **Config.** `fk`, `junction_local_fk` and `junction_reference_fk` take a string or a list (`config.KeyColumns`). A list whose length is not the referenced PK's column count is a post-parse error, including a string into a composite key. `v1.json` takes both forms and rejects a map.
+- **Declared edges.** gen maps a declared key by position onto the resolved PK. A declared key of more than one column is a generation error until 32.5.
+- **Manifest.** `fk: {table, schema, columns, references, constraint}`, junction keys in the same shape, and `schema_version` `0.2.0`. 38 manifest JSON and 16 `_index.md` goldens moved. No Go golden moved.
+- **MCP.** `find_referencing` returns `fk_columns` and dedups on the whole list.
+- **Registry and PRD.** The design §10.1 IDs are registered, with four `relationships` matrix rows. The two §10.2 guards pass. PRD Appendix B gains the `MATCH FULL` and bind-limit rows.
+- **Verified (2026-11-05).** `/verify 32.3` passed with no FIX logged. The reviewer's three test gaps were closed inline: the `junction_reference_fk` length case, distinct PK names in `declaredKeyDDL`, and the 32.6 row's overclaimed test. Two rulings followed:
+  - A key into a view maps onto its `@pk`. A belongs-to or m2m key into a view without `@pk` is a post-parse error (new §4.13 row), not a manifest `references: []`.
+  - The manifest `v1.json` requires `columns` and `references` on every `fk` and junction key.
+
+**32.2 complete (2026-10-23):** parser model and detection.
+- **Model.** `parser.KeyPair` and `Relationship.Key` / `JunctionLocal` / `JunctionReference`, with per-key constraint names, replace the single-column fields. `Constraint.Match` records MATCH FULL on PostgreSQL under both sources.
+- **Detection.** Detection reads the FOREIGN KEY constraints (PRD §5.3 rules 1–6) and is idempotent. A non-key FK warns and gives no edge.
+- **Duplicate keys.** Of identical keys the one whose name sorts first is kept, and the first declared of unnamed (SQLite) ones. Every source agrees, with no parity exception.
+- **Name collisions.** A name two detected edges still share after disambiguation is now a gen error naming both edges' foreign keys.
+- **Staging guard.** gen omits every edge with more than one key pair until 32.5.
+- **Examples.** All 15 examples detect the same edges as before, and no Go golden changed.
+
+**32.1 complete (2026-10-23):** runtime. `sql.Exists` takes `string | []string` with indexed tokens (`CorrelationTokenAt(i)`, index 0 = `CorrelationToken`), so one-pair generated calls are unchanged; `PrefixConditions` qualifies each column of a composite-key batch condition (now a structured value); composite-key batches use tuple IN on every dialect, so the OR-of-ANDs fallback and `Dialect.SupportsTupleIN` are removed. No Go golden moved; the `mysql` manifest's composite-PK `HardDeleteMany` SQL moved (3 tables × 4 files). `make check` and `make check-examples` green. Next: 32.2.
+
+**32.0 complete (2026-10-22):** PRD and doc sync. Design §4 is now PRD text (§4.8, §4.13, §5.2, §5.3, §8.2, §8.6, §9.9, §11.1, §11.5, §13.1–§13.4, §13.7.1, §25.1, §29.10, §30, §31.3), with `MANIFEST.md`, `MCP.md` and `guidelines/SQL.md` synced. §9.1 was re-verified at `244ce2ee`. Nine points were ruled while writing and in review, recorded in design §7.1:
+- an all-pinned edge stays `create`-only;
+- M2M unlink needs a junction PK equal to the union;
+- a pinned mismatch is `ErrAlreadyRelated`;
+- the manifest `junction` uses the nested key shape;
+- `Filter.PKs` stays OR-of-ANDs (backlog);
+- every key member, the tenant column included, is elided from the nested child input;
+- rule 1 accepts the declared PK;
+- the residual name collision is checked after exclusions;
+- MATCH FULL `connect` with a pinned member needs `allow_reparent`. **Next:** `/implement 32.1` and `/implement 32.2` (independent).
 
 **Phase 31 (Introspection Examples — `source: database` and `both` End to End) closed 2026-10-12.** All 5 sub-items complete: 31.0 PRD §8.1.7 and `guidelines/TESTING.md` §10 sync; 31.1 PostgreSQL type and domain comments introspected from `pg_description` (the one defect the 2026-10-11 probe found); 31.2 shared `cmd/sqlgen/internal/livedb` package (containers, per-test databases, `ApplySetup`, the parity exceptions behind `NormalizeTree`, view `source` across the split manifest layout, the MySQL literal-default exception); 31.3 `TestE2EDatabaseTwin`, every one of the 12 `files` examples regenerated from a live database and equal to its goldens after the shared exceptions, plus the `after_views.sql` convention; 31.4 three `source: both` modules (`introspect_postgres`, `introspect_mysql`, `introspect_sqlite`) with the three-way check in `TestE2EGoldenFiles`.
 

@@ -510,66 +510,6 @@ func TestReturningClause(t *testing.T) {
 	}
 }
 
-// --- ON CONFLICT Upsert ---
-
-func TestUpsert(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "UpsertCat"})
-	if err != nil {
-		t.Fatalf("Create category: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
-
-	// Initial insert via upsert (ON CONFLICT on SKU)
-	p1, err := client.Products().Upsert(ctx, &models.CreateProductInput{
-		CategoryID: cat.ID, Title: "UpsertProduct", Price: 10.00,
-		SKU: "UPSERT-001",
-	}, models.ProductConflictSKU)
-	if err != nil {
-		t.Fatalf("Upsert (insert): %v", err)
-	}
-	if p1.Title != "UpsertProduct" {
-		t.Errorf("Upsert insert title = %q, want %q", p1.Title, "UpsertProduct")
-	}
-	if p1.Price != 10.00 {
-		t.Errorf("Upsert insert price = %v, want 10.00", p1.Price)
-	}
-	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p1.ID) })
-
-	// Upsert same SKU with updated values (ON CONFLICT DO UPDATE)
-	p2, err := client.Products().Upsert(ctx, &models.CreateProductInput{
-		CategoryID: cat.ID, Title: "UpdatedUpsert", Price: 25.00,
-		SKU: "UPSERT-001",
-	}, models.ProductConflictSKU)
-	if err != nil {
-		t.Fatalf("Upsert (update): %v", err)
-	}
-	if p2.Title != "UpdatedUpsert" {
-		t.Errorf("Upsert update title = %q, want %q", p2.Title, "UpdatedUpsert")
-	}
-	if p2.Price != 25.00 {
-		t.Errorf("Upsert update price = %v, want 25.00", p2.Price)
-	}
-	// Should be same row (same ID) since SKU conflict triggered update
-	if p2.ID != p1.ID {
-		t.Errorf("Upsert should update existing row: p2.ID=%d, p1.ID=%d", p2.ID, p1.ID)
-	}
-
-	// Verify only one product with that SKU
-	sku := "UPSERT-001"
-	products, err := client.Products().GetMany(ctx, &models.GetProductsInput{
-		Filter: &models.ProductFilter{SKU: &comparator.String{Eq: &sku}},
-	})
-	if err != nil {
-		t.Fatalf("GetMany by sku: %v", err)
-	}
-	if len(products) != 1 {
-		t.Errorf("Expected 1 product with sku %q, got %d", sku, len(products))
-	}
-}
-
 // --- Filtering ---
 
 func TestFilterComparators(t *testing.T) {

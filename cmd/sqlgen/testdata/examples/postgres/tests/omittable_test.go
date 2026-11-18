@@ -37,50 +37,6 @@ import (
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/postgres/models"
 )
 
-// --- zero-field Update short-circuit ---
-
-func TestUpdate_ZeroFields_NoUpdateSQL_Postgres(t *testing.T) {
-	ctx := context.Background()
-
-	cap := newCapturingQuerier(dbpgx.New(testPool))
-	client := models.New(cap)
-
-	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "ZeroUpdate-14.12"})
-	if err != nil {
-		t.Fatalf("Create category: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
-
-	seed, err := client.Products().Create(ctx, &models.CreateProductInput{
-		Name:       "ZeroUpdateProduct",
-		Price:      10.00,
-		CategoryID: cat.ID,
-	})
-	if err != nil {
-		t.Fatalf("Create product: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, seed.ID) })
-
-	cap.reset()
-
-	got, err := client.Products().Update(ctx, seed.ID, &models.UpdateProductInput{})
-	if err != nil {
-		t.Fatalf("Update(empty): %v", err)
-	}
-	if got == nil || got.ID != seed.ID {
-		t.Fatalf("Update(empty) = %+v, want product with ID %s", got, seed.ID)
-	}
-	if got.Name != seed.Name || got.Price != seed.Price || got.IsActive != seed.IsActive {
-		t.Errorf("Update(empty) returned modified entity: got=%+v want=%+v", got, seed)
-	}
-
-	for _, sqlStr := range cap.snapshot() {
-		if strings.HasPrefix(strings.TrimSpace(strings.ToUpper(sqlStr)), "UPDATE ") {
-			t.Errorf("Update(empty) issued an UPDATE statement: %q", sqlStr)
-		}
-	}
-}
-
 // --- null-vs-unset on nullable column ---
 
 func TestUpdate_NullableColumn_OmitVsSetNil_Postgres(t *testing.T) {

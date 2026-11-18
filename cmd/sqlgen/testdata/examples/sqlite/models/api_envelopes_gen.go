@@ -34,13 +34,37 @@ type AssetDocumentLinkConnection = Connection[AssetDocumentLink]
 type AssetDocumentLinkEdge = Edge[AssetDocumentLink]
 type AssetDocumentLinkListResult = PaginateResult[AssetDocumentLink]
 
+type BadgeConnection = Connection[Badge]
+type BadgeEdge = Edge[Badge]
+type BadgeListResult = PaginateResult[Badge]
+
+type BinConnection = Connection[Bin]
+type BinEdge = Edge[Bin]
+type BinListResult = PaginateResult[Bin]
+
+type BinItemConnection = Connection[BinItem]
+type BinItemEdge = Edge[BinItem]
+type BinItemListResult = PaginateResult[BinItem]
+
 type BinaryKeyConnection = Connection[BinaryKey]
 type BinaryKeyEdge = Edge[BinaryKey]
 type BinaryKeyListResult = PaginateResult[BinaryKey]
 
+type BinaryKeyBadgeConnection = Connection[BinaryKeyBadge]
+type BinaryKeyBadgeEdge = Edge[BinaryKeyBadge]
+type BinaryKeyBadgeListResult = PaginateResult[BinaryKeyBadge]
+
 type BinaryKeyEventConnection = Connection[BinaryKeyEvent]
 type BinaryKeyEventEdge = Edge[BinaryKeyEvent]
 type BinaryKeyEventListResult = PaginateResult[BinaryKeyEvent]
+
+type BoolKeyedConnection = Connection[BoolKeyed]
+type BoolKeyedEdge = Edge[BoolKeyed]
+type BoolKeyedListResult = PaginateResult[BoolKeyed]
+
+type BoolKeyedNoteConnection = Connection[BoolKeyedNote]
+type BoolKeyedNoteEdge = Edge[BoolKeyedNote]
+type BoolKeyedNoteListResult = PaginateResult[BoolKeyedNote]
 
 type CategoryConnection = Connection[Category]
 type CategoryEdge = Edge[Category]
@@ -58,6 +82,18 @@ type DocumentConnection = Connection[Document]
 type DocumentEdge = Edge[Document]
 type DocumentListResult = PaginateResult[Document]
 
+type KeyClassChildConnection = Connection[KeyClassChild]
+type KeyClassChildEdge = Edge[KeyClassChild]
+type KeyClassChildListResult = PaginateResult[KeyClassChild]
+
+type KeyClassParentConnection = Connection[KeyClassParent]
+type KeyClassParentEdge = Edge[KeyClassParent]
+type KeyClassParentListResult = PaginateResult[KeyClassParent]
+
+type KeyClassRealChildConnection = Connection[KeyClassRealChild]
+type KeyClassRealChildEdge = Edge[KeyClassRealChild]
+type KeyClassRealChildListResult = PaginateResult[KeyClassRealChild]
+
 type KeyOnlyRowConnection = Connection[KeyOnlyRow]
 type KeyOnlyRowEdge = Edge[KeyOnlyRow]
 type KeyOnlyRowListResult = PaginateResult[KeyOnlyRow]
@@ -73,6 +109,10 @@ type OrderItemListResult = PaginateResult[OrderItem]
 type OwnerConnection = Connection[Owner]
 type OwnerEdge = Edge[Owner]
 type OwnerListResult = PaginateResult[Owner]
+
+type OwnerBadgeConnection = Connection[OwnerBadge]
+type OwnerBadgeEdge = Edge[OwnerBadge]
+type OwnerBadgeListResult = PaginateResult[OwnerBadge]
 
 type OwnerProfileConnection = Connection[OwnerProfile]
 type OwnerProfileEdge = Edge[OwnerProfile]
@@ -105,6 +145,14 @@ type SluggedRowListResult = PaginateResult[SluggedRow]
 type TagConnection = Connection[Tag]
 type TagEdge = Edge[Tag]
 type TagListResult = PaginateResult[Tag]
+
+type TimeKeyedConnection = Connection[TimeKeyed]
+type TimeKeyedEdge = Edge[TimeKeyed]
+type TimeKeyedListResult = PaginateResult[TimeKeyed]
+
+type TimeKeyedNoteConnection = Connection[TimeKeyedNote]
+type TimeKeyedNoteEdge = Edge[TimeKeyedNote]
+type TimeKeyedNoteListResult = PaginateResult[TimeKeyedNote]
 
 type UserConnection = Connection[User]
 type UserEdge = Edge[User]

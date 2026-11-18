@@ -53,11 +53,6 @@ type Dialect interface {
 	// OID.
 	SupportsArrayParams() bool
 
-	// SupportsTupleIN reports whether this dialect supports tuple IN syntax
-	// for composite PK batch lookups: WHERE (col1, col2) IN (($1,$2), ...).
-	// MySQL does not support this and uses expanded OR instead.
-	SupportsTupleIN() bool
-
 	// BackslashEscapes reports whether a backslash escapes the character after
 	// it inside a '...' or "..." string literal, as MySQL's default sql_mode
 	// reads it. PostgreSQL and SQLite read a backslash there literally. The
@@ -74,14 +69,30 @@ type Dialect interface {
 	// LockClause returns the row-level lock SQL fragment for the given mode,
 	// without a leading space. Returns an empty string for [LockNone].
 	//
+	// of names the table alias the lock is restricted to. Empty locks every
+	// row the statement reads, which is what a single-table SELECT wants. A
+	// non-empty of emits the OF form, so a SELECT that LEFT JOINs other tables
+	// locks only the rows of the aliased table: PostgreSQL rejects an
+	// unqualified lock on the nullable side of an outer join, and MySQL would
+	// lock the joined rows too. of is written as given, matching how
+	// [BuildSelectJoin] writes the alias after the table.
+	//
 	// PostgreSQL: "FOR UPDATE", "FOR SHARE", "FOR UPDATE NOWAIT",
-	// "FOR UPDATE SKIP LOCKED".
+	// "FOR UPDATE SKIP LOCKED"; with of, "FOR UPDATE OF p", "FOR SHARE OF p",
+	// "FOR UPDATE OF p NOWAIT", "FOR UPDATE OF p SKIP LOCKED".
 	// MySQL: "FOR UPDATE", "LOCK IN SHARE MODE", "FOR UPDATE NOWAIT" (8.0+),
-	// "FOR UPDATE SKIP LOCKED" (8.0+).
+	// "FOR UPDATE SKIP LOCKED" (8.0+); with of, the PostgreSQL OF forms, which
+	// need MySQL 8.0+ for every mode and which MariaDB does not accept.
 	// SQLite: empty string regardless of mode — SQLite has no per-row locking;
 	// the rejection of non-[LockNone] modes happens at the runtime guard in
 	// generated read methods (see PRD §9.6a) before this is reached.
-	LockClause(mode LockMode) string
+	LockClause(mode LockMode, of string) string
+
+	// NoLimitClause returns the fragment that stands for "no limit" when a
+	// SELECT has an OFFSET but no LIMIT, without a leading space. PostgreSQL:
+	// empty (OFFSET stands alone). MySQL: "LIMIT 18446744073709551615".
+	// SQLite: "LIMIT -1". MySQL and SQLite reject an OFFSET with no LIMIT.
+	NoLimitClause() string
 }
 
 // UpsertClauseOptions configures [Dialect.UpsertClause].

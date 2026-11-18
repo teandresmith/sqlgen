@@ -43,9 +43,7 @@ const teardownBound = 5 * time.Second
 // without the reservation. The assertion here is that the reservation did not
 // change a shape that already passed.
 func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
 	// Row counts differ per edge so a read cannot pass by returning another
 	// one's result set. The seeded rows are what each read counts.
@@ -118,60 +116,124 @@ func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
 }
 
 // TestLeakedResultSetDoesNotStrandTheConnection is the teardown exemption on
-// these two dialects: a result set left neither drained nor closed keeps the
+// these dialects: a result set left neither drained nor closed keeps the
 // reservation, and a root teardown must proceed without it rather than wait.
 // The pooled connection would otherwise be stranded for the life of the
-// process.
+// process. The driver then accepts the teardown: the COMMIT persists the
+// transaction's write and the ROLLBACK discards it.
 func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	requireDocker(t)
+	t.Run("mysql", func(t *testing.T) {
+		t.Run("commit", func(t *testing.T) { assertLeakedTeardownSucceeds(t, mysqlDialect(), database.Commit, 1) })
+		t.Run("rollback", func(t *testing.T) { assertLeakedTeardownSucceeds(t, mysqlDialect(), database.Rollback, 0) })
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		t.Run("commit", func(t *testing.T) { assertLeakedTeardownSucceeds(t, sqliteDialect(), database.Commit, 1) })
+		t.Run("rollback", func(t *testing.T) { assertLeakedTeardownSucceeds(t, sqliteDialect(), database.Rollback, 0) })
+	})
+	t.Run("postgres", func(t *testing.T) {
+		t.Run("commit", func(t *testing.T) { assertLeakedTeardownSucceeds(t, postgresDialect(), database.Commit, 1) })
+		t.Run("rollback", func(t *testing.T) { assertLeakedTeardownSucceeds(t, postgresDialect(), database.Rollback, 0) })
+	})
+}
+
+// assertLeakedTeardownSucceeds writes a row in a root transaction, leaves a
+// result set open, and ends the transaction with teardown: it must return
+// promptly, succeed, close the Tx, and leave wantRows rows behind.
+func assertLeakedTeardownSucceeds(t *testing.T, d dialect, teardown func(context.Context) error, wantRows int) {
+	t.Helper()
+	cleanTables(t, d.db)
+	q := stdlibadapter.New(d.db)
+
+	txCtx, err := database.NewTransaction(context.Background(), q, "leak")
+	if err != nil {
+		t.Fatalf("NewTransaction() error = %v", err)
 	}
+	tx := database.FromContext(txCtx)
 
-	tests := []struct {
-		name     string
-		teardown func(ctx context.Context) error
-	}{
-		{name: "commit", teardown: database.Commit},
-		{name: "rollback", teardown: database.Rollback},
+	if _, err := tx.Exec(txCtx, d.insert, "leak", "leak@example.com"); err != nil {
+		t.Fatalf("Exec() error = %v", err)
 	}
+	rows, err := tx.Query(txCtx, "SELECT id FROM test_users")
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	// Deliberately neither drained nor closed until the assertion is made:
+	// closing here hands the reservation back and the probe measures nothing.
+	defer func() { _ = rows.Close() }()
 
-	for _, b := range backends() {
-		for _, tt := range tests {
-			t.Run(b.name+"/"+tt.name, func(t *testing.T) {
-				cleanTables(t, b.db)
-				q := stdlibadapter.New(b.db)
+	done := make(chan error, 1)
+	go func() { done <- teardown(txCtx) }()
 
-				txCtx, err := database.NewTransaction(context.Background(), q, "leak")
-				if err != nil {
-					t.Fatalf("NewTransaction() error = %v", err)
-				}
-				tx := database.FromContext(txCtx)
-
-				if _, err := tx.Exec(txCtx, "INSERT INTO test_users (name, email) VALUES (?, ?)", "leak", "leak@example.com"); err != nil {
-					t.Fatalf("Exec() error = %v", err)
-				}
-				rows, err := tx.Query(txCtx, "SELECT id FROM test_users")
-				if err != nil {
-					t.Fatalf("Query() error = %v", err)
-				}
-				// Deliberately neither drained nor closed until the assertion
-				// is made: closing here hands the reservation back and the
-				// probe measures nothing.
-				defer func() { _ = rows.Close() }()
-
-				done := make(chan error, 1)
-				go func() { done <- tt.teardown(txCtx) }()
-
-				select {
-				case err := <-done:
-					// Whether the driver accepts a teardown over an open
-					// result set is its business; that it was *attempted*
-					// rather than waited on is the property under test.
-					t.Logf("%s() against a pinned connection = %v", tt.name, err)
-				case <-time.After(teardownBound):
-					t.Fatalf("%s() did not return within %s: a leaked result set stranded the connection (PRD §18.5)", tt.name, teardownBound)
-				}
-			})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("teardown against a pinned connection = %v, want nil", err)
 		}
+		if !tx.IsClosed() {
+			t.Error("IsClosed() = false after the teardown, want true")
+		}
+	case <-time.After(teardownBound):
+		t.Fatalf("teardown did not return within %s: a leaked result set stranded the connection", teardownBound)
+	}
+
+	_ = rows.Close()
+	if !tx.IsClosed() {
+		// A refused teardown leaves the transaction holding the connection,
+		// and SQLite's pool has only one.
+		_ = database.Rollback(txCtx)
+	}
+	if got := d.rows(t, "leak@example.com"); got != wantRows {
+		t.Errorf("rows after the teardown = %d, want %d", got, wantRows)
+	}
+}
+
+// TestDrainedResultSetReleasesTheConnection iterates a result set to
+// exhaustion without closing it and then issues another statement on the same
+// transaction. Exhaustion alone must give the connection back: the statement
+// runs at once instead of waiting on the reservation until its deadline.
+func TestDrainedResultSetReleasesTheConnection(t *testing.T) {
+	requireDocker(t)
+	t.Run("mysql", func(t *testing.T) { assertDrainReleases(t, mysqlDialect()) })
+	t.Run("sqlite", func(t *testing.T) { assertDrainReleases(t, sqliteDialect()) })
+	t.Run("postgres", func(t *testing.T) { assertDrainReleases(t, postgresDialect()) })
+}
+
+func assertDrainReleases(t *testing.T, d dialect) {
+	t.Helper()
+	cleanTables(t, d.db)
+	ctx := context.Background()
+	q := stdlibadapter.New(d.db)
+
+	txCtx, err := database.NewTransaction(ctx, q, "drain_release")
+	if err != nil {
+		t.Fatalf("NewTransaction() error = %v", err)
+	}
+	tx := database.FromContext(txCtx)
+
+	rows, err := tx.Query(txCtx, "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3")
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	var n int
+	for rows.Next() {
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Errorf("rows.Err() after draining = %v, want nil", err)
+	}
+	if n != 3 {
+		t.Errorf("drained %d rows, want 3", n)
+	}
+
+	stmtCtx, cancel := context.WithTimeout(txCtx, 2*time.Second)
+	defer cancel()
+	if _, err := tx.Exec(stmtCtx, d.insert, "drain", "drain@example.com"); err != nil {
+		t.Errorf("Exec() after draining without Close = %v, want nil: the drained result set still holds the connection", err)
+	}
+
+	_ = rows.Close()
+	if err := database.Rollback(txCtx); err != nil {
+		t.Errorf("Rollback() error = %v", err)
 	}
 }

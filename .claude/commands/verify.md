@@ -25,16 +25,29 @@ The two modes share most of the flow; only Step 1 (load spec) and Step 8 (loggin
 - Description (the bug summary and any expected-fix notes)
 - Use the origin phase to locate relevant PRD sections via `docs/tracker/IMPLEMENTATION_ORDER.md`
 
-### Step 2: Read the PRD sections
+### Step 2: Read the registry rows for the PRD sections
 
-Read each referenced PRD section from `docs/PRD.md`. Build a checklist of every concrete requirement:
+The checklist is the requirement registry (`docs/conformance/`, format in its `README.md`), not a fresh reading of the PRD prose. For each referenced PRD section:
+
+1. Find its anchor (`<!-- prd: N.X sha256: … -->`) in the registry file the ownership map in `docs/conformance/README.md` assigns it to. A deeper heading belongs to its nearest anchored ancestor.
+2. Take that anchor's rows as the checklist. Each row is one requirement, its tests, and the matrix cell it fills.
+3. Run `make req-check VERBOSE=1`. A changed PRD section under the anchor (hash mismatch) means the rows need review first; stop and report it.
+
+Each of these is a **FAIL**:
+- a row with no test (`untested`);
+- a test that fails, or skips without a capability message;
+- an empty matrix cell the sub-item touches.
+
+Read the PRD section too, but only to check that the rows cover it. A PRD behavior with no row is a missing row: report it as **UNTESTED**, and add the row in this verification if it is unambiguous. A test that pins behavior the PRD does not state is not a requirement: add no row for it. Record it in the module file's PRD gaps table (`docs/conformance/README.md` → Format) with an empty Ruling, and list it for the user, who rules `amend-prd` or `drop-pin`.
+
+If the owning file has no rows for the section yet (it is `not-started`, or `in-progress` without this section), build the checklist from the PRD prose as before, and note the missing rows in the report:
 - Types, functions, methods, interfaces that must exist
 - Specific behavior (edge cases, error handling, return values)
 - Dialect-specific behavior (if applicable)
 - Config fields and defaults
 - Validation rules
 
-For fix mode, the "checklist" is narrower — focus on the behavior the fix is supposed to restore or correct.
+For fix mode, the "checklist" is narrower: the rows for the behavior the fix is supposed to restore or correct.
 
 ### Step 3: Read the implementation
 
@@ -105,7 +118,7 @@ For both modes, after the parent's own cross-reference is complete, launch the `
 Agent(
   subagent_type: "sqlgen-reviewer",
   description: "Independent review of {ID}",
-  prompt: "Provide an independent review of {sub-item N.X | FIX-NNN}. Files changed (from `git diff --name-only HEAD~1..HEAD` if recently committed, or `git diff --name-only HEAD` if uncommitted):\n\n{file list}\n\nThe diff is your primary scope, but explore (~10-15 files max) for regression risks. Report findings only — do not modify files or log fixes. Confirm or refute the parent's preliminary findings: {paste short summary of parent's PASS/FAIL findings}."
+  prompt: "Provide an independent review of {sub-item N.X | FIX-NNN}. Files changed (from `git diff --name-only HEAD~1..HEAD` if recently committed, or `git diff --name-only HEAD` if uncommitted):\n\n{file list}\n\nThe diff is your primary scope, but explore (~10-15 files max) for regression risks. Report findings only — do not modify files or log fixes. For each registry row the sub-item touches ({row IDs}), judge whether its tests actually exercise the requirement as worded. Confirm or refute the parent's preliminary findings: {paste short summary of parent's PASS/FAIL findings}."
 )
 ```
 

@@ -237,17 +237,27 @@ func sortedPairs(m map[string]string) []pair {
 	return pairs
 }
 
-// fkCell renders a relationship's foreign-key column for the relationships table:
-// "[schema.]table.column" for FK-backed edges, "[schema.]table (local_fk →
-// target_fk)" for M2M junctions, empty when neither is present.
+// fkCell renders a relationship's foreign-key columns for the relationships
+// table: "[schema.]table.column" for FK-backed edges, "[schema.]table
+// (local_fk → target_fk)" for M2M junctions, empty when neither is present. A
+// key of several columns is parenthesized: "table.(a, b)".
 func fkCell(r Relationship) string {
 	if r.Junction != nil {
-		return fmt.Sprintf("%s (%s → %s)", qualifiedTable(r.Junction.Schema, r.Junction.Table), r.Junction.LocalFK, r.Junction.TargetFK)
+		return fmt.Sprintf("%s (%s → %s)", qualifiedTable(r.Junction.Schema, r.Junction.Table), keyColumnsCell(r.Junction.LocalFK.Columns), keyColumnsCell(r.Junction.TargetFK.Columns))
 	}
 	if r.FK != nil {
-		return qualifiedTable(r.FK.Schema, r.FK.Table) + "." + r.FK.Column
+		return qualifiedTable(r.FK.Schema, r.FK.Table) + "." + keyColumnsCell(r.FK.Columns)
 	}
 	return ""
+}
+
+// keyColumnsCell spells a key's columns: the bare column for one, a
+// parenthesized list for several.
+func keyColumnsCell(cols []string) string {
+	if len(cols) == 1 {
+		return cols[0]
+	}
+	return "(" + strings.Join(cols, ", ") + ")"
 }
 
 // qualifiedTable prefixes table with its schema when one is set — the spelling

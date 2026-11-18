@@ -31,7 +31,7 @@ func mapMySQLError(err error) (bool, error) {
 			Detail:     mysqlErr.Message,
 			Err:        err,
 		}
-	case 1048: // ER_BAD_NULL_ERROR → not null violation
+	case 1048, 1364: // ER_BAD_NULL_ERROR / ER_NO_DEFAULT_FOR_FIELD → not null violation
 		return true, &database.ConstraintError{
 			Type:   database.ConstraintNotNull,
 			Column: parseMySQLColumn(mysqlErr.Message),
@@ -47,7 +47,7 @@ func mapMySQLError(err error) (bool, error) {
 		}
 	case 1213: // ER_LOCK_DEADLOCK
 		return true, fmt.Errorf("%w: %w", database.ErrDeadlock, err)
-	case 2002, 2006, 1040: // connection errors
+	case 1040: // ER_CON_COUNT_ERROR: too many connections
 		return true, fmt.Errorf("%w: %w", database.ErrConnectionFailed, err)
 	default:
 		return false, err
@@ -87,9 +87,13 @@ func parseMySQLConstraint(msg string) string {
 }
 
 // parseMySQLColumn extracts the column name from MySQL error messages.
-// Supports not-null violation (1048) format: "Column 'COLUMN' cannot be null"
+// Supports the not-null violation formats: 1048 "Column 'COLUMN' cannot be null"
+// and 1364 "Field 'COLUMN' doesn't have a default value".
 func parseMySQLColumn(msg string) string {
 	after, found := strings.CutPrefix(msg, "Column '")
+	if !found {
+		after, found = strings.CutPrefix(msg, "Field '")
+	}
 	if !found {
 		return ""
 	}

@@ -145,3 +145,10 @@ Type `WorkspaceLineTotalFilter`.
 Type `WorkspaceLineTotalSort`.
 
 Fields: LineCount, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.WorkspaceLineTotal().Get(ctx, uuid.NewV4())
+rows, err := client.WorkspaceLineTotal().GetMany(ctx, &models.GetWorkspaceLineTotalsInput{Filter: &models.WorkspaceLineTotalFilter{LineCount: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```

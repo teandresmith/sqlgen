@@ -1,0 +1,624 @@
+{
+  "kind": "table",
+  "name": "Label",
+  "table": "labels",
+  "schema": "public",
+  "file_prefix": "label",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "labels_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    },
+    {
+      "name": "labels_workspace_id_id_key",
+      "columns": [
+        "workspace_id",
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "int64"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:label:{id}",
+      "invalidates_on": [
+        "Update",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "LabelCreated",
+        "LabelDeleted",
+        "LabelUpdated"
+      ],
+      "payload_shape": "models.LabelEvent"
+    },
+    "tenancy": {
+      "column": "workspace_id",
+      "mode": "auto-filter",
+      "missing_resolver_error": "tenancy.ErrMissing",
+      "mismatch_error": "tenancy.ErrMismatch"
+    }
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "auto": "insert",
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "workspace_id",
+      "go_field": "WorkspaceID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "name",
+      "go_field": "Name",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "tasks",
+      "kind": "m2m",
+      "target_entity": "Task",
+      "junction": {
+        "table": "task_labels",
+        "schema": "public",
+        "local_fk": {
+          "columns": [
+            "workspace_id",
+            "label_id"
+          ],
+          "references": [
+            "workspace_id",
+            "id"
+          ],
+          "constraint": "task_labels_workspace_id_label_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "workspace_id",
+            "task_id"
+          ],
+          "references": [
+            "workspace_id",
+            "id"
+          ],
+          "constraint": "task_labels_workspace_id_task_id_fkey"
+        }
+      }
+    },
+    {
+      "name": "templates",
+      "kind": "m2m",
+      "target_entity": "Template",
+      "junction": {
+        "table": "template_labels",
+        "schema": "public",
+        "local_fk": {
+          "columns": [
+            "workspace_id",
+            "label_id"
+          ],
+          "references": [
+            "workspace_id",
+            "id"
+          ],
+          "constraint": "template_labels_workspace_id_label_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "workspace_id",
+            "template_id"
+          ],
+          "references": [
+            "owner_workspace",
+            "id"
+          ],
+          "constraint": "template_labels_workspace_id_template_id_fkey"
+        }
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "*Label",
+        "errors": [
+          "ErrNotFound",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"name\", \"workspace_id\" FROM \"public\".\"labels\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetLabelsInput"
+          }
+        ],
+        "returns": "[]*Label",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"name\", \"workspace_id\" FROM \"public\".\"labels\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "bool",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"labels\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*LabelFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"labels\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*LabelFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"labels\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[LabelFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Label]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[LabelFilter]"
+          }
+        ],
+        "returns": "*Connection[Label]",
+        "errors": [
+          "ErrInvalidCursor",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamLabelsInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Label, error]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"name\", \"workspace_id\" FROM \"public\".\"labels\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateLabelInput"
+          }
+        ],
+        "returns": "*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"labels\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateLabelInput"
+          }
+        ],
+        "returns": "[]*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"labels\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateLabelInput"
+          }
+        ],
+        "returns": "*Label",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"labels\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateLabelItem"
+          }
+        ],
+        "returns": "[]*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"labels\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*LabelFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateLabelInput"
+          }
+        ],
+        "returns": "[]*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"labels\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateLabelInput"
+          },
+          {
+            "name": "target",
+            "type": "LabelConflictTarget"
+          }
+        ],
+        "returns": "*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "One method over the generated LabelConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateLabelInput"
+          },
+          {
+            "name": "target",
+            "type": "LabelConflictTarget"
+          }
+        ],
+        "returns": "[]*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same LabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateLabelWithRelatedInput"
+          }
+        ],
+        "returns": "*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Tasks, Templates), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateLabelWithRelatedInput"
+          }
+        ],
+        "returns": "*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Tasks, Templates), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertLabelWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "LabelConflictTarget"
+          }
+        ],
+        "returns": "*Label",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Tasks, Templates), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"labels\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]int64"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"labels\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*LabelFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"labels\" WHERE <filter> RETURNING \"id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "LabelFilter",
+    "fields": [
+      {
+        "name": "ID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "Name",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "WorkspaceID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*LabelFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*LabelFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "LabelSort",
+    "fields": [
+      "ID",
+      "Name",
+      "WorkspaceID"
+    ]
+  },
+  "examples": {
+    "read": [
+      "row, err := client.Labels().Get(ctx, 1)",
+      "rows, err := client.Labels().GetMany(ctx, &models.GetLabelsInput{Filter: &models.LabelFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Labels().Create(ctx, &models.CreateLabelInput{Name: \"example\"})",
+      "updated, err := client.Labels().Update(ctx, 1, &models.UpdateLabelInput{WorkspaceID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
+}

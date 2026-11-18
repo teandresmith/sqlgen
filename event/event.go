@@ -36,8 +36,8 @@ type Event struct {
 
 // Config holds runtime configuration for event publishing.
 type Config struct {
-	// OnError is called when PublishBatch fails. Mutation always succeeds —
-	// publish failure is never propagated to the caller.
+	// OnError is called when PublishBatch returns an error or panics. Mutation
+	// always succeeds — publish failure is never propagated to the caller.
 	// When nil, defaults to logging to stderr via log.Printf.
 	OnError func(ctx context.Context, events []Event, err error)
 

@@ -183,8 +183,9 @@ func TestMergeInvalidJSONFailsWithoutOverwrite(t *testing.T) {
 	if err == nil {
 		t.Fatal("Merge() on invalid JSON: expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), ".mcp.json:") || !strings.Contains(err.Error(), "refusing to overwrite") {
-		t.Errorf("Merge() error = %q, want line/col reference and refusing-to-overwrite text", err)
+	// The truncated document ends after its second newline: line 3, column 1.
+	if !strings.HasPrefix(err.Error(), "parse .mcp.json:3:1: ") || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Errorf("Merge() error = %q, want prefix %q and refusing-to-overwrite text", err, "parse .mcp.json:3:1: ")
 	}
 	raw, readErr := os.ReadFile(filepath.Join(root, ".mcp.json")) //nolint:gosec // test helper, path is controlled
 	if readErr != nil {

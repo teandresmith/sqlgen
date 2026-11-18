@@ -8,7 +8,9 @@ import (
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
+	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/sql"
+	"github.com/teandresmith/sqlgen/types"
 )
 
 // Per-table query and mutation methods on *Q and *M. The
@@ -19,8 +21,9 @@ import (
 //
 // Q/M methods take model-side types only — that breaks the cycle that would
 // otherwise form between this sub-package and graph (graph's gqlgen-generated
-// input types depend on graph's package; seed-side translation maps them
-// onto these methods' model-shape parameters).
+// input types depend on graph's package; the graph package's regenerated
+// translators map them onto these methods' parameters, an update input onto
+// the Update<T>Request this package declares).
 
 // Q is the query helper struct for sqlgen-managed Query.* fields.
 type Q struct {
@@ -40,8 +43,8 @@ type IncrementOp[T comparable] struct {
 }
 
 // InvalidInputError builds a gqlerror.Error tagged with INVALID_INPUT for
-// runtime conflict checks on input operators. Exported so
-// seed files in the parent graph package can call it directly.
+// runtime conflict checks on input operators. Exported so the input
+// translators in the parent graph package can call it directly.
 func InvalidInputError(msg string) error {
 	return &gqlerror.Error{
 		Message:    msg,
@@ -146,14 +149,26 @@ func (m *M) CreateArticles(ctx context.Context, inputs []*models.CreateArticleIn
 	return res, nil
 }
 
+// UpdateArticleRequest is one updateArticle /
+// updateArticles input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateArticleRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateArticleInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateArticle resolves the single-row update mutation for articles.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateArticle(ctx context.Context, id int, setIn *models.UpdateArticleInput, hasSet bool) (*models.Article, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateArticle(ctx context.Context, id int, input UpdateArticleRequest) (*models.Article, error) {
 	fo := articleFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Articles().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.ArticleFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Articles().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.ArticleFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ArticleFieldOptions](ctx) {
 				f(o)
 			}
@@ -161,7 +176,13 @@ func (m *M) UpdateArticle(ctx context.Context, id int, setIn *models.UpdateArtic
 			return nil, mapErrorToGQL(err)
 		}
 	}
-	res, err := m.Client.Articles().Get(ctx, int64(id), func(o *models.CallOptions[models.ArticleFieldOptions]) {
+	// The row is read back whether or not it is soft-deleted: the set fields
+	// may have soft-deleted it, and Get would then report it missing.
+	keys := []int64{int64(id)}
+	rows, err := m.Client.Articles().GetMany(ctx, &models.GetArticlesInput{
+		Filter: &models.ArticleFilter{ID: &comparator.Number[int64]{In: keys}, DeletedAt: &comparator.NullableTime{}},
+		Limit:  new(1),
+	}, func(o *models.CallOptions[models.ArticleFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.ArticleFieldOptions](ctx) {
 			f(o)
@@ -170,15 +191,18 @@ func (m *M) UpdateArticle(ctx context.Context, id int, setIn *models.UpdateArtic
 	if err != nil {
 		return nil, mapErrorToGQL(err)
 	}
-	return res, nil
+	if len(rows) == 0 {
+		return nil, mapErrorToGQL(models.ErrNotFound)
+	}
+	return rows[0], nil
 }
 
 // UpdateArticles resolves the bulk update-where mutation for articles.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateArticles(ctx context.Context, filter *models.ArticleFilter, setIn *models.UpdateArticleInput) ([]*models.Article, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateArticles(ctx context.Context, filter *models.ArticleFilter, input UpdateArticleRequest) ([]*models.Article, error) {
 	fo := articleFieldOptionsFromContext(ctx)
-	res, err := m.Client.Articles().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ArticleFieldOptions]) {
+	res, err := m.Client.Articles().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ArticleFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.ArticleFieldOptions](ctx) {
 			f(o)
@@ -206,16 +230,15 @@ func (m *M) UpsertArticle(ctx context.Context, input *models.CreateArticleInput)
 }
 
 // HardDeleteArticle resolves the explicit hard-delete mutation
-// when both delete variants are enabled. Returns Boolean!.
+// when both delete variants are enabled. Returns Boolean!: true whenever the
+// delete ran without error, whether or not the row existed — the client's
+// HardDelete is idempotent.
 func (m *M) HardDeleteArticle(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Articles().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.ArticleFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.ArticleFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -355,14 +378,26 @@ func (m *M) CreateAssets(ctx context.Context, inputs []*models.CreateAssetInput)
 	return res, nil
 }
 
+// UpdateAssetRequest is one updateAsset /
+// updateAssets input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateAssetRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateAssetInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateAsset resolves the single-row update mutation for assets.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateAsset(ctx context.Context, id int, setIn *models.UpdateAssetInput, hasSet bool) (*models.Asset, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateAsset(ctx context.Context, id int, input UpdateAssetRequest) (*models.Asset, error) {
 	fo := assetFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Assets().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.AssetFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Assets().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.AssetFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.AssetFieldOptions](ctx) {
 				f(o)
 			}
@@ -383,11 +418,11 @@ func (m *M) UpdateAsset(ctx context.Context, id int, setIn *models.UpdateAssetIn
 }
 
 // UpdateAssets resolves the bulk update-where mutation for assets.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateAssets(ctx context.Context, filter *models.AssetFilter, setIn *models.UpdateAssetInput) ([]*models.Asset, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateAssets(ctx context.Context, filter *models.AssetFilter, input UpdateAssetRequest) ([]*models.Asset, error) {
 	fo := assetFieldOptionsFromContext(ctx)
-	res, err := m.Client.Assets().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.AssetFieldOptions]) {
+	res, err := m.Client.Assets().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.AssetFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.AssetFieldOptions](ctx) {
 			f(o)
@@ -415,16 +450,15 @@ func (m *M) UpsertAsset(ctx context.Context, input *models.CreateAssetInput) (*m
 }
 
 // DeleteAsset resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteAsset(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Assets().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.AssetFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.AssetFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -543,16 +577,564 @@ func (m *M) UpsertAssetDocumentLink(ctx context.Context, input *models.CreateAss
 }
 
 // DeleteAssetDocumentLink resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteAssetDocumentLink(ctx context.Context, assetID int, documentID int) (bool, error) {
 	if err := m.Client.AssetDocumentLinks().HardDelete(ctx, models.AssetDocumentLinkPK{AssetID: int64(assetID), DocumentID: int64(documentID)}, func(o *models.CallOptions[models.AssetDocumentLinkFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.AssetDocumentLinkFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// Badge resolves the single-by-PK query for badges.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) Badge(ctx context.Context, code string) (*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.Badges().Get(ctx, code, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
 		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// Badges resolves the cursor-paginated Connection query for badges.
+func (q *Q) Badges(ctx context.Context, filter *models.BadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Badge], error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.Badges().Connection(ctx, models.ConnectionInput[models.BadgeFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BadgeList resolves the offset-paginated ListResult query for badges.
+func (q *Q) BadgeList(ctx context.Context, filter *models.BadgeFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.Badge], error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BadgeFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.Badges().Paginate(ctx, in, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBadge resolves the single-row create mutation for badges.
+func (m *M) CreateBadge(ctx context.Context, input *models.CreateBadgeInput) (*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.Badges().Create(ctx, input, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBadges resolves the bulk create mutation for badges.
+func (m *M) CreateBadges(ctx context.Context, inputs []*models.CreateBadgeInput) ([]*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.Badges().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBadgeRequest is one updateBadge /
+// updateBadges input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBadgeRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBadgeInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBadge resolves the single-row update mutation for badges.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBadge(ctx context.Context, code string, input UpdateBadgeRequest) (*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.Badges().Update(ctx, code, input.Set, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.Badges().Get(ctx, code, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBadges resolves the bulk update-where mutation for badges.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBadges(ctx context.Context, filter *models.BadgeFilter, input UpdateBadgeRequest) ([]*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.Badges().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBadge resolves the single-row upsert mutation for badges.
+func (m *M) UpsertBadge(ctx context.Context, input *models.CreateBadgeInput) (*models.Badge, error) {
+	fo := badgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.Badges().Upsert(ctx, input, models.BadgeConflictPK, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBadge resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBadge(ctx context.Context, code string) (bool, error) {
+	if err := m.Client.Badges().HardDelete(ctx, code, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// Bin resolves the single-by-PK query for bins.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) Bin(ctx context.Context, aisle string, slot int) (*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := q.Client.Bins().Get(ctx, models.BinPK{Aisle: aisle, Slot: int64(slot)}, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// Bins resolves the cursor-paginated Connection query for bins.
+func (q *Q) Bins(ctx context.Context, filter *models.BinFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Bin], error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := q.Client.Bins().Connection(ctx, models.ConnectionInput[models.BinFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinList resolves the offset-paginated ListResult query for bins.
+func (q *Q) BinList(ctx context.Context, filter *models.BinFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.Bin], error) {
+	fo := binFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BinFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.Bins().Paginate(ctx, in, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBin resolves the single-row create mutation for bins.
+func (m *M) CreateBin(ctx context.Context, input *models.CreateBinInput) (*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := m.Client.Bins().Create(ctx, input, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBins resolves the bulk create mutation for bins.
+func (m *M) CreateBins(ctx context.Context, inputs []*models.CreateBinInput) ([]*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := m.Client.Bins().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBinRequest is one updateBin /
+// updateBins input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBinRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBinInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBin resolves the single-row update mutation for bins.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBin(ctx context.Context, aisle string, slot int, input UpdateBinRequest) (*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.Bins().Update(ctx, models.BinPK{Aisle: aisle, Slot: int64(slot)}, input.Set, func(o *models.CallOptions[models.BinFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.Bins().Get(ctx, models.BinPK{Aisle: aisle, Slot: int64(slot)}, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBins resolves the bulk update-where mutation for bins.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBins(ctx context.Context, filter *models.BinFilter, input UpdateBinRequest) ([]*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := m.Client.Bins().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBin resolves the single-row upsert mutation for bins.
+func (m *M) UpsertBin(ctx context.Context, input *models.CreateBinInput) (*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := m.Client.Bins().Upsert(ctx, input, models.BinConflictPK, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBin resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBin(ctx context.Context, aisle string, slot int) (bool, error) {
+	if err := m.Client.Bins().HardDelete(ctx, models.BinPK{Aisle: aisle, Slot: int64(slot)}, func(o *models.CallOptions[models.BinFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// BinItem resolves the single-by-PK query for bin_items.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) BinItem(ctx context.Context, id int) (*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := q.Client.BinItems().Get(ctx, int64(id), func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinItems resolves the cursor-paginated Connection query for bin_items.
+func (q *Q) BinItems(ctx context.Context, filter *models.BinItemFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BinItem], error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := q.Client.BinItems().Connection(ctx, models.ConnectionInput[models.BinItemFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinItemList resolves the offset-paginated ListResult query for bin_items.
+func (q *Q) BinItemList(ctx context.Context, filter *models.BinItemFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.BinItem], error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BinItemFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.BinItems().Paginate(ctx, in, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBinItem resolves the single-row create mutation for bin_items.
+func (m *M) CreateBinItem(ctx context.Context, input *models.CreateBinItemInput) (*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinItems().Create(ctx, input, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBinItems resolves the bulk create mutation for bin_items.
+func (m *M) CreateBinItems(ctx context.Context, inputs []*models.CreateBinItemInput) ([]*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinItems().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBinItemRequest is one updateBinItem /
+// updateBinItems input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBinItemRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBinItemInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBinItem resolves the single-row update mutation for bin_items.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBinItem(ctx context.Context, id int, input UpdateBinItemRequest) (*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.BinItems().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.BinItems().Get(ctx, int64(id), func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBinItems resolves the bulk update-where mutation for bin_items.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBinItems(ctx context.Context, filter *models.BinItemFilter, input UpdateBinItemRequest) ([]*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinItems().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBinItem resolves the single-row upsert mutation for bin_items.
+func (m *M) UpsertBinItem(ctx context.Context, input *models.CreateBinItemInput) (*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinItems().Upsert(ctx, input, models.BinItemConflictPK, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBinItem resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBinItem(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.BinItems().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -655,14 +1237,26 @@ func (m *M) CreateBinaryKeys(ctx context.Context, inputs []*models.CreateBinaryK
 	return res, nil
 }
 
+// UpdateBinaryKeyRequest is one updateBinaryKey /
+// updateBinaryKeys input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBinaryKeyRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBinaryKeyInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateBinaryKey resolves the single-row update mutation for binary_keys.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateBinaryKey(ctx context.Context, id []byte, setIn *models.UpdateBinaryKeyInput, hasSet bool) (*models.BinaryKey, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBinaryKey(ctx context.Context, id []byte, input UpdateBinaryKeyRequest) (*models.BinaryKey, error) {
 	fo := binaryKeyFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.BinaryKeys().Update(ctx, id, setIn, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.BinaryKeys().Update(ctx, id, input.Set, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.BinaryKeyFieldOptions](ctx) {
 				f(o)
 			}
@@ -683,11 +1277,11 @@ func (m *M) UpdateBinaryKey(ctx context.Context, id []byte, setIn *models.Update
 }
 
 // UpdateBinaryKeys resolves the bulk update-where mutation for binary_keys.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateBinaryKeys(ctx context.Context, filter *models.BinaryKeyFilter, setIn *models.UpdateBinaryKeyInput) ([]*models.BinaryKey, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBinaryKeys(ctx context.Context, filter *models.BinaryKeyFilter, input UpdateBinaryKeyRequest) ([]*models.BinaryKey, error) {
 	fo := binaryKeyFieldOptionsFromContext(ctx)
-	res, err := m.Client.BinaryKeys().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
+	res, err := m.Client.BinaryKeys().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.BinaryKeyFieldOptions](ctx) {
 			f(o)
@@ -715,16 +1309,142 @@ func (m *M) UpsertBinaryKey(ctx context.Context, input *models.CreateBinaryKeyIn
 }
 
 // DeleteBinaryKey resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteBinaryKey(ctx context.Context, id []byte) (bool, error) {
 	if err := m.Client.BinaryKeys().HardDelete(ctx, id, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.BinaryKeyFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// BinaryKeyBadge resolves the single-by-PK query for binary_key_badges.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) BinaryKeyBadge(ctx context.Context, binaryKeyID []byte, badgeCode string) (*models.BinaryKeyBadge, error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.BinaryKeyBadges().Get(ctx, models.BinaryKeyBadgePK{BinaryKeyID: binaryKeyID, BadgeCode: badgeCode}, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
 		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinaryKeyBadges resolves the cursor-paginated Connection query for binary_key_badges.
+func (q *Q) BinaryKeyBadges(ctx context.Context, filter *models.BinaryKeyBadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BinaryKeyBadge], error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.BinaryKeyBadges().Connection(ctx, models.ConnectionInput[models.BinaryKeyBadgeFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinaryKeyBadgeList resolves the offset-paginated ListResult query for binary_key_badges.
+func (q *Q) BinaryKeyBadgeList(ctx context.Context, filter *models.BinaryKeyBadgeFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.BinaryKeyBadge], error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BinaryKeyBadgeFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.BinaryKeyBadges().Paginate(ctx, in, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBinaryKeyBadge resolves the single-row create mutation for binary_key_badges.
+func (m *M) CreateBinaryKeyBadge(ctx context.Context, input *models.CreateBinaryKeyBadgeInput) (*models.BinaryKeyBadge, error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinaryKeyBadges().Create(ctx, input, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBinaryKeyBadges resolves the bulk create mutation for binary_key_badges.
+func (m *M) CreateBinaryKeyBadges(ctx context.Context, inputs []*models.CreateBinaryKeyBadgeInput) ([]*models.BinaryKeyBadge, error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinaryKeyBadges().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBinaryKeyBadge resolves the single-row upsert mutation for binary_key_badges.
+func (m *M) UpsertBinaryKeyBadge(ctx context.Context, input *models.CreateBinaryKeyBadgeInput) (*models.BinaryKeyBadge, error) {
+	fo := binaryKeyBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinaryKeyBadges().Upsert(ctx, input, models.BinaryKeyBadgeConflictPK, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBinaryKeyBadge resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBinaryKeyBadge(ctx context.Context, binaryKeyID []byte, badgeCode string) (bool, error) {
+	if err := m.Client.BinaryKeyBadges().HardDelete(ctx, models.BinaryKeyBadgePK{BinaryKeyID: binaryKeyID, BadgeCode: badgeCode}, func(o *models.CallOptions[models.BinaryKeyBadgeFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BinaryKeyBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -827,14 +1547,26 @@ func (m *M) CreateBinaryKeyEvents(ctx context.Context, inputs []*models.CreateBi
 	return res, nil
 }
 
+// UpdateBinaryKeyEventRequest is one updateBinaryKeyEvent /
+// updateBinaryKeyEvents input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBinaryKeyEventRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBinaryKeyEventInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateBinaryKeyEvent resolves the single-row update mutation for binary_key_events.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateBinaryKeyEvent(ctx context.Context, id int, setIn *models.UpdateBinaryKeyEventInput, hasSet bool) (*models.BinaryKeyEvent, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBinaryKeyEvent(ctx context.Context, id int, input UpdateBinaryKeyEventRequest) (*models.BinaryKeyEvent, error) {
 	fo := binaryKeyEventFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.BinaryKeyEvents().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.BinaryKeyEvents().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.BinaryKeyEventFieldOptions](ctx) {
 				f(o)
 			}
@@ -855,11 +1587,11 @@ func (m *M) UpdateBinaryKeyEvent(ctx context.Context, id int, setIn *models.Upda
 }
 
 // UpdateBinaryKeyEvents resolves the bulk update-where mutation for binary_key_events.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateBinaryKeyEvents(ctx context.Context, filter *models.BinaryKeyEventFilter, setIn *models.UpdateBinaryKeyEventInput) ([]*models.BinaryKeyEvent, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBinaryKeyEvents(ctx context.Context, filter *models.BinaryKeyEventFilter, input UpdateBinaryKeyEventRequest) ([]*models.BinaryKeyEvent, error) {
 	fo := binaryKeyEventFieldOptionsFromContext(ctx)
-	res, err := m.Client.BinaryKeyEvents().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
+	res, err := m.Client.BinaryKeyEvents().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.BinaryKeyEventFieldOptions](ctx) {
 			f(o)
@@ -887,16 +1619,381 @@ func (m *M) UpsertBinaryKeyEvent(ctx context.Context, input *models.CreateBinary
 }
 
 // DeleteBinaryKeyEvent resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteBinaryKeyEvent(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.BinaryKeyEvents().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.BinaryKeyEventFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// BoolKeyed resolves the single-by-PK query for bool_keyed.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) BoolKeyed(ctx context.Context, k bool) (*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := q.Client.BoolKeyeds().Get(ctx, k, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
 		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BoolKeyeds resolves the cursor-paginated Connection query for bool_keyed.
+func (q *Q) BoolKeyeds(ctx context.Context, filter *models.BoolKeyedFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BoolKeyed], error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := q.Client.BoolKeyeds().Connection(ctx, models.ConnectionInput[models.BoolKeyedFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BoolKeyedList resolves the offset-paginated ListResult query for bool_keyed.
+func (q *Q) BoolKeyedList(ctx context.Context, filter *models.BoolKeyedFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.BoolKeyed], error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BoolKeyedFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.BoolKeyeds().Paginate(ctx, in, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBoolKeyed resolves the single-row create mutation for bool_keyed.
+func (m *M) CreateBoolKeyed(ctx context.Context, input *models.CreateBoolKeyedInput) (*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyeds().Create(ctx, input, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBoolKeyeds resolves the bulk create mutation for bool_keyed.
+func (m *M) CreateBoolKeyeds(ctx context.Context, inputs []*models.CreateBoolKeyedInput) ([]*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyeds().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBoolKeyedRequest is one updateBoolKeyed /
+// updateBoolKeyeds input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBoolKeyedRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBoolKeyedInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBoolKeyed resolves the single-row update mutation for bool_keyed.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBoolKeyed(ctx context.Context, k bool, input UpdateBoolKeyedRequest) (*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.BoolKeyeds().Update(ctx, k, input.Set, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.BoolKeyeds().Get(ctx, k, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBoolKeyeds resolves the bulk update-where mutation for bool_keyed.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBoolKeyeds(ctx context.Context, filter *models.BoolKeyedFilter, input UpdateBoolKeyedRequest) ([]*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyeds().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBoolKeyed resolves the single-row upsert mutation for bool_keyed.
+func (m *M) UpsertBoolKeyed(ctx context.Context, input *models.CreateBoolKeyedInput) (*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyeds().Upsert(ctx, input, models.BoolKeyedConflictPK, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBoolKeyed resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBoolKeyed(ctx context.Context, k bool) (bool, error) {
+	if err := m.Client.BoolKeyeds().HardDelete(ctx, k, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// BoolKeyedNote resolves the single-by-PK query for bool_keyed_notes.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) BoolKeyedNote(ctx context.Context, id int) (*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := q.Client.BoolKeyedNotes().Get(ctx, int64(id), func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BoolKeyedNotes resolves the cursor-paginated Connection query for bool_keyed_notes.
+func (q *Q) BoolKeyedNotes(ctx context.Context, filter *models.BoolKeyedNoteFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BoolKeyedNote], error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := q.Client.BoolKeyedNotes().Connection(ctx, models.ConnectionInput[models.BoolKeyedNoteFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BoolKeyedNoteList resolves the offset-paginated ListResult query for bool_keyed_notes.
+func (q *Q) BoolKeyedNoteList(ctx context.Context, filter *models.BoolKeyedNoteFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.BoolKeyedNote], error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BoolKeyedNoteFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.BoolKeyedNotes().Paginate(ctx, in, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBoolKeyedNote resolves the single-row create mutation for bool_keyed_notes.
+func (m *M) CreateBoolKeyedNote(ctx context.Context, input *models.CreateBoolKeyedNoteInput) (*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyedNotes().Create(ctx, input, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBoolKeyedNotes resolves the bulk create mutation for bool_keyed_notes.
+func (m *M) CreateBoolKeyedNotes(ctx context.Context, inputs []*models.CreateBoolKeyedNoteInput) ([]*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyedNotes().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBoolKeyedNoteRequest is one updateBoolKeyedNote /
+// updateBoolKeyedNotes input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBoolKeyedNoteRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBoolKeyedNoteInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBoolKeyedNote resolves the single-row update mutation for bool_keyed_notes.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBoolKeyedNote(ctx context.Context, id int, input UpdateBoolKeyedNoteRequest) (*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.BoolKeyedNotes().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.BoolKeyedNotes().Get(ctx, int64(id), func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBoolKeyedNotes resolves the bulk update-where mutation for bool_keyed_notes.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBoolKeyedNotes(ctx context.Context, filter *models.BoolKeyedNoteFilter, input UpdateBoolKeyedNoteRequest) ([]*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyedNotes().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBoolKeyedNote resolves the single-row upsert mutation for bool_keyed_notes.
+func (m *M) UpsertBoolKeyedNote(ctx context.Context, input *models.CreateBoolKeyedNoteInput) (*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyedNotes().Upsert(ctx, input, models.BoolKeyedNoteConflictPK, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBoolKeyedNote resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBoolKeyedNote(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.BoolKeyedNotes().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -999,14 +2096,26 @@ func (m *M) CreateCategories(ctx context.Context, inputs []*models.CreateCategor
 	return res, nil
 }
 
+// UpdateCategoryRequest is one updateCategory /
+// updateCategories input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateCategoryRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateCategoryInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateCategory resolves the single-row update mutation for categories.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateCategory(ctx context.Context, id int, setIn *models.UpdateCategoryInput, hasSet bool) (*models.Category, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateCategory(ctx context.Context, id int, input UpdateCategoryRequest) (*models.Category, error) {
 	fo := categoryFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Categories().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.CategoryFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Categories().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.CategoryFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.CategoryFieldOptions](ctx) {
 				f(o)
 			}
@@ -1027,11 +2136,11 @@ func (m *M) UpdateCategory(ctx context.Context, id int, setIn *models.UpdateCate
 }
 
 // UpdateCategories resolves the bulk update-where mutation for categories.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateCategories(ctx context.Context, filter *models.CategoryFilter, setIn *models.UpdateCategoryInput) ([]*models.Category, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateCategories(ctx context.Context, filter *models.CategoryFilter, input UpdateCategoryRequest) ([]*models.Category, error) {
 	fo := categoryFieldOptionsFromContext(ctx)
-	res, err := m.Client.Categories().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.CategoryFieldOptions]) {
+	res, err := m.Client.Categories().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.CategoryFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.CategoryFieldOptions](ctx) {
 			f(o)
@@ -1059,16 +2168,15 @@ func (m *M) UpsertCategory(ctx context.Context, input *models.CreateCategoryInpu
 }
 
 // DeleteCategory resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteCategory(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Categories().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.CategoryFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.CategoryFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -1196,16 +2304,75 @@ func (m *M) CreateDigitLeadingColumns(ctx context.Context, inputs []*models.Crea
 	return res, nil
 }
 
+// UpdateDigitLeadingColumnRequest is one updateDigitLeadingColumn /
+// updateDigitLeadingColumns input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateDigitLeadingColumnRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateDigitLeadingColumnInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet            bool
+	Col2010RevenueInc *int
+	Col2010RevenueDec *int
+	Col2024QuotaInc   *int
+	Col2024QuotaDec   *int
+}
+
 // UpdateDigitLeadingColumn resolves the single-row update mutation for digit_leading_columns.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
-// post-dispatch state.
-func (m *M) UpdateDigitLeadingColumn(ctx context.Context, id int, setIn *models.UpdateDigitLeadingColumnInput, hasSet bool, incOps []IncrementOp[models.DigitLeadingColumnIncrementColumn]) (*models.DigitLeadingColumn, error) {
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
+func (m *M) UpdateDigitLeadingColumn(ctx context.Context, id int, input UpdateDigitLeadingColumnRequest) (*models.DigitLeadingColumn, error) {
+	if input.Set.Col2010Revenue.IsSet() && input.Col2010RevenueInc != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Col2010Revenue.IsSet() && input.Col2010RevenueDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both set and decremented in one mutation")
+	}
+	if input.Col2010RevenueInc != nil && input.Col2010RevenueDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Col2024Quota.IsSet() && input.Col2024QuotaInc != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Col2024Quota.IsSet() && input.Col2024QuotaDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both set and decremented in one mutation")
+	}
+	if input.Col2024QuotaInc != nil && input.Col2024QuotaDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.DigitLeadingColumnIncrementColumn]
+	if input.Col2010RevenueInc != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
+			Amount: *input.Col2010RevenueInc,
+		})
+	}
+	if input.Col2010RevenueDec != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
+			Amount: -*input.Col2010RevenueDec,
+		})
+	}
+	if input.Col2024QuotaInc != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2024Quota,
+			Amount: *input.Col2024QuotaInc,
+		})
+	}
+	if input.Col2024QuotaDec != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2024Quota,
+			Amount: -*input.Col2024QuotaDec,
+		})
+	}
 	fo := digitLeadingColumnFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.DigitLeadingColumns().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.DigitLeadingColumns().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
 				f(o)
 			}
@@ -1238,15 +2405,118 @@ func (m *M) UpdateDigitLeadingColumn(ctx context.Context, id int, setIn *models.
 }
 
 // UpdateDigitLeadingColumns resolves the bulk update-where mutation for digit_leading_columns.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateDigitLeadingColumns(ctx context.Context, filter *models.DigitLeadingColumnFilter, setIn *models.UpdateDigitLeadingColumnInput) ([]*models.DigitLeadingColumn, error) {
+// It takes the same input as updateDigitLeadingColumn, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateDigitLeadingColumns(ctx context.Context, filter *models.DigitLeadingColumnFilter, input UpdateDigitLeadingColumnRequest) ([]*models.DigitLeadingColumn, error) {
+	if input.Set.Col2010Revenue.IsSet() && input.Col2010RevenueInc != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Col2010Revenue.IsSet() && input.Col2010RevenueDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both set and decremented in one mutation")
+	}
+	if input.Col2010RevenueInc != nil && input.Col2010RevenueDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Col2024Quota.IsSet() && input.Col2024QuotaInc != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Col2024Quota.IsSet() && input.Col2024QuotaDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both set and decremented in one mutation")
+	}
+	if input.Col2024QuotaInc != nil && input.Col2024QuotaDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.DigitLeadingColumnIncrementColumn]
+	if input.Col2010RevenueInc != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
+			Amount: *input.Col2010RevenueInc,
+		})
+	}
+	if input.Col2010RevenueDec != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
+			Amount: -*input.Col2010RevenueDec,
+		})
+	}
+	if input.Col2024QuotaInc != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2024Quota,
+			Amount: *input.Col2024QuotaInc,
+		})
+	}
+	if input.Col2024QuotaDec != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2024Quota,
+			Amount: -*input.Col2024QuotaDec,
+		})
+	}
 	fo := digitLeadingColumnFieldOptionsFromContext(ctx)
-	res, err := m.Client.DigitLeadingColumns().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.DigitLeadingColumns().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.DigitLeadingColumn
+	err := m.Client.WithTx(ctx, "update_digit_leading_column_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.DigitLeadingColumns().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.DigitLeadingColumn{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.DigitLeadingColumns().Increment(ctx, row.ID, models.IncrementInput[models.DigitLeadingColumnIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read.
+		res, err = m.Client.DigitLeadingColumns().GetMany(ctx, &models.GetDigitLeadingColumnsInput{
+			Filter: &models.DigitLeadingColumnFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -1270,16 +2540,15 @@ func (m *M) UpsertDigitLeadingColumn(ctx context.Context, input *models.CreateDi
 }
 
 // DeleteDigitLeadingColumn resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteDigitLeadingColumn(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.DigitLeadingColumns().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -1382,14 +2651,26 @@ func (m *M) CreateDocuments(ctx context.Context, inputs []*models.CreateDocument
 	return res, nil
 }
 
+// UpdateDocumentRequest is one updateDocument /
+// updateDocuments input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateDocumentRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateDocumentInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateDocument resolves the single-row update mutation for documents.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateDocument(ctx context.Context, id int, setIn *models.UpdateDocumentInput, hasSet bool) (*models.Document, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateDocument(ctx context.Context, id int, input UpdateDocumentRequest) (*models.Document, error) {
 	fo := documentFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Documents().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.DocumentFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Documents().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.DocumentFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.DocumentFieldOptions](ctx) {
 				f(o)
 			}
@@ -1410,11 +2691,11 @@ func (m *M) UpdateDocument(ctx context.Context, id int, setIn *models.UpdateDocu
 }
 
 // UpdateDocuments resolves the bulk update-where mutation for documents.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateDocuments(ctx context.Context, filter *models.DocumentFilter, setIn *models.UpdateDocumentInput) ([]*models.Document, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateDocuments(ctx context.Context, filter *models.DocumentFilter, input UpdateDocumentRequest) ([]*models.Document, error) {
 	fo := documentFieldOptionsFromContext(ctx)
-	res, err := m.Client.Documents().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.DocumentFieldOptions]) {
+	res, err := m.Client.Documents().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.DocumentFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.DocumentFieldOptions](ctx) {
 			f(o)
@@ -1442,16 +2723,463 @@ func (m *M) UpsertDocument(ctx context.Context, input *models.CreateDocumentInpu
 }
 
 // DeleteDocument resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteDocument(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Documents().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.DocumentFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.DocumentFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// KeyClassChild resolves the single-by-PK query for key_class_children.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) KeyClassChild(ctx context.Context, id int) (*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassChildren().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
 		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassChildren resolves the cursor-paginated Connection query for key_class_children.
+func (q *Q) KeyClassChildren(ctx context.Context, filter *models.KeyClassChildFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.KeyClassChild], error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassChildren().Connection(ctx, models.ConnectionInput[models.KeyClassChildFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassChildList resolves the offset-paginated ListResult query for key_class_children.
+func (q *Q) KeyClassChildList(ctx context.Context, filter *models.KeyClassChildFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.KeyClassChild], error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.KeyClassChildFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.KeyClassChildren().Paginate(ctx, in, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateKeyClassChild resolves the single-row create mutation for key_class_children.
+func (m *M) CreateKeyClassChild(ctx context.Context, input *models.CreateKeyClassChildInput) (*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassChildren().Create(ctx, input, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateKeyClassChildren resolves the bulk create mutation for key_class_children.
+func (m *M) CreateKeyClassChildren(ctx context.Context, inputs []*models.CreateKeyClassChildInput) ([]*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassChildren().CreateMany(ctx, inputs, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateKeyClassChildRequest is one updateKeyClassChild /
+// updateKeyClassChildren input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateKeyClassChildRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateKeyClassChildInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateKeyClassChild resolves the single-row update mutation for key_class_children.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateKeyClassChild(ctx context.Context, id int, input UpdateKeyClassChildRequest) (*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.KeyClassChildren().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.KeyClassChildren().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateKeyClassChildren resolves the bulk update-where mutation for key_class_children.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateKeyClassChildren(ctx context.Context, filter *models.KeyClassChildFilter, input UpdateKeyClassChildRequest) ([]*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassChildren().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertKeyClassChild resolves the single-row upsert mutation for key_class_children.
+func (m *M) UpsertKeyClassChild(ctx context.Context, input *models.CreateKeyClassChildInput) (*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassChildren().Upsert(ctx, input, models.KeyClassChildConflictPK, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteKeyClassChild resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteKeyClassChild(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.KeyClassChildren().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// KeyClassParent resolves the single-by-PK query for key_class_parents.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) KeyClassParent(ctx context.Context, id int) (*models.KeyClassParent, error) {
+	fo := keyClassParentFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassParents().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassParentFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassParentFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassParents resolves the cursor-paginated Connection query for key_class_parents.
+func (q *Q) KeyClassParents(ctx context.Context, filter *models.KeyClassParentFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.KeyClassParent], error) {
+	fo := keyClassParentFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassParents().Connection(ctx, models.ConnectionInput[models.KeyClassParentFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.KeyClassParentFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassParentFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassParentList resolves the offset-paginated ListResult query for key_class_parents.
+func (q *Q) KeyClassParentList(ctx context.Context, filter *models.KeyClassParentFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.KeyClassParent], error) {
+	fo := keyClassParentFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.KeyClassParentFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.KeyClassParents().Paginate(ctx, in, func(o *models.CallOptions[models.KeyClassParentFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassParentFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteKeyClassParent resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteKeyClassParent(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.KeyClassParents().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.KeyClassParentFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.KeyClassParentFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// KeyClassRealChild resolves the single-by-PK query for key_class_real_children.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) KeyClassRealChild(ctx context.Context, id int) (*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassRealChildren().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassRealChildren resolves the cursor-paginated Connection query for key_class_real_children.
+func (q *Q) KeyClassRealChildren(ctx context.Context, filter *models.KeyClassRealChildFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.KeyClassRealChild], error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassRealChildren().Connection(ctx, models.ConnectionInput[models.KeyClassRealChildFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassRealChildList resolves the offset-paginated ListResult query for key_class_real_children.
+func (q *Q) KeyClassRealChildList(ctx context.Context, filter *models.KeyClassRealChildFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.KeyClassRealChild], error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.KeyClassRealChildFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.KeyClassRealChildren().Paginate(ctx, in, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateKeyClassRealChild resolves the single-row create mutation for key_class_real_children.
+func (m *M) CreateKeyClassRealChild(ctx context.Context, input *models.CreateKeyClassRealChildInput) (*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassRealChildren().Create(ctx, input, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateKeyClassRealChildren resolves the bulk create mutation for key_class_real_children.
+func (m *M) CreateKeyClassRealChildren(ctx context.Context, inputs []*models.CreateKeyClassRealChildInput) ([]*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassRealChildren().CreateMany(ctx, inputs, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateKeyClassRealChildRequest is one updateKeyClassRealChild /
+// updateKeyClassRealChildren input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateKeyClassRealChildRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateKeyClassRealChildInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateKeyClassRealChild resolves the single-row update mutation for key_class_real_children.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateKeyClassRealChild(ctx context.Context, id int, input UpdateKeyClassRealChildRequest) (*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.KeyClassRealChildren().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.KeyClassRealChildren().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateKeyClassRealChildren resolves the bulk update-where mutation for key_class_real_children.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateKeyClassRealChildren(ctx context.Context, filter *models.KeyClassRealChildFilter, input UpdateKeyClassRealChildRequest) ([]*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassRealChildren().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertKeyClassRealChild resolves the single-row upsert mutation for key_class_real_children.
+func (m *M) UpsertKeyClassRealChild(ctx context.Context, input *models.CreateKeyClassRealChildInput) (*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassRealChildren().Upsert(ctx, input, models.KeyClassRealChildConflictPK, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteKeyClassRealChild resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteKeyClassRealChild(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.KeyClassRealChildren().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -1525,16 +3253,15 @@ func (q *Q) KeyOnlyRowList(ctx context.Context, filter *models.KeyOnlyRowFilter,
 }
 
 // DeleteKeyOnlyRow resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteKeyOnlyRow(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.KeyOnlyRows().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.KeyOnlyRowFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.KeyOnlyRowFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -1637,16 +3364,52 @@ func (m *M) CreateOrders(ctx context.Context, inputs []*models.CreateOrderInput)
 	return res, nil
 }
 
+// UpdateOrderRequest is one updateOrder /
+// updateOrders input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateOrderRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateOrderInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet   bool
+	TotalInc *int
+	TotalDec *int
+}
+
 // UpdateOrder resolves the single-row update mutation for orders.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
-// post-dispatch state.
-func (m *M) UpdateOrder(ctx context.Context, id int, setIn *models.UpdateOrderInput, hasSet bool, incOps []IncrementOp[models.OrderIncrementColumn]) (*models.Order, error) {
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
+func (m *M) UpdateOrder(ctx context.Context, id int, input UpdateOrderRequest) (*models.Order, error) {
+	if input.Set.Total.IsSet() && input.TotalInc != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Total.IsSet() && input.TotalDec != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both set and decremented in one mutation")
+	}
+	if input.TotalInc != nil && input.TotalDec != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.OrderIncrementColumn]
+	if input.TotalInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderIncrementColumn]{
+			Column: models.OrderIncrementTotal,
+			Amount: *input.TotalInc,
+		})
+	}
+	if input.TotalDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderIncrementColumn]{
+			Column: models.OrderIncrementTotal,
+			Amount: -*input.TotalDec,
+		})
+	}
 	fo := orderFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Orders().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.OrderFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Orders().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.OrderFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
 				f(o)
 			}
@@ -1679,15 +3442,97 @@ func (m *M) UpdateOrder(ctx context.Context, id int, setIn *models.UpdateOrderIn
 }
 
 // UpdateOrders resolves the bulk update-where mutation for orders.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateOrders(ctx context.Context, filter *models.OrderFilter, setIn *models.UpdateOrderInput) ([]*models.Order, error) {
+// It takes the same input as updateOrder, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateOrders(ctx context.Context, filter *models.OrderFilter, input UpdateOrderRequest) ([]*models.Order, error) {
+	if input.Set.Total.IsSet() && input.TotalInc != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Total.IsSet() && input.TotalDec != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both set and decremented in one mutation")
+	}
+	if input.TotalInc != nil && input.TotalDec != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.OrderIncrementColumn]
+	if input.TotalInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderIncrementColumn]{
+			Column: models.OrderIncrementTotal,
+			Amount: *input.TotalInc,
+		})
+	}
+	if input.TotalDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderIncrementColumn]{
+			Column: models.OrderIncrementTotal,
+			Amount: -*input.TotalDec,
+		})
+	}
 	fo := orderFieldOptionsFromContext(ctx)
-	res, err := m.Client.Orders().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.OrderFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Orders().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OrderFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.Order
+	err := m.Client.WithTx(ctx, "update_order_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Orders().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OrderFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.Order{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Orders().Increment(ctx, row.ID, models.IncrementInput[models.OrderIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.OrderFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read.
+		res, err = m.Client.Orders().GetMany(ctx, &models.GetOrdersInput{
+			Filter: &models.OrderFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.OrderFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -1711,16 +3556,15 @@ func (m *M) UpsertOrder(ctx context.Context, input *models.CreateOrderInput) (*m
 }
 
 // DeleteOrder resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteOrder(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Orders().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.OrderFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -1823,16 +3667,75 @@ func (m *M) CreateOrderItems(ctx context.Context, inputs []*models.CreateOrderIt
 	return res, nil
 }
 
+// UpdateOrderItemRequest is one updateOrderItem /
+// updateOrderItems input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateOrderItemRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateOrderItemInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet       bool
+	QuantityInc  *int
+	QuantityDec  *int
+	UnitPriceInc *int
+	UnitPriceDec *int
+}
+
 // UpdateOrderItem resolves the single-row update mutation for order_items.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
-// post-dispatch state.
-func (m *M) UpdateOrderItem(ctx context.Context, id int, setIn *models.UpdateOrderItemInput, hasSet bool, incOps []IncrementOp[models.OrderItemIncrementColumn]) (*models.OrderItem, error) {
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
+func (m *M) UpdateOrderItem(ctx context.Context, id int, input UpdateOrderItemRequest) (*models.OrderItem, error) {
+	if input.Set.Quantity.IsSet() && input.QuantityInc != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Quantity.IsSet() && input.QuantityDec != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both set and decremented in one mutation")
+	}
+	if input.QuantityInc != nil && input.QuantityDec != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.UnitPrice.IsSet() && input.UnitPriceInc != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.UnitPrice.IsSet() && input.UnitPriceDec != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both set and decremented in one mutation")
+	}
+	if input.UnitPriceInc != nil && input.UnitPriceDec != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.OrderItemIncrementColumn]
+	if input.QuantityInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementQuantity,
+			Amount: *input.QuantityInc,
+		})
+	}
+	if input.QuantityDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementQuantity,
+			Amount: -*input.QuantityDec,
+		})
+	}
+	if input.UnitPriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementUnitPrice,
+			Amount: *input.UnitPriceInc,
+		})
+	}
+	if input.UnitPriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementUnitPrice,
+			Amount: -*input.UnitPriceDec,
+		})
+	}
 	fo := orderItemFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.OrderItems().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.OrderItems().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
 				f(o)
 			}
@@ -1865,15 +3768,118 @@ func (m *M) UpdateOrderItem(ctx context.Context, id int, setIn *models.UpdateOrd
 }
 
 // UpdateOrderItems resolves the bulk update-where mutation for order_items.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateOrderItems(ctx context.Context, filter *models.OrderItemFilter, setIn *models.UpdateOrderItemInput) ([]*models.OrderItem, error) {
+// It takes the same input as updateOrderItem, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateOrderItems(ctx context.Context, filter *models.OrderItemFilter, input UpdateOrderItemRequest) ([]*models.OrderItem, error) {
+	if input.Set.Quantity.IsSet() && input.QuantityInc != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Quantity.IsSet() && input.QuantityDec != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both set and decremented in one mutation")
+	}
+	if input.QuantityInc != nil && input.QuantityDec != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.UnitPrice.IsSet() && input.UnitPriceInc != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.UnitPrice.IsSet() && input.UnitPriceDec != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both set and decremented in one mutation")
+	}
+	if input.UnitPriceInc != nil && input.UnitPriceDec != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.OrderItemIncrementColumn]
+	if input.QuantityInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementQuantity,
+			Amount: *input.QuantityInc,
+		})
+	}
+	if input.QuantityDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementQuantity,
+			Amount: -*input.QuantityDec,
+		})
+	}
+	if input.UnitPriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementUnitPrice,
+			Amount: *input.UnitPriceInc,
+		})
+	}
+	if input.UnitPriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementUnitPrice,
+			Amount: -*input.UnitPriceDec,
+		})
+	}
 	fo := orderItemFieldOptionsFromContext(ctx)
-	res, err := m.Client.OrderItems().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.OrderItems().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.OrderItem
+	err := m.Client.WithTx(ctx, "update_order_item_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.OrderItems().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.OrderItem{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.OrderItems().Increment(ctx, row.ID, models.IncrementInput[models.OrderItemIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read.
+		res, err = m.Client.OrderItems().GetMany(ctx, &models.GetOrderItemsInput{
+			Filter: &models.OrderItemFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -1897,16 +3903,15 @@ func (m *M) UpsertOrderItem(ctx context.Context, input *models.CreateOrderItemIn
 }
 
 // DeleteOrderItem resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteOrderItem(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.OrderItems().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.OrderItemFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -2009,14 +4014,26 @@ func (m *M) CreateOwners(ctx context.Context, inputs []*models.CreateOwnerInput)
 	return res, nil
 }
 
+// UpdateOwnerRequest is one updateOwner /
+// updateOwners input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateOwnerRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateOwnerInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateOwner resolves the single-row update mutation for owners.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateOwner(ctx context.Context, ownerKey int, setIn *models.UpdateOwnerInput, hasSet bool) (*models.Owner, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateOwner(ctx context.Context, ownerKey int, input UpdateOwnerRequest) (*models.Owner, error) {
 	fo := ownerFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Owners().Update(ctx, int64(ownerKey), setIn, func(o *models.CallOptions[models.OwnerFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Owners().Update(ctx, int64(ownerKey), input.Set, func(o *models.CallOptions[models.OwnerFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.OwnerFieldOptions](ctx) {
 				f(o)
 			}
@@ -2037,11 +4054,11 @@ func (m *M) UpdateOwner(ctx context.Context, ownerKey int, setIn *models.UpdateO
 }
 
 // UpdateOwners resolves the bulk update-where mutation for owners.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateOwners(ctx context.Context, filter *models.OwnerFilter, setIn *models.UpdateOwnerInput) ([]*models.Owner, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateOwners(ctx context.Context, filter *models.OwnerFilter, input UpdateOwnerRequest) ([]*models.Owner, error) {
 	fo := ownerFieldOptionsFromContext(ctx)
-	res, err := m.Client.Owners().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.OwnerFieldOptions]) {
+	res, err := m.Client.Owners().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OwnerFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.OwnerFieldOptions](ctx) {
 			f(o)
@@ -2069,16 +4086,142 @@ func (m *M) UpsertOwner(ctx context.Context, input *models.CreateOwnerInput) (*m
 }
 
 // DeleteOwner resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteOwner(ctx context.Context, ownerKey int) (bool, error) {
 	if err := m.Client.Owners().HardDelete(ctx, int64(ownerKey), func(o *models.CallOptions[models.OwnerFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.OwnerFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// OwnerBadge resolves the single-by-PK query for owner_badges.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) OwnerBadge(ctx context.Context, ownerID int, badgeCode string) (*models.OwnerBadge, error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.OwnerBadges().Get(ctx, models.OwnerBadgePK{OwnerID: int64(ownerID), BadgeCode: badgeCode}, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
 		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// OwnerBadges resolves the cursor-paginated Connection query for owner_badges.
+func (q *Q) OwnerBadges(ctx context.Context, filter *models.OwnerBadgeFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.OwnerBadge], error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := q.Client.OwnerBadges().Connection(ctx, models.ConnectionInput[models.OwnerBadgeFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// OwnerBadgeList resolves the offset-paginated ListResult query for owner_badges.
+func (q *Q) OwnerBadgeList(ctx context.Context, filter *models.OwnerBadgeFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.OwnerBadge], error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.OwnerBadgeFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.OwnerBadges().Paginate(ctx, in, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateOwnerBadge resolves the single-row create mutation for owner_badges.
+func (m *M) CreateOwnerBadge(ctx context.Context, input *models.CreateOwnerBadgeInput) (*models.OwnerBadge, error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.OwnerBadges().Create(ctx, input, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateOwnerBadges resolves the bulk create mutation for owner_badges.
+func (m *M) CreateOwnerBadges(ctx context.Context, inputs []*models.CreateOwnerBadgeInput) ([]*models.OwnerBadge, error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.OwnerBadges().CreateMany(ctx, inputs, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertOwnerBadge resolves the single-row upsert mutation for owner_badges.
+func (m *M) UpsertOwnerBadge(ctx context.Context, input *models.CreateOwnerBadgeInput) (*models.OwnerBadge, error) {
+	fo := ownerBadgeFieldOptionsFromContext(ctx)
+	res, err := m.Client.OwnerBadges().Upsert(ctx, input, models.OwnerBadgeConflictPK, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteOwnerBadge resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteOwnerBadge(ctx context.Context, ownerID int, badgeCode string) (bool, error) {
+	if err := m.Client.OwnerBadges().HardDelete(ctx, models.OwnerBadgePK{OwnerID: int64(ownerID), BadgeCode: badgeCode}, func(o *models.CallOptions[models.OwnerBadgeFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.OwnerBadgeFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -2181,14 +4324,26 @@ func (m *M) CreateOwnerProfiles(ctx context.Context, inputs []*models.CreateOwne
 	return res, nil
 }
 
+// UpdateOwnerProfileRequest is one updateOwnerProfile /
+// updateOwnerProfiles input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateOwnerProfileRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateOwnerProfileInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateOwnerProfile resolves the single-row update mutation for owner_profiles.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateOwnerProfile(ctx context.Context, id int, setIn *models.UpdateOwnerProfileInput, hasSet bool) (*models.OwnerProfile, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateOwnerProfile(ctx context.Context, id int, input UpdateOwnerProfileRequest) (*models.OwnerProfile, error) {
 	fo := ownerProfileFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.OwnerProfiles().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.OwnerProfiles().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.OwnerProfileFieldOptions](ctx) {
 				f(o)
 			}
@@ -2209,11 +4364,11 @@ func (m *M) UpdateOwnerProfile(ctx context.Context, id int, setIn *models.Update
 }
 
 // UpdateOwnerProfiles resolves the bulk update-where mutation for owner_profiles.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateOwnerProfiles(ctx context.Context, filter *models.OwnerProfileFilter, setIn *models.UpdateOwnerProfileInput) ([]*models.OwnerProfile, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateOwnerProfiles(ctx context.Context, filter *models.OwnerProfileFilter, input UpdateOwnerProfileRequest) ([]*models.OwnerProfile, error) {
 	fo := ownerProfileFieldOptionsFromContext(ctx)
-	res, err := m.Client.OwnerProfiles().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
+	res, err := m.Client.OwnerProfiles().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.OwnerProfileFieldOptions](ctx) {
 			f(o)
@@ -2241,16 +4396,15 @@ func (m *M) UpsertOwnerProfile(ctx context.Context, input *models.CreateOwnerPro
 }
 
 // DeleteOwnerProfile resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteOwnerProfile(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.OwnerProfiles().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.OwnerProfileFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -2353,16 +4507,75 @@ func (m *M) CreateProducts(ctx context.Context, inputs []*models.CreateProductIn
 	return res, nil
 }
 
+// UpdateProductRequest is one updateProduct /
+// updateProducts input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateProductRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateProductInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet      bool
+	PriceInc    *int
+	PriceDec    *int
+	WeightKgInc *int
+	WeightKgDec *int
+}
+
 // UpdateProduct resolves the single-row update mutation for products.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
-// post-dispatch state.
-func (m *M) UpdateProduct(ctx context.Context, id int, setIn *models.UpdateProductInput, hasSet bool, incOps []IncrementOp[models.ProductIncrementColumn]) (*models.Product, error) {
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
+func (m *M) UpdateProduct(ctx context.Context, id int, input UpdateProductRequest) (*models.Product, error) {
+	if input.Set.Price.IsSet() && input.PriceInc != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Price.IsSet() && input.PriceDec != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both set and decremented in one mutation")
+	}
+	if input.PriceInc != nil && input.PriceDec != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.WeightKg.IsSet() && input.WeightKgInc != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.WeightKg.IsSet() && input.WeightKgDec != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both set and decremented in one mutation")
+	}
+	if input.WeightKgInc != nil && input.WeightKgDec != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.ProductIncrementColumn]
+	if input.PriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementPrice,
+			Amount: *input.PriceInc,
+		})
+	}
+	if input.PriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementPrice,
+			Amount: -*input.PriceDec,
+		})
+	}
+	if input.WeightKgInc != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementWeightKg,
+			Amount: *input.WeightKgInc,
+		})
+	}
+	if input.WeightKgDec != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementWeightKg,
+			Amount: -*input.WeightKgDec,
+		})
+	}
 	fo := productFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Products().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.ProductFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Products().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.ProductFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
 				f(o)
 			}
@@ -2395,15 +4608,118 @@ func (m *M) UpdateProduct(ctx context.Context, id int, setIn *models.UpdateProdu
 }
 
 // UpdateProducts resolves the bulk update-where mutation for products.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateProducts(ctx context.Context, filter *models.ProductFilter, setIn *models.UpdateProductInput) ([]*models.Product, error) {
+// It takes the same input as updateProduct, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateProducts(ctx context.Context, filter *models.ProductFilter, input UpdateProductRequest) ([]*models.Product, error) {
+	if input.Set.Price.IsSet() && input.PriceInc != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Price.IsSet() && input.PriceDec != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both set and decremented in one mutation")
+	}
+	if input.PriceInc != nil && input.PriceDec != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.WeightKg.IsSet() && input.WeightKgInc != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.WeightKg.IsSet() && input.WeightKgDec != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both set and decremented in one mutation")
+	}
+	if input.WeightKgInc != nil && input.WeightKgDec != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.ProductIncrementColumn]
+	if input.PriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementPrice,
+			Amount: *input.PriceInc,
+		})
+	}
+	if input.PriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementPrice,
+			Amount: -*input.PriceDec,
+		})
+	}
+	if input.WeightKgInc != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementWeightKg,
+			Amount: *input.WeightKgInc,
+		})
+	}
+	if input.WeightKgDec != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementWeightKg,
+			Amount: -*input.WeightKgDec,
+		})
+	}
 	fo := productFieldOptionsFromContext(ctx)
-	res, err := m.Client.Products().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ProductFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Products().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ProductFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.Product
+	err := m.Client.WithTx(ctx, "update_product_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Products().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ProductFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.Product{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Products().Increment(ctx, row.ID, models.IncrementInput[models.ProductIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.ProductFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read.
+		res, err = m.Client.Products().GetMany(ctx, &models.GetProductsInput{
+			Filter: &models.ProductFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.ProductFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -2427,16 +4743,15 @@ func (m *M) UpsertProduct(ctx context.Context, input *models.CreateProductInput)
 }
 
 // DeleteProduct resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteProduct(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Products().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.ProductFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -2606,14 +4921,26 @@ func (m *M) CreateProductTagLabels(ctx context.Context, inputs []*models.CreateP
 	return res, nil
 }
 
+// UpdateProductTagLabelRequest is one updateProductTagLabel /
+// updateProductTagLabels input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateProductTagLabelRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateProductTagLabelInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateProductTagLabel resolves the single-row update mutation for product_tag_labels.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateProductTagLabel(ctx context.Context, productID int, tagName string, label string, setIn *models.UpdateProductTagLabelInput, hasSet bool) (*models.ProductTagLabel, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateProductTagLabel(ctx context.Context, productID int, tagName string, label string, input UpdateProductTagLabelRequest) (*models.ProductTagLabel, error) {
 	fo := productTagLabelFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.ProductTagLabels().Update(ctx, models.ProductTagLabelPK{ProductID: int64(productID), TagName: tagName, Label: label}, setIn, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.ProductTagLabels().Update(ctx, models.ProductTagLabelPK{ProductID: int64(productID), TagName: tagName, Label: label}, input.Set, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ProductTagLabelFieldOptions](ctx) {
 				f(o)
 			}
@@ -2634,11 +4961,11 @@ func (m *M) UpdateProductTagLabel(ctx context.Context, productID int, tagName st
 }
 
 // UpdateProductTagLabels resolves the bulk update-where mutation for product_tag_labels.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateProductTagLabels(ctx context.Context, filter *models.ProductTagLabelFilter, setIn *models.UpdateProductTagLabelInput) ([]*models.ProductTagLabel, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateProductTagLabels(ctx context.Context, filter *models.ProductTagLabelFilter, input UpdateProductTagLabelRequest) ([]*models.ProductTagLabel, error) {
 	fo := productTagLabelFieldOptionsFromContext(ctx)
-	res, err := m.Client.ProductTagLabels().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
+	res, err := m.Client.ProductTagLabels().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.ProductTagLabelFieldOptions](ctx) {
 			f(o)
@@ -2666,16 +4993,15 @@ func (m *M) UpsertProductTagLabel(ctx context.Context, input *models.CreateProdu
 }
 
 // DeleteProductTagLabel resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteProductTagLabel(ctx context.Context, productID int, tagName string, label string) (bool, error) {
 	if err := m.Client.ProductTagLabels().HardDelete(ctx, models.ProductTagLabelPK{ProductID: int64(productID), TagName: tagName, Label: label}, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.ProductTagLabelFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -2778,14 +5104,26 @@ func (m *M) CreateProfiles(ctx context.Context, inputs []*models.CreateProfileIn
 	return res, nil
 }
 
+// UpdateProfileRequest is one updateProfile /
+// updateProfiles input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateProfileRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateProfileInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateProfile resolves the single-row update mutation for profiles.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateProfile(ctx context.Context, id int, setIn *models.UpdateProfileInput, hasSet bool) (*models.Profile, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateProfile(ctx context.Context, id int, input UpdateProfileRequest) (*models.Profile, error) {
 	fo := profileFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Profiles().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.ProfileFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Profiles().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.ProfileFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ProfileFieldOptions](ctx) {
 				f(o)
 			}
@@ -2806,11 +5144,11 @@ func (m *M) UpdateProfile(ctx context.Context, id int, setIn *models.UpdateProfi
 }
 
 // UpdateProfiles resolves the bulk update-where mutation for profiles.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateProfiles(ctx context.Context, filter *models.ProfileFilter, setIn *models.UpdateProfileInput) ([]*models.Profile, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateProfiles(ctx context.Context, filter *models.ProfileFilter, input UpdateProfileRequest) ([]*models.Profile, error) {
 	fo := profileFieldOptionsFromContext(ctx)
-	res, err := m.Client.Profiles().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ProfileFieldOptions]) {
+	res, err := m.Client.Profiles().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ProfileFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.ProfileFieldOptions](ctx) {
 			f(o)
@@ -2838,16 +5176,15 @@ func (m *M) UpsertProfile(ctx context.Context, input *models.CreateProfileInput)
 }
 
 // DeleteProfile resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteProfile(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Profiles().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.ProfileFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.ProfileFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -2950,16 +5287,52 @@ func (m *M) CreateReservedWordColumns(ctx context.Context, inputs []*models.Crea
 	return res, nil
 }
 
+// UpdateReservedWordColumnRequest is one updateReservedWordColumn /
+// updateReservedWordColumns input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateReservedWordColumnRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateReservedWordColumnInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+	LenInc *int
+	LenDec *int
+}
+
 // UpdateReservedWordColumn resolves the single-row update mutation for reserved_word_columns.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
-// post-dispatch state.
-func (m *M) UpdateReservedWordColumn(ctx context.Context, id int, setIn *models.UpdateReservedWordColumnInput, hasSet bool, incOps []IncrementOp[models.ReservedWordColumnIncrementColumn]) (*models.ReservedWordColumn, error) {
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
+func (m *M) UpdateReservedWordColumn(ctx context.Context, id int, input UpdateReservedWordColumnRequest) (*models.ReservedWordColumn, error) {
+	if input.Set.Len.IsSet() && input.LenInc != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Len.IsSet() && input.LenDec != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both set and decremented in one mutation")
+	}
+	if input.LenInc != nil && input.LenDec != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.ReservedWordColumnIncrementColumn]
+	if input.LenInc != nil {
+		incOps = append(incOps, IncrementOp[models.ReservedWordColumnIncrementColumn]{
+			Column: models.ReservedWordColumnIncrementLen,
+			Amount: *input.LenInc,
+		})
+	}
+	if input.LenDec != nil {
+		incOps = append(incOps, IncrementOp[models.ReservedWordColumnIncrementColumn]{
+			Column: models.ReservedWordColumnIncrementLen,
+			Amount: -*input.LenDec,
+		})
+	}
 	fo := reservedWordColumnFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.ReservedWordColumns().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.ReservedWordColumns().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
 				f(o)
 			}
@@ -2992,15 +5365,97 @@ func (m *M) UpdateReservedWordColumn(ctx context.Context, id int, setIn *models.
 }
 
 // UpdateReservedWordColumns resolves the bulk update-where mutation for reserved_word_columns.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateReservedWordColumns(ctx context.Context, filter *models.ReservedWordColumnFilter, setIn *models.UpdateReservedWordColumnInput) ([]*models.ReservedWordColumn, error) {
+// It takes the same input as updateReservedWordColumn, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateReservedWordColumns(ctx context.Context, filter *models.ReservedWordColumnFilter, input UpdateReservedWordColumnRequest) ([]*models.ReservedWordColumn, error) {
+	if input.Set.Len.IsSet() && input.LenInc != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Len.IsSet() && input.LenDec != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both set and decremented in one mutation")
+	}
+	if input.LenInc != nil && input.LenDec != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.ReservedWordColumnIncrementColumn]
+	if input.LenInc != nil {
+		incOps = append(incOps, IncrementOp[models.ReservedWordColumnIncrementColumn]{
+			Column: models.ReservedWordColumnIncrementLen,
+			Amount: *input.LenInc,
+		})
+	}
+	if input.LenDec != nil {
+		incOps = append(incOps, IncrementOp[models.ReservedWordColumnIncrementColumn]{
+			Column: models.ReservedWordColumnIncrementLen,
+			Amount: -*input.LenDec,
+		})
+	}
 	fo := reservedWordColumnFieldOptionsFromContext(ctx)
-	res, err := m.Client.ReservedWordColumns().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.ReservedWordColumns().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.ReservedWordColumn
+	err := m.Client.WithTx(ctx, "update_reserved_word_column_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.ReservedWordColumns().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.ReservedWordColumn{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.ReservedWordColumns().Increment(ctx, row.ID, models.IncrementInput[models.ReservedWordColumnIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read.
+		res, err = m.Client.ReservedWordColumns().GetMany(ctx, &models.GetReservedWordColumnsInput{
+			Filter: &models.ReservedWordColumnFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -3024,16 +5479,15 @@ func (m *M) UpsertReservedWordColumn(ctx context.Context, input *models.CreateRe
 }
 
 // DeleteReservedWordColumn resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteReservedWordColumn(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.ReservedWordColumns().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -3136,14 +5590,26 @@ func (m *M) CreateSluggedRows(ctx context.Context, inputs []*models.CreateSlugge
 	return res, nil
 }
 
+// UpdateSluggedRowRequest is one updateSluggedRow /
+// updateSluggedRows input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateSluggedRowRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateSluggedRowInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateSluggedRow resolves the single-row update mutation for slugged_rows.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateSluggedRow(ctx context.Context, id int, setIn *models.UpdateSluggedRowInput, hasSet bool) (*models.SluggedRow, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateSluggedRow(ctx context.Context, id int, input UpdateSluggedRowRequest) (*models.SluggedRow, error) {
 	fo := sluggedRowFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.SluggedRows().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.SluggedRows().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.SluggedRowFieldOptions](ctx) {
 				f(o)
 			}
@@ -3164,11 +5630,11 @@ func (m *M) UpdateSluggedRow(ctx context.Context, id int, setIn *models.UpdateSl
 }
 
 // UpdateSluggedRows resolves the bulk update-where mutation for slugged_rows.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateSluggedRows(ctx context.Context, filter *models.SluggedRowFilter, setIn *models.UpdateSluggedRowInput) ([]*models.SluggedRow, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateSluggedRows(ctx context.Context, filter *models.SluggedRowFilter, input UpdateSluggedRowRequest) ([]*models.SluggedRow, error) {
 	fo := sluggedRowFieldOptionsFromContext(ctx)
-	res, err := m.Client.SluggedRows().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
+	res, err := m.Client.SluggedRows().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.SluggedRowFieldOptions](ctx) {
 			f(o)
@@ -3196,16 +5662,15 @@ func (m *M) UpsertSluggedRow(ctx context.Context, input *models.CreateSluggedRow
 }
 
 // DeleteSluggedRow resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteSluggedRow(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.SluggedRows().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.SluggedRowFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -3308,14 +5773,26 @@ func (m *M) CreateTags(ctx context.Context, inputs []*models.CreateTagInput) ([]
 	return res, nil
 }
 
+// UpdateTagRequest is one updateTag /
+// updateTags input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateTagRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateTagInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateTag resolves the single-row update mutation for tags.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateTag(ctx context.Context, id int, setIn *models.UpdateTagInput, hasSet bool) (*models.Tag, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateTag(ctx context.Context, id int, input UpdateTagRequest) (*models.Tag, error) {
 	fo := tagFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Tags().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.TagFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Tags().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.TagFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.TagFieldOptions](ctx) {
 				f(o)
 			}
@@ -3323,7 +5800,13 @@ func (m *M) UpdateTag(ctx context.Context, id int, setIn *models.UpdateTagInput,
 			return nil, mapErrorToGQL(err)
 		}
 	}
-	res, err := m.Client.Tags().Get(ctx, int64(id), func(o *models.CallOptions[models.TagFieldOptions]) {
+	// The row is read back whether or not it is soft-deleted: the set fields
+	// may have soft-deleted it, and Get would then report it missing.
+	keys := []int64{int64(id)}
+	rows, err := m.Client.Tags().GetMany(ctx, &models.GetTagsInput{
+		Filter: &models.TagFilter{ID: &comparator.Number[int64]{In: keys}, IsDeleted: &comparator.Bool{}},
+		Limit:  new(1),
+	}, func(o *models.CallOptions[models.TagFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.TagFieldOptions](ctx) {
 			f(o)
@@ -3332,15 +5815,18 @@ func (m *M) UpdateTag(ctx context.Context, id int, setIn *models.UpdateTagInput,
 	if err != nil {
 		return nil, mapErrorToGQL(err)
 	}
-	return res, nil
+	if len(rows) == 0 {
+		return nil, mapErrorToGQL(models.ErrNotFound)
+	}
+	return rows[0], nil
 }
 
 // UpdateTags resolves the bulk update-where mutation for tags.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateTags(ctx context.Context, filter *models.TagFilter, setIn *models.UpdateTagInput) ([]*models.Tag, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateTags(ctx context.Context, filter *models.TagFilter, input UpdateTagRequest) ([]*models.Tag, error) {
 	fo := tagFieldOptionsFromContext(ctx)
-	res, err := m.Client.Tags().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.TagFieldOptions]) {
+	res, err := m.Client.Tags().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.TagFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.TagFieldOptions](ctx) {
 			f(o)
@@ -3368,16 +5854,15 @@ func (m *M) UpsertTag(ctx context.Context, input *models.CreateTagInput) (*model
 }
 
 // HardDeleteTag resolves the explicit hard-delete mutation
-// when both delete variants are enabled. Returns Boolean!.
+// when both delete variants are enabled. Returns Boolean!: true whenever the
+// delete ran without error, whether or not the row existed — the client's
+// HardDelete is idempotent.
 func (m *M) HardDeleteTag(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Tags().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.TagFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.TagFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -3418,6 +5903,372 @@ func (m *M) RestoreTag(ctx context.Context, id int) (*models.Tag, error) {
 		return nil, mapErrorToGQL(err)
 	}
 	return res, nil
+}
+
+// TimeKeyed resolves the single-by-PK query for time_keyed.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) TimeKeyed(ctx context.Context, at types.DateTime) (*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := q.Client.TimeKeyeds().Get(ctx, at, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TimeKeyeds resolves the cursor-paginated Connection query for time_keyed.
+func (q *Q) TimeKeyeds(ctx context.Context, filter *models.TimeKeyedFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.TimeKeyed], error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := q.Client.TimeKeyeds().Connection(ctx, models.ConnectionInput[models.TimeKeyedFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TimeKeyedList resolves the offset-paginated ListResult query for time_keyed.
+func (q *Q) TimeKeyedList(ctx context.Context, filter *models.TimeKeyedFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.TimeKeyed], error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.TimeKeyedFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.TimeKeyeds().Paginate(ctx, in, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTimeKeyed resolves the single-row create mutation for time_keyed.
+func (m *M) CreateTimeKeyed(ctx context.Context, input *models.CreateTimeKeyedInput) (*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyeds().Create(ctx, input, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTimeKeyeds resolves the bulk create mutation for time_keyed.
+func (m *M) CreateTimeKeyeds(ctx context.Context, inputs []*models.CreateTimeKeyedInput) ([]*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyeds().CreateMany(ctx, inputs, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTimeKeyedRequest is one updateTimeKeyed /
+// updateTimeKeyeds input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateTimeKeyedRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateTimeKeyedInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateTimeKeyed resolves the single-row update mutation for time_keyed.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateTimeKeyed(ctx context.Context, at types.DateTime, input UpdateTimeKeyedRequest) (*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.TimeKeyeds().Update(ctx, at, input.Set, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.TimeKeyeds().Get(ctx, at, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTimeKeyeds resolves the bulk update-where mutation for time_keyed.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateTimeKeyeds(ctx context.Context, filter *models.TimeKeyedFilter, input UpdateTimeKeyedRequest) ([]*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyeds().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertTimeKeyed resolves the single-row upsert mutation for time_keyed.
+func (m *M) UpsertTimeKeyed(ctx context.Context, input *models.CreateTimeKeyedInput) (*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyeds().Upsert(ctx, input, models.TimeKeyedConflictPK, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteTimeKeyed resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteTimeKeyed(ctx context.Context, at types.DateTime) (bool, error) {
+	if err := m.Client.TimeKeyeds().HardDelete(ctx, at, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// TimeKeyedNote resolves the single-by-PK query for time_keyed_notes.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) TimeKeyedNote(ctx context.Context, id int) (*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := q.Client.TimeKeyedNotes().Get(ctx, int64(id), func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TimeKeyedNotes resolves the cursor-paginated Connection query for time_keyed_notes.
+func (q *Q) TimeKeyedNotes(ctx context.Context, filter *models.TimeKeyedNoteFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.TimeKeyedNote], error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := q.Client.TimeKeyedNotes().Connection(ctx, models.ConnectionInput[models.TimeKeyedNoteFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TimeKeyedNoteList resolves the offset-paginated ListResult query for time_keyed_notes.
+func (q *Q) TimeKeyedNoteList(ctx context.Context, filter *models.TimeKeyedNoteFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.TimeKeyedNote], error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.TimeKeyedNoteFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.TimeKeyedNotes().Paginate(ctx, in, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTimeKeyedNote resolves the single-row create mutation for time_keyed_notes.
+func (m *M) CreateTimeKeyedNote(ctx context.Context, input *models.CreateTimeKeyedNoteInput) (*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyedNotes().Create(ctx, input, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTimeKeyedNotes resolves the bulk create mutation for time_keyed_notes.
+func (m *M) CreateTimeKeyedNotes(ctx context.Context, inputs []*models.CreateTimeKeyedNoteInput) ([]*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyedNotes().CreateMany(ctx, inputs, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTimeKeyedNoteRequest is one updateTimeKeyedNote /
+// updateTimeKeyedNotes input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateTimeKeyedNoteRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateTimeKeyedNoteInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateTimeKeyedNote resolves the single-row update mutation for time_keyed_notes.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateTimeKeyedNote(ctx context.Context, id int, input UpdateTimeKeyedNoteRequest) (*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.TimeKeyedNotes().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.TimeKeyedNotes().Get(ctx, int64(id), func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTimeKeyedNotes resolves the bulk update-where mutation for time_keyed_notes.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateTimeKeyedNotes(ctx context.Context, filter *models.TimeKeyedNoteFilter, input UpdateTimeKeyedNoteRequest) ([]*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyedNotes().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertTimeKeyedNote resolves the single-row upsert mutation for time_keyed_notes.
+func (m *M) UpsertTimeKeyedNote(ctx context.Context, input *models.CreateTimeKeyedNoteInput) (*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyedNotes().Upsert(ctx, input, models.TimeKeyedNoteConflictPK, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteTimeKeyedNote resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteTimeKeyedNote(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.TimeKeyedNotes().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
 }
 
 // User resolves the single-by-PK query for users.
@@ -3517,16 +6368,121 @@ func (m *M) CreateUsers(ctx context.Context, inputs []*models.CreateUserInput) (
 	return res, nil
 }
 
+// UpdateUserRequest is one updateUser /
+// updateUsers input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateUserRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateUserInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet        bool
+	AgeInc        *int
+	AgeDec        *int
+	BalanceInc    *int
+	BalanceDec    *int
+	LoginCountInc *int
+	LoginCountDec *int
+	ScoreInc      *int
+	ScoreDec      *int
+}
+
 // UpdateUser resolves the single-row update mutation for users.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
-// post-dispatch state.
-func (m *M) UpdateUser(ctx context.Context, id int, setIn *models.UpdateUserInput, hasSet bool, incOps []IncrementOp[models.UserIncrementColumn]) (*models.User, error) {
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
+func (m *M) UpdateUser(ctx context.Context, id int, input UpdateUserRequest) (*models.User, error) {
+	if input.Set.Age.IsSet() && input.AgeInc != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Age.IsSet() && input.AgeDec != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both set and decremented in one mutation")
+	}
+	if input.AgeInc != nil && input.AgeDec != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceInc != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceDec != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both set and decremented in one mutation")
+	}
+	if input.BalanceInc != nil && input.BalanceDec != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.LoginCount.IsSet() && input.LoginCountInc != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.LoginCount.IsSet() && input.LoginCountDec != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both set and decremented in one mutation")
+	}
+	if input.LoginCountInc != nil && input.LoginCountDec != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Score.IsSet() && input.ScoreInc != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Score.IsSet() && input.ScoreDec != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both set and decremented in one mutation")
+	}
+	if input.ScoreInc != nil && input.ScoreDec != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.UserIncrementColumn]
+	if input.AgeInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementAge,
+			Amount: *input.AgeInc,
+		})
+	}
+	if input.AgeDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementAge,
+			Amount: -*input.AgeDec,
+		})
+	}
+	if input.BalanceInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementBalance,
+			Amount: *input.BalanceInc,
+		})
+	}
+	if input.BalanceDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementBalance,
+			Amount: -*input.BalanceDec,
+		})
+	}
+	if input.LoginCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementLoginCount,
+			Amount: *input.LoginCountInc,
+		})
+	}
+	if input.LoginCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementLoginCount,
+			Amount: -*input.LoginCountDec,
+		})
+	}
+	if input.ScoreInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementScore,
+			Amount: *input.ScoreInc,
+		})
+	}
+	if input.ScoreDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementScore,
+			Amount: -*input.ScoreDec,
+		})
+	}
 	fo := userFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Users().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.UserFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Users().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.UserFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
 				f(o)
 			}
@@ -3559,15 +6515,160 @@ func (m *M) UpdateUser(ctx context.Context, id int, setIn *models.UpdateUserInpu
 }
 
 // UpdateUsers resolves the bulk update-where mutation for users.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateUsers(ctx context.Context, filter *models.UserFilter, setIn *models.UpdateUserInput) ([]*models.User, error) {
+// It takes the same input as updateUser, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateUsers(ctx context.Context, filter *models.UserFilter, input UpdateUserRequest) ([]*models.User, error) {
+	if input.Set.Age.IsSet() && input.AgeInc != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Age.IsSet() && input.AgeDec != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both set and decremented in one mutation")
+	}
+	if input.AgeInc != nil && input.AgeDec != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceInc != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceDec != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both set and decremented in one mutation")
+	}
+	if input.BalanceInc != nil && input.BalanceDec != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.LoginCount.IsSet() && input.LoginCountInc != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.LoginCount.IsSet() && input.LoginCountDec != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both set and decremented in one mutation")
+	}
+	if input.LoginCountInc != nil && input.LoginCountDec != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Score.IsSet() && input.ScoreInc != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Score.IsSet() && input.ScoreDec != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both set and decremented in one mutation")
+	}
+	if input.ScoreInc != nil && input.ScoreDec != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.UserIncrementColumn]
+	if input.AgeInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementAge,
+			Amount: *input.AgeInc,
+		})
+	}
+	if input.AgeDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementAge,
+			Amount: -*input.AgeDec,
+		})
+	}
+	if input.BalanceInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementBalance,
+			Amount: *input.BalanceInc,
+		})
+	}
+	if input.BalanceDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementBalance,
+			Amount: -*input.BalanceDec,
+		})
+	}
+	if input.LoginCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementLoginCount,
+			Amount: *input.LoginCountInc,
+		})
+	}
+	if input.LoginCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementLoginCount,
+			Amount: -*input.LoginCountDec,
+		})
+	}
+	if input.ScoreInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementScore,
+			Amount: *input.ScoreInc,
+		})
+	}
+	if input.ScoreDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementScore,
+			Amount: -*input.ScoreDec,
+		})
+	}
 	fo := userFieldOptionsFromContext(ctx)
-	res, err := m.Client.Users().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.UserFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Users().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.UserFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.User
+	err := m.Client.WithTx(ctx, "update_user_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Users().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.UserFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.User{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Users().Increment(ctx, row.ID, models.IncrementInput[models.UserIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.UserFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read.
+		res, err = m.Client.Users().GetMany(ctx, &models.GetUsersInput{
+			Filter: &models.UserFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.UserFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -3591,16 +6692,15 @@ func (m *M) UpsertUser(ctx context.Context, input *models.CreateUserInput) (*mod
 }
 
 // DeleteUser resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteUser(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Users().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.UserFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -3719,16 +6819,15 @@ func (m *M) UpsertUserCategory(ctx context.Context, input *models.CreateUserCate
 }
 
 // DeleteUserCategory resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteUserCategory(ctx context.Context, userID int, categoryID int) (bool, error) {
 	if err := m.Client.UserCategories().HardDelete(ctx, models.UserCategoryPK{UserID: int64(userID), CategoryID: int64(categoryID)}, func(o *models.CallOptions[models.UserCategoryFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.UserCategoryFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -3831,16 +6930,75 @@ func (m *M) CreateWarehouses(ctx context.Context, inputs []*models.CreateWarehou
 	return res, nil
 }
 
+// UpdateWarehouseRequest is one updateWarehouse /
+// updateWarehouses input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateWarehouseRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateWarehouseInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet           bool
+	PriceInc         *int
+	PriceDec         *int
+	NullablePriceInc *int
+	NullablePriceDec *int
+}
+
 // UpdateWarehouse resolves the single-row update mutation for warehouses.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
-// post-dispatch state.
-func (m *M) UpdateWarehouse(ctx context.Context, id int, setIn *models.UpdateWarehouseInput, hasSet bool, incOps []IncrementOp[models.WarehouseIncrementColumn]) (*models.Warehouse, error) {
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
+func (m *M) UpdateWarehouse(ctx context.Context, id int, input UpdateWarehouseRequest) (*models.Warehouse, error) {
+	if input.Set.Price.IsSet() && input.PriceInc != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Price.IsSet() && input.PriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both set and decremented in one mutation")
+	}
+	if input.PriceInc != nil && input.PriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.NullablePrice.IsSet() && input.NullablePriceInc != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.NullablePrice.IsSet() && input.NullablePriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both set and decremented in one mutation")
+	}
+	if input.NullablePriceInc != nil && input.NullablePriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.WarehouseIncrementColumn]
+	if input.PriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementPrice,
+			Amount: *input.PriceInc,
+		})
+	}
+	if input.PriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementPrice,
+			Amount: -*input.PriceDec,
+		})
+	}
+	if input.NullablePriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementNullablePrice,
+			Amount: *input.NullablePriceInc,
+		})
+	}
+	if input.NullablePriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementNullablePrice,
+			Amount: -*input.NullablePriceDec,
+		})
+	}
 	fo := warehouseFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Warehouses().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Warehouses().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
 				f(o)
 			}
@@ -3873,15 +7031,118 @@ func (m *M) UpdateWarehouse(ctx context.Context, id int, setIn *models.UpdateWar
 }
 
 // UpdateWarehouses resolves the bulk update-where mutation for warehouses.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateWarehouses(ctx context.Context, filter *models.WarehouseFilter, setIn *models.UpdateWarehouseInput) ([]*models.Warehouse, error) {
+// It takes the same input as updateWarehouse, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateWarehouses(ctx context.Context, filter *models.WarehouseFilter, input UpdateWarehouseRequest) ([]*models.Warehouse, error) {
+	if input.Set.Price.IsSet() && input.PriceInc != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Price.IsSet() && input.PriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both set and decremented in one mutation")
+	}
+	if input.PriceInc != nil && input.PriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.NullablePrice.IsSet() && input.NullablePriceInc != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.NullablePrice.IsSet() && input.NullablePriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both set and decremented in one mutation")
+	}
+	if input.NullablePriceInc != nil && input.NullablePriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.WarehouseIncrementColumn]
+	if input.PriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementPrice,
+			Amount: *input.PriceInc,
+		})
+	}
+	if input.PriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementPrice,
+			Amount: -*input.PriceDec,
+		})
+	}
+	if input.NullablePriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementNullablePrice,
+			Amount: *input.NullablePriceInc,
+		})
+	}
+	if input.NullablePriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementNullablePrice,
+			Amount: -*input.NullablePriceDec,
+		})
+	}
 	fo := warehouseFieldOptionsFromContext(ctx)
-	res, err := m.Client.Warehouses().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Warehouses().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.Warehouse
+	err := m.Client.WithTx(ctx, "update_warehouse_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Warehouses().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.Warehouse{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Warehouses().Increment(ctx, row.ID, models.IncrementInput[models.WarehouseIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read.
+		res, err = m.Client.Warehouses().GetMany(ctx, &models.GetWarehousesInput{
+			Filter: &models.WarehouseFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -3905,16 +7166,15 @@ func (m *M) UpsertWarehouse(ctx context.Context, input *models.CreateWarehouseIn
 }
 
 // DeleteWarehouse resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteWarehouse(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Warehouses().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.WarehouseFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil

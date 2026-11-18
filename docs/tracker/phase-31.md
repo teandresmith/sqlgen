@@ -1,6 +1,6 @@
 # Phase 31: Introspection Examples — `source: database` and `both` End to End
 
-Status: In Progress
+Status: Complete (closed 2026-10-12)
 PRD Sections: 4.1.1, 4.2, 4.3, 6.1, 6.3, 8.1.7, 16.2, 30.4.2
 
 > **Design.** `docs/design/INTROSPECTION_EXAMPLES.md` (ACCEPTED 2026-10-11) is the source for every

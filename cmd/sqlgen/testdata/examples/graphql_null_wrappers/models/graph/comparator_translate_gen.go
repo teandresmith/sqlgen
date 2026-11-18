@@ -109,6 +109,9 @@ func translateNullableBooleanComparator(in *gqlmodel.NullableBooleanComparator) 
 	if in.Neq != nil {
 		out.Neq = in.Neq
 	}
+	if len(in.In) > 0 {
+		out.In = append([]bool(nil), in.In...)
+	}
 	if in.IsNull != nil {
 		out.Null = in.IsNull
 	}

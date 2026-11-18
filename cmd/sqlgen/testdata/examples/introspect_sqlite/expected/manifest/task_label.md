@@ -56,19 +56,6 @@ sqlite:
 SELECT "id", "label", "task_id" FROM "task_labels" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *TaskLabelFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "task_labels" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -93,6 +80,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "task_labels" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *TaskLabelFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "task_labels" WHERE <filter>
 ```
 
 ### Paginate
@@ -153,36 +153,6 @@ sqlite:
 INSERT INTO "task_labels" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateTaskLabelInput`, `target TaskLabelConflictTarget`
-- Returns: `*TaskLabel`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "task_labels" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateTaskLabelInput`, `target TaskLabelConflictTarget`
-- Returns: `[]*TaskLabel`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "task_labels" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateTaskLabelInput`
@@ -226,6 +196,36 @@ sqlite:
 
 ```sql
 UPDATE "task_labels" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateTaskLabelInput`, `target TaskLabelConflictTarget`
+- Returns: `*TaskLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "task_labels" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateTaskLabelInput`, `target TaskLabelConflictTarget`
+- Returns: `[]*TaskLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "task_labels" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -288,3 +288,17 @@ Type `TaskLabelFilter`.
 Type `TaskLabelSort`.
 
 Fields: ID, Label, TaskID
+
+## Read examples
+
+```go
+row, err := client.TaskLabels().Get(ctx, 1)
+rows, err := client.TaskLabels().GetMany(ctx, &models.GetTaskLabelsInput{Filter: &models.TaskLabelFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.TaskLabels().Create(ctx, &models.CreateTaskLabelInput{TaskID: 1, Label: "example"})
+updated, err := client.TaskLabels().Update(ctx, 1, &models.UpdateTaskLabelInput{TaskID: omittable.Set(int64(1))})
+```

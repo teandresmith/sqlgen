@@ -72,7 +72,7 @@ input AssetSort {
 }
 input CreateAssetInput {
   name: String!
-  createdAt: DateTime!
+  createdAt: DateTime
 }
 input UpdateAssetInput {
   name: String

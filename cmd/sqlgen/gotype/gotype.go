@@ -9,6 +9,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/decimal"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/literal"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/uuidgofrs"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/uuidgoogle"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/uuidstd"
@@ -22,6 +23,12 @@ type GoType struct {
 	IsSlice       bool           // true for PostgreSQL array types mapped to Go slices
 	SliceElemType string         // element type name for named slices — enum arrays ("UserRole") and MySQL SETs ("UsersPermissionsSetValue")
 	FKConvert     FKStringMethod // how to convert to string for FK comparisons
+	// UnmappedSQLType is set when no resolution step — override, integration,
+	// enum, SET, domain or built-in mapping — maps the column's SQL type, so
+	// it fell back to string. It holds the SQL type that missed, lowercased
+	// and without modifiers (the element type for an array, the base for a
+	// domain): the `overrides.types` key that would map it. Empty otherwise.
+	UnmappedSQLType string
 }
 
 // FKStringMethod indicates how to convert a value to string for FK comparisons.
@@ -79,6 +86,18 @@ var (
 	goIPNet    = typeInfo{name: "net.IPNet", imp: "net", zero: "net.IPNet{}", kind: nullPtrOnly, fk: FKStringStringer}
 	goHWAddr   = typeInfo{name: "net.HardwareAddr", imp: "net", zero: "nil", kind: nullRef, fk: FKStringStringer}
 )
+
+// sqlNullEquivalents maps each Go type that has a database/sql null wrapper to
+// the typeInfo the built-in mappings use for it, so an `overrides.types` entry
+// naming that Go type without a `nullable:` variant takes the same wrapper a
+// built-in column of that type takes under use_pointers false (PRD §4.7, §7.3).
+var sqlNullEquivalents = map[string]typeInfo{
+	goString.name: goString, goInt8.name: goInt8, goInt16.name: goInt16,
+	goInt32.name: goInt32, goInt64.name: goInt64, goUint8.name: goUint8,
+	goUint16.name: goUint16, goUint32.name: goUint32, goUint64.name: goUint64,
+	goFloat32.name: goFloat32, goFloat64.name: goFloat64, goBool.name: goBool,
+	goTime.name: goTime,
+}
 
 // postgresMappings maps PostgreSQL SQL types to Go types.
 var postgresMappings = map[string]typeInfo{
@@ -166,35 +185,6 @@ var dialectMappings = map[config.Dialect]map[string]typeInfo{
 	config.DialectSQLite:   sqliteMappings,
 }
 
-// knownGoTypes maps Go type names to import path and zero value,
-// used for resolving type_map literal Go type strings.
-var knownGoTypes = map[string]struct{ imp, zero string }{
-	"string":           {"", `""`},
-	"int":              {"", "0"},
-	"int8":             {"", "0"},
-	"int16":            {"", "0"},
-	"int32":            {"", "0"},
-	"int64":            {"", "0"},
-	"uint":             {"", "0"},
-	"uint8":            {"", "0"},
-	"uint16":           {"", "0"},
-	"uint32":           {"", "0"},
-	"uint64":           {"", "0"},
-	"float32":          {"", "0"},
-	"float64":          {"", "0"},
-	"bool":             {"", "false"},
-	"byte":             {"", "0"},
-	"rune":             {"", "0"},
-	"time.Time":        {"time", "time.Time{}"},
-	"time.Duration":    {"time", "0"},
-	"any":              {"", "nil"},
-	"net.IP":           {"net", "nil"},
-	"net.IPNet":        {"net", "net.IPNet{}"},
-	"net.HardwareAddr": {"net", "nil"},
-	"json.RawMessage":  {"encoding/json", "nil"},
-	"types.JSON":       {"github.com/teandresmith/sqlgen/types", "nil"},
-}
-
 // Resolver resolves SQL types to Go types using the configured override chain.
 type Resolver struct {
 	dialect         config.Dialect
@@ -244,6 +234,7 @@ func NewResolver(dialect config.Dialect, usePointers bool, globalOverrides map[s
 	if globalOverrides == nil {
 		globalOverrides = make(map[string]config.TypeOverride)
 	}
+	globalOverrides = lowerKeys(globalOverrides)
 	r := &Resolver{
 		dialect:         dialect,
 		usePointers:     usePointers,
@@ -478,6 +469,12 @@ func registerSchemaType[V any](r *Resolver, m map[string]V, schema, name string,
 	m[name] = value
 }
 
+// UsePointers reports the resolver's `overrides.use_pointers` setting. A nil
+// receiver reports the default, true.
+func (r *Resolver) UsePointers() bool {
+	return r == nil || r.usePointers
+}
+
 // IsEnumGoType reports whether goType is the Go type name of a registered
 // schema enum. Such a type is a named string declared in the generated package,
 // so an untyped string constant is assignable to it. A nil receiver knows no
@@ -503,7 +500,11 @@ func (r *Resolver) RegisterSet(schema, sqlName, goTypeName string) {
 
 // IsSet reports whether the given SQL type name is a registered SET type.
 func (r *Resolver) IsSet(sqlType string) bool {
-	_, ok := r.sets[r.schemaTypeKey(normalizeSQL(sqlType))]
+	key, ok := r.schemaTypeKey(normalizeSQL(sqlType))
+	if !ok {
+		return false
+	}
+	_, ok = r.sets[key]
 	return ok
 }
 
@@ -525,19 +526,38 @@ func (r *Resolver) ForSchema(schema string) *Resolver {
 
 // schemaTypeKey returns the key the enum, SET and domain maps hold a bare
 // sqlType under for the owner schema: ownerSchema.sqlType when that is
-// registered, sqlType otherwise. A qualified sqlType is returned as given.
-func (r *Resolver) schemaTypeKey(sqlType string) string {
+// registered, sqlType otherwise. A qualified sqlType, or any sqlType for a
+// resolver with no owner schema, is returned as given. It reports false when
+// sqlType must not be looked up in those maps at all: a bare name the
+// dialect's built-in mapping knows never falls back to another schema's type
+// of that name, since the database resolves it to the built-in type
+// (PRD §7.1).
+func (r *Resolver) schemaTypeKey(sqlType string) (string, bool) {
 	if r.ownerSchema == "" || strings.Contains(sqlType, ".") {
-		return sqlType
+		return sqlType, true
 	}
 	qualified := r.ownerSchema + "." + sqlType
 	_, isEnum := r.enums[qualified]
 	_, isSet := r.sets[qualified]
 	_, isDomain := r.domains[qualified]
 	if isEnum || isSet || isDomain {
-		return qualified
+		return qualified, true
 	}
-	return sqlType
+	if owner, ok := r.bareOwners[sqlType]; ok && owner != r.ownerSchema && r.isBuiltin(sqlType) {
+		return "", false
+	}
+	return sqlType, true
+}
+
+// isBuiltin reports whether the dialect's built-in mapping knows sqlType.
+func (r *Resolver) isBuiltin(sqlType string) bool {
+	mappings := dialectMappings[r.dialect]
+	for _, key := range lookupKeys(sqlType) {
+		if _, ok := mappings[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // RegisterDomain registers the domain schema.sqlName so that columns using it
@@ -646,7 +666,10 @@ func (r *Resolver) BaseSQLType(sqlType string) string {
 // (e.g. positive_int → integer), so aggregate widening keys on the real base
 // rather than the domain name. Bounded to guard against pathological cycles.
 func (r *Resolver) resolveDomainBase(sqlType string) string {
-	t := r.schemaTypeKey(sqlType)
+	t, ok := r.schemaTypeKey(sqlType)
+	if !ok {
+		return sqlType
+	}
 	if _, ok := r.domainBaseType(t); !ok {
 		return sqlType
 	}
@@ -655,9 +678,26 @@ func (r *Resolver) resolveDomainBase(sqlType string) string {
 		if !ok {
 			return t
 		}
-		t = base
+		// The base is read in the domain's own schema, so a built-in base
+		// name never reaches another schema's type of that name.
+		key, ok := r.ForSchema(r.domains[t].schema).schemaTypeKey(base)
+		if !ok {
+			return base
+		}
+		t = key
 	}
 	return t
+}
+
+// SumResultSQLType returns the SQL type a SUM over a column of sqlType
+// returns: the widened base type where the dialect widens it (PostgreSQL
+// SUM(integer) → bigint, through any domain), and sqlType itself otherwise.
+func (r *Resolver) SumResultSQLType(sqlType string) string {
+	base := stripModifiers(r.resolveDomainBase(normalizeSQL(sqlType)))
+	if widened := r.widenSumBase(base); widened != base {
+		return widened
+	}
+	return sqlType
 }
 
 // widenSumBase maps a SUM's base SQL type to the type PostgreSQL / MySQL
@@ -688,6 +728,33 @@ func (r *Resolver) widenSumBase(base string) string {
 		// matches the value SUM(integer) yields.
 	}
 	return base
+}
+
+// lowerKeys returns m with its keys lower-cased, so an overrides.types key
+// matches whatever its letter case, as SQL types are compared lower-cased.
+// It returns m itself when every key is already lower-case. Two keys that
+// differ only in case are a config error; should both reach here, the
+// lower-case spelling wins.
+func lowerKeys(m map[string]config.TypeOverride) map[string]config.TypeOverride {
+	upper := false
+	for k := range m {
+		if k != strings.ToLower(k) {
+			upper = true
+			break
+		}
+	}
+	if !upper {
+		return m
+	}
+	out := make(map[string]config.TypeOverride, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		lower := strings.ToLower(k)
+		if _, taken := out[lower]; taken && k != lower {
+			continue
+		}
+		out[lower] = m[k]
+	}
+	return out
 }
 
 // lookupOverride searches an override map for a SQL type, trying the exact
@@ -777,30 +844,94 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 	// different steps of the chain below: the scope's own entries are
 	// overrides, what its integrations contribute for SQL types it did not
 	// spell out is an integration.
-	scopedOverrides, scopedIntegrations := scopeIntegrations(tableOverrides)
+	scopedOverrides, scopedIntegrations := scopeIntegrations(lowerKeys(tableOverrides))
 
 	// Step 2: Table-level overrides.types
 	if override, key, ok := r.lookupOverride(scopedOverrides, sqlType); ok {
-		return FromOverride(override, nullable), overrideSource{key: key, tableScoped: true}
+		return FromOverride(override, nullable, r.usePointers), overrideSource{key: key, tableScoped: true}
 	}
 
 	// Step 3: Global overrides.types
 	if override, key, ok := r.lookupOverride(r.globalOverrides, sqlType); ok {
-		return FromOverride(override, nullable), overrideSource{key: key}
+		return FromOverride(override, nullable, r.usePointers), overrideSource{key: key}
 	}
 
 	// Step 4: Built-in integrations. A table-scoped activation is the more
 	// specific of the two, so it is consulted first; both sit below every
 	// explicit override, per the chain in PRD §7.1.
 	if override, _, ok := r.lookupOverride(scopedIntegrations, sqlType); ok {
-		return FromOverride(override, nullable), overrideSource{}
+		return FromOverride(override, nullable, r.usePointers), overrideSource{}
 	}
 	if override, _, ok := r.lookupOverride(r.integrations, sqlType); ok {
-		return FromOverride(override, nullable), overrideSource{}
+		return FromOverride(override, nullable, r.usePointers), overrideSource{}
 	}
 
 	// Step 4.5: Schema enums, sets, and domains, owner schema first
-	key := r.schemaTypeKey(sqlType)
+	if gt, source, ok := r.resolveSchemaType(sqlType, nullable, tableOverrides); ok {
+		return gt, source
+	}
+
+	// Handle PostgreSQL array types: strip [] suffix and resolve base type.
+	// Array columns always map to Go slices; nullable arrays use the same
+	// slice type since slices are already reference types with a nil zero value.
+	if r.dialect == config.DialectPostgres {
+		if baseType, ok := strings.CutSuffix(sqlType, "[]"); ok {
+			// Enum arrays use a named slice type (e.g., UserRoleSlice) with
+			// Scan/Value methods so pgx can handle the custom OID without
+			// manual type registration.
+			if goTypeName, ok := r.arrayEnumElem(baseType); ok {
+				return GoType{
+					Name:          goTypeName + "Slice",
+					ZeroValue:     "nil",
+					IsSlice:       true,
+					SliceElemType: goTypeName,
+					FKConvert:     FKStringSprint,
+				}, overrideSource{}
+			}
+
+			base, source := r.resolveByTypeSource(baseType, false, tableOverrides)
+			return GoType{
+				Name:            "[]" + base.Name,
+				Import:          base.Import,
+				ZeroValue:       "nil",
+				IsSlice:         true,
+				FKConvert:       FKStringSprint,
+				UnmappedSQLType: base.UnmappedSQLType,
+			}, source
+		}
+	}
+
+	// Step 5: Built-in dialect mapping
+	return r.builtinResolve(sqlType, nullable), overrideSource{}
+}
+
+// arrayEnumElem returns the enum Go type of a PostgreSQL array element type
+// that names a registered enum. An enum element wins over overrides.types.
+func (r *Resolver) arrayEnumElem(elemSQLType string) (string, bool) {
+	key, schemaType := r.schemaTypeKey(elemSQLType)
+	goTypeName, ok := r.enums[key]
+	return goTypeName, schemaType && ok
+}
+
+// ArrayElemGoType returns the Go type of one element of a PostgreSQL array
+// whose element SQL type is elemSQLType, as the array column resolves it
+// when nothing retypes the column.
+func (r *Resolver) ArrayElemGoType(elemSQLType string, tableOverrides map[string]config.TypeOverride) string {
+	elemSQLType = normalizeSQL(elemSQLType)
+	if goTypeName, ok := r.arrayEnumElem(elemSQLType); ok {
+		return goTypeName
+	}
+	base, _ := r.resolveByTypeSource(elemSQLType, false, tableOverrides)
+	return base.Name
+}
+
+// resolveSchemaType resolves sqlType as a registered enum, SET or domain,
+// owner schema first. It reports false when sqlType names none.
+func (r *Resolver) resolveSchemaType(sqlType string, nullable bool, tableOverrides map[string]config.TypeOverride) (GoType, overrideSource, bool) {
+	key, ok := r.schemaTypeKey(sqlType)
+	if !ok {
+		return GoType{}, overrideSource{}, false
+	}
 	if goTypeName, ok := r.enums[key]; ok {
 		gt := GoType{
 			Name:      goTypeName,
@@ -811,7 +942,7 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 			gt.Name = "*" + goTypeName
 			gt.ZeroValue = "nil"
 		}
-		return gt, overrideSource{}
+		return gt, overrideSource{}, true
 	}
 	if goTypeName, ok := r.sets[key]; ok {
 		// SET types are named slices (reference types), so nullable uses the same type.
@@ -827,7 +958,7 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 			ZeroValue:     "nil",
 			SliceElemType: goTypeName + "Value",
 			FKConvert:     FKStringSprint,
-		}, overrideSource{}
+		}, overrideSource{}, true
 	}
 	if d, ok := r.domains[key]; ok {
 		// A domain's base resolves as a column of the domain, in the
@@ -836,40 +967,10 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 		if d.schema != "" && d.schema != r.ownerSchema {
 			scope = r.ForSchema(d.schema)
 		}
-		return scope.resolveByTypeSource(d.base, nullable, tableOverrides)
+		gt, source := scope.resolveByTypeSource(d.base, nullable, tableOverrides)
+		return gt, source, true
 	}
-
-	// Handle PostgreSQL array types: strip [] suffix and resolve base type.
-	// Array columns always map to Go slices; nullable arrays use the same
-	// slice type since slices are already reference types with a nil zero value.
-	if r.dialect == config.DialectPostgres {
-		if baseType, ok := strings.CutSuffix(sqlType, "[]"); ok {
-			// Enum arrays use a named slice type (e.g., UserRoleSlice) with
-			// Scan/Value methods so pgx can handle the custom OID without
-			// manual type registration.
-			if goTypeName, ok := r.enums[r.schemaTypeKey(baseType)]; ok {
-				return GoType{
-					Name:          goTypeName + "Slice",
-					ZeroValue:     "nil",
-					IsSlice:       true,
-					SliceElemType: goTypeName,
-					FKConvert:     FKStringSprint,
-				}, overrideSource{}
-			}
-
-			base, source := r.resolveByTypeSource(baseType, false, tableOverrides)
-			return GoType{
-				Name:      "[]" + base.Name,
-				Import:    base.Import,
-				ZeroValue: "nil",
-				IsSlice:   true,
-				FKConvert: FKStringSprint,
-			}, source
-		}
-	}
-
-	// Step 5: Built-in dialect mapping
-	return r.builtinResolve(sqlType, nullable), overrideSource{}
+	return GoType{}, overrideSource{}, false
 }
 
 // builtinResolve looks up the built-in dialect mapping for a SQL type.
@@ -888,8 +989,10 @@ func (r *Resolver) builtinResolve(sqlType string, nullable bool) GoType {
 		return r.goTypeFromInfo(goBytes, nullable)
 	}
 
-	// Unknown type: default to string.
-	return r.goTypeFromInfo(goString, nullable)
+	// Unknown type: default to string, and say so, so the caller can warn.
+	gt := r.goTypeFromInfo(goString, nullable)
+	gt.UnmappedSQLType = stripModifiers(sqlType)
+	return gt
 }
 
 // goTypeFromInfo converts a typeInfo to a GoType, applying nullable handling.
@@ -951,11 +1054,14 @@ func (r *Resolver) goTypeFromInfo(info typeInfo, nullable bool) GoType {
 // instead of aspirational: otherwise a key §4.7 honors could be parsed for
 // `tenancy.type` and quietly dropped.
 //
-// It takes no resolver state, which is why it can be shared: an override names
-// its own type, import and nullable variant outright, and nothing about the
-// dialect, the schema's enums/domains, or the usePointers setting can change
-// what it resolves to.
-func FromOverride(override config.TypeOverride, nullable bool) GoType {
+// It takes no resolver state beyond usePointers, which is why it can be
+// shared: an override names its own type, import and nullable variant, and
+// nothing about the dialect or the schema's enums/domains can change what it
+// resolves to. usePointers matters only for a nullable column whose override
+// names no `nullable:` variant: an omitted variant "uses `*T` when
+// `use_pointers` is true, or `sql.Null*` when false" (PRD §4.7), and only a Go
+// type with a database/sql null equivalent has a `sql.Null*` to take (§7.3).
+func FromOverride(override config.TypeOverride, nullable, usePointers bool) GoType {
 	zero := override.ZeroValue
 	if zero == "" {
 		zero = deriveZeroValue(override.Type)
@@ -963,7 +1069,7 @@ func FromOverride(override config.TypeOverride, nullable bool) GoType {
 
 	gt := GoType{
 		Name:      override.Type,
-		Import:    override.Import,
+		Import:    overrideImport(override.Type, override.Import),
 		ZeroValue: zero,
 		FKConvert: DeriveFKMethod(override.Type),
 	}
@@ -972,11 +1078,18 @@ func FromOverride(override config.TypeOverride, nullable bool) GoType {
 		return gt
 	}
 
-	// Nullable with explicit nullable variant.
+	// Nullable with explicit nullable variant. Without an import of its own it
+	// shares the parent's explicit one; failing that, a known literal brings
+	// its own.
 	if override.Nullable.Type != "" {
 		gt.Name = override.Nullable.Type
-		if override.Nullable.Import != "" {
+		switch {
+		case override.Nullable.Import != "":
 			gt.Import = override.Nullable.Import
+		case override.Import == "":
+			if info, ok := literal.Lookup(override.Nullable.Type); ok {
+				gt.Import = info.Import
+			}
 		}
 		if strings.HasPrefix(override.Nullable.Type, "*") {
 			gt.ZeroValue = "nil"
@@ -996,11 +1109,31 @@ func FromOverride(override config.TypeOverride, nullable bool) GoType {
 		return gt
 	}
 
+	// use_pointers false: a Go type with a database/sql null wrapper takes
+	// it, exactly as a built-in column of that type does.
+	if info, ok := sqlNullEquivalents[override.Type]; ok && !usePointers {
+		gt.Name = info.null
+		gt.Import = info.nullImp
+		gt.ZeroValue = info.null + "{}"
+		return gt
+	}
+
 	// Value-typed override: wrap in pointer so the column's null state has
 	// a Go-side representation distinct from the type's zero value.
 	gt.Name = "*" + override.Type
 	gt.ZeroValue = "nil"
 	return gt
+}
+
+// overrideImport returns an override's import: the explicit one, or the
+// registry's for a known literal (PRD §4.7). Leaving it to goimports would make
+// the generated file depend on the consumer's module cache.
+func overrideImport(goType, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	info, _ := literal.Lookup(goType)
+	return info.Import
 }
 
 // KnownLiteral reports whether goType names a Go type literal the resolver
@@ -1013,8 +1146,8 @@ func FromOverride(override config.TypeOverride, nullable bool) GoType {
 // declare one, and `column_map.<col>.type` needs its sibling `.import`
 // (PRD §8.5 "Column Overrides").
 func KnownLiteral(goType string) (string, bool) {
-	info, ok := knownGoTypes[goType]
-	return info.imp, ok
+	info, ok := literal.Lookup(goType)
+	return info.Import, ok
 }
 
 // FromLiteral resolves a literal Go type string to a GoType. Used for
@@ -1026,9 +1159,9 @@ func FromLiteral(goType string, nullable bool) GoType {
 		FKConvert: DeriveFKMethod(goType),
 	}
 
-	if info, ok := knownGoTypes[goType]; ok {
-		gt.Import = info.imp
-		gt.ZeroValue = info.zero
+	if info, ok := literal.Lookup(goType); ok {
+		gt.Import = info.Import
+		gt.ZeroValue = info.Zero
 	} else {
 		gt.ZeroValue = deriveZeroValue(goType)
 	}

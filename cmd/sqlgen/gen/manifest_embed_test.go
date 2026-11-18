@@ -132,7 +132,7 @@ func TestManifestEmbedTemplate_SingleLayout(t *testing.T) {
 		"func (c *Client) ManifestVersion() string {",
 		`sqlgenManifestFS.ReadFile("manifest/manifest_gen.json")`,
 		"manifest.LoadInto(raw, entityFS, &sqlgenManifestDoc, sqlgenManifestEntities)",
-		"return nil, manifest.ErrEntityNotFound",
+		"return manifest.FindEntity(sqlgenManifestEntities, table)",
 		"sqlgenManifestVersion = sqlgenManifestDoc.SchemaVersion",
 	}
 	for _, w := range wantContains {

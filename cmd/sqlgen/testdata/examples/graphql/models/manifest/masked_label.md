@@ -55,19 +55,6 @@ postgres:
 SELECT "id", "label" FROM "public"."masked_labels" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *MaskedLabelFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."masked_labels" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -92,6 +79,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."masked_labels" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *MaskedLabelFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."masked_labels" WHERE <filter>
 ```
 
 ### Paginate
@@ -152,36 +152,6 @@ postgres:
 INSERT INTO "public"."masked_labels" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateMaskedLabelInput`, `target MaskedLabelConflictTarget`
-- Returns: `*MaskedLabel`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated MaskedLabelConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."masked_labels" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateMaskedLabelInput`, `target MaskedLabelConflictTarget`
-- Returns: `[]*MaskedLabel`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same MaskedLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."masked_labels" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateMaskedLabelInput`
@@ -225,6 +195,36 @@ postgres:
 
 ```sql
 UPDATE "public"."masked_labels" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateMaskedLabelInput`, `target MaskedLabelConflictTarget`
+- Returns: `*MaskedLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated MaskedLabelConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."masked_labels" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateMaskedLabelInput`, `target MaskedLabelConflictTarget`
+- Returns: `[]*MaskedLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same MaskedLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."masked_labels" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -286,3 +286,17 @@ Type `MaskedLabelFilter`.
 Type `MaskedLabelSort`.
 
 Fields: ID, Label
+
+## Read examples
+
+```go
+row, err := client.MaskedLabels().Get(ctx, uuid.NewV4())
+rows, err := client.MaskedLabels().GetMany(ctx, &models.GetMaskedLabelsInput{Filter: &models.MaskedLabelFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.MaskedLabels().Create(ctx, &models.CreateMaskedLabelInput{Label: "example"})
+updated, err := client.MaskedLabels().Update(ctx, uuid.NewV4(), &models.UpdateMaskedLabelInput{Label: omittable.Set("example")})
+```

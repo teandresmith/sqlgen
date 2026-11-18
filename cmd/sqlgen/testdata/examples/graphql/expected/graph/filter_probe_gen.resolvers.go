@@ -35,14 +35,12 @@ func (r *mutationResolver) CreateFilterProbes(ctx context.Context, inputs []*gql
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateFilterProbe(ctx context.Context, id uuid1.UUID, input gqlmodel.UpdateFilterProbeInput) (*models.FilterProbe, error) {
-	setIn := translateUpdateFilterProbeInput(input)
-	hasSet := hasUpdateFilterProbeSetFields(input)
-	return r.M.UpdateFilterProbe(ctx, id, setIn, hasSet)
+	return r.M.UpdateFilterProbe(ctx, id, translateUpdateFilterProbeRequest(input))
 }
 
 // UpdateFilterProbes is the resolver for the updateFilterProbes field.
 func (r *mutationResolver) UpdateFilterProbes(ctx context.Context, filter gqlmodel.FilterProbeFilter, input gqlmodel.UpdateFilterProbeInput) ([]*models.FilterProbe, error) {
-	return r.M.UpdateFilterProbes(ctx, translateFilterProbeFilter(&filter), translateUpdateFilterProbeInput(input))
+	return r.M.UpdateFilterProbes(ctx, translateFilterProbeFilter(&filter), translateUpdateFilterProbeRequest(input))
 }
 
 // UpsertFilterProbe is the resolver for the upsertFilterProbe field.

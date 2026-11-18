@@ -40,6 +40,8 @@ overrides:
       import: uuid
 
 generation:
+  nested_mutations:
+    enabled: true
   # Manifest emission pins the `features.tenancy` block a tenanted
   # view reports (PRD §30.4.2). per_entity so both the top-level
   # manifest_gen.json index and entities/<view>.json carry the golden.
@@ -68,5 +70,31 @@ views:
       - line_items
 
 tables:
+  # The time-keyed nested target, both edges listed so a change that made
+  # either ineligible fails generation (see schema.sql).
+  moment_owners:
+    nested_mutations:
+      relationships:
+        - name: Moments
+  moment_tags:
+    nested_mutations:
+      relationships:
+        - name: Moments
   articles: {}
   line_items: {}
+  sprints:
+    nested_mutations:
+      relationships:
+        - name: Tasks
+          allow_reparent: true
+  zones:
+    nested_mutations:
+      relationships:
+        - name: Sites
+        - name: Plots
+          allow_reparent: true
+  shared_guardians:
+    nested_mutations:
+      relationships:
+        - name: SharedKids
+          allow_reparent: true

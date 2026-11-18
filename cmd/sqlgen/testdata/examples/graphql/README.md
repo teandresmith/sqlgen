@@ -131,7 +131,7 @@ for the generated-artifacts table.
 graphql/
   sqlgen.yml             # input/output + api.graphql + cache + tenancy
   gqlgen.yml             # consumer-owned; merged with sqlgen-emitted entries at wrapper time
-  schema.sql             # 19 tables + every relationship variant + scalar registry coverage
+  schema.sql             # 27 tables + every relationship variant + scalar registry coverage
   go.mod / go.sum        # pgx + gqlgen + cache/memory deps; `tool github.com/99designs/gqlgen` pins gqlgen
   generate.go            # //go:generate sqlgen graphql gen — belt-and-braces (`sqlgen generate` chains it inline)
   models/

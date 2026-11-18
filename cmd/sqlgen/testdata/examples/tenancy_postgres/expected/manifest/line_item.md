@@ -60,20 +60,6 @@ postgres:
 SELECT "order_id", "product_id", "quantity", "workspace_id" FROM "public"."line_items" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *LineItemFilter`
-- Returns: `int64`, `error`
-- Errors: `tenancy.ErrMissing`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."line_items" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk LineItemPK`
@@ -100,6 +86,20 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."line_items" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *LineItemFilter`
+- Returns: `int64`, `error`
+- Errors: `tenancy.ErrMissing`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."line_items" WHERE <filter>
 ```
 
 ### Paginate
@@ -162,36 +162,6 @@ postgres:
 INSERT INTO "public"."line_items" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateLineItemInput`, `target LineItemConflictTarget`
-- Returns: `*LineItem`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: One method over the generated LineItemConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."line_items" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateLineItemInput`, `target LineItemConflictTarget`
-- Returns: `[]*LineItem`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Batched in generation.batch_size chunks over the same LineItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."line_items" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk LineItemPK`, `input *UpdateLineItemInput`
@@ -235,6 +205,36 @@ postgres:
 
 ```sql
 UPDATE "public"."line_items" SET <set> WHERE <filter> RETURNING "order_id", "product_id"
+```
+
+### Upsert
+
+- Params: `input *CreateLineItemInput`, `target LineItemConflictTarget`
+- Returns: `*LineItem`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: One method over the generated LineItemConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."line_items" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateLineItemInput`, `target LineItemConflictTarget`
+- Returns: `[]*LineItem`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: Batched in generation.batch_size chunks over the same LineItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."line_items" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment
@@ -315,3 +315,17 @@ Type `LineItemFilter`.
 Type `LineItemSort`.
 
 Fields: OrderID, ProductID, Quantity, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.LineItems().Get(ctx, models.LineItemPK{OrderID: 1, ProductID: 1})
+rows, err := client.LineItems().GetMany(ctx, &models.GetLineItemsInput{Filter: &models.LineItemFilter{Quantity: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.LineItems().Create(ctx, &models.CreateLineItemInput{OrderID: 1, ProductID: 1, Quantity: 1})
+updated, err := client.LineItems().Update(ctx, models.LineItemPK{OrderID: 1, ProductID: 1}, &models.UpdateLineItemInput{WorkspaceID: omittable.Set(uuid.NewV4())})
+```

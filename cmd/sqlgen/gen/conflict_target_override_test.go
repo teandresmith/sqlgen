@@ -99,22 +99,24 @@ func TestBuildConflictTargets_OverrideNeedsAnIndex(t *testing.T) {
 			},
 		},
 		{
-			// KNOWN LIMITATION, pinned so it cannot change silently: an inline
-			// single-column PRIMARY KEY records only the column flag on all
-			// three dialects, so once the write-back sets that same flag this
-			// shape is byte-identical to an app-enforced override. The guard
-			// fails closed — a missing constant is a compile error the author
-			// sees at once, a wrongly-emitted target is a 42P10 in production.
-			name: "inline single-column PK restated in config loses its target (known limitation)",
+			// The one-column case of the rule above: a PRIMARY KEY constraint
+			// over the key keeps the target whether the key is composite or not.
+			// (Canonicalization gives an inline PRIMARY KEY this constraint.)
+			name: "inline single-column PK restated in config keeps its target",
 			table: parser.Table{
 				Name: "products",
 				Columns: []parser.Column{
 					{Name: "id", Type: "uuid", PrimaryKey: true},
 					{Name: "name", Type: "text"},
 				},
+				Constraints: []parser.Constraint{
+					{Name: "products_pkey", Type: parser.PrimaryKey, Columns: []string{"id"}},
+				},
 			},
 			tableCfg: config.TableConfig{PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"id"}}},
-			want:     nil,
+			want: []ConflictTargetContext{
+				{ConstantName: "ProductConflictPK", Columns: []string{"id"}, CoversPK: true, Comment: "PRIMARY KEY (id)"},
+			},
 		},
 		{
 			name: "app-enforced override emits no PK target",

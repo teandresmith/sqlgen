@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/sql"
@@ -272,8 +273,9 @@ func TestDeleteTemplate_softDeleteMany(t *testing.T) {
 		"idStrings := make([]string, len(ids))",
 		"idStrings[i] = id.String()",
 		"sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{",
-		`Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings)...)}`,
-		`fmt.Errorf("soft delete products: %w", err)`,
+		"for start := 0; start < len(ids); start += c.batchSize {",
+		`delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}`,
+		`fmt.Errorf("soft delete many products: %w", err)`,
 		"ID: &comparator.ID{In: idStrings}",
 		"DeletedAt: &comparator.NullableTime{Null: new(false)}",
 		"Limit: new(0)",
@@ -461,8 +463,9 @@ func TestDeleteTemplate_hardDeleteMany(t *testing.T) {
 
 	wantPatterns := []string{
 		"func (c *productClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts ...func(*CallOptions[ProductFieldOptions])) error",
-		`sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)`,
-		`fmt.Errorf("hard delete products: %w", err)`,
+		"for start := 0; start < len(ids); start += c.batchSize {",
+		`sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)`,
+		`fmt.Errorf("hard delete many products: %w", err)`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {
@@ -548,7 +551,8 @@ func TestDeleteTemplate_compositePK_softDeleteMany(t *testing.T) {
 
 	wantPatterns := []string{
 		"func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,",
-		"pkValues := make([][]any, len(pks))",
+		"for start := 0; start < len(pks); start += c.batchSize {",
+		"pkValues := make([][]any, end-start)",
 		"sql.BuildCompositePKBatchCondition(c.dialect,",
 		"PKs: pks",
 	}
@@ -565,7 +569,8 @@ func TestDeleteTemplate_compositePK_hardDeleteMany(t *testing.T) {
 
 	wantPatterns := []string{
 		"func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,",
-		"pkValues := make([][]any, len(pks))",
+		"for start := 0; start < len(pks); start += c.batchSize {",
+		"pkValues := make([][]any, end-start)",
 		"sql.BuildCompositePKBatchCondition(c.dialect,",
 		"sql.BuildHardDelete(c.dialect, c.table,",
 	}
@@ -706,5 +711,175 @@ func TestDeleteTemplate_goldenFile_noSoftDelete(t *testing.T) {
 
 	if diff := cmp.Diff(string(want), got); diff != "" {
 		t.Errorf("delete_products_no_soft_gen.go mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// --- Tests: by-key no-op writes record no affected key ---
+
+// methodBody returns the source of the generated method named name, from its
+// signature to the closing brace at column zero.
+func methodBody(t *testing.T, output, name string) string {
+	t.Helper()
+	start := strings.Index(output, ") "+name+"(ctx context.Context")
+	if start < 0 {
+		t.Fatalf("method %s not found in output:\n%s", name, output)
+	}
+	rest := output[start:]
+	end := strings.Index(rest, "\n}\n")
+	if end < 0 {
+		// The last declaration in the output may end without a newline.
+		if !strings.HasSuffix(rest, "\n}") {
+			t.Fatalf("method %s has no closing brace", name)
+		}
+		end = len(rest) - len("\n}")
+	}
+	return rest[:end]
+}
+
+// A by-key SoftDelete, Restore or HardDelete whose key matches no row writes
+// nothing. It must record no affected key, so the cache invalidates nothing
+// and the event hook publishes nothing: the one m.AffectedPKs assignment in
+// each of those methods sits behind the matched-row check.
+func TestDeleteTemplate_byKeyNoOp_recordsNoAffectedPKs(t *testing.T) {
+	tenanted := func(dialectName config.Dialect, driver config.Driver) gen.TableContext {
+		tc := tenantedProductContext()
+		tc.Dialect = dialectName
+		tc.Driver = driver
+		tc.SoftDelete = &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt", Strategy: "timestamp"}
+		tc.ExcludeDeleted = true
+		tc.FilterFields = []gen.FilterFieldContext{
+			{FieldName: "ID", ComparatorType: "comparator.ID", ColumnName: "id"},
+			{FieldName: "DeletedAt", ComparatorType: "comparator.NullableTime", ColumnName: "deleted_at", IsSoftDeleteColumn: true},
+		}
+		tc.Operations = gen.ResolvedOperations{SoftDelete: true, Restore: true, HardDelete: true}
+		return tc
+	}
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+	}{
+		{name: "postgres exec", ctx: testDeleteContext_timestamp(), dialect: sql.NewPostgresDialect()},
+		{name: "mysql exec", ctx: testDeleteContext_mysql(), dialect: sql.NewMySQLDialect()},
+		{name: "composite pk", ctx: testDeleteContext_compositePK(), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted postgres returning", ctx: tenanted("postgres", "pgx"), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted sqlite returning", ctx: tenanted("sqlite", "stdlib"), dialect: sql.NewSQLiteDialect()},
+		{name: "tenanted mysql pre-read", ctx: tenanted("mysql", "stdlib"), dialect: sql.NewMySQLDialect()},
+	}
+	methods := []struct {
+		name string
+	}{
+		{name: "SoftDelete"},
+		{name: "Restore"},
+		{name: "HardDelete"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			output := executeDeleteTemplate(t, tt.ctx, tt.dialect)
+			for _, m := range methods {
+				t.Run(m.name, func(t *testing.T) {
+					body := methodBody(t, output, m.name)
+					lines := strings.Split(body, "\n")
+					assignments := 0
+					for i, line := range lines {
+						if !strings.Contains(line, "m.AffectedPKs =") {
+							continue
+						}
+						assignments++
+						prev := ""
+						for j := i - 1; j >= 0; j-- {
+							if s := strings.TrimSpace(lines[j]); s != "" {
+								prev = s
+								break
+							}
+						}
+						if prev != "if matched > 0 {" {
+							t.Errorf("m.AffectedPKs assignment not behind the matched-row check; preceding line %q\n\nmethod:\n%s", prev, body)
+						}
+					}
+					if assignments != 1 {
+						t.Errorf("m.AffectedPKs assignments = %d, want 1\n\nmethod:\n%s", assignments, body)
+					}
+				})
+			}
+		})
+	}
+}
+
+// A batch SoftDeleteMany, RestoreMany or HardDeleteMany records only the keys
+// its statements wrote, never the listed keys as given: a listed key that
+// matches no row must not reach AffectedPKs, so the cache invalidates nothing
+// for it and the event hook publishes nothing for it. The written keys come
+// from the statement itself on a dialect with RETURNING, and from a pre-read
+// of the matching keys on MySQL.
+func TestDeleteTemplate_batchNoOp_recordsOnlyWrittenKeys(t *testing.T) {
+	tenanted := func(dialectName config.Dialect, driver config.Driver) gen.TableContext {
+		tc := tenantedProductContext()
+		tc.Dialect = dialectName
+		tc.Driver = driver
+		tc.SoftDelete = &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt", Strategy: "timestamp"}
+		tc.ExcludeDeleted = true
+		tc.FilterFields = []gen.FilterFieldContext{
+			{FieldName: "ID", ComparatorType: "comparator.ID", ColumnName: "id"},
+			{FieldName: "DeletedAt", ComparatorType: "comparator.NullableTime", ColumnName: "deleted_at", IsSoftDeleteColumn: true},
+		}
+		tc.Operations = gen.ResolvedOperations{SoftDelete: true, Restore: true, HardDelete: true}
+		return tc
+	}
+	onDialect := func(tc gen.TableContext, dialectName config.Dialect, driver config.Driver) gen.TableContext {
+		tc.Dialect = dialectName
+		tc.Driver = driver
+		return tc
+	}
+	const singleKeyReturning = `ReturningColumns: []string{"id"}`
+	const compositeKeyReturning = `ReturningColumns: []string{"order_id", "product_id"}`
+	const keyPreRead = "c.matchingKeys(ctx, conn, "
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+		// keyCapture is the source text that captures the written keys.
+		keyCapture string
+	}{
+		{name: "postgres returning", ctx: testDeleteContext_timestamp(), dialect: sql.NewPostgresDialect(), keyCapture: singleKeyReturning},
+		{name: "sqlite returning", ctx: onDialect(testDeleteContext_timestamp(), "sqlite", "stdlib"), dialect: sql.NewSQLiteDialect(), keyCapture: singleKeyReturning},
+		{name: "mysql pre-read", ctx: testDeleteContext_mysql(), dialect: sql.NewMySQLDialect(), keyCapture: keyPreRead},
+		{name: "composite pk postgres returning", ctx: testDeleteContext_compositePK(), dialect: sql.NewPostgresDialect(), keyCapture: compositeKeyReturning},
+		{name: "composite pk sqlite returning", ctx: onDialect(testDeleteContext_compositePK(), "sqlite", "stdlib"), dialect: sql.NewSQLiteDialect(), keyCapture: compositeKeyReturning},
+		{name: "composite pk mysql pre-read", ctx: onDialect(testDeleteContext_compositePK(), "mysql", "stdlib"), dialect: sql.NewMySQLDialect(), keyCapture: keyPreRead},
+		{name: "tenanted postgres returning", ctx: tenanted("postgres", "pgx"), dialect: sql.NewPostgresDialect(), keyCapture: `ReturningColumns: []string{"id", "workspace_id"}`},
+		{name: "tenanted mysql pre-read", ctx: tenanted("mysql", "stdlib"), dialect: sql.NewMySQLDialect(), keyCapture: "c.captureAffectedTenants(ctx, conn, "},
+	}
+	methods := []struct {
+		name string
+	}{
+		{name: "SoftDeleteMany"},
+		{name: "RestoreMany"},
+		{name: "HardDeleteMany"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			output := executeDeleteTemplate(t, tt.ctx, tt.dialect)
+			for _, m := range methods {
+				t.Run(m.name, func(t *testing.T) {
+					body := methodBody(t, output, m.name)
+					for _, listed := range []string{"m.AffectedPKs = toAnySlice(ids)", "m.AffectedPKs = toAnySlice(pks)"} {
+						if strings.Contains(body, listed) {
+							t.Errorf("records every listed key (%q)\n\nmethod:\n%s", listed, body)
+						}
+					}
+					if n := strings.Count(body, "m.AffectedPKs = affectedPKs"); n != 1 {
+						t.Errorf("m.AffectedPKs = affectedPKs assignments = %d, want 1\n\nmethod:\n%s", n, body)
+					}
+					if !strings.Contains(body, tt.keyCapture) {
+						t.Errorf("written keys not captured by %q\n\nmethod:\n%s", tt.keyCapture, body)
+					}
+					// Sub-batching stays: one statement per c.batchSize keys.
+					if !strings.Contains(body, "start += c.batchSize") {
+						t.Errorf("batch_size sub-batching lost\n\nmethod:\n%s", body)
+					}
+				})
+			}
+		})
 	}
 }

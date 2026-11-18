@@ -67,7 +67,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Get(ctx context.Context, {{ if .
 			// {{ .CompositePKStructName }}; the runtime verifies it matches the resolved tenant
 			// before any DB round-trip. No auto-fill — mismatch returns ErrMismatch.
 			if pk.{{ .Tenancy.FieldName }} != resolvedTenant {
-				return nil, tenancy.ErrMismatch
+				return nil, fmt.Errorf("get {{ .TableName | toSingular }}: %w", tenancy.ErrMismatch)
 			}
 {{- end }}
 			qctx.Tenant = resolvedTenant
@@ -81,6 +81,11 @@ func (c *{{ .StructName | toCamelCase }}Client) Get(ctx context.Context, {{ if .
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[{{ .StructName }}FieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -118,7 +123,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Get(ctx context.Context, {{ if .
 		return {{ $resultVar }}[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get {{ .TableName | toSingular }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -144,7 +149,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		input = &Get{{ .StructName | structNamePlural }}Input{}
 	}
 	options := resolveCallOptions(opts)
-{{ template "shared/lock-mode-guard" (lockGuardCtx . (printf "get %s" .TableName)) }}
+{{ template "shared/lock-mode-guard" (lockGuardCtx . (printf "get many %s" .TableName)) }}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
 		Input: input, CallOptions: options,
@@ -170,7 +175,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 				columns = unionColumns(selected, input.requiredColumns...)
 {{- if .HasO2MRelationships }}
 				if fieldOptions.loadsRelationships() {
-					columns = unionColumns(columns, {{ printf "%q" (index .PKColumns 0).Name }})
+					columns = unionColumns(columns{{ range .LoadKeyColumns }}, {{ printf "%q" .Name }}{{ end }})
 				}
 {{- end }}
 			}
@@ -182,7 +187,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		// resolved before the conditions are built rather than appended after them.
 		filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
 		if filterErr != nil {
-			return nil, fmt.Errorf("get {{ .TableName }}: %w", filterErr)
+			return nil, filterErr
 		}
 {{- end }}
 
@@ -206,7 +211,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .TableName }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
@@ -258,7 +263,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
-					return nil, fmt.Errorf("get {{ .TableName }}: resolve tenant: %w", err)
+					return nil, fmt.Errorf("resolve tenant: %w", err)
 				}
 				if apply {
 					tenantedAliases := map[string]string{
@@ -296,14 +301,14 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 
 			rows, err := conn.Query(ctx, result, resultArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
 			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
 			joinColumns, err := rows.Columns()
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .TableName }} columns: %w", err)
+				return nil, fmt.Errorf("columns: %w", err)
 			}
 			{{ $resultVar }}, err = scan{{ .StructName | structNamePlural }}WithOneToOneJoins(rows, joinColumns)
 			if err != nil {
@@ -322,7 +327,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
@@ -338,7 +343,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, {{ $resultVar }}, options.FieldOptions{{ if .Tenancy }}, options.SkipTenancy{{ end }}{{ if .ExplicitTenantGoType }}, options.Tenant{{ end }}); err != nil {
+			if err := c.loadRelationships(ctx, conn, {{ $resultVar }}, options); err != nil {
 				return nil, err
 			}
 		}
@@ -347,7 +352,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		return {{ $resultVar }}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many {{ .TableName }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -356,11 +361,10 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 }
 {{- if .HasO2MRelationships }}
 
-{{ $pkField := index .PKColumns 0 -}}
 {{ $parentIDsVar := printf "%sIDs" (.StructName | toCamelCase) -}}
 // loadsRelationships reports whether any O2M or M2M relationship is selected.
-// GetMany unions the {{ $pkField.Name }} column into a narrowed projection when one is:
-// loadRelationships maps every child back through {{ $.VarName }}.{{ $pkField.FieldName }}, which
+// GetMany unions the {{ range $i, $c := .LoadKeyColumns }}{{ if $i }} and {{ end }}{{ $c.Name }}{{ end }} column{{ if gt (len .LoadKeyColumns) 1 }}s{{ end }} into a narrowed projection when one is:
+// loadRelationships maps every child back through {{ range $i, $c := .LoadKeyColumns }}{{ if $i }} and {{ end }}{{ $.VarName }}.{{ $c.FieldName }}{{ end }}, which
 // an unselected column would leave at its zero value.
 func (fo *{{ .StructName }}FieldOptions) loadsRelationships() bool {
 {{- range .O2MRelationships }}
@@ -379,14 +383,25 @@ func (fo *{{ .StructName }}FieldOptions) loadsRelationships() bool {
 // loadRelationships fetches every selected O2M / M2M member through the
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache{{ if .Tenancy }}, SkipEvents{{ if .ExplicitTenantGoType }}, SkipTenancy and Tenant{{ else }} and SkipTenancy{{ end }}{{ else }} and SkipEvents{{ end }}. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
 {{- if .ExplicitTenantGoType }}
 //
-// Both tenancy call options travel with it for that reason.
-// SkipTenancy has always been forwarded; CallOptions.Tenant is forwarded too,
-// because a parent scoped to an explicit tenant whose children fell back to the
-// ctx resolver read the two halves of one row set under two different tenants —
-// and on the explicit-tenant bootstrap path, where ctx carries no tenant at all, the child
-// read failed with tenancy.ErrMissing while the parent succeeded.
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
 {{- end }}
 //
 // The fan-out is unbounded, inside a transaction and out. Outside one each
@@ -395,78 +410,112 @@ func (fo *{{ .StructName }}FieldOptions) loadsRelationships() bool {
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Context, conn database.Querier, {{ $resultVar }} []*{{ .StructName }}, fo *{{ .StructName }}FieldOptions{{ if .Tenancy }}, skipTenancy bool{{ end }}{{ if .ExplicitTenantGoType }}, tenant *{{ .ExplicitTenantGoType }}{{ end }}) error {
+func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Context, conn database.Querier, {{ $resultVar }} []*{{ .StructName }}, options CallOptions[{{ .StructName }}FieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 {{- range .O2MRelationships }}
 {{- $relVar := printf "related%s" .FieldName }}
+{{- if .KeyedLoad }}
+{{ template "table/load-o2m-keyed" (keyedLoad $ . $resultVar) }}
+{{- else }}
 
 	if fo.{{ .FieldName }} != nil {
 		g.Go(func() error {
-{{- if pkIsStringType $pkField }}
+{{- if pkIsStringType .ParentKey }}
 			// Collect parent FK values as strings
 			{{ $parentIDsVar }} := make([]string, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ fkToString $pkField (printf "%s.%s" $.VarName $pkField.FieldName) }}
+				{{ $parentIDsVar }}[idx] = {{ fkToString .ParentKey (printf "%s.%s" $.VarName .ParentKey.FieldName) }}
 			}
 {{- else }}
 			// Collect parent FK values
-			{{ $parentIDsVar }} := make([]{{ $pkField.GoType }}, len({{ $resultVar }}))
+			{{ $parentIDsVar }} := make([]{{ or .FKEnumGoType .ParentKey.GoType }}, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ printf "%s.%s" $.VarName $pkField.FieldName }}
+				{{ $parentIDsVar }}[idx] = {{ if .FKEnumGoType }}{{ .FKEnumGoType }}({{ end }}{{ printf "%s.%s" $.VarName .ParentKey.FieldName }}{{ if .FKEnumGoType }}){{ end }}
 			}
 {{- end }}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &{{ .TargetStructName }}Filter{
-				{{ .FKFieldName }}: {{ pkFilterInExpr $pkField $parentIDsVar .FKNullable }},
-			}
-			if fo.{{ .FieldName }}.Filter != nil {
-				filter.And = append(filter.And, fo.{{ .FieldName }}.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.{{ .FieldName }}.Sorts
 			if len(sorts) == 0 {
 				sorts = c.{{ .FieldName | toCamelCase }}DefaultSort
 			}
 
+{{- $keysVar := "chunk" }}
+{{- if $.O2MLoadUnchunked }}
+{{- $keysVar = $parentIDsVar }}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// ({{ $resultVar }}) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			{{ $relVar }}, err := c.{{ .TargetStructName | toCamelCase }}Client.GetMany(ctx, &Get{{ .TargetStructName | structNamePlural }}Input{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-{{- if .Filter }}
-				// Static sub-categorization predicate from the relationship's
-				// config `filter:`. Joins the consumer-supplied
-				// FieldOptions filter via AND on the target query's WHERE.
-				conditions: []sql.Condition{sql.Raw({{ printf "%q" .Filter }})},
-{{- else if .Discriminator }}
-				// Same predicate from the relationship's config
-				// `discriminator:`. The structured form is
-				// column-and-value rather than opaque SQL, so the value binds
-				// as a parameter and the column is quoted by the dialect.
-				conditions: []sql.Condition{sql.Raw(c.dialect.QuoteIdentifier({{ printf "%q" .Discriminator.Column }})+" = $", {{ .Discriminator.GoLiteral }})},
+{{- else }}
+
+			// Load via related entity client, {{ loadChunkSize 1 }} parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// ({{ $resultVar }}) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+			var {{ $relVar }} []*{{ .TargetStructName }}
+			for start := 0; start < len({{ $parentIDsVar }}); start += {{ loadChunkSize 1 }} {
+				chunk := {{ $parentIDsVar }}[start:min(start+{{ loadChunkSize 1 }}, len({{ $parentIDsVar }}))]
 {{- end }}
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{ {{- printf "%q" .FKColumn -}} },
-			}, func(co *CallOptions[{{ .TargetStructName }}FieldOptions]) {
-				co.FieldOptions = fo.{{ .FieldName }}.FieldOptions
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &{{ .TargetStructName }}Filter{
+					{{ .FKFieldName }}: {{ pkFilterInExprByGoType (or .FKEnumGoType .ParentKey.GoType) $keysVar .FKNullable }},
+				}
+				if fo.{{ .FieldName }}.Filter != nil {
+					filter.And = append(filter.And, fo.{{ .FieldName }}.Filter)
+				}
+
+				{{ if $.O2MLoadUnchunked }}{{ $relVar }}{{ else }}loaded{{ end }}, err := c.{{ .TargetStructName | toCamelCase }}Client.GetMany(ctx, &Get{{ .TargetStructName | structNamePlural }}Input{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+{{- if .Filter }}
+					// Static sub-categorization predicate from the relationship's
+					// config `filter:`. Joins the consumer-supplied
+					// FieldOptions filter via AND on the target query's WHERE.
+					conditions: []sql.Condition{sql.Raw({{ printf "%q" .Filter }})},
+{{- else if .Discriminator }}
+					// Same predicate from the relationship's config
+					// `discriminator:`. The structured form is
+					// column-and-value rather than opaque SQL, so the value binds
+					// as a parameter and the column is quoted by the dialect.
+					conditions: []sql.Condition{sql.Raw(c.dialect.QuoteIdentifier({{ printf "%q" .Discriminator.Column }})+" = $", {{ .Discriminator.GoLiteral }})},
+{{- end }}
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{ {{- printf "%q" .FKColumn -}} },
+				}, func(co *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+					co.FieldOptions = fo.{{ .FieldName }}.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 {{- if $.Tenancy }}
-				co.SkipTenancy = skipTenancy
+					co.SkipTenancy = options.SkipTenancy
 {{- end }}
 {{- if $.ExplicitTenantGoType }}
-				co.Tenant = tenant
+					co.Tenant = options.Tenant
 {{- end }}
-			})
-			if err != nil {
-				return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }}: %w", err)
+				})
+				if err != nil {
+					return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }}: %w", err)
+				}
+{{- if not $.O2MLoadUnchunked }}
+				{{ $relVar }} = append({{ $relVar }}, loaded...)
 			}
+{{- end }}
 
 			// Map results back to parent entities by FK. The FK column on the
 			// child table may be nullable and resolved to a Null-wrapper struct
@@ -483,165 +532,526 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				key := {{ fkLoadKey .FKColumnGoType $fkVar }}
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range {{ $resultVar }} {
-				{{ $resultVar }}[i].{{ .FieldName }} = byFK[{{ fkToString $pkField (printf "%s[i].%s" $resultVar $pkField.FieldName) }}]
+				key := {{ fkToString .ParentKey (printf "%s[i].%s" $resultVar .ParentKey.FieldName) }}
+				rs, ok := byFK[key]
+				{{ $resultVar }}[i].{{ .FieldName }} = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }}: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
 	}
 {{- end }}
+{{- end }}
 {{- range .M2MRelationships }}
 {{- $relVar := printf "related%s" .FieldName }}
+{{- if .KeyedLoad }}
+{{ template "table/load-m2m-keyed" (keyedLoad $ . $resultVar) }}
+{{- else }}
 
 	if fo.{{ .FieldName }} != nil {
 		g.Go(func() error {
-{{- if pkIsStringType $pkField }}
+{{- if pkIsStringType .ParentKey }}
 			// Collect parent IDs as strings
 			{{ $parentIDsVar }} := make([]string, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ fkToString $pkField (printf "%s.%s" $.VarName $pkField.FieldName) }}
+				{{ $parentIDsVar }}[idx] = {{ fkToString .ParentKey (printf "%s.%s" $.VarName .ParentKey.FieldName) }}
 			}
 {{- else }}
 			// Collect parent IDs
-			{{ $parentIDsVar }} := make([]{{ $pkField.GoType }}, len({{ $resultVar }}))
+			{{ $parentIDsVar }} := make([]{{ .ParentKey.GoType }}, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ printf "%s.%s" $.VarName $pkField.FieldName }}
+				{{ $parentIDsVar }}[idx] = {{ printf "%s.%s" $.VarName .ParentKey.FieldName }}
 			}
 {{- end }}
-
-			// Step 1: Query junction table to get mapping
-			junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: {{ printf "%q" .JunctionSchema }}, Name: {{ printf "%q" .JunctionTable }}}, sql.SelectOptions{
-				Columns:    []string{ {{- printf "%q" .JunctionLocalFK }}, {{ printf "%q" .JunctionReferenceFK -}} },
-				Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .JunctionLocalFK }})).In(toAnySlice({{ $parentIDsVar }})...)},
-			})
-
-			junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-			if err != nil {
-				return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
-			}
-			defer junctionRows.Close()
-
-			// Discover column positions from result (BuildSelect sorts columns alphabetically)
-			junctionCols, err := junctionRows.Columns()
-			if err != nil {
-				return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }} junction columns: %w", err)
-			}
-			localIdx, refIdx := 0, 1
-			for i, col := range junctionCols {
-				switch col {
-				case {{ printf "%q" .JunctionLocalFK }}:
-					localIdx = i
-				case {{ printf "%q" .JunctionReferenceFK }}:
-					refIdx = i
-				}
-			}
-
-			// Build mapping and collect all target IDs
-			parentToTargetIDs := make(map[string][]string)
-			var allTargetIDs []string
-			for junctionRows.Next() {
-				vals := make([]string, len(junctionCols))
-				ptrs := make([]any, len(junctionCols))
-				for i := range vals {
-					ptrs[i] = &vals[i]
-				}
-				if err := junctionRows.Scan(ptrs...); err != nil {
-					return fmt.Errorf("scan {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
-				}
-				parentID, targetID := vals[localIdx], vals[refIdx]
-				parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
-				allTargetIDs = append(allTargetIDs, targetID)
-			}
-			if err := junctionRows.Err(); err != nil {
-				return fmt.Errorf("iterate {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
-			}
-
-			if len(allTargetIDs) == 0 {
-				return nil
-			}
-
-			// Step 2: Fetch the actual entities
-{{- if pkIsStringType .FKGoType }}
-			filter := &{{ .TargetStructName }}Filter{
-				ID: &comparator.ID{In: allTargetIDs},
-			}
-{{- else }}
-			targetPKs := make([]{{ .FKGoType }}, len(allTargetIDs))
-			for ii, s := range allTargetIDs {
-				v, _ := strconv.ParseInt(s, 10, 64)
-				targetPKs[ii] = {{ .FKGoType }}(v)
-			}
-			filter := &{{ .TargetStructName }}Filter{
-				ID: {{ pkFilterInExprStr .FKGoType "targetPKs" false }},
-			}
-{{- end }}
-			if fo.{{ .FieldName }}.Filter != nil {
-				filter.And = append(filter.And, fo.{{ .FieldName }}.Filter)
-			}
 
 			sorts := fo.{{ .FieldName }}.Sorts
 			if len(sorts) == 0 {
 				sorts = c.{{ .FieldName | toCamelCase }}DefaultSort
 			}
 
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded targets must use a name distinct from the parent slice
-			// ({{ $resultVar }}) to avoid shadowing it and mis-mapping the results
-			// onto the targets instead of the parents.
-			{{ $relVar }}, err := c.{{ .TargetStructName | toCamelCase }}Client.GetMany(ctx, &Get{{ .TargetStructName | structNamePlural }}Input{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-{{- if .Filter }}
-				// Static sub-categorization predicate from the relationship's
-				// config `filter:`. Applied as an AND on the
-				// target query after the junction resolves target IDs.
-				conditions: []sql.Condition{sql.Raw({{ printf "%q" .Filter }})},
-{{- else if .Discriminator }}
-				// Same predicate from the relationship's config
-				// `discriminator:`, bound as a parameter.
-				conditions: []sql.Condition{sql.Raw(c.dialect.QuoteIdentifier({{ printf "%q" .Discriminator.Column }})+" = $", {{ .Discriminator.GoLiteral }})},
+			// The three steps run once per chunk of {{ loadChunkSize 1 }} parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len({{ $parentIDsVar }}); start += {{ loadChunkSize 1 }} {
+				chunk := {{ $parentIDsVar }}[start:min(start+{{ loadChunkSize 1 }}, len({{ $parentIDsVar }}))]
+
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key column
+				// only; step 2 decides which targets load.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: {{ printf "%q" .JunctionSchema }}, Name: {{ printf "%q" .JunctionTable }}}, []sql.JoinClause{ {
+						Table:   sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}},
+						Alias:   "t",
+						On:      "t." + c.dialect.QuoteIdentifier({{ printf "%q" .TargetPKColumn }}) + " = j." + c.dialect.QuoteIdentifier({{ printf "%q" .JunctionReferenceFK }}),
+						Columns: []string{ {{- printf "%q" .TargetPKColumn -}} },
+					} }, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{ {{- printf "%q" .JunctionLocalFK -}} },
+						Conditions: []sql.Condition{
+							sql.Where("j." + c.dialect.QuoteIdentifier({{ printf "%q" .JunctionLocalFK }})).In(toAnySlice(chunk)...),
+							// The builder's join is a LEFT JOIN: a junction row whose
+							// target is gone maps nothing.
+							sql.Where("t." + c.dialect.QuoteIdentifier({{ printf "%q" .TargetPKColumn }})).IsNotNull(),
+						},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }} junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case {{ printf "%q" (printf "j.%s" .JunctionLocalFK) }}:
+							localIdx = i
+						case {{ printf "%q" (printf "t.%s" .TargetPKColumn) }}:
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey {{ .FKColumnGoType }}
+						var target {{ .TargetStructName }}
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &target.{{ .TargetPKFieldName }}
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
+						}
+{{- with fkLoadGuard .FKColumnGoType "localKey" }}
+						if !({{ . }}) {
+							continue
+						}
 {{- end }}
-				// Step 3 keys every loaded target on its own PK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every target onto the zero value.
-				requiredColumns: []string{ {{- printf "%q" .TargetPKColumn -}} },
-			}, func(co *CallOptions[{{ .TargetStructName }}FieldOptions]) {
-				co.FieldOptions = fo.{{ .FieldName }}.FieldOptions
+						parentID, targetID := {{ fkLoadKey .FKColumnGoType "localKey" }}, {{ fkToStringByGoType .FKGoType (printf "target.%s" .TargetPKFieldName) }}
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .JunctionLocalFK }})).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .TargetPKColumn }})).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier({{ printf "%q" .JunctionReferenceFK }}) +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .JunctionSchema }}, Name: {{ printf "%q" .JunctionTable }}}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+{{- if .Filter }}
+					// Static sub-categorization predicate from the relationship's
+					// config `filter:`. Applied as an AND on the
+					// target query alongside the junction match.
+					sql.Raw({{ printf "%q" .Filter }}),
+{{- else if .Discriminator }}
+					// Same predicate from the relationship's config
+					// `discriminator:`, bound as a parameter.
+					sql.Raw(c.dialect.QuoteIdentifier({{ printf "%q" .Discriminator.Column }})+" = $", {{ .Discriminator.GoLiteral }}),
+{{- end }}
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &{{ .TargetStructName }}Filter{}
+				if fo.{{ .FieldName }}.Filter != nil {
+					filter.And = append(filter.And, fo.{{ .FieldName }}.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// ({{ $resultVar }}) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				{{ $relVar }}, err := c.{{ .TargetStructName | toCamelCase }}Client.GetMany(ctx, &Get{{ .TargetStructName | structNamePlural }}Input{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{ {{- printf "%q" .TargetPKColumn -}} },
+				}, func(co *CallOptions[{{ .TargetStructName }}FieldOptions]) {
+					co.FieldOptions = fo.{{ .FieldName }}.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 {{- if $.Tenancy }}
-				co.SkipTenancy = skipTenancy
+					co.SkipTenancy = options.SkipTenancy
 {{- end }}
 {{- if $.ExplicitTenantGoType }}
-				co.Tenant = tenant
+					co.Tenant = options.Tenant
 {{- end }}
-			})
-			if err != nil {
-				return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }}: %w", err)
-			}
-
-			// Step 3: Map back to parent entities via junction mapping. The
-			// targets are walked in the order the fetch returned them, so the
-			// relationship's Sorts — the caller's, or the static `sort:` —
-			// order each parent's slice. Walking the
-			// junction rows instead would keep junction order and drop the sort.
-			parentsByTarget := make(map[string][]int, len({{ $relVar }}))
-			for i := range {{ $resultVar }} {
-				for _, tID := range parentToTargetIDs[{{ fkToString $pkField (printf "%s[i].%s" $resultVar $pkField.FieldName) }}] {
-					parentsByTarget[tID] = append(parentsByTarget[tID], i)
+				})
+				if err != nil {
+					return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }}: %w", err)
 				}
-			}
-			for _, t := range {{ $relVar }} {
-				for _, i := range parentsByTarget[{{ fkToStringByGoType .FKGoType (printf "t.%s" .TargetPKFieldName) }}] {
-					{{ $resultVar }}[i].{{ .FieldName }} = append({{ $resultVar }}[i].{{ .FieldName }}, t)
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the column's comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
+				parentsByTarget := make(map[string][]int, len({{ $relVar }}))
+				matched := make(map[string]struct{}, len(parentToTargetIDs))
+				for i := start; i < start+len(chunk); i++ {
+					key := {{ fkToString .ParentKey (printf "%s[i].%s" $resultVar .ParentKey.FieldName) }}
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
+				}
+				for _, t := range {{ $relVar }} {
+					for _, i := range parentsByTarget[{{ fkToStringByGoType .FKGoType (printf "t.%s" .TargetPKFieldName) }}] {
+						{{ $resultVar }}[i].{{ .FieldName }} = append({{ $resultVar }}[i].{{ .FieldName }}, t)
+					}
 				}
 			}
 			return nil
 		})
 	}
 {{- end }}
+{{- end }}
 
 	return g.Wait()
 }
 {{- end }}
+{{- end -}}
+
+{{- define "table/load-collect-keys" -}}
+{{- $v := .Table.VarName -}}
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
+			{{ .KeyedVar }} := make([]*{{ .Table.StructName }}, 0, len({{ .ResultVar }}))
+			{{ .KeysVar }} := make([][]any, 0, len({{ .ResultVar }}))
+			for _, {{ $v }} := range {{ .ResultVar }} {
+{{- with keyGuard .Rel.LoadKey "referenced" $v }}
+				if !({{ . }}) {
+					continue
+				}
+{{- end }}
+				{{ .KeyedVar }} = append({{ .KeyedVar }}, {{ $v }})
+				{{ .KeysVar }} = append({{ .KeysVar }}, {{ keyValues .Rel.LoadKey "referenced" $v }})
+			}
+
+			sorts := fo.{{ .Rel.FieldName }}.Sorts
+			if len(sorts) == 0 {
+				sorts = c.{{ .Rel.FieldName | toCamelCase }}DefaultSort
+			}
+{{- end -}}
+{{- define "table/load-child-options" -}}
+					co.FieldOptions = fo.{{ .Rel.FieldName }}.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+{{- if .Table.Tenancy }}
+					co.SkipTenancy = options.SkipTenancy
+{{- end }}
+{{- if .Table.ExplicitTenantGoType }}
+					co.Tenant = options.Tenant
+{{- end }}
+{{- end -}}
+{{- define "table/load-o2m-keyed" -}}
+{{- $rel := .Rel }}
+	if fo.{{ $rel.FieldName }} != nil {
+		g.Go(func() error {
+{{ template "table/load-collect-keys" . }}
+
+			// Load via related entity client, {{ loadChunkSize (len $rel.LoadKey) }} parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var {{ .RelVar }} []*{{ $rel.TargetStructName }}
+			for start := 0; start < len({{ .KeysVar }}); start += {{ loadChunkSize (len $rel.LoadKey) }} {
+				chunk := {{ .KeysVar }}[start:min(start+{{ loadChunkSize (len $rel.LoadKey) }}, len({{ .KeysVar }}))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &{{ $rel.TargetStructName }}Filter{}
+				if fo.{{ $rel.FieldName }}.Filter != nil {
+					filter.And = append(filter.And, fo.{{ $rel.FieldName }}.Filter)
+				}
+
+				loaded, err := c.{{ $rel.TargetStructName | toCamelCase }}Client.GetMany(ctx, &Get{{ $rel.TargetStructName | structNamePlural }}Input{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range $i, $m := $rel.LoadKey }}{{ if $i }}, {{ end }}{{ printf "%q" $m.Column }}{{ end -}} }, chunk),
+{{- if $rel.Filter }}
+						// Static sub-categorization predicate from the relationship's
+						// config `filter:`.
+						sql.Raw({{ printf "%q" $rel.Filter }}),
+{{- else if $rel.Discriminator }}
+						// Same predicate from the relationship's config
+						// `discriminator:`, bound as a parameter.
+						sql.Raw(c.dialect.QuoteIdentifier({{ printf "%q" $rel.Discriminator.Column }})+" = $", {{ $rel.Discriminator.GoLiteral }}),
+{{- end }}
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{ {{- range $i, $m := $rel.LoadKey }}{{ if $i }}, {{ end }}{{ printf "%q" $m.Column }}{{ end -}} },
+				}, func(co *CallOptions[{{ $rel.TargetStructName }}FieldOptions]) {
+{{ template "table/load-child-options" . }}
+				})
+				if err != nil {
+					return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }}: %w", err)
+				}
+				{{ .RelVar }} = append({{ .RelVar }}, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[{{ len $rel.LoadKey }}]string][]*{{ $rel.TargetStructName }})
+			for _, r := range {{ .RelVar }} {
+{{- with keyGuard $rel.LoadKey "holder" "r" }}
+				if !({{ . }}) {
+					continue
+				}
+{{- end }}
+				key := {{ keyTuple $rel.LoadKey "holder" "r" }}
+				byKey[key] = append(byKey[key], r)
+			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the columns' comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[[{{ len $rel.LoadKey }}]string]struct{}, len(byKey))
+			for _, parent := range {{ .KeyedVar }} {
+				key := {{ keyTuple $rel.LoadKey "referenced" "parent" }}
+				rs, ok := byKey[key]
+				parent.{{ $rel.FieldName }} = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byKey) {
+				return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }}: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byKey)-len(matched), len(byKey))
+			}
+			return nil
+		})
+	}
+{{- end -}}
+{{- define "table/load-m2m-keyed" -}}
+{{- $rel := .Rel }}
+{{- $n := len $rel.LoadKey }}
+{{- $m := len $rel.LoadReferenceKey }}
+	if fo.{{ $rel.FieldName }} != nil {
+		g.Go(func() error {
+{{ template "table/load-collect-keys" . }}
+
+			// The three steps run once per chunk of {{ loadChunkSize $n }} parent keys:
+			// within half the dialect's bind-parameter limit, leaving the rest for
+			// the relationship's filters.
+			for start := 0; start < len({{ .KeysVar }}); start += {{ loadChunkSize $n }} {
+				chunk := {{ .KeysVar }}[start:min(start+{{ loadChunkSize $n }}, len({{ .KeysVar }}))]
+
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key columns
+				// only; step 2 decides which targets load.
+				parentToTargetIDs := make(map[[{{ $n }}]string][][{{ $m }}]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: {{ printf "%q" $rel.JunctionSchema }}, Name: {{ printf "%q" $rel.JunctionTable }}}, []sql.JoinClause{ {
+						Table: sql.Table{Schema: {{ printf "%q" $rel.TargetSchema }}, Name: {{ printf "%q" $rel.TargetTable }}},
+						Alias: "t",
+						On: {{ range $i, $k := $rel.LoadReferenceKey }}{{ if $i }} + " AND t." + {{ else }}"t." + {{ end }}c.dialect.QuoteIdentifier({{ printf "%q" $k.Referenced.Name }}) + " = j." + c.dialect.QuoteIdentifier({{ printf "%q" $k.Column }}){{ end }},
+						Columns: []string{ {{- range $i, $k := $rel.LoadReferenceKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Referenced.Name }}{{ end -}} },
+					} }, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{ {{- range $i, $k := $rel.LoadKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Column }}{{ end -}} },
+						// The builder's join is a LEFT JOIN: a junction row whose
+						// target is gone, or whose reference key holds a NULL, maps
+						// nothing.
+						Conditions: append(sql.PrefixConditions("j", []sql.Condition{
+							sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range $i, $k := $rel.LoadKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Column }}{{ end -}} }, chunk),
+						}), sql.Where("t."+c.dialect.QuoteIdentifier({{ printf "%q" (index $rel.LoadReferenceKey 0).Referenced.Name }})).IsNotNull()),
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }} junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }} junction columns: %w", err)
+					}
+
+					for junctionRows.Next() {
+{{- range $rel.LoadKey }}
+						var {{ .Var }} {{ .GoType }}
+{{- end }}
+						var target {{ $rel.TargetStructName }}
+						ptrs := make([]any, len(junctionCols))
+						for i, col := range junctionCols {
+							switch col {
+{{- range $rel.LoadKey }}
+							case {{ printf "%q" (printf "j.%s" .Column) }}:
+								ptrs[i] = &{{ .Var }}
+{{- end }}
+{{- range $rel.LoadReferenceKey }}
+							case {{ printf "%q" (printf "t.%s" .Referenced.Name) }}:
+								ptrs[i] = &target.{{ .Referenced.FieldName }}
+{{- end }}
+							}
+						}
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }} junction: %w", err)
+						}
+{{- with keyGuard $rel.LoadKey "junction" "" }}
+						if !({{ . }}) {
+							continue
+						}
+{{- end }}
+						parentID, targetID := {{ keyTuple $rel.LoadKey "junction" "" }}, {{ keyTuple $rel.LoadReferenceKey "referenced" "target" }}
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }} junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range $i, $k := $rel.LoadKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Column }}{{ end -}} }, chunk),
+				})
+				conditions := []sql.Condition{
+					sql.TupleInSubquery(c.dialect, []string{ {{- range $i, $k := $rel.LoadReferenceKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Referenced.Name }}{{ end -}} }, sql.Subquery{
+						SQL: "SELECT {{ range $i, $k := $rel.LoadReferenceKey }}{{ if $i }}, {{ end }}j." + c.dialect.QuoteIdentifier({{ printf "%q" $k.Column }}) + "{{ end }}" +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: {{ printf "%q" $rel.JunctionSchema }}, Name: {{ printf "%q" $rel.JunctionTable }}}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+{{- if $rel.Filter }}
+					// Static sub-categorization predicate from the relationship's
+					// config `filter:`.
+					sql.Raw({{ printf "%q" $rel.Filter }}),
+{{- else if $rel.Discriminator }}
+					// Same predicate from the relationship's config
+					// `discriminator:`, bound as a parameter.
+					sql.Raw(c.dialect.QuoteIdentifier({{ printf "%q" $rel.Discriminator.Column }})+" = $", {{ $rel.Discriminator.GoLiteral }}),
+{{- end }}
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &{{ $rel.TargetStructName }}Filter{}
+				if fo.{{ $rel.FieldName }}.Filter != nil {
+					filter.And = append(filter.And, fo.{{ $rel.FieldName }}.Filter)
+				}
+
+				{{ .RelVar }}, err := c.{{ $rel.TargetStructName | toCamelCase }}Client.GetMany(ctx, &Get{{ $rel.TargetStructName | structNamePlural }}Input{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its referenced columns, so
+					// the fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{ {{- range $i, $k := $rel.LoadReferenceKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Referenced.Name }}{{ end -}} },
+				}, func(co *CallOptions[{{ $rel.TargetStructName }}FieldOptions]) {
+{{ template "table/load-child-options" . }}
+				})
+				if err != nil {
+					return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }}: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts order each parent's slice.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the columns' comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
+				parentsByTarget := make(map[[{{ $m }}]string][]int, len({{ .RelVar }}))
+				matched := make(map[[{{ $n }}]string]struct{}, len(parentToTargetIDs))
+				for i := start; i < start+len(chunk); i++ {
+					parent := {{ .KeyedVar }}[i]
+					key := {{ keyTuple $rel.LoadKey "referenced" "parent" }}
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }} junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
+				}
+				for _, t := range {{ .RelVar }} {
+					for _, i := range parentsByTarget[{{ keyTuple $rel.LoadReferenceKey "referenced" "t" }}] {
+						{{ .KeyedVar }}[i].{{ $rel.FieldName }} = append({{ .KeyedVar }}[i].{{ $rel.FieldName }}, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
 {{- end -}}

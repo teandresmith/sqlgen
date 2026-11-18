@@ -1,0 +1,535 @@
+{
+  "kind": "table",
+  "name": "Moment",
+  "table": "moments",
+  "schema": "public",
+  "file_prefix": "moment",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "moments_pkey",
+      "columns": [
+        "at"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "at",
+        "go_field": "At",
+        "go_type": "time.Time"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:moment:{at}",
+      "invalidates_on": [
+        "Update",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "MomentCreated",
+        "MomentDeleted",
+        "MomentUpdated"
+      ],
+      "payload_shape": "models.MomentEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "at",
+      "go_field": "At",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.Time",
+      "comment": ""
+    },
+    {
+      "name": "owner_id",
+      "go_field": "OwnerID",
+      "go_type": "*int64",
+      "db_type": "bigint",
+      "nullable": true,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.NullableNumber[int64]",
+      "comment": ""
+    },
+    {
+      "name": "label",
+      "go_field": "Label",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "moment_tags",
+      "kind": "m2m",
+      "target_entity": "MomentTag",
+      "junction": {
+        "table": "moment_tag_links",
+        "schema": "public",
+        "local_fk": {
+          "columns": [
+            "moment_at"
+          ],
+          "references": [
+            "at"
+          ],
+          "constraint": "moment_tag_links_moment_at_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "tag_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "moment_tag_links_tag_id_fkey"
+        }
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "time.Time"
+          }
+        ],
+        "returns": "*Moment",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"at\", \"label\", \"owner_id\" FROM \"public\".\"moments\" WHERE \"at\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetMomentsInput"
+          }
+        ],
+        "returns": "[]*Moment",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"at\", \"label\", \"owner_id\" FROM \"public\".\"moments\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "time.Time"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"moments\" WHERE \"at\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MomentFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"moments\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MomentFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"moments\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[MomentFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Moment]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[MomentFilter]"
+          }
+        ],
+        "returns": "*Connection[Moment]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamMomentsInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Moment, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"at\", \"label\", \"owner_id\" FROM \"public\".\"moments\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateMomentInput"
+          }
+        ],
+        "returns": "*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"moments\" (<columns>) VALUES (<values>) RETURNING \"at\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateMomentInput"
+          }
+        ],
+        "returns": "[]*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"moments\" (<columns>) VALUES <values> RETURNING \"at\""
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "time.Time"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateMomentInput"
+          }
+        ],
+        "returns": "*Moment",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"moments\" SET <set> WHERE \"at\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateMomentItem"
+          }
+        ],
+        "returns": "[]*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"moments\" SET <set> WHERE \"at\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MomentFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateMomentInput"
+          }
+        ],
+        "returns": "[]*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"moments\" SET <set> WHERE <filter> RETURNING \"at\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateMomentInput"
+          },
+          {
+            "name": "target",
+            "type": "MomentConflictTarget"
+          }
+        ],
+        "returns": "*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated MomentConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"moments\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"at\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateMomentInput"
+          },
+          {
+            "name": "target",
+            "type": "MomentConflictTarget"
+          }
+        ],
+        "returns": "[]*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same MomentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"moments\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateMomentWithRelatedInput"
+          }
+        ],
+        "returns": "*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (MomentTags), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "time.Time"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateMomentWithRelatedInput"
+          }
+        ],
+        "returns": "*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (MomentTags), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertMomentWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "MomentConflictTarget"
+          }
+        ],
+        "returns": "*Moment",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (MomentTags), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "time.Time"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"moments\" WHERE \"at\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]time.Time"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"moments\" WHERE \"at\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MomentFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"moments\" WHERE <filter> RETURNING \"at\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "MomentFilter",
+    "fields": [
+      {
+        "name": "At",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "Label",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "OwnerID",
+        "type": "*comparator.NullableNumber[int64]"
+      },
+      {
+        "name": "And",
+        "type": "[]*MomentFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*MomentFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "MomentSort",
+    "fields": [
+      "At",
+      "Label",
+      "OwnerID"
+    ]
+  },
+  "examples": {
+    "read": [
+      "row, err := client.Moments().Get(ctx, time.Now())",
+      "rows, err := client.Moments().GetMany(ctx, &models.GetMomentsInput{Filter: &models.MomentFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Moments().Create(ctx, &models.CreateMomentInput{At: time.Now(), Label: \"example\"})",
+      "updated, err := client.Moments().Update(ctx, time.Now(), &models.UpdateMomentInput{OwnerID: omittable.Set(new(int64(1)))})"
+    ]
+  }
+}

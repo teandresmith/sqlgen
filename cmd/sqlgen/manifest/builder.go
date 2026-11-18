@@ -12,6 +12,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/parser"
 )
 
@@ -23,12 +24,17 @@ import (
 // the running sqlgen binary's version for the Generator stanza and the
 // $schema URL.
 type BuildInput struct {
-	Schema    *parser.Schema
-	Config    *config.RootConfig
-	Tables    []gen.TableContext
-	Views     []gen.ViewContext
-	Enums     []gen.EnumContext
-	API       *gen.APIContext
+	Schema *parser.Schema
+	Config *config.RootConfig
+	Tables []gen.TableContext
+	Views  []gen.ViewContext
+	Enums  []gen.EnumContext
+	API    *gen.APIContext
+	// UUID is the UUID integration the generated package resolved. Example
+	// lines (include_examples) spell a uuid.UUID value with its V4
+	// constructor; the zero value stands for the default standard-library
+	// binding, as gotype.UUIDIntegrationFor("") does.
+	UUID      gotype.UUIDIntegration
 	Version   string
 	Timestamp string
 }
@@ -71,7 +77,7 @@ func Build(in BuildInput) (*Document, error) {
 		if !manifestEntityEnabled(in.Config, v.ViewName, v.Schema) {
 			continue
 		}
-		entities = append(entities, buildViewEntity(in, v, goLayout))
+		entities = append(entities, buildViewEntity(in, v, goLayout, includeExamples))
 	}
 	sort.SliceStable(entities, func(i, j int) bool {
 		return entities[i].Name < entities[j].Name
@@ -86,7 +92,7 @@ func Build(in BuildInput) (*Document, error) {
 		Package:          in.Config.Output.Package,
 		Layout:           jsonLayout,
 		Conventions:      buildConventions(in.Config, in.Tables, in.Views),
-		GenerationConfig: buildGenerationConfig(in.Config, in.Tables),
+		GenerationConfig: buildGenerationConfig(in.Config, in.Tables, in.Views),
 		Entities:         entities,
 		Enums:            buildEnums(in.Enums),
 		Extras:           buildExtras(in.Schema, in.Config),
@@ -164,17 +170,35 @@ func schemaURL(version string) string {
 // therefore aggregates over every built table context (not the
 // manifest-filtered entities, since a per-table `manifest.enabled: false`
 // opt-out must not flip a package-level toggle).
-func buildGenerationConfig(cfg *config.RootConfig, tables []gen.TableContext) GenerationConfig {
+//
+// cache and events read the per-table resolution, so the global flag alone
+// answers neither: tables.<name>.cache.enabled is a tri-state override that
+// wins in both directions over the global block (§27.2), and
+// tables.<name>.events.enabled opts a table out of an enabled global (§28.8).
+// views reads the generated view contexts — a view parsed from the schema is
+// generated whether or not the config carries a `views:` entry for it.
+func buildGenerationConfig(cfg *config.RootConfig, tables []gen.TableContext, views []gen.ViewContext) GenerationConfig {
 	return GenerationConfig{
 		AuditColumns:  anyTableHasAuditColumns(tables, cfg),
-		Cache:         cfg.Cache != nil && cfg.Cache.Enabled,
-		Events:        cfg.Events != nil && cfg.Events.Enabled,
+		Cache:         anyTableResolves(tables, cfg, func(tc config.TableConfig) bool { return config.ResolveTableCacheEnabled(tc, cfg.Cache) }),
+		Events:        anyTableResolves(tables, cfg, func(tc config.TableConfig) bool { return config.ResolveTableEventsEnabled(tc, cfg.Events) }),
 		GraphQL:       graphQLEnabled(cfg),
 		GraphTopLevel: graphTopLevel(cfg),
 		SoftDelete:    anyTableHasSoftDelete(tables),
 		Tenancy:       tenancyEnabled(cfg),
-		Views:         len(cfg.Views) > 0,
+		Views:         len(views) > 0,
 	}
+}
+
+// anyTableResolves reports whether resolve holds for any generated table's
+// config entry.
+func anyTableResolves(tables []gen.TableContext, cfg *config.RootConfig, resolve func(config.TableConfig) bool) bool {
+	for i := range tables {
+		if resolve(findTableConfig(cfg, tables[i].TableName, tables[i].Schema)) {
+			return true
+		}
+	}
+	return false
 }
 
 // anyTableHasSoftDelete reports whether any generated table has a detected
@@ -308,6 +332,7 @@ func buildConventions(cfg *config.RootConfig, tables []gen.TableContext, views [
 		{Name: "ErrInvalidCursor", Package: pkg},
 		{Name: "ErrDeadlock", Package: pkg},
 		{Name: "ErrConnectionFailed", Package: pkg},
+		{Name: "ErrTxDone", Package: pkg},
 		{Name: "ErrConstraintViolation", Package: pkg},
 		{Name: "ErrAlreadyRelated", GraphQLCode: "CONFLICT", Package: pkg},
 		{Name: "ErrNestedVerbConflict", GraphQLCode: "INVALID_INPUT", Package: pkg},
@@ -421,7 +446,8 @@ func buildTableEntity(in BuildInput, tc gen.TableContext, layout config.Layout, 
 	cols := buildColumns(tc.Columns, parserTable, tc.FilterFields, in.Config.Input.Dialect)
 	rels := buildRelationships(tc, in.Tables)
 	indexes := buildIndexes(parserTable, tc)
-	features := buildFeatures(tc, tCfg, in.Config)
+	methods := buildMethods(in, tc, tCfg)
+	features := buildFeatures(tc, tCfg, in.Config, methods.Mutation)
 
 	entity := Entity{
 		Kind:          "table",
@@ -436,17 +462,17 @@ func buildTableEntity(in BuildInput, tc gen.TableContext, layout config.Layout, 
 		Features:      features,
 		Columns:       cols,
 		Relationships: rels,
-		Methods:       buildMethods(in, tc, tCfg),
+		Methods:       methods,
 		Filter:        buildFilter(tc),
 		Sort:          buildSort(tc),
 	}
 	if includeExamples {
-		entity.Examples = &Examples{}
+		entity.Examples = buildTableExamples(in, tc, entity)
 	}
 	return entity
 }
 
-func buildViewEntity(in BuildInput, vc gen.ViewContext, layout config.Layout) Entity {
+func buildViewEntity(in BuildInput, vc gen.ViewContext, layout config.Layout, includeExamples bool) Entity {
 	parserView := findParserView(in.Schema, vc.ViewName, vc.Schema)
 
 	cols := buildColumns(vc.Columns, nil, vc.FilterFields, in.Config.Input.Dialect)
@@ -476,7 +502,7 @@ func buildViewEntity(in BuildInput, vc gen.ViewContext, layout config.Layout) En
 		source = parserView.SQL
 	}
 
-	return Entity{
+	entity := Entity{
 		Kind:         "view",
 		Name:         vc.StructName,
 		Table:        vc.ViewName,
@@ -499,6 +525,10 @@ func buildViewEntity(in BuildInput, vc gen.ViewContext, layout config.Layout) En
 		Filter:        buildFilter(viewAsTable(vc)),
 		Sort:          buildSort(viewAsTable(vc)),
 	}
+	if includeExamples {
+		entity.Examples = buildViewExamples(in, vc, entity)
+	}
+	return entity
 }
 
 // viewAsTable maps a ViewContext into the subset of TableContext fields the
@@ -1123,7 +1153,7 @@ func buildPK(tc gen.TableContext) PK {
 
 // --- features ---
 
-func buildFeatures(tc gen.TableContext, tCfg config.TableConfig, cfg *config.RootConfig) Features {
+func buildFeatures(tc gen.TableContext, tCfg config.TableConfig, cfg *config.RootConfig, mutations []Method) Features {
 	f := Features{}
 	if tc.SoftDelete != nil {
 		f.SoftDelete = &SoftDeleteFeature{
@@ -1131,7 +1161,7 @@ func buildFeatures(tc gen.TableContext, tCfg config.TableConfig, cfg *config.Roo
 			Type:   string(tc.SoftDelete.Strategy),
 		}
 	}
-	if cache := buildCacheFeature(tc, tCfg, cfg); cache != nil {
+	if cache := buildCacheFeature(tc, tCfg, cfg, mutations); cache != nil {
 		f.Cache = cache
 	}
 	if events := buildEventsFeature(tc, tCfg, cfg); events != nil {
@@ -1146,30 +1176,51 @@ func buildFeatures(tc gen.TableContext, tCfg config.TableConfig, cfg *config.Roo
 	return f
 }
 
-func buildCacheFeature(tc gen.TableContext, tCfg config.TableConfig, cfg *config.RootConfig) *CacheFeature {
-	if cfg.Cache == nil || !cfg.Cache.Enabled {
-		return nil
-	}
+// buildCacheFeature resolves the table's cache the way §27.2 / §4.6 do:
+// tables.<name>.cache.enabled wins in both directions over the global
+// cache.enabled, so a per-table opt-in is populated under a global false (or
+// with no `cache:` block at all) and a per-table opt-out is null under a
+// global true. TTL resolves per table → global → the 1h built-in default; key
+// prefix and hydration are global-only knobs and fall back to their §27.2
+// defaults ("sqlgen", enabled) when the global block leaves them unset.
+func buildCacheFeature(tc gen.TableContext, tCfg config.TableConfig, cfg *config.RootConfig, mutations []Method) *CacheFeature {
 	if !config.ResolveTableCacheEnabled(tCfg, cfg.Cache) {
 		return nil
 	}
-	ttlSeconds := 0
-	if cfg.Cache.TTL != "" {
-		if d := parseDurationSeconds(cfg.Cache.TTL); d > 0 {
-			ttlSeconds = d
-		}
-	}
+	hydrationOn := cfg.Cache == nil || cfg.Cache.Hydration == nil || cfg.Cache.Hydration.Enabled
 	hydration := "lazy"
-	if cfg.Cache.Hydration != nil && cfg.Cache.Hydration.Enabled {
+	if hydrationOn {
 		hydration = "eager"
 	}
-	keyPattern := cacheKeyPattern(tc, cfg)
 	return &CacheFeature{
-		TTLSeconds:    ttlSeconds,
+		TTLSeconds:    int(config.ResolveTableCacheTTL(tCfg, cfg.Cache).Seconds()),
 		Hydration:     hydration,
-		KeyPattern:    keyPattern,
-		InvalidatesOn: []string{"Create", "Update", "Delete", "SoftDelete", "Restore", "Increment"},
+		KeyPattern:    cacheKeyPattern(tc, cfg),
+		InvalidatesOn: cacheInvalidatingMethods(mutations),
 	}
+}
+
+// cacheInvalidatingWrites is the set of §27.7 operations whose cache arm
+// invalidates. Create / CreateMany are absent — they set the cache rather
+// than invalidate it — and so are the …WithRelated methods, which dispatch
+// nothing of their own (every inner call invalidates under its own op).
+var cacheInvalidatingWrites = map[string]bool{
+	"Update": true, "Upsert": true, "Increment": true, "SoftDelete": true, "HardDelete": true, "Restore": true,
+	"UpsertMany": true, "UpdateMany": true, "SoftDeleteMany": true, "HardDeleteMany": true, "RestoreMany": true,
+	"UpdateWhere": true, "SoftDeleteWhere": true, "HardDeleteWhere": true, "RestoreWhere": true,
+}
+
+// cacheInvalidatingMethods lists the entity's own invalidating mutations in
+// methods.mutation[] order (PRD §30.4.2: invalidates_on names "methods on the
+// entity itself"), so a method the entity does not generate cannot appear.
+func cacheInvalidatingMethods(mutations []Method) []string {
+	out := []string{}
+	for _, m := range mutations {
+		if cacheInvalidatingWrites[m.Name] {
+			out = append(out, m.Name)
+		}
+	}
+	return out
 }
 
 func cacheKeyPattern(tc gen.TableContext, cfg *config.RootConfig) string {
@@ -1189,9 +1240,6 @@ func cacheKeyPattern(tc gen.TableContext, cfg *config.RootConfig) string {
 }
 
 func buildEventsFeature(tc gen.TableContext, tCfg config.TableConfig, cfg *config.RootConfig) *EventsFeature {
-	if cfg.Events == nil || !cfg.Events.Enabled {
-		return nil
-	}
 	if !config.ResolveTableEventsEnabled(tCfg, cfg.Events) {
 		return nil
 	}
@@ -1332,37 +1380,6 @@ func auditColumnsForTable(tc gen.TableContext, cfg *config.RootConfig) []string 
 	return out
 }
 
-// parseDurationSeconds parses an integer-seconds value out of a duration
-// string (e.g. "30s", "1m"). Self-contained so the builder doesn't pull in
-// time.ParseDuration directly — keeps stdlib import surface minimal here.
-func parseDurationSeconds(s string) int {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0
-	}
-	if v, ok := strings.CutSuffix(s, "s"); ok {
-		return atoi(v)
-	}
-	if v, ok := strings.CutSuffix(s, "m"); ok {
-		return atoi(v) * 60
-	}
-	if v, ok := strings.CutSuffix(s, "h"); ok {
-		return atoi(v) * 3600
-	}
-	return atoi(s)
-}
-
-func atoi(s string) int {
-	n := 0
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return 0
-		}
-		n = n*10 + int(r-'0')
-	}
-	return n
-}
-
 // --- relationships ---
 
 // relationshipPredicate renders the edge's sub-categorization predicate for the
@@ -1370,10 +1387,9 @@ func atoi(s string) int {
 //
 // A `discriminator:` compiles to exactly the equality predicate the equivalent
 // `filter:` produced (PRD §13.4.1), so it is reported in the same field and the
-// same spelling rather than as a second, structurally different key. Two
-// reasons: the manifest's JSON Schema is frozen at schema_version 0.1.0 (PRD
-// §30.4) and gains no field for this, and a reader of the manifest wants the
-// predicate the edge applies — not which of two config spellings expressed it.
+// same spelling rather than as a second, structurally different key: a
+// reader of the manifest wants the predicate the edge applies, not which of
+// two config spellings expressed it.
 // Reporting it here is also what keeps migrating an edge between the two forms
 // invisible to the manifest.
 //
@@ -1409,17 +1425,20 @@ func buildRelationships(tc gen.TableContext, allTables []gen.TableContext) []Rel
 			if r.Type == parser.OneToOne && !r.FKOnTarget {
 				fkTable, fkSchema = tc.TableName, tc.Schema
 			}
+			key := keyOf(r.Key, r.FKColumn, constraintAt(r.Constraints, 0))
 			rel.FK = &FK{
-				Table:  fkTable,
-				Schema: fkSchema,
-				Column: r.FKColumn,
+				Table:      fkTable,
+				Schema:     fkSchema,
+				Columns:    key.Columns,
+				References: key.References,
+				Constraint: key.Constraint,
 			}
 		case parser.ManyToMany:
 			rel.Junction = &Junction{
 				Table:    r.JunctionTable,
 				Schema:   r.JunctionSchema,
-				LocalFK:  r.JunctionLocalFK,
-				TargetFK: r.JunctionReferenceFK,
+				LocalFK:  keyOf(r.JunctionLocal, r.JunctionLocalFK, constraintAt(r.Constraints, 0)),
+				TargetFK: keyOf(r.JunctionReference, r.JunctionReferenceFK, constraintAt(r.Constraints, 1)),
 			}
 		}
 		out = append(out, rel)
@@ -1429,12 +1448,40 @@ func buildRelationships(tc gen.TableContext, allTables []gen.TableContext) []Rel
 	return out
 }
 
+// keyOf renders an edge's key pairs as the manifest's column lists, in the
+// FK's declared order (PRD §30.4.2). A context with no pairs, a hand-built
+// one, falls back to its one FK column and no references. Post-parse
+// validation rejects a declared key with nothing to reference (§4.13).
+func keyOf(pairs []parser.KeyPair, column, constraint string) JunctionKey {
+	key := JunctionKey{Columns: []string{}, References: []string{}, Constraint: constraint}
+	if len(pairs) == 0 {
+		if column != "" {
+			key.Columns = []string{column}
+		}
+		return key
+	}
+	for _, p := range pairs {
+		key.Columns = append(key.Columns, p.Local)
+		key.References = append(key.References, p.Referenced)
+	}
+	return key
+}
+
+// constraintAt is the i-th constraint an edge came from, or "" for a declared
+// edge, which has none.
+func constraintAt(constraints []string, i int) string {
+	if i < len(constraints) {
+		return constraints[i]
+	}
+	return ""
+}
+
 func relationshipKind(t parser.RelationshipType, side parser.RelationshipSide) string {
 	switch t {
 	case parser.OneToOne:
 		// O2O on the parent side carries the FK; m2o on the child side. The
 		// codegen marks both as OneToOne — Side is the authoritative
-		// disambiguator. Every production emit path (addO2O,
+		// disambiguator. Every production emit path (DetectRelationships,
 		// configRelationshipToContext, relationshipToContext) populates Side,
 		// so SideUnspecified here means a caller fed a hand-built fixture
 		// through the manifest pipeline without going through the gen
@@ -1652,7 +1699,8 @@ func (ctx methodCtx) filterParam() MethodParam {
 // interface (PRD §9.1, §9.4, §9.4a). Get, GetMany and Count are unconditional —
 // toResolvedOperations pins all three true because the rest of the surface is
 // built on them; everything else follows its resolved flag, which is a schema
-// fact (PRD §4.6).
+// fact (PRD §4.6). The list keeps the interface's declaration order in
+// table/client.go.tmpl (PRD §30.3) — Exists and ExistsWhere come before Count.
 //
 // Earlier revisions advertised FindByID / FindBy<Col> / List / Walk, names
 // taken from a documentation example rather than from the templates. None of
@@ -1674,13 +1722,6 @@ func buildQueryMethods(ctx methodCtx) []Method {
 			Errors:    errs(ctx.filterTenancy()),
 			SQLBodies: ctx.body(sqlGetMany(ctx.in.Config, ctx.tc)),
 		},
-		{
-			Name:      "Count",
-			Params:    []MethodParam{ctx.filterParam()},
-			Returns:   "int64",
-			Errors:    errs(ctx.filterTenancy()),
-			SQLBodies: ctx.body(sqlCount(ctx.in.Config, ctx.tc)),
-		},
 	}
 	if ctx.tc.Operations.Exists {
 		out = append(
@@ -1701,6 +1742,13 @@ func buildQueryMethods(ctx methodCtx) []Method {
 			},
 		)
 	}
+	out = append(out, Method{
+		Name:      "Count",
+		Params:    []MethodParam{ctx.filterParam()},
+		Returns:   "int64",
+		Errors:    errs(ctx.filterTenancy()),
+		SQLBodies: ctx.body(sqlCount(ctx.in.Config, ctx.tc)),
+	})
 	if ctx.tc.Operations.Paginate {
 		out = append(out, Method{
 			Name:    "Paginate",
@@ -1734,7 +1782,9 @@ func buildQueryMethods(ctx methodCtx) []Method {
 
 // buildMutationMethods lists the write half of the generated <Entity>Client
 // interface (PRD §9.2, §9.3), each gated on the same resolved flag as its
-// template — a schema fact (PRD §4.6).
+// template — a schema fact (PRD §4.6). The list keeps the interface's
+// declaration order in table/client.go.tmpl (PRD §30.3): create, update,
+// upsert, the …WithRelated methods, Increment, then the delete families.
 //
 // Constraint failures are one structured *database.ConstraintError unwrapping
 // to ErrConstraintViolation (§22.2) — earlier revisions split it into
@@ -1748,8 +1798,10 @@ func buildQueryMethods(ctx methodCtx) []Method {
 func buildMutationMethods(ctx methodCtx) []Method {
 	out := buildCreateMethods(ctx)
 	out = append(out, buildUpdateMethods(ctx)...)
-	out = append(out, buildDeleteMethods(ctx)...)
+	out = append(out, buildUpsertMethods(ctx)...)
 	out = append(out, buildNestedMethods(ctx)...)
+	out = append(out, buildIncrementMethods(ctx)...)
+	out = append(out, buildDeleteMethods(ctx)...)
 	return out
 }
 
@@ -1887,6 +1939,12 @@ func buildCreateMethods(ctx methodCtx) []Method {
 			SQLBodies: ctx.body(sqlCreateMany(ctx.in.Config, ctx.tc)),
 		})
 	}
+	return out
+}
+
+func buildUpsertMethods(ctx methodCtx) []Method {
+	var out []Method
+	createInput := "*Create" + ctx.entity + "Input"
 	if ctx.tc.Operations.Upsert {
 		out = append(out, Method{
 			Name: "Upsert",
@@ -1953,6 +2011,11 @@ func buildUpdateMethods(ctx methodCtx) []Method {
 			SQLBodies: ctx.body(sqlUpdateWhere(ctx.in.Config, ctx.tc)),
 		})
 	}
+	return out
+}
+
+func buildIncrementMethods(ctx methodCtx) []Method {
+	var out []Method
 	if ctx.tc.Operations.Increment && len(ctx.tc.IncrementColumns) > 0 {
 		out = append(out, Method{
 			Name:      "Increment",

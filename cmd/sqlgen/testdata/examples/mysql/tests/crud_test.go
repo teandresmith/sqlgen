@@ -548,53 +548,6 @@ func jsonAnyEqual(a, b any) bool {
 	}
 }
 
-// --- ON DUPLICATE KEY UPDATE (Upsert) ---
-
-func TestUpsert(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "UpsertCat"})
-	if err != nil {
-		t.Fatalf("Create category: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
-
-	// Initial insert
-	p1, err := client.Products().Upsert(ctx, &models.CreateProductInput{
-		CategoryID: cat.ID, Title: "UpsertProduct", Price: 10.00,
-		SKU: "UPSERT-001", Attributes: mustJSON(map[string]any{"v": float64(1)}),
-	}, models.ProductConflictPK)
-	if err != nil {
-		t.Fatalf("Upsert (insert): %v", err)
-	}
-	if p1.Title != "UpsertProduct" {
-		t.Errorf("Upsert insert title = %q, want %q", p1.Title, "UpsertProduct")
-	}
-	if p1.Price != 10.00 {
-		t.Errorf("Upsert insert price = %v, want 10.00", p1.Price)
-	}
-
-	// Upsert same PK with updated values (ON DUPLICATE KEY UPDATE)
-	p2, err := client.Products().Upsert(ctx, &models.CreateProductInput{
-		CategoryID: cat.ID, Title: "UpdatedUpsert", Price: 25.00,
-		SKU: "UPSERT-001-NEW", Attributes: mustJSON(map[string]any{"v": float64(2)}),
-	}, models.ProductConflictPK)
-	if err != nil {
-		t.Fatalf("Upsert (update): %v", err)
-	}
-
-	// Verify the upsert created a new row (different PK since we changed the SKU)
-	if p2.Title != "UpdatedUpsert" {
-		t.Errorf("Upsert update title = %q, want %q", p2.Title, "UpdatedUpsert")
-	}
-
-	t.Cleanup(func() {
-		_ = client.Products().HardDelete(ctx, p1.ID)
-		_ = client.Products().HardDelete(ctx, p2.ID)
-	})
-}
-
 // --- Filtering ---
 
 func TestFilterComparators(t *testing.T) {

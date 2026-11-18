@@ -1267,8 +1267,29 @@ func (p *Parser) applyAlterOption(table *parser.Table, opt sqlparser.AlterOption
 		return p.renameTable(table.Name, o.Table.Name.String())
 	case *sqlparser.ChangeColumn:
 		return p.alterChangeColumn(table, o)
+	case *sqlparser.AlterColumn:
+		return alterColumnDefault(table, o)
 	}
 
+	return nil
+}
+
+// alterColumnDefault applies ALTER COLUMN … SET DEFAULT or DROP DEFAULT. As
+// in a column definition, DEFAULT NULL is recorded as no default. The other
+// ALTER COLUMN forms (SET VISIBLE / INVISIBLE) change nothing in the model.
+// A column the table does not have is an error, as it is in MySQL.
+func alterColumnDefault(table *parser.Table, o *sqlparser.AlterColumn) error {
+	col := parser.ColumnByName(table, declaredColumn(table, o.Column.Name.String()))
+	if col == nil {
+		return fmt.Errorf("alter column %s.%s: column not found", table.Name, o.Column.Name.String())
+	}
+	if !o.DropDefault && o.DefaultVal == nil {
+		return nil
+	}
+	col.Default = ""
+	if _, isNull := o.DefaultVal.(*sqlparser.NullVal); o.DefaultVal != nil && !isNull {
+		col.Default = exprText(o.DefaultVal)
+	}
 	return nil
 }
 

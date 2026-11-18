@@ -55,6 +55,24 @@ func TestJSON_Parse_HasKey(t *testing.T) {
 			t.Errorf("JSON.Parse() mismatch (-want +got):\n%s", diff)
 		}
 	})
+
+	// The comparator does not translate between the two forms: each dialect
+	// binds the other's spelling unchanged too.
+	t.Run("postgres binds a JSON path unchanged", func(t *testing.T) {
+		got := comparator.JSON{HasKey: new("$.region")}.Parse("data", pgDialect)
+		want := []sql.Condition{{Clause: "data::jsonb ? $", Value: "$.region", Column: "data"}}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("JSON{HasKey: \"$.region\"}.Parse(postgres) mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("mysql binds a bare key unchanged", func(t *testing.T) {
+		got := comparator.JSON{HasKey: new("region")}.Parse("data", mysqlDialect)
+		want := []sql.Condition{{Clause: "JSON_CONTAINS_PATH(data, 'one', $)", Value: "region", Column: "data"}}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("JSON{HasKey: \"region\"}.Parse(mysql) mismatch (-want +got):\n%s", diff)
+		}
+	})
 }
 
 func TestJSON_Parse_Custom(t *testing.T) {

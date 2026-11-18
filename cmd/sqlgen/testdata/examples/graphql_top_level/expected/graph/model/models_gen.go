@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/shopspring/decimal"
 )
 
@@ -27,16 +28,16 @@ type CategorySort struct {
 }
 
 type CreateCategoryInput struct {
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
+	Name        string     `json:"name"`
+	Description *string    `json:"description,omitempty"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
 }
 
 type CreateProductInput struct {
 	Name       string          `json:"name"`
 	Price      decimal.Decimal `json:"price"`
 	CategoryID int             `json:"categoryID"`
-	CreatedAt  time.Time       `json:"createdAt"`
+	CreatedAt  *time.Time      `json:"createdAt,omitempty"`
 }
 
 type DecimalComparator struct {
@@ -140,9 +141,9 @@ type TimeRange struct {
 }
 
 type UpdateCategoryInput struct {
-	Name        *string    `json:"name,omitempty"`
-	Description *string    `json:"description,omitempty"`
-	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+	Name        *string                    `json:"name,omitempty"`
+	Description graphql.Omittable[*string] `json:"description,omitempty"`
+	CreatedAt   *time.Time                 `json:"createdAt,omitempty"`
 }
 
 type UpdateProductInput struct {

@@ -444,7 +444,7 @@ The facade routes every cache backend error through a three-pronged policy,
 unified across `Get` / `Set` / `Invalidate` / `InvalidateMany` /
 `InvalidatePattern`:
 
-1. **Structured telemetry.** `MetricsRecorder.Error(schema, table, op, err)` with `op ∈ {"get", "set", "invalidate", "invalidate_many", "invalidate_pattern"}`. Zero-cost when no recorder is wired (§5.5 nil-check gating). Schema carries the key-segment value so errors from same-name tables in different schemas remain distinguishable.
+1. **Structured telemetry.** `MetricsRecorder.Error(schema, table, op, err)` with `op ∈ {"get", "set", "invalidate_many", "invalidate_pattern", "invalidate_tenant_fallback"}` from the facade and `"invalidate"` from the event adapter. Zero-cost when no recorder is wired (§5.5 nil-check gating). Schema carries the key-segment value so errors from same-name tables in different schemas remain distinguishable.
 2. **Textual log fallback.** `OnErrorFunc` callback, defaulting to `DefaultOnCacheError` which logs to stderr via `log.Printf` — same shape as `event.DefaultOnError` (§5.4 precedent). User can swap via `WithOnError(fn)` (§9.1).
 3. **Breaker feedback.** Every routed error calls `breaker.RecordFailure()` — sustained cache errors open the circuit per §17, which short-circuits subsequent cache calls without the backend even being consulted. Counters reset per §5.7 on the next closed-state success.
 
@@ -962,8 +962,9 @@ that source table (§15).
 Generated client options (`cache_gen.go` + additions to `client.go.tmpl`):
 
 ```go
-// WithCache wires a *Cache instance into the client. Shorthand for:
-//   WithQueryHook(c.QueryHook()), WithMutationHook(c.MutationHook())
+// WithCache wires a *Cache instance into the client. Its hooks run outermost,
+// ahead of the event hooks and every WithQueryHook / WithMutationHook hook,
+// whatever the option order.
 func WithCache(c *Cache) Option
 ```
 
@@ -1050,7 +1051,7 @@ sha256(
     schema || 0x00 ||
     json_bytes(columns) ||      // [{Name, GoType, StructTag} ...] in DDL column order
     json_bytes(pk_columns) ||   // PK names in DDL PRIMARY KEY order (order matters)
-    serializer_id ||            // "json" | "msgpack" | "custom:<sha of WithSerializer type name>"
+    serializer_id ||            // "json" | "msgpack" | "custom" (a custom type is not known at codegen; bump cache_version on a swap)
     cache_version               // optional user-controlled kill switch — see §10.2
 )[:8]
 ```
@@ -1172,8 +1173,7 @@ composite) so no pack step is needed (see `hook/hook.go` godoc on
 pattern-wiping: each captures `AffectedPKs` before returning (`RETURNING` on
 PostgreSQL/SQLite, a pre-`SELECT` on MySQL), so the matched row set is known by
 the time invalidation runs. The arm also returns early for a table the config
-left uncached — its `cacheSchemaFor` miss must not become a commit error under
-`CallbackSync` (PRD §27.9).
+left uncached — its `cacheSchemaFor` miss has nothing to evict.
 
 **No-PK tables.** Tables with no primary key (and no `tables.<name>.primary_key.columns`
 override — see PRD §8.6) are skipped from generation entirely by `BuildTableContexts`
@@ -1289,7 +1289,7 @@ These guarantees make the §9.5 hook-chain reasoning work out:
 
 **Callback context caveat.** `CallbackMode` defaults to `CallbackAsync`; the async path executes callbacks on a fresh `context.Background()` — not the original request context. Cache invalidation logic **must not read request-scoped metadata** (tracing spans, auth identities, request deadlines) from the callback's `ctx`. Use the key + table data already closed over in the callback; that's all the backend call needs. Setting `CallbackMode: CallbackSync` propagates the original ctx at the cost of blocking the commit return until every callback completes — usually not what cache users want.
 
-**Retry behavior.** Both sync and async paths retry a failed callback once before giving up (sync returns the error, async logs it). Cache invalidation is idempotent (§5.4 / §22 decision #1), so a retry-on-transient-error is safe. A persistently failing invalidation means the backend is unhealthy — the circuit breaker (§17) will notice via `MetricsRecorder.Error` accumulation and short-circuit future reads.
+**Retry behavior.** Both sync and async paths retry a failed callback once before giving up (a cache callback swallows the final error after its retry: backend failures have already gone through the error policy, so neither mode surfaces them from `Commit`). Cache invalidation is idempotent (§5.4 / §22 decision #1), so a retry-on-transient-error is safe. A persistently failing invalidation means the backend is unhealthy — the circuit breaker (§17) will notice via `MetricsRecorder.Error` accumulation and short-circuit future reads.
 
 **Tracked contract.** The three ordering guarantees above are cross-referenced
 in the sync-back list so `database/transaction.go`'s `OnCommit` godoc can be
@@ -1506,7 +1506,7 @@ alongside them.
        PKImportPath string   // single-PK: "github.com/google/uuid" (if named type)
        PKComposite  bool
        PKStructName string   // composite only: "OrderItemPK"
-       PKFields     []PKField // composite only; DDL column order + types
+       PKFields     []PKField // composite only; PRIMARY KEY (...) order + types
    }
 
    type PKField struct {

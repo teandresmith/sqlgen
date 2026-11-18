@@ -2,6 +2,7 @@ package gen_test
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"text/template"
@@ -74,7 +75,7 @@ func buildLockGuardTableContext(dialect string) gen.TableContext {
 		Operations: gen.ResolvedOperations{
 			Get: true, GetMany: true, Count: true,
 			Create: true, Update: true, Upsert: true,
-			Connection: true,
+			Paginate: true, Connection: true,
 		},
 		Dialect:    config.Dialect(dialect),
 		Driver:     "pgx",
@@ -166,7 +167,7 @@ func TestLockModeGuard_GetManyMethod_allDialects(t *testing.T) {
 			dialect: "postgres",
 			mustContain: []string{
 				"if options.LockMode != sql.LockNone {",
-				`return nil, fmt.Errorf("get products: LockMode requires an active transaction")`,
+				`return nil, fmt.Errorf("get many products: LockMode requires an active transaction")`,
 				"options.SkipCache = true",
 			},
 			mustNotHave: []string{"c.mysqlVersion.get(ctx)", "is unsupported on sqlite dialect"},
@@ -175,7 +176,7 @@ func TestLockModeGuard_GetManyMethod_allDialects(t *testing.T) {
 			dialect: "mysql",
 			mustContain: []string{
 				"if options.LockMode != sql.LockNone {",
-				`return nil, fmt.Errorf("get products: LockMode requires an active transaction")`,
+				`return nil, fmt.Errorf("get many products: LockMode requires an active transaction")`,
 				"options.SkipCache = true",
 				"version, err := c.mysqlVersion.get(ctx)",
 				"if version.Major < 8 {",
@@ -185,7 +186,7 @@ func TestLockModeGuard_GetManyMethod_allDialects(t *testing.T) {
 		{
 			dialect: "sqlite",
 			mustContain: []string{
-				`return nil, fmt.Errorf("get products: LockMode is unsupported on sqlite dialect")`,
+				`return nil, fmt.Errorf("get many products: LockMode is unsupported on sqlite dialect")`,
 			},
 			mustNotHave: []string{
 				"database.InTransaction(ctx)",
@@ -244,6 +245,111 @@ func TestLockModeGuard_ConnectionMethod_allDialects(t *testing.T) {
 		t.Run(tc.dialect, func(t *testing.T) {
 			ctx := buildLockGuardTableContext(tc.dialect)
 			out := renderTableTemplate(t, tmpl, "table/pagination", ctx)
+			mustContainAll(t, out, tc.mustContain...)
+			mustNotContain(t, out, tc.mustNotHave...)
+		})
+	}
+}
+
+// TestLockModeGuard_PaginateMethod_allDialects pins the same guard shape onto
+// Paginate. Paginate counts before its page read, so its own body must
+// short-circuit before the count runs.
+func TestLockModeGuard_PaginateMethod_allDialects(t *testing.T) {
+	tmpl := loadTableTemplates(t, "pagination.go.tmpl")
+	cases := []struct {
+		dialect     string
+		mustContain []string
+		mustNotHave []string
+	}{
+		{
+			dialect: "postgres",
+			mustContain: []string{
+				"if options.LockMode != sql.LockNone {",
+				`return nil, fmt.Errorf("paginate products: LockMode requires an active transaction")`,
+				"options.SkipCache = true",
+			},
+			mustNotHave: []string{"c.mysqlVersion.get(ctx)"},
+		},
+		{
+			dialect: "mysql",
+			mustContain: []string{
+				`return nil, fmt.Errorf("paginate products: LockMode requires an active transaction")`,
+				"version, err := c.mysqlVersion.get(ctx)",
+			},
+			mustNotHave: []string{"is unsupported on sqlite dialect"},
+		},
+		{
+			dialect: "sqlite",
+			mustContain: []string{
+				`return nil, fmt.Errorf("paginate products: LockMode is unsupported on sqlite dialect")`,
+			},
+			mustNotHave: []string{"database.InTransaction(ctx)"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dialect, func(t *testing.T) {
+			ctx := buildLockGuardTableContext(tc.dialect)
+			out := renderTableTemplate(t, tmpl, "table/pagination", ctx)
+			mustContainAll(t, out, tc.mustContain...)
+			mustNotContain(t, out, tc.mustNotHave...)
+		})
+	}
+}
+
+// TestLockModeGuard_OneToOneJoin pins the MySQL guard for a locked read that
+// selects a one-to-one relationship. That read goes through a LEFT JOIN whose
+// lock names the parent alias, a form MySQL accepts from 8.0 and MariaDB not at
+// all, so every read method of a table with one-to-one relationships checks the
+// cached server version when one is selected. PostgreSQL accepts the form and
+// SQLite never locks, and a MySQL table with no one-to-one relationship has no
+// join to guard.
+func TestLockModeGuard_OneToOneJoin(t *testing.T) {
+	joinGuard := []string{
+		"if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {",
+		"if version.Major < 8 || version.MariaDB {",
+	}
+	cases := []struct {
+		name        string
+		dialect     string
+		hasO2O      bool
+		tmplPath    string
+		tmplName    string
+		mustContain []string
+		mustNotHave []string
+	}{
+		{
+			name: "mysql get", dialect: "mysql", hasO2O: true, tmplPath: "get.go.tmpl", tmplName: "table/get",
+			mustContain: append(slices.Clone(joinGuard),
+				`return nil, fmt.Errorf("get product: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)`,
+				`return nil, fmt.Errorf("get many products: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)`,
+			),
+		},
+		{
+			name: "mysql paginate and connection", dialect: "mysql", hasO2O: true, tmplPath: "pagination.go.tmpl", tmplName: "table/pagination",
+			mustContain: append(slices.Clone(joinGuard),
+				`return nil, fmt.Errorf("paginate products: LockMode %s with a one-to-one relationship selected`,
+				`return nil, fmt.Errorf("connection products: LockMode %s with a one-to-one relationship selected`,
+			),
+		},
+		{
+			name: "mysql table without one-to-one relationships", dialect: "mysql", tmplPath: "get.go.tmpl", tmplName: "table/get",
+			mustNotHave: append(slices.Clone(joinGuard), "with a one-to-one relationship selected"),
+		},
+		{
+			name: "postgres accepts the qualified lock", dialect: "postgres", hasO2O: true, tmplPath: "get.go.tmpl", tmplName: "table/get",
+			mustNotHave: append(slices.Clone(joinGuard), "with a one-to-one relationship selected"),
+		},
+		{
+			name: "sqlite never locks", dialect: "sqlite", hasO2O: true, tmplPath: "get.go.tmpl", tmplName: "table/get",
+			mustNotHave: append(slices.Clone(joinGuard), "with a one-to-one relationship selected"),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl := loadTableTemplates(t, tc.tmplPath)
+			ctx := buildLockGuardTableContext(tc.dialect)
+			ctx.HasO2ORelationships = tc.hasO2O
+			out := renderTableTemplate(t, tmpl, tc.tmplName, ctx)
 			mustContainAll(t, out, tc.mustContain...)
 			mustNotContain(t, out, tc.mustNotHave...)
 		})
@@ -352,6 +458,7 @@ func TestMySQLVersionCache_emittedOnlyForMySQL(t *testing.T) {
 			mustContain: []string{
 				"type mysqlVersionCache struct",
 				"sync.Once",
+				`MariaDB: strings.Contains(raw, "MariaDB")`,
 				`"SELECT VERSION()"`,
 				"newMySQLVersionCache",
 			},

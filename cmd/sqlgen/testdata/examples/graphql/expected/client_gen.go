@@ -89,11 +89,13 @@ type Client struct {
 	assetDocumentLink    *assetDocumentLinkClient
 	category             *categoryClient
 	categoryPriceTotal   *categoryPriceTotalClient
+	cycle                *cycleClient
 	document             *documentClient
 	event                *eventClient
 	filterProbe          *filterProbeClient
 	keyedCode            *keyedCodeClient
 	keyedCodeEntry       *keyedCodeEntryClient
+	label                *labelClient
 	maskedLabel          *maskedLabelClient
 	numericWidth         *numericWidthClient
 	order                *orderClient
@@ -101,6 +103,9 @@ type Client struct {
 	product              *productClient
 	profile              *profileClient
 	scalarProbe          *scalarProbeClient
+	task                 *taskClient
+	taskLabel            *taskLabelClient
+	taskReport           *taskReportClient
 	user                 *userClient
 	userBadge            *userBadgeClient
 	userCategory         *userCategoryClient
@@ -141,11 +146,13 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		assetDocumentLink:    newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		category:             newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		categoryPriceTotal:   newCategoryPriceTotalClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		cycle:                newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		document:             newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		event:                newEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		filterProbe:          newFilterProbeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		keyedCode:            newKeyedCodeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		keyedCodeEntry:       newKeyedCodeEntryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		label:                newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		maskedLabel:          newMaskedLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		numericWidth:         newNumericWidthClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		order:                newOrderClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -153,6 +160,9 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		product:              newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		profile:              newProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		scalarProbe:          newScalarProbeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		task:                 newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		taskLabel:            newTaskLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		taskReport:           newTaskReportClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		user:                 newUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		userBadge:            newUserBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		userCategory:         newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -186,6 +196,11 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// Past that gate, resolveTenant is emitted in its required:false form, so
 	// a zero resolver return leaves the subquery unscoped rather than
 	// erroring — a resolver error still propagates.
+	c.cycle.tenantResolver = options.tenantResolver
+	c.label.tenantResolver = options.tenantResolver
+	c.task.tenantResolver = options.tenantResolver
+	c.taskLabel.tenantResolver = options.tenantResolver
+	c.taskReport.tenantResolver = options.tenantResolver
 	c.workspaceNote.tenantResolver = options.tenantResolver
 	c.workspaceNoteSummary.tenantResolver = options.tenantResolver
 	c.workspaceSetting.tenantResolver = options.tenantResolver
@@ -197,10 +212,13 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// configured rather than on NewTransaction's default.
 	c.asset.callbackMode = options.callbackMode
 	c.category.callbackMode = options.callbackMode
+	c.cycle.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
 	c.keyedCode.callbackMode = options.callbackMode
+	c.label.callbackMode = options.callbackMode
 	c.order.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
+	c.task.callbackMode = options.callbackMode
 	c.user.callbackMode = options.callbackMode
 	c.workspaceNote.callbackMode = options.callbackMode
 
@@ -211,11 +229,16 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.category.productClient = c.product
 	c.category.userClient = c.user
 	c.category.userCategoryClient = c.userCategory
+	c.cycle.taskClient = c.task
 	c.document.assetClient = c.asset
 	c.document.assetDocumentLinkClient = c.assetDocumentLink
 	c.keyedCode.keyedCodeEntryClient = c.keyedCodeEntry
+	c.label.taskClient = c.task
+	c.label.taskLabelClient = c.taskLabel
 	c.order.orderItemClient = c.orderItem
 	c.product.orderItemClient = c.orderItem
+	c.task.labelClient = c.label
+	c.task.taskLabelClient = c.taskLabel
 	c.user.eventClient = c.event
 	c.user.orderClient = c.order
 	c.user.userSessionClient = c.userSession
@@ -247,6 +270,11 @@ func (c *Client) CategoryPriceTotal() CategoryPriceTotalClient {
 	return c.categoryPriceTotal
 }
 
+// Cycles returns the CycleClient for Cycle operations.
+func (c *Client) Cycles() CycleClient {
+	return c.cycle
+}
+
 // Documents returns the DocumentClient for Document operations.
 func (c *Client) Documents() DocumentClient {
 	return c.document
@@ -270,6 +298,11 @@ func (c *Client) KeyedCodes() KeyedCodeClient {
 // KeyedCodeEntries returns the KeyedCodeEntryClient for KeyedCodeEntry operations.
 func (c *Client) KeyedCodeEntries() KeyedCodeEntryClient {
 	return c.keyedCodeEntry
+}
+
+// Labels returns the LabelClient for Label operations.
+func (c *Client) Labels() LabelClient {
+	return c.label
 }
 
 // MaskedLabels returns the MaskedLabelClient for MaskedLabel operations.
@@ -305,6 +338,21 @@ func (c *Client) Profiles() ProfileClient {
 // ScalarProbes returns the ScalarProbeClient for ScalarProbe operations.
 func (c *Client) ScalarProbes() ScalarProbeClient {
 	return c.scalarProbe
+}
+
+// Tasks returns the TaskClient for Task operations.
+func (c *Client) Tasks() TaskClient {
+	return c.task
+}
+
+// TaskLabels returns the TaskLabelClient for TaskLabel operations.
+func (c *Client) TaskLabels() TaskLabelClient {
+	return c.taskLabel
+}
+
+// TaskReports returns the TaskReportClient for TaskReport operations.
+func (c *Client) TaskReports() TaskReportClient {
+	return c.taskReport
 }
 
 // Users returns the UserClient for User operations.
@@ -473,12 +521,22 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // Close closes all closeable dependencies held by the client.
+// Besides the querier, it closes the cache and the event publisher, when
+// configured.
 // If a dependency does not implement io.Closer, it is silently skipped.
 // All close errors are collected and returned as a joined error.
 func (c *Client) Close() error {
 	var errs []error
 	if closer, ok := c.querier.(io.Closer); ok {
 		errs = append(errs, closer.Close())
+	}
+	if c.opts.cache != nil {
+		errs = append(errs, c.opts.cache.Close())
+	}
+	if c.opts.eventPublisher != nil {
+		if closer, ok := c.opts.eventPublisher.(io.Closer); ok {
+			errs = append(errs, closer.Close())
+		}
 	}
 	return errors.Join(errs...)
 }

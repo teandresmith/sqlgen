@@ -111,20 +111,10 @@ func ValidateAPIWalkerCompleteness(src APIEntity, apiTable APITableContext, expo
 // request asked for.
 //
 // Both checks are scoped to an entity that has an API read surface at all. An
-// entity whose every column is access-restricted exposes no selectable column
-// and emits a walker with no case clauses, so what its row-identity block names
-// is moot beside the larger defect — that such an entity reaches the API
-// surface at all. §32.4 requires a readable PK, and the schema template would
-// emit an empty `type <T> {}` gqlgen rejects; diagnosing that belongs to the
-// rule that owns it, so it is exempted here rather than reported under a
-// row-identity message that names the wrong cause.
-//
-// The exemption rests on the state being unreachable through a validated
-// config, NOT on the walker being unreachable: a parent's relationship case
-// descends into the target's walker regardless of the target's readability
-// (relationship cases are not gated on it), so the walker is still callable.
-// Reaching the state at all takes bypassing config validation the way the
-// §26.5.3 target-exposure tests deliberately do.
+// entity whose every column is access-restricted has none: BuildAPIContext
+// gives such a table no API context (tableAPIExposed, PRD §26.4), so the
+// readable-count guard below is defensive — it keeps a hand-built context
+// from being reported under a row-identity message that names the wrong cause.
 func validateAPIRowIdentityProjection(src APIEntity, apiTable APITableContext) error {
 	// GoFieldName → the field, keyed the way the row-identity block names its
 	// entries (`fo.<GoFieldName> = true`) rather than by SQL name. Both spell

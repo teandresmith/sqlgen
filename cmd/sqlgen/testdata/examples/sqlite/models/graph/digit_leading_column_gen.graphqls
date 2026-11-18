@@ -55,10 +55,10 @@ input DigitLeadingColumnSort {
   direction: SortDirection!
 }
 input CreateDigitLeadingColumnInput {
-  col2010Revenue: Float!
-  col2024Quota: Int!
-  col1stPlace: String!
-  col3dModelURL: String!
+  col2010Revenue: Float
+  col2024Quota: Int
+  col1stPlace: String
+  col3dModelURL: String
 }
 input UpdateDigitLeadingColumnInput {
   col2010Revenue: Float

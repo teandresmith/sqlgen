@@ -30,11 +30,19 @@ func (c *orderItemClient) SoftDelete(ctx context.Context, pk OrderItemPK, opts .
 				[]any{pk.OrderID, pk.ProductID}),
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete order_item: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{pk}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -63,7 +71,7 @@ func (c *orderItemClient) SoftDelete(ctx context.Context, pk OrderItemPK, opts .
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete order_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -88,24 +96,59 @@ func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,
 			return []*OrderItem{}, nil
 		}
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{pk.OrderID, pk.ProductID}
-		}
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[OrderItemPK]struct{}, len(pks))
 
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column: "deleted_at",
-			Type:   sql.SoftDeleteTimestamp,
-			Conditions: []sql.Condition{
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.OrderID, pk.ProductID}
+			}
+			delConds := []sql.Condition{
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
-			},
-		})
+			}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("soft delete order_items: %w", err)
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:           "deleted_at",
+				Type:             sql.SoftDeleteTimestamp,
+				Conditions:       delConds,
+				ReturningColumns: []string{"order_id", "product_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[OrderItemPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK OrderItemPK
+				if err := rows.Scan(&rowPK.OrderID, &rowPK.ProductID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted order_item key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -125,7 +168,7 @@ func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete many order_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -143,6 +186,13 @@ func (c *orderItemClient) SoftDeleteWhere(ctx context.Context, filter *OrderItem
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -164,7 +214,7 @@ func (c *orderItemClient) SoftDeleteWhere(ctx context.Context, filter *OrderItem
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete order_items where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -201,7 +251,7 @@ func (c *orderItemClient) SoftDeleteWhere(ctx context.Context, filter *OrderItem
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete order_items where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -227,25 +277,45 @@ func (c *orderItemClient) Restore(ctx context.Context, pk OrderItemPK, opts ...f
 				[]any{pk.OrderID, pk.ProductID}),
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore order_item: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{pk}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
 
-		return c.Get(ctx, pk, func(o *CallOptions[OrderItemFieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetOrderItemsInput{
+			Filter: &OrderItemFilter{PKs: []OrderItemPK{pk}},
+			Limit:  new(1),
+		}, func(o *CallOptions[OrderItemFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore order_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -270,23 +340,58 @@ func (c *orderItemClient) RestoreMany(ctx context.Context, pks []OrderItemPK, op
 			return []*OrderItem{}, nil
 		}
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{pk.OrderID, pk.ProductID}
-		}
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[OrderItemPK]struct{}, len(pks))
 
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{"deleted_at": nil},
-			Conditions: []sql.Condition{
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.OrderID, pk.ProductID}
+			}
+			restoreConds := []sql.Condition{
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
-			},
-		})
+			}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("restore order_items: %w", err)
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses:       map[string]any{"deleted_at": nil},
+				Conditions:       restoreConds,
+				ReturningColumns: []string{"order_id", "product_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[OrderItemPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK OrderItemPK
+				if err := rows.Scan(&rowPK.OrderID, &rowPK.ProductID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored order_item key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -303,7 +408,7 @@ func (c *orderItemClient) RestoreMany(ctx context.Context, pks []OrderItemPK, op
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore many order_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -312,8 +417,8 @@ func (c *orderItemClient) RestoreMany(ctx context.Context, pks []OrderItemPK, op
 }
 
 // RestoreWhere restores all soft-deleted order_items matching the filter and returns them.
-// Always scoped to deleted rows — only soft-deleted entities are restored.
-// Returns empty slice when no rows match.
+// Always scoped to deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
 func (c *orderItemClient) RestoreWhere(ctx context.Context, filter *OrderItemFilter, opts ...func(*CallOptions[OrderItemFieldOptions])) ([]*OrderItem, error) {
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -321,6 +426,13 @@ func (c *orderItemClient) RestoreWhere(ctx context.Context, filter *OrderItemFil
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -341,7 +453,7 @@ func (c *orderItemClient) RestoreWhere(ctx context.Context, filter *OrderItemFil
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore order_items where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -375,7 +487,7 @@ func (c *orderItemClient) RestoreWhere(ctx context.Context, filter *OrderItemFil
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore order_items where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -398,14 +510,25 @@ func (c *orderItemClient) HardDelete(ctx context.Context, pk OrderItemPK, opts .
 				[]any{pk.OrderID, pk.ProductID}),
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete order_item: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{pk}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete order_item: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple order_items from the database.
@@ -417,25 +540,63 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{pk.OrderID, pk.ProductID}
-		}
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[OrderItemPK]struct{}, len(pks))
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.OrderID, pk.ProductID}
+			}
+			hardConds := []sql.Condition{
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValues),
-			},
-		})
+			}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete order_items: %w", err)
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"order_id", "product_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[OrderItemPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK OrderItemPK
+				if err := rows.Scan(&rowPK.OrderID, &rowPK.ProductID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted order_item key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many order_items: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all order_items matching the filter.
@@ -462,7 +623,7 @@ func (c *orderItemClient) HardDeleteWhere(ctx context.Context, filter *OrderItem
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete order_items where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -480,5 +641,34 @@ func (c *orderItemClient) HardDeleteWhere(ctx context.Context, filter *OrderItem
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete order_items where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *orderItemClient) recordWrittenKeys(written map[OrderItemPK]struct{}, listed []OrderItemPK, rowKeys map[OrderItemPK]struct{}) {
+	found := make(map[OrderItemPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }

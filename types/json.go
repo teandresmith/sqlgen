@@ -2,8 +2,10 @@
 package types
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -11,7 +13,7 @@ import (
 // JSON holds a raw JSON document of any shape — object, array, scalar, or
 // null. It is the default Go type for `json` and `jsonb` columns when no
 // typed Go struct is configured. Decode opportunistically with AsMap /
-// AsSlice / Decode, or override the column's go_type to a concrete struct
+// AsSlice / Decode, or override the column's Go type to a concrete struct
 // via overrides.types or per-column override for typed access at the field
 // level.
 //
@@ -56,9 +58,12 @@ func (j JSON) Value() (driver.Value, error) {
 	return []byte(j), nil
 }
 
-// MarshalJSON delegates to json.RawMessage.MarshalJSON. A nil JSON emits
-// the literal `null`.
+// MarshalJSON delegates to json.RawMessage.MarshalJSON. A nil or empty JSON
+// emits the literal `null`, as Value and MarshalGQL treat both as null.
 func (j JSON) MarshalJSON() ([]byte, error) {
+	if len(j) == 0 {
+		return []byte("null"), nil
+	}
 	b, err := json.RawMessage(j).MarshalJSON()
 	if err != nil {
 		return nil, fmt.Errorf("marshal JSON: %w", err)
@@ -66,9 +71,13 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 	return b, nil
 }
 
-// UnmarshalJSON delegates to json.RawMessage.UnmarshalJSON, which validates
-// that the input is well-formed JSON.
+// UnmarshalJSON rejects input that is not well-formed JSON, then delegates
+// to json.RawMessage.UnmarshalJSON. RawMessage copies its input unchecked, so
+// a direct call would otherwise store malformed bytes.
 func (j *JSON) UnmarshalJSON(data []byte) error {
+	if !json.Valid(data) {
+		return errors.New("unmarshal JSON: invalid JSON input")
+	}
 	if err := (*json.RawMessage)(j).UnmarshalJSON(data); err != nil {
 		return fmt.Errorf("unmarshal JSON: %w", err)
 	}
@@ -145,15 +154,14 @@ func (j JSON) AsSlice() ([]any, error) {
 	return s, nil
 }
 
-// IsNull reports whether the value is SQL NULL (empty bytes) or holds the
-// JSON `null` literal. The two are indistinguishable to most application
-// code; use len(j) == 0 directly when you must distinguish.
+// IsNull reports whether the value is empty (SQL NULL) or whitespace-only,
+// or holds the JSON `null` literal, with any surrounding JSON whitespace
+// (space, tab, CR, LF).
+// The two are indistinguishable to most application code; use len(j) == 0
+// directly when you must distinguish.
 func (j JSON) IsNull() bool {
-	b := jsonFirstByte(j)
-	if b == 0 {
-		return true
-	}
-	return b == 'n' && string(j[skipWhitespace(j):]) == "null"
+	trimmed := bytes.Trim(j, " \t\r\n")
+	return len(trimmed) == 0 || string(trimmed) == "null"
 }
 
 // IsObject reports whether the first non-whitespace byte is `{`. This is a

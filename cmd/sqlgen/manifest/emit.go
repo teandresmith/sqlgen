@@ -7,6 +7,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/parser"
 )
 
@@ -16,12 +17,15 @@ import (
 // without re-parsing. Timestamp pins Document.GeneratedAt (from the
 // --manifest-timestamp flag, or time.Now().UTC() at the caller).
 type StageInput struct {
-	Schema    *parser.Schema
-	Config    *config.RootConfig
-	Tables    []gen.TableContext
-	Views     []gen.ViewContext
-	Enums     []gen.EnumContext
-	API       *gen.APIContext
+	Schema *parser.Schema
+	Config *config.RootConfig
+	Tables []gen.TableContext
+	Views  []gen.ViewContext
+	Enums  []gen.EnumContext
+	API    *gen.APIContext
+	// UUID is the UUID integration the generated package resolved
+	// (gen.GenerateResult.UUID); example lines spell uuid.UUID values with it.
+	UUID      gotype.UUIDIntegration
 	Version   string
 	Timestamp string
 }
@@ -55,13 +59,14 @@ func RunStage(in StageInput) (*StageResult, error) {
 	cfg := in.Config
 	outputDir := cfg.Output.Dir
 	graphDir := ResolveGraphBreadcrumbDir(cfg)
+	staleGraphDir := staleGraphBreadcrumbDir(cfg)
 
 	if !manifestEnabled(cfg) {
 		// The deleted set travels with the error too: cleanup removes files one
 		// at a time, so a mid-sweep failure still leaves some gone, and dropping
 		// the list there would reopen the silent-deletion hole on the one path
 		// where the consumer most needs to know what happened.
-		deleted, err := CleanStale(CleanInput{Config: cfg, OutputDir: outputDir, GraphDir: graphDir})
+		deleted, err := CleanStale(CleanInput{Config: cfg, OutputDir: outputDir, GraphDir: graphDir, StaleGraphDir: staleGraphDir})
 		return &StageResult{Deleted: deleted}, err
 	}
 
@@ -73,6 +78,7 @@ func RunStage(in StageInput) (*StageResult, error) {
 		Views:     in.Views,
 		Enums:     in.Enums,
 		API:       in.API,
+		UUID:      in.UUID,
 		Version:   in.Version,
 		Timestamp: in.Timestamp,
 	})
@@ -97,6 +103,12 @@ func RunStage(in StageInput) (*StageResult, error) {
 		OutputDir:   outputDir,
 		MarkdownDir: m.MarkdownDir,
 		GraphDir:    graphDir,
+		// A breadcrumb points at the markdown index only when markdown is
+		// written; a json-only run points at the JSON artifacts instead.
+		JSONOnly:         !formatEnabled(m, config.ManifestFormatMarkdown),
+		JSONFilename:     m.JSONFilename,
+		JSONPerEntityDir: m.JSONPerEntityDir,
+		PerEntityJSON:    m.JSONLayout == config.JSONLayoutPerEntity,
 	})
 	if err != nil {
 		return nil, err
@@ -113,7 +125,7 @@ func RunStage(in StageInput) (*StageResult, error) {
 		return nil, fmt.Errorf("rendering manifest embed: %w", err)
 	}
 
-	deleted, err := CleanStale(CleanInput{Config: cfg, Doc: doc, OutputDir: outputDir, GraphDir: graphDir})
+	deleted, err := CleanStale(CleanInput{Config: cfg, Doc: doc, OutputDir: outputDir, GraphDir: graphDir, StaleGraphDir: staleGraphDir})
 	return &StageResult{Warnings: warnings, Deleted: deleted}, err
 }
 
@@ -138,6 +150,30 @@ func ResolveGraphBreadcrumbDir(cfg *config.RootConfig) string {
 	if graphDir == "" {
 		return ""
 	}
+	rel, err := filepath.Rel(cfg.Output.Dir, graphDir)
+	if err != nil || rel == "." {
+		return ""
+	}
+	return graphDir
+}
+
+// staleGraphBreadcrumbDir returns the graph package directory a GraphQL-off
+// run cleans breadcrumbs out of, else "". The breadcrumbs went to the resolver
+// dir when GraphQL was on, so that is where they are looked for — and only
+// there: a config with no api / api.graphql block, or one whose resolver dir
+// is unresolved, names no graph package, so nothing is cleaned. Guessing the
+// default <output.dir>/graph for such a config would delete a sqlgen-marked
+// breadcrumb from a directory the config never claimed. Like
+// ResolveGraphBreadcrumbDir it yields "" when the dir is the models output dir
+// itself, whose breadcrumbs the models flags govern.
+func staleGraphBreadcrumbDir(cfg *config.RootConfig) string {
+	if graphQLEnabled(cfg) {
+		return ""
+	}
+	if cfg.API == nil || cfg.API.GraphQL == nil || cfg.API.GraphQL.ResolverDir == "" {
+		return ""
+	}
+	graphDir := cfg.API.GraphQL.ResolverDir
 	rel, err := filepath.Rel(cfg.Output.Dir, graphDir)
 	if err != nil || rel == "." {
 		return ""

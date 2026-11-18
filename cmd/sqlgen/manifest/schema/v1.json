@@ -8,6 +8,19 @@
     { "$ref": "#/$defs/entity" }
   ],
   "$defs": {
+    "columnList": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "junctionKey": {
+      "type": "object",
+      "required": ["columns", "references"],
+      "properties": {
+        "columns": { "$ref": "#/$defs/columnList" },
+        "references": { "$ref": "#/$defs/columnList" },
+        "constraint": { "type": "string" }
+      }
+    },
     "document": {
       "type": "object",
       "required": [
@@ -337,10 +350,13 @@
         "target_entity": { "type": "string" },
         "fk": {
           "type": "object",
+          "required": ["columns", "references"],
           "properties": {
             "table": { "type": "string" },
             "schema": { "type": "string" },
-            "column": { "type": "string" }
+            "columns": { "$ref": "#/$defs/columnList" },
+            "references": { "$ref": "#/$defs/columnList" },
+            "constraint": { "type": "string" }
           }
         },
         "junction": {
@@ -348,8 +364,8 @@
           "properties": {
             "table": { "type": "string" },
             "schema": { "type": "string" },
-            "local_fk": { "type": "string" },
-            "target_fk": { "type": "string" }
+            "local_fk": { "$ref": "#/$defs/junctionKey" },
+            "target_fk": { "$ref": "#/$defs/junctionKey" }
           }
         },
         "filter": { "type": "string" }

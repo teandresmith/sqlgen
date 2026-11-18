@@ -99,9 +99,6 @@ func (d MySQLDialect) UpsertClause(opts UpsertClauseOptions) string {
 // SupportsArrayParams returns false — MySQL does not support native array parameters.
 func (d MySQLDialect) SupportsArrayParams() bool { return false }
 
-// SupportsTupleIN returns false — MySQL uses expanded OR for composite PK batch lookups.
-func (d MySQLDialect) SupportsTupleIN() bool { return false }
-
 // BackslashEscapes returns true — MySQL's default sql_mode reads a backslash
 // inside a '...' or "..." literal as escaping the character after it.
 func (d MySQLDialect) BackslashEscapes() bool { return true }
@@ -110,22 +107,23 @@ func (d MySQLDialect) BackslashEscapes() bool { return true }
 // form, and accepts an empty column list with an empty value row instead.
 func (d MySQLDialect) DefaultValuesClause() string { return "() VALUES ()" }
 
-// LockClause returns the row-level lock SQL fragment for the given mode.
-// MySQL uses "LOCK IN SHARE MODE" for [LockForShare]. NoWait and SkipLocked
-// require MySQL 8.0+; the version guard lives in the codegen runtime layer.
-// Returns the empty string for [LockNone] or any unrecognised mode.
-func (d MySQLDialect) LockClause(mode LockMode) string {
-	switch mode {
-	case LockNone:
-		return ""
-	case LockForUpdate:
-		return "FOR UPDATE"
-	case LockForShare:
-		return "LOCK IN SHARE MODE"
-	case LockForUpdateNoWait:
-		return "FOR UPDATE NOWAIT"
-	case LockForUpdateSkipLocked:
-		return "FOR UPDATE SKIP LOCKED"
+// NoLimitClause returns "LIMIT 18446744073709551615" — MySQL accepts OFFSET
+// only after a LIMIT, and documents the largest BIGINT UNSIGNED as the way to
+// ask for every remaining row.
+func (d MySQLDialect) NoLimitClause() string { return "LIMIT 18446744073709551615" }
+
+// LockClause returns the row-level lock SQL fragment for the given mode,
+// restricted to the table aliased of when of is not empty.
+// Unqualified, MySQL uses "LOCK IN SHARE MODE" for [LockForShare]; that
+// spelling has no OF form, so the qualified share lock is "FOR SHARE OF".
+// NoWait and SkipLocked require MySQL 8.0+, and so does every OF form, which
+// MariaDB does not accept at all; the version guard lives in the codegen
+// runtime layer. Returns the empty string for [LockNone] or any unrecognised
+// mode.
+func (d MySQLDialect) LockClause(mode LockMode, of string) string {
+	share := "LOCK IN SHARE MODE"
+	if of != "" {
+		share = "FOR SHARE"
 	}
-	return ""
+	return lockClauseOf(mode, share, of)
 }

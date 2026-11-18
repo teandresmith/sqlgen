@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/literal"
 )
 
 // Warning represents a non-fatal validation issue.
@@ -31,6 +33,8 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateConnectionRequired(cfg, &errs)
 	validateRemovedOperations(cfg, &errs)
 	validateNullableVariants(cfg, &errs)
+	validatePostgresTypeKeys(cfg, &errs)
+	validateTypeKeyCase(cfg, &errs)
 	validateSchemaDialect(cfg, &warnings)
 	validateIgnoredInputKeys(cfg, &warnings)
 	validateIgnoredPasswordEnv(cfg, &warnings)
@@ -38,6 +42,10 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateCacheConfig(cfg, &errs, &warnings)
 	validateViewCacheConfig(cfg, &errs)
 	validateTenancyConfig(cfg, &errs)
+	validateTenancyOptIn(cfg, &errs)
+	validateTableOverridesUsePointers(cfg, &errs)
+	validateEmptyCursorKeys(cfg, &errs)
+	validateOutputFilePlacement(cfg, &errs)
 	validateAPIConfig(cfg, &errs)
 	validateAPIOperations(cfg, &errs)
 	// Registered independently of validateAPIOperations, which returns early
@@ -49,10 +57,42 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateRelationships(cfg, &errs)
 	validateNestedMutations(cfg, &errs)
 	validateManifestConfig(cfg, &errs)
+	validateEventsConfig(cfg, &errs)
 	validateColumnAccess(cfg, &errs)
 	validateColumnOverrides(cfg, &errs)
+	validateExtraNames(cfg, &errs)
 
 	return warnings, errors.Join(errs...)
+}
+
+// validateExtraNames enforces PRD §4.10's naming of an `extras` entry: its key
+// is the generated struct's Go name and each `fields` key a field's, both used
+// verbatim, so each must be an exported Go identifier. Anything else would be
+// emitted as a declaration that does not parse, or as an unexported name the
+// models package's consumers and encoding/json cannot reach.
+func validateExtraNames(cfg *RootConfig, errs *[]error) {
+	for _, name := range slices.Sorted(maps.Keys(cfg.Extras)) {
+		if !isExportedIdentifier(name) {
+			*errs = append(*errs, fmt.Errorf(
+				"extras.%s: %q is not an exported Go identifier — the key is the generated struct's name, used as written (PRD §4.10)",
+				name, name,
+			))
+		}
+		for _, field := range slices.Sorted(maps.Keys(cfg.Extras[name].Fields)) {
+			if !isExportedIdentifier(field) {
+				*errs = append(*errs, fmt.Errorf(
+					"extras.%s.fields.%s: %q is not an exported Go identifier — the key is the generated field's name, used as written (PRD §4.10)",
+					name, field, field,
+				))
+			}
+		}
+	}
+}
+
+// isExportedIdentifier reports whether name is a Go identifier, not a keyword,
+// that starts with an upper-case letter.
+func isExportedIdentifier(name string) bool {
+	return token.IsIdentifier(name) && token.IsExported(name)
 }
 
 // validateOutputDir warns when output.dir was omitted and defaulted to the
@@ -425,6 +465,8 @@ func validateRelationships(cfg *RootConfig, errs *[]error) {
 //     struct. The generator skips a nameless edge (`sqlgen validate` still
 //     builds its contexts after this rule fails), so this is the one place
 //     the missing key is reported.
+//   - `table:` is required: it names the related table, and an edge to no
+//     table has nothing to load.
 //   - `type:` is required and one of the six spellings the generator maps; it
 //     would otherwise be read as o2m.
 //   - `fk:` is required on an o2o or o2m edge, and `junction:` on an m2m one.
@@ -442,6 +484,17 @@ func validateRelationshipKeys(tableName string, i int, r TableRelationship, errs
 			tableName, i,
 		))
 	}
+	if r.Table == "" {
+		// Named by its name too when it has one, as the link-key errors are.
+		entry := fmt.Sprintf("tables.%s.relationships[%d]", tableName, i)
+		if r.Name != "" {
+			entry += fmt.Sprintf(" (%q)", r.Name)
+		}
+		*errs = append(*errs, fmt.Errorf(
+			"%s.table: required — it names the related table the relationship links to (PRD §4.8)",
+			entry,
+		))
+	}
 	switch {
 	case r.Type == "":
 		*errs = append(*errs, fmt.Errorf(
@@ -453,7 +506,7 @@ func validateRelationshipKeys(tableName string, i int, r TableRelationship, errs
 			"tables.%s.relationships[%d].type: %q is not a valid value (allowed: o2o, one_to_one, o2m, one_to_many, m2m, many_to_many) (PRD §4.8)",
 			tableName, i, r.Type,
 		))
-	case r.FK == "" && !isM2M(r.Type):
+	case len(r.FK) == 0 && !isM2M(r.Type):
 		*errs = append(*errs, fmt.Errorf(
 			"tables.%s.relationships[%d] (%q).fk: required on an o2o or o2m relationship — it names the FK column that creates the link (PRD §4.8 / §4.13)",
 			tableName, i, r.Name,
@@ -576,14 +629,9 @@ func validateRelationshipSortColumns(cfg *RootConfig, tables []SchemaTable, errs
 // that resolution too (PRD §4.13).
 func validateRelationshipFKColumns(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
 	var parsed map[string][]SchemaColumn
-
-	hasColumn := func(cols []SchemaColumn, name string) bool {
-		return slices.ContainsFunc(cols, func(c SchemaColumn) bool { return c.Name == name })
-	}
-
 	for _, tableName := range sortedTableKeys(cfg.Tables) {
 		for i, r := range cfg.Tables[tableName].Relationships {
-			if r.FK == "" || isM2M(r.Type) {
+			if len(r.FK) == 0 || isM2M(r.Type) {
 				continue
 			}
 			if parsed == nil {
@@ -593,27 +641,231 @@ func validateRelationshipFKColumns(cfg *RootConfig, tables []SchemaTable, errs *
 					parsed[qualifiedTableName(t)] = t.Columns
 				}
 			}
-			targetCols, ok := parsed[r.Table]
-			if !ok || hasColumn(targetCols, r.FK) {
-				continue
-			}
-			if !isO2O(r.Type) {
-				*errs = append(*errs, fmt.Errorf(
-					"tables.%s.relationships[%d] (%q).fk: %q is not a column on related table %q (PRD §4.8)",
-					tableName, i, r.Name, r.FK, r.Table,
-				))
-				continue
-			}
-			sourceCols, ok := parsed[tableName]
-			if !ok || hasColumn(sourceCols, r.FK) {
-				continue
-			}
-			*errs = append(*errs, fmt.Errorf(
-				"tables.%s.relationships[%d] (%q).fk: %q is not a column on table %q or on related table %q; an o2o fk is on one of them (PRD §4.8 / §13.1)",
-				tableName, i, r.Name, r.FK, tableName, r.Table,
-			))
+			checkRelationshipFKColumns(tableName, i, r, parsed, errs)
 		}
 	}
+}
+
+// checkRelationshipFKColumns is validateRelationshipFKColumns for one entry.
+func checkRelationshipFKColumns(tableName string, i int, r TableRelationship, parsed map[string][]SchemaColumn, errs *[]error) {
+	hasColumn := func(cols []SchemaColumn, name string) bool {
+		return slices.ContainsFunc(cols, func(c SchemaColumn) bool { return c.Name == name })
+	}
+	targetCols, ok := parsed[r.Table]
+	if !ok {
+		return
+	}
+	sourceCols, sourceOK := parsed[tableName]
+	// An o2o key is on one side (§13.1): every column on the related table,
+	// or every column on this one.
+	if isO2O(r.Type) && sourceOK && keySplitAcross(r.FK, sourceCols, targetCols) {
+		*errs = append(*errs, fmt.Errorf(
+			"tables.%s.relationships[%d] (%q).fk: %s has columns on both table %q and related table %q; an o2o fk is on one of them (PRD §4.8 / §13.1)",
+			tableName, i, r.Name, r.FK, tableName, r.Table,
+		))
+		return
+	}
+	for _, col := range r.FK {
+		if hasColumn(targetCols, col) {
+			continue
+		}
+		if !isO2O(r.Type) {
+			*errs = append(*errs, fmt.Errorf(
+				"tables.%s.relationships[%d] (%q).fk: %q is not a column on related table %q (PRD §4.8)",
+				tableName, i, r.Name, col, r.Table,
+			))
+			continue
+		}
+		if !sourceOK || hasColumn(sourceCols, col) {
+			continue
+		}
+		*errs = append(*errs, fmt.Errorf(
+			"tables.%s.relationships[%d] (%q).fk: %q is not a column on table %q or on related table %q; an o2o fk is on one of them (PRD §4.8 / §13.1)",
+			tableName, i, r.Name, col, tableName, r.Table,
+		))
+	}
+}
+
+// validateRelationshipKeyLength enforces PRD §4.13's key-length rule: `fk`,
+// `junction_local_fk` and `junction_reference_fk` map by position onto the
+// resolved primary key of the table they reference (§13.4), so a list must
+// have that key's column count. A string is a one-item list, so it fails too
+// against a composite key.
+//
+// An o2m `fk` and an m2m `junction_local_fk` reference this table, and an m2m
+// `junction_reference_fk` the related one. An o2o `fk` references this table
+// when every column is on the related one (has-one), and the related table
+// otherwise (belongs-to), as §13.1 derives the side. An unset junction key is
+// inferred, and a table outside the parsed set or without a primary key is
+// left to relationship resolution, as validateRelationshipFKColumns leaves it.
+//
+// A key that references a view maps onto its `@pk` columns. A view without
+// `@pk` has no key to map onto, so a belongs-to or m2m edge into it is an
+// error whether the key is set or inferred.
+func validateRelationshipKeyLength(cfg *RootConfig, tables []SchemaTable, views []SchemaView, errs *[]error) {
+	parsed := make(map[string]SchemaTable, len(tables)*2)
+	for _, t := range tables {
+		parsed[t.Name] = t
+		parsed[qualifiedTableName(t)] = t
+	}
+	viewCols := make(map[string][]SchemaColumn, len(views)*2)
+	for _, v := range views {
+		viewCols[v.Name] = v.Columns
+		viewCols[qualifiedViewName(v)] = v.Columns
+	}
+	for _, tableName := range sortedTableKeys(cfg.Tables) {
+		for i, r := range cfg.Tables[tableName].Relationships {
+			for _, err := range relationshipKeyLengthErrors(cfg, parsed, viewCols, tableName, r) {
+				*errs = append(*errs, fmt.Errorf("tables.%s.relationships[%d] (%q).%w", tableName, i, r.Name, err))
+			}
+		}
+	}
+}
+
+// relationshipKeyLengthErrors is validateRelationshipKeyLength for one entry.
+// A name that is a parsed table is never read as a view.
+func relationshipKeyLengthErrors(cfg *RootConfig, parsed map[string]SchemaTable, viewCols map[string][]SchemaColumn, tableName string, r TableRelationship) []error {
+	var errs []error
+	check := func(key string, cols KeyColumns, referenced string) {
+		if err := checkRelationshipKeyLength(cfg, parsed, key, cols, referenced); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	related, relatedIsTable := parsed[r.Table]
+	relatedViewCols, relatedIsView := viewCols[r.Table]
+	relatedIsView = relatedIsView && !relatedIsTable
+	checkView := func(key string, cols KeyColumns) {
+		if err := checkViewKey(key, cols, r.Table, relatedViewCols); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	switch {
+	case isM2M(r.Type):
+		check("junction_local_fk", r.JunctionLocalFK, tableName)
+		if relatedIsView {
+			checkView("junction_reference_fk", r.JunctionReferenceFK)
+			break
+		}
+		check("junction_reference_fk", r.JunctionReferenceFK, r.Table)
+	case isO2O(r.Type):
+		// Every column on the related table or view makes it has-one, which
+		// references this table; otherwise it is belongs-to.
+		relatedCols := related.Columns
+		if relatedIsView {
+			relatedCols = relatedViewCols
+		}
+		switch {
+		case len(r.FK) > 0 && (relatedIsTable || relatedIsView) && columnsIn(relatedCols, r.FK):
+			check("fk", r.FK, tableName)
+		case relatedIsView:
+			checkView("fk", r.FK)
+		default:
+			check("fk", r.FK, r.Table)
+		}
+	default:
+		check("fk", r.FK, tableName)
+	}
+	return errs
+}
+
+// checkViewKey checks a key into a view against the view's `@pk`: a view
+// without one is an error, and a written key must match its length.
+func checkViewKey(key string, cols KeyColumns, view string, viewCols []SchemaColumn) error {
+	pk := viewPrimaryKey(viewCols)
+	switch {
+	case len(pk) == 0:
+		return keyReferencesViewError(key, view)
+	case cols != nil && len(cols) != len(pk):
+		return keyLengthError(key, cols, view, pk)
+	}
+	return nil
+}
+
+// viewPrimaryKey is a view's `@pk` columns in column order, empty without one.
+func viewPrimaryKey(cols []SchemaColumn) []string {
+	var pk []string
+	for _, c := range cols {
+		if c.PrimaryKey {
+			pk = append(pk, c.Name)
+		}
+	}
+	return pk
+}
+
+// keyReferencesViewError is the error for a key into a view without `@pk`,
+// which has no primary key for it to map onto.
+func keyReferencesViewError(key, view string) error {
+	return fmt.Errorf(
+		"%s: references view %q, which declares no @pk for the key to map onto; a belongs-to or m2m relationship into a view needs one (PRD §4.13 / §13.4)",
+		key, view,
+	)
+}
+
+// checkRelationshipKeyLength compares one key with the resolved primary key of
+// the table it references. An unset key, a table outside parsed and a table
+// without a primary key pass.
+func checkRelationshipKeyLength(cfg *RootConfig, parsed map[string]SchemaTable, key string, cols KeyColumns, referenced string) error {
+	if cols == nil {
+		return nil
+	}
+	table, ok := parsed[referenced]
+	if !ok {
+		return nil
+	}
+	var tc TableConfig
+	if found := findTableConfig(cfg, table); found != nil {
+		tc = *found
+	}
+	// A list maps onto the key in its PRIMARY KEY (...) order (§13.4).
+	pk := resolvedPKColumns(tc, table)
+	if len(pk) == 0 || len(cols) == len(pk) {
+		return nil
+	}
+	return keyLengthError(key, cols, referenced, pk)
+}
+
+// keyLengthError is the error for a key whose length differs from the primary
+// key it references.
+func keyLengthError(key string, cols KeyColumns, referenced string, pk []string) error {
+	return fmt.Errorf(
+		"%s: %s has %s, but it references the primary key of %q, which has %s (%s); a key list maps by position onto that key (PRD §4.13 / §13.4)",
+		key, cols, pluralColumns(len(cols)), referenced, pluralColumns(len(pk)), strings.Join(pk, ", "),
+	)
+}
+
+// columnsIn reports whether every column of key is one of cols.
+func columnsIn(cols []SchemaColumn, key KeyColumns) bool {
+	for _, c := range key {
+		if !slices.ContainsFunc(cols, func(sc SchemaColumn) bool { return sc.Name == c }) {
+			return false
+		}
+	}
+	return true
+}
+
+// pluralColumns spells a column count: "1 column", "2 columns".
+func pluralColumns(n int) string {
+	if n == 1 {
+		return "1 column"
+	}
+	return fmt.Sprintf("%d columns", n)
+}
+
+// keySplitAcross reports whether every column of key is on a or b, but neither
+// table holds them all. A column on neither is reported per column instead.
+func keySplitAcross(key KeyColumns, a, b []SchemaColumn) bool {
+	on := func(cols []SchemaColumn, name string) bool {
+		return slices.ContainsFunc(cols, func(c SchemaColumn) bool { return c.Name == name })
+	}
+	allA, allB := true, true
+	for _, c := range key {
+		inA, inB := on(a, c), on(b, c)
+		if !inA && !inB {
+			return false
+		}
+		allA, allB = allA && inA, allB && inB
+	}
+	return !allA && !allB
 }
 
 // RelationshipDedupKey returns the §13.7.3 dedup key for a single relationship.
@@ -655,9 +907,17 @@ func RelationshipDedupKey(r TableRelationship) string {
 	const sep = "\x00"
 	disc := discriminatorDedupComponent(r.Discriminator)
 	if isM2M(r.Type) {
-		return "m" + sep + r.Table + sep + r.Junction + sep + r.JunctionLocalFK + sep + r.JunctionReferenceFK + sep + r.Filter + sep + disc
+		return "m" + sep + r.Table + sep + r.Junction + sep + keyDedupComponent(r.JunctionLocalFK) + sep + keyDedupComponent(r.JunctionReferenceFK) + sep + r.Filter + sep + disc
 	}
-	return "x" + sep + r.Table + sep + r.FK + sep + r.Filter + sep + disc
+	return "x" + sep + r.Table + sep + keyDedupComponent(r.FK) + sep + r.Filter + sep + disc
+}
+
+// keyDedupComponent joins a key's columns for RelationshipDedupKey. `\x01`
+// cannot appear in an identifier either, and differs from the field separator,
+// so a list cannot alias into the fields after it; `fk: x` and `fk: [x]` give
+// one component.
+func keyDedupComponent(k KeyColumns) string {
+	return strings.Join(k, "\x01")
 }
 
 // filterHasBareDoubleQuote reports whether a `filter:` predicate contains a
@@ -1089,7 +1349,6 @@ func validateEnumValues(cfg *RootConfig, errs *[]error) {
 	checks := []enumValidator{
 		{"input.dialect", string(cfg.Input.Dialect), cfg.Input.Dialect.IsValid(), "postgres, mysql, sqlite"},
 		{"input.source", string(cfg.Input.Source), cfg.Input.Source.IsValid(), "files, database, both"},
-		{"input.parse_mode", string(cfg.Input.ParseMode), cfg.Input.ParseMode.IsValid(), "strict, merge"},
 		{"output.driver", string(cfg.Output.Driver), cfg.Output.Driver.IsValid(), "pgx, stdlib"},
 		{"output.layout", string(cfg.Output.Layout), cfg.Output.Layout.IsValid(), "single_file, file_per_table"},
 		{"generation.uuid_version", string(cfg.Generation.UUIDVersion), cfg.Generation.UUIDVersion.IsValid(), "v4, v7"},
@@ -1350,15 +1609,134 @@ func validateTenancyConfig(cfg *RootConfig, errs *[]error) {
 	}
 }
 
-// validateTenancyTypeOverride enforces the "type with no import" rule for a
-// tenancy TypeOverride. The generator needs both fields to emit a valid Go
-// import and reference for the tenant resolver (PRD §29.2.4 + §4.7).
+// validateTenancyOptIn rejects a per-table or per-view `tenancy.enabled: true`
+// while global tenancy.enabled is off (or there is no `tenancy:` block). The
+// flag forces an entity tenanted under the global switch (PRD §29.2.3 rule 5);
+// with the switch off no tenancy code is generated, so the knob would be
+// silently ignored (§29.2.2 / §4.13). It mirrors validateEventsConfig.
+func validateTenancyOptIn(cfg *RootConfig, errs *[]error) {
+	if cfg.Tenancy != nil && cfg.Tenancy.Enabled {
+		return
+	}
+	for _, name := range sortedTableKeys(cfg.Tables) {
+		if t := cfg.Tables[name].Tenancy; t != nil && t.Enabled != nil && *t.Enabled {
+			*errs = append(*errs, fmt.Errorf("tables.%s.tenancy.enabled: cannot be true when global tenancy.enabled is false — no tenancy code is generated while the global switch is off (PRD §29.2.2 / §4.13)", name))
+		}
+	}
+	for _, name := range sortedViewKeys(cfg.Views) {
+		if t := cfg.Views[name].Tenancy; t != nil && t.Enabled != nil && *t.Enabled {
+			*errs = append(*errs, fmt.Errorf("views.%s.tenancy.enabled: cannot be true when global tenancy.enabled is false — no tenancy code is generated while the global switch is off (PRD §29.2.2 / §4.13)", name))
+		}
+	}
+}
+
+// validateTableOverridesUsePointers rejects `tables.<t>.overrides.use_pointers`.
+// The per-table overrides block takes `types` only: the pointer policy is
+// package-wide (PRD §4.7) and is read from the global key, so a per-table value
+// would be silently ignored (§4.13).
+func validateTableOverridesUsePointers(cfg *RootConfig, errs *[]error) {
+	for _, name := range sortedTableKeys(cfg.Tables) {
+		if ov := cfg.Tables[name].Overrides; ov != nil && ov.UsePointers != nil {
+			*errs = append(*errs, fmt.Errorf("tables.%s.overrides.use_pointers: not allowed per table — tables.%s.overrides takes types only, and a package has one pointer policy; set overrides.use_pointers globally instead", name, name))
+		}
+	}
+}
+
+// validateEmptyCursorKeys rejects an explicit empty `cursor_keys: []` at each
+// of its three scopes. A cursor needs a key, and the loader keeps an explicit
+// empty list empty rather than defaulting it (PRD §4.6), so an empty list here
+// was written that way; omitting the key is how to take the default or
+// inherit (PRD §4.13).
+func validateEmptyCursorKeys(cfg *RootConfig, errs *[]error) {
+	if cfg.Generation.CursorKeys != nil && len(cfg.Generation.CursorKeys) == 0 {
+		*errs = append(*errs, errors.New("generation.cursor_keys: must not be empty — a cursor needs a key; omit cursor_keys for the default [id]"))
+	}
+	for _, name := range sortedTableKeys(cfg.Tables) {
+		if keys := cfg.Tables[name].CursorKeys; keys != nil && len(keys) == 0 {
+			*errs = append(*errs, fmt.Errorf("tables.%s.cursor_keys: must not be empty — a cursor needs a key; omit cursor_keys to inherit generation.cursor_keys", name))
+		}
+	}
+	for _, name := range sortedViewKeys(cfg.Views) {
+		if keys := cfg.Views[name].CursorKeys; keys != nil && len(keys) == 0 {
+			*errs = append(*errs, fmt.Errorf("views.%s.cursor_keys: must not be empty — a cursor needs a key; omit cursor_keys to inherit generation.cursor_keys", name))
+		}
+	}
+}
+
+// validateOutputFilePlacement keeps output.enums and output.types inside the
+// models package. Generated models reference enum and composite types
+// unqualified and never import another package for them, so an enums or types
+// file outside output.dir, or one declaring a package other than
+// output.package, leaves models_gen.go with `undefined: <Type>`. The file is
+// resolved as generation resolves it — relative to output.dir unless absolute
+// — and its directory is compared to output.dir as absolute, cleaned paths.
+func validateOutputFilePlacement(cfg *RootConfig, errs *[]error) {
+	type outputFile struct{ key, file, pkg string }
+	var outputs []outputFile
+	if e := cfg.Output.Enums; e != nil {
+		outputs = append(outputs, outputFile{"enums", e.File, e.Package})
+	}
+	if t := cfg.Output.Types; t != nil {
+		outputs = append(outputs, outputFile{"types", t.File, t.Package})
+	}
+	outputDir := cfg.Output.Dir
+	for _, o := range outputs {
+		if o.file != "" && !fileDirectlyIn(o.file, outputDir) {
+			*errs = append(*errs, fmt.Errorf(
+				"output.%s.file: %q is outside output.dir %q — generated models do not import a separate %s package; keep the file in output.dir",
+				o.key, o.file, outputDir, o.key,
+			))
+		}
+		if o.pkg != "" && o.pkg != cfg.Output.Package {
+			*errs = append(*errs, fmt.Errorf(
+				"output.%s.package: %q differs from output.package %q — generated models do not import a separate %s package; omit output.%s.package or set it to %q",
+				o.key, o.pkg, cfg.Output.Package, o.key, o.key, cfg.Output.Package,
+			))
+		}
+	}
+}
+
+// fileDirectlyIn reports whether file, resolved relative to dir unless it is
+// absolute, sits directly in dir.
+func fileDirectlyIn(file, dir string) bool {
+	resolved := file
+	if !filepath.IsAbs(file) {
+		resolved = filepath.Join(dir, file)
+	}
+	fileDir, errFile := filepath.Abs(filepath.Dir(resolved))
+	outDir, errDir := filepath.Abs(dir)
+	if errFile != nil || errDir != nil {
+		return filepath.Dir(filepath.Clean(resolved)) == filepath.Clean(dir)
+	}
+	return fileDir == outDir
+}
+
+// validateTenancyTypeOverride applies the TypeOverride import rule (PRD §4.7)
+// to a tenancy TypeOverride, which is the same shape and resolves through the
+// same code path as an `overrides.types` entry (§29.2.4): an import is required
+// only when `type` names a package sqlgen does not already know. Builtins,
+// same-package types and the built-in literals (`time.Time`, `types.JSON`, …)
+// need none. The nullable variant inherits the parent's import, so it needs its
+// own when neither half carries one, or when the parent has one but the variant
+// names another package — the rule gen's typeOverrideImportErrors applies to `overrides.types`,
+// over the same literal registry.
 func validateTenancyTypeOverride(t *TypeOverride, path string, errs *[]error) {
 	if t == nil {
 		return
 	}
-	if t.Type != "" && t.Import == "" {
-		*errs = append(*errs, fmt.Errorf("%s: import is required when type is set (got type=%q)", path, t.Type))
+	switch {
+	case t.Import == "" && literal.NeedsExplicitImport(t.Type):
+		*errs = append(*errs, fmt.Errorf(
+			"%s.type: %q names a package-qualified type — set %s.import to the package it comes from",
+			path, t.Type, path,
+		))
+	case t.Nullable.Import == "" &&
+		(t.Import == "" && literal.NeedsExplicitImport(t.Nullable.Type) ||
+			t.Import != "" && literal.NullableNeedsOwnImport(t.Type, t.Nullable.Type)):
+		*errs = append(*errs, fmt.Errorf(
+			"%s.nullable.type: %q names a package-qualified type — set %s.nullable.import to the package it comes from",
+			path, t.Nullable.Type, path,
+		))
 	}
 }
 
@@ -1385,6 +1763,9 @@ type SchemaTable struct {
 	Schema       string
 	Columns      []SchemaColumn
 	UniqueGroups [][]string
+	// PrimaryKey is the declared PRIMARY KEY constraint's columns in clause
+	// order, empty when the table declares none.
+	PrimaryKey []string
 }
 
 // SchemaView holds the minimal view information needed for post-parse validation.
@@ -1425,6 +1806,7 @@ func ValidatePostParse(cfg *RootConfig, tables []SchemaTable, views []SchemaView
 	validateAmbiguousBareNames(cfg, tables, &errs)
 	validateViewInvalidateOn(cfg, tables, &errs)
 	validatePrimaryKeyOverride(cfg, tables, &errs, &warnings)
+	validateExcludedPrimaryKey(cfg, tables, &errs)
 	validateCompositePKStrategy(cfg, tables, &errs)
 	validateMissingPrimaryKey(cfg, tables, &warnings)
 	validateColumnAccessSchema(cfg, tables, &errs, &warnings)
@@ -1432,6 +1814,7 @@ func ValidatePostParse(cfg *RootConfig, tables []SchemaTable, views []SchemaView
 	validateRelationshipDiscriminators(cfg, tables, &errs)
 	validateRelationshipSortColumns(cfg, tables, &errs)
 	validateRelationshipFKColumns(cfg, tables, &errs)
+	validateRelationshipKeyLength(cfg, tables, views, &errs)
 
 	return warnings, errors.Join(errs...)
 }
@@ -1599,15 +1982,20 @@ func accessDropsFilter(access string) bool {
 	return access == AccessWriteOnly || access == AccessHidden || access == AccessInternal
 }
 
-// resolvedPKColumns returns the table's effective primary-key columns in
-// declaration order: the tables.<name>.primary_key.columns override when
-// present (it silently replaces the auto-detected PK, PRD §8.6), otherwise
-// the schema PK flags.
+// resolvedPKColumns returns the table's effective primary-key columns: the
+// tables.<name>.primary_key.columns override in declaration order when present
+// (it silently replaces the auto-detected PK, PRD §8.6), otherwise the schema
+// PK in its PRIMARY KEY (...) order (§27.5), falling back to column order when
+// no constraint lists exactly the flagged columns.
 func resolvedPKColumns(tc TableConfig, table SchemaTable) []string {
 	if tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
 		return tc.PrimaryKey.Columns
 	}
-	return pkColumnNames(table.Columns)
+	pk := pkColumnNames(table.Columns)
+	if len(table.PrimaryKey) == len(pk) && !slices.ContainsFunc(pk, func(c string) bool { return !slices.Contains(table.PrimaryKey, c) }) {
+		return table.PrimaryKey
+	}
+	return pk
 }
 
 // resolvedCursorKeys returns the table's effective §4.13 cursor-key set and a
@@ -1643,7 +2031,7 @@ func resolvedCursorKeys(cfg *RootConfig, tc TableConfig, table SchemaTable) (map
 		present,
 		resolvedPKColumns(tc, table),
 	)
-	if decision.Err != nil || !decision.Emit {
+	if len(decision.Errs) > 0 || !decision.Emit {
 		return nil, ""
 	}
 	switch {
@@ -1739,9 +2127,7 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			table.Columns,
 			resolvedPKColumns(tc, table),
 		)
-		if decision.Err != nil {
-			*errs = append(*errs, decision.Err)
-		}
+		*errs = append(*errs, decision.Errs...)
 		if decision.Warning != "" {
 			*warnings = append(*warnings, Warning{Message: decision.Warning})
 		}
@@ -1755,9 +2141,7 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			qualifiedViewName(view),
 			view.Columns,
 		)
-		if decision.Err != nil {
-			*errs = append(*errs, decision.Err)
-		}
+		*errs = append(*errs, decision.Errs...)
 		if decision.Warning != "" {
 			*warnings = append(*warnings, Warning{Message: decision.Warning})
 		}
@@ -1880,8 +2264,8 @@ func validatePrimaryKeyOverride(cfg *RootConfig, tables []SchemaTable, errs *[]e
 		if !uniqueCovers(table, resolved) {
 			*warnings = append(*warnings, Warning{
 				Message: fmt.Sprintf(
-					"tables.%s.primary_key.columns: no UNIQUE constraint covers the declared PK on table %s; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level",
-					qualified, qualified,
+					"tables.%s.primary_key.columns: no UNIQUE constraint covers the declared PK; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level",
+					qualified,
 				),
 			})
 		}
@@ -2011,6 +2395,50 @@ func validateMissingPrimaryKey(cfg *RootConfig, tables []SchemaTable, warnings *
 	}
 }
 
+// validateExcludedPrimaryKey rejects exclude_columns removing a member of a
+// table's detected primary key (PRD §4.13): generating on the members that
+// remain would key Get, Update and HardDelete on a column set that is not
+// unique. Tables with a primary_key.columns override are checked by
+// validatePrimaryKeyOverride; fully excluded and exclude_tables tables are
+// skipped, not generated.
+func validateExcludedPrimaryKey(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
+	global := make(map[string]bool, len(cfg.Generation.ExcludeColumns))
+	for _, name := range cfg.Generation.ExcludeColumns {
+		global[name] = true
+	}
+	for _, table := range tables {
+		tc := findTableConfig(cfg, table)
+		if tc != nil && tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
+			continue
+		}
+		if allColumnsExcluded(cfg, table) {
+			continue
+		}
+		if _, matched := MatchExcludeTablePattern(table.Name, table.Schema, cfg.ExcludeTables); matched {
+			continue
+		}
+		qualified := qualifiedTableName(table)
+		for _, col := range table.Columns {
+			if !col.PrimaryKey {
+				continue
+			}
+			key := ""
+			switch {
+			case tc != nil && slices.Contains(tc.ExcludeColumns, col.Name):
+				key = "tables." + qualified + ".exclude_columns"
+			case global[col.Name]:
+				key = "generation.exclude_columns"
+			default:
+				continue
+			}
+			*errs = append(*errs, fmt.Errorf(
+				"%s removes primary-key column %q of table %s; keep the column, declare tables.%s.primary_key.columns over columns that remain, or drop the table with exclude_tables",
+				key, col.Name, qualified, qualified,
+			))
+		}
+	}
+}
+
 // validateExcludeColumnsExhaustion warns when global + table-level exclude_columns
 // removes every column from a table.
 func validateExcludeColumnsExhaustion(cfg *RootConfig, tables []SchemaTable, warnings *[]Warning) {
@@ -2024,8 +2452,9 @@ func validateExcludeColumnsExhaustion(cfg *RootConfig, tables []SchemaTable, war
 }
 
 // validateViewInvalidateOn verifies each cached view's invalidate_on entries
-// name a parsed, generation-included table. An unresolved name or a name whose
-// columns are fully excluded is a hard error (PRD §27.11 / CACHE.md §3.4) —
+// name a parsed, generation-included table. An unresolved name, a name an
+// exclude_tables pattern drops, or a name whose columns are fully excluded is a
+// hard error (PRD §27.11 / CACHE.md §3.4) —
 // no mutation hook would fire for it, so the view cache would silently never
 // invalidate from that source.
 func validateViewInvalidateOn(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
@@ -2047,6 +2476,10 @@ func validateViewInvalidateOn(cfg *RootConfig, tables []SchemaTable, errs *[]err
 			tbl, ok := parsed[src]
 			if !ok {
 				*errs = append(*errs, fmt.Errorf("views.%s.invalidate_on: table %q not found in parsed schema", viewName, src))
+				continue
+			}
+			if pattern, excluded := MatchExcludeTablePattern(tbl.Name, tbl.Schema, cfg.ExcludeTables); excluded {
+				*errs = append(*errs, fmt.Errorf("views.%s.invalidate_on: table %q is excluded from generation by exclude_tables pattern %q; view cache would silently never invalidate from this source", viewName, src, pattern))
 				continue
 			}
 			if allColumnsExcluded(cfg, tbl) {
@@ -2153,7 +2586,7 @@ func findViewConfig(cfg *RootConfig, view SchemaView) ViewConfig {
 }
 
 // pkColumnNames returns the subset of column names marked PrimaryKey, in
-// declaration order.
+// column order.
 func pkColumnNames(cols []SchemaColumn) []string {
 	var names []string
 	for _, col := range cols {
@@ -2225,8 +2658,10 @@ func validateManifestConfig(cfg *RootConfig, errs *[]error) {
 	if m != nil {
 		// Enforced regardless of enabled state: the removal path (manifest
 		// disabled / emit flipped off) walks the same project_configs
-		// targets, so the module-root-escape rule must hold symmetrically.
+		// targets, and the stale-cleanup pass joins the artifact paths onto
+		// output.dir, so the escape rules must hold symmetrically.
 		validateManifestMCPTargets(m, errs)
+		validateManifestArtifactPaths(m, errs)
 	}
 	validateManifestPerTableOptIn(cfg, enabled, errs)
 }
@@ -2254,7 +2689,6 @@ func validateManifestEnabledFields(m *ManifestConfig, errs *[]error) {
 	if !m.JSONLayout.IsValid() {
 		*errs = append(*errs, fmt.Errorf("manifest.json_layout: %q is not one of single, per_entity (PRD §30.2 / §4.13)", string(m.JSONLayout)))
 	}
-	validateManifestArtifactPaths(m, errs)
 }
 
 // validateManifestArtifactPaths enforces PRD §30.2's placement rules on the
@@ -2276,7 +2710,7 @@ func validateManifestArtifactPaths(m *ManifestConfig, errs *[]error) {
 	if err := checkManifestDirPlacement("manifest.json_per_entity_dir", m.JSONPerEntityDir, false); err != nil {
 		*errs = append(*errs, err)
 	}
-	if m.JSONPerEntityDir != "" && m.MarkdownDir != "" && m.JSONPerEntityDir == m.MarkdownDir {
+	if m.JSONPerEntityDir != "" && m.MarkdownDir != "" && filepath.Clean(m.JSONPerEntityDir) == filepath.Clean(m.MarkdownDir) {
 		*errs = append(*errs, fmt.Errorf("manifest.json_per_entity_dir: cannot equal manifest.markdown_dir (%q) (PRD §30.2 / §4.13)", m.MarkdownDir))
 	}
 }
@@ -2344,6 +2778,23 @@ func validateManifestPerTableOptIn(cfg *RootConfig, globalEnabled bool, errs *[]
 	}
 }
 
+// validateEventsConfig rejects the opt-in form of the per-table events
+// override. The global events.enabled gates event generation, so a per-table
+// `enabled: true` under a global off (or no `events:` block) would be a
+// silently ignored knob (PRD §28.8 / §4.13). Views take no events override.
+func validateEventsConfig(cfg *RootConfig, errs *[]error) {
+	globalEnabled := cfg.Events != nil && cfg.Events.Enabled
+	for _, name := range sortedTableKeys(cfg.Tables) {
+		t := cfg.Tables[name]
+		if t.Events == nil || t.Events.Enabled == nil {
+			continue
+		}
+		if *t.Events.Enabled && !globalEnabled {
+			*errs = append(*errs, fmt.Errorf("tables.%s.events.enabled: cannot be true when global events.enabled is false — per-table flag is opt-out only (PRD §28.8 / §4.13)", name))
+		}
+	}
+}
+
 // checkManifestDirPlacement enforces the placement rules for manifest dir
 // fields: cannot be ".", cannot start with "_" (reserved for _index.md /
 // _conventions.md), and (when checkArtifactSubdir is true) cannot collide
@@ -2353,23 +2804,27 @@ func checkManifestDirPlacement(field, value string, checkArtifactSubdir bool) er
 	if value == "" {
 		return nil
 	}
-	if value == "." {
+	if filepath.Clean(value) == "." {
 		return fmt.Errorf("%s: cannot be %q (PRD §30.2 / §4.13)", field, value)
 	}
 	// PRD §30.2 types both fields as a *subdirectory under* their parent
 	// (markdown_dir under output.dir, json_per_entity_dir under markdown_dir).
-	// An absolute path or one escaping via ".." is not a subdirectory, and the
+	// An absolute path, or one whose ".." segments climb out of the parent
+	// anywhere in it (filepath.IsLocal), is not a subdirectory, and the
 	// emitters and the stale-cleanup pass both join it onto the parent — so a
 	// value that escapes writes, prunes and removes outside the tree sqlgen
 	// owns.
-	if filepath.IsAbs(value) || value == ".." || strings.HasPrefix(filepath.ToSlash(value), "../") {
+	if !filepath.IsLocal(value) {
 		return fmt.Errorf("%s: must be a subdirectory of its parent, got %q — absolute paths and %q escapes are rejected (PRD §30.2 / §4.13)", field, value, "..")
 	}
-	if strings.HasPrefix(value, "_") {
+	// The remaining rules compare the cleaned path, so `./graph` or
+	// `docs/../_index` cannot slip past them.
+	clean := filepath.ToSlash(filepath.Clean(value))
+	if strings.HasPrefix(clean, "_") {
 		return fmt.Errorf("%s: cannot start with %q (reserved for _index.md / _conventions.md) (PRD §30.2 / §4.13)", field, "_")
 	}
 	if checkArtifactSubdir {
-		if reservedManifestArtifactDirs[strings.TrimSuffix(value, "/")] {
+		if reservedManifestArtifactDirs[clean] {
 			return fmt.Errorf("%s: %q collides with a PRD §8.3 artifact subdir (PRD §30.2 / §4.13)", field, value)
 		}
 	}

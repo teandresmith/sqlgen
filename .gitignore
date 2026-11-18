@@ -4,3 +4,6 @@ coverage.out
 
 # /fix-vet prototype patches (local only; consumed by /fix-implement)
 .claude/prototypes/
+
+# make conformance: go test -json results the report is built from
+.conformance-results/

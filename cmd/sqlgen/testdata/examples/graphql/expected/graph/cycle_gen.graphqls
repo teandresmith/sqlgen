@@ -1,0 +1,116 @@
+"""
+Cycle corresponds to the cycles table.
+"""
+type Cycle {
+  "id"
+  id: UUID!
+  "workspace_id"
+  workspaceID: UUID!
+  "name"
+  name: String!
+  "one-to-many relationship with the tasks table."
+  tasks: [Task!]!
+}
+
+type CycleConnection {
+  edges:      [CycleEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type CycleEdge {
+  node:   Cycle!
+  cursor: String!
+}
+
+type CycleListResult {
+  items:      [Cycle!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input CycleFilter {
+  workspaceID: IDComparator
+  name: StringComparator
+  tasks: TaskFilter
+  and: [CycleFilter!]
+  or:  [CycleFilter!]
+}
+
+enum CycleSortField {
+  ID
+  WORKSPACE_ID
+  NAME
+}
+
+input CycleSort {
+  field:     CycleSortField!
+  direction: SortDirection!
+}
+input CreateCycleInput {
+  workspaceID: UUID
+  name: String!
+}
+input UpdateCycleInput {
+  name: String
+}
+
+extend type Query {
+  cycle(id: UUID!): Cycle
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to cycleList instead."
+  cycles(filter: CycleFilter, first: Int, after: String, last: Int, before: String): CycleConnection!
+  cycleList(filter: CycleFilter, sort: [CycleSort!], limit: Int, offset: Int): CycleListResult!
+}
+
+extend type Mutation {
+  createCycle(input: CreateCycleInput!): Cycle!
+  createCycles(inputs: [CreateCycleInput!]!): [Cycle!]!
+  updateCycle(id: UUID!, input: UpdateCycleInput!): Cycle!
+  updateCycles(filter: CycleFilter!, input: UpdateCycleInput!): [Cycle!]!
+  upsertCycle(input: CreateCycleInput!): Cycle!
+  deleteCycle(id: UUID!): Boolean!
+}
+
+input CreateCycleWithRelatedInput {
+  cycle: CreateCycleInput!
+  tasks: CycleTasksCreateNested
+}
+
+input UpdateCycleWithRelatedInput {
+  cycle: UpdateCycleInput
+  tasks: CycleTasksUpdateNested
+}
+
+input UpsertCycleWithRelatedInput {
+  cycle: CreateCycleInput!
+  tasks: CycleTasksUpdateNested
+}
+
+enum CycleConflictTarget {
+  PK
+  WORKSPACE_ID_ID
+}
+
+input CycleTasksCreateNested {
+  create: [CycleTasksCreateInput!]
+  connect: [UUID!]
+}
+
+input CycleTasksUpdateNested {
+  clear: Boolean
+  create: [CycleTasksCreateInput!]
+  connect: [UUID!]
+  disconnect: [UUID!]
+}
+
+input CycleTasksCreateInput {
+  title: String!
+}
+
+extend type Mutation {
+  createCycleWithRelated(input: CreateCycleWithRelatedInput!): Cycle!
+  updateCycleWithRelated(id: UUID!, input: UpdateCycleWithRelatedInput!): Cycle!
+  upsertCycleWithRelated(input: UpsertCycleWithRelatedInput!, conflictTarget: CycleConflictTarget! = PK): Cycle!
+}

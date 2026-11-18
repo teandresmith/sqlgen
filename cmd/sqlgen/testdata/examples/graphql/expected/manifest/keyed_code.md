@@ -62,19 +62,6 @@ postgres:
 SELECT "code", "id", "name" FROM "public"."keyed_codes" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *KeyedCodeFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."keyed_codes" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -99,6 +86,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."keyed_codes" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *KeyedCodeFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."keyed_codes" WHERE <filter>
 ```
 
 ### Paginate
@@ -159,36 +159,6 @@ postgres:
 INSERT INTO "public"."keyed_codes" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateKeyedCodeInput`, `target KeyedCodeConflictTarget`
-- Returns: `*KeyedCode`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated KeyedCodeConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."keyed_codes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateKeyedCodeInput`, `target KeyedCodeConflictTarget`
-- Returns: `[]*KeyedCode`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same KeyedCodeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."keyed_codes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateKeyedCodeInput`
@@ -234,6 +204,57 @@ postgres:
 UPDATE "public"."keyed_codes" SET <set> WHERE <filter> RETURNING "id"
 ```
 
+### Upsert
+
+- Params: `input *CreateKeyedCodeInput`, `target KeyedCodeConflictTarget`
+- Returns: `*KeyedCode`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated KeyedCodeConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."keyed_codes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateKeyedCodeInput`, `target KeyedCodeConflictTarget`
+- Returns: `[]*KeyedCode`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same KeyedCodeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."keyed_codes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateKeyedCodeWithRelatedInput`
+- Returns: `*KeyedCode`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id uuid.UUID`, `input *UpdateKeyedCodeWithRelatedInput`
+- Returns: `*KeyedCode`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertKeyedCodeWithRelatedInput`, `target KeyedCodeConflictTarget`
+- Returns: `*KeyedCode`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
 ### HardDelete
 
 - Params: `id uuid.UUID`
@@ -277,27 +298,6 @@ postgres:
 DELETE FROM "public"."keyed_codes" WHERE <filter> RETURNING "id"
 ```
 
-### CreateWithRelated
-
-- Params: `input *CreateKeyedCodeWithRelatedInput`
-- Returns: `*KeyedCode`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id uuid.UUID`, `input *UpdateKeyedCodeWithRelatedInput`
-- Returns: `*KeyedCode`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertKeyedCodeWithRelatedInput`, `target KeyedCodeConflictTarget`
-- Returns: `*KeyedCode`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Entries), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
 ## Filter
 
 Type `KeyedCodeFilter`.
@@ -315,3 +315,17 @@ Type `KeyedCodeFilter`.
 Type `KeyedCodeSort`.
 
 Fields: Code, ID, Name
+
+## Read examples
+
+```go
+row, err := client.KeyedCodes().Get(ctx, uuid.NewV4())
+rows, err := client.KeyedCodes().GetMany(ctx, &models.GetKeyedCodesInput{Filter: &models.KeyedCodeFilter{Code: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.KeyedCodes().Create(ctx, &models.CreateKeyedCodeInput{Code: "example", Name: "example"})
+updated, err := client.KeyedCodes().Update(ctx, uuid.NewV4(), &models.UpdateKeyedCodeInput{Code: omittable.Set("example")})
+```

@@ -1,0 +1,61 @@
+"""
+OwnerBadge corresponds to the owner_badges table.
+"""
+type OwnerBadge {
+  "owner_id"
+  ownerID: Int!
+  "badge_code"
+  badgeCode: ID!
+}
+
+type OwnerBadgeConnection {
+  edges:      [OwnerBadgeEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type OwnerBadgeEdge {
+  node:   OwnerBadge!
+  cursor: String!
+}
+
+type OwnerBadgeListResult {
+  items:      [OwnerBadge!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input OwnerBadgeFilter {
+  and: [OwnerBadgeFilter!]
+  or:  [OwnerBadgeFilter!]
+}
+
+enum OwnerBadgeSortField {
+  OWNER_ID
+  BADGE_CODE
+}
+
+input OwnerBadgeSort {
+  field:     OwnerBadgeSortField!
+  direction: SortDirection!
+}
+input CreateOwnerBadgeInput {
+  ownerID: Int!
+  badgeCode: ID!
+}
+
+extend type Query {
+  ownerBadge(ownerID: Int!, badgeCode: ID!): OwnerBadge
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to ownerBadgeList instead."
+  ownerBadges(filter: OwnerBadgeFilter, first: Int, after: String, last: Int, before: String): OwnerBadgeConnection!
+  ownerBadgeList(filter: OwnerBadgeFilter, sort: [OwnerBadgeSort!], limit: Int, offset: Int): OwnerBadgeListResult!
+}
+
+extend type Mutation {
+  createOwnerBadge(input: CreateOwnerBadgeInput!): OwnerBadge!
+  createOwnerBadges(inputs: [CreateOwnerBadgeInput!]!): [OwnerBadge!]!
+  upsertOwnerBadge(input: CreateOwnerBadgeInput!): OwnerBadge!
+  deleteOwnerBadge(ownerID: Int!, badgeCode: ID!): Boolean!
+}

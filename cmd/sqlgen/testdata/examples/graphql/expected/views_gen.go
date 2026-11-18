@@ -157,7 +157,7 @@ func (c *categoryPriceTotalClient) Get(ctx context.Context, id int64, opts ...fu
 		return categoryPriceTotals[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get category_price_total: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -235,7 +235,7 @@ func (c *categoryPriceTotalClient) GetMany(ctx context.Context, input *GetCatego
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get category_price_totals: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -247,7 +247,7 @@ func (c *categoryPriceTotalClient) GetMany(ctx context.Context, input *GetCatego
 		return categoryPriceTotals, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many category_price_totals: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -274,12 +274,12 @@ func (c *categoryPriceTotalClient) Count(ctx context.Context, filter *CategoryPr
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count category_price_totals: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count category_price_totals: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -301,7 +301,7 @@ func (c *categoryPriceTotalClient) Paginate(ctx context.Context, input PaginateI
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate category_price_totals count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -312,7 +312,7 @@ func (c *categoryPriceTotalClient) Paginate(ctx context.Context, input PaginateI
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate category_price_totals: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[CategoryPriceTotal]{
@@ -320,11 +320,11 @@ func (c *categoryPriceTotalClient) Paginate(ctx context.Context, input PaginateI
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate category_price_totals: %w", err)
 	}
 	return result.(*PaginateResult[CategoryPriceTotal]), nil
 }
@@ -352,7 +352,7 @@ func (c *categoryPriceTotalClient) Connection(ctx context.Context, input Connect
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection category_price_totals count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -396,7 +396,7 @@ func (c *categoryPriceTotalClient) Connection(ctx context.Context, input Connect
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection category_price_totals: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -435,7 +435,7 @@ func (c *categoryPriceTotalClient) Connection(ctx context.Context, input Connect
 		return &Connection[CategoryPriceTotal]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection category_price_totals: %w", err)
 	}
 	return result.(*Connection[CategoryPriceTotal]), nil
 }
@@ -497,11 +497,14 @@ func (c *categoryPriceTotalClient) Refresh(ctx context.Context) error {
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, false)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh category_price_totals: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh category_price_totals: %w", err)
+	}
+	return nil
 }
 
 // RefreshConcurrently recomputes the category_price_totals materialized view without
@@ -511,7 +514,7 @@ func (c *categoryPriceTotalClient) Refresh(ctx context.Context) error {
 // database.ErrRefreshConcurrentlyInTx before issuing any SQL.
 func (c *categoryPriceTotalClient) RefreshConcurrently(ctx context.Context) error {
 	if database.InTransaction(ctx) {
-		return fmt.Errorf("refresh category_price_totals: %w", database.ErrRefreshConcurrentlyInTx)
+		return fmt.Errorf("refresh concurrently category_price_totals: %w", database.ErrRefreshConcurrentlyInTx)
 	}
 	_, err := c.executeQuery(ctx, false, &hook.QueryContext{
 		Op: hook.OpRefresh, Table: TableCategoryPriceTotals, Schema: "public",
@@ -519,11 +522,14 @@ func (c *categoryPriceTotalClient) RefreshConcurrently(ctx context.Context) erro
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, true)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh category_price_totals: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh concurrently category_price_totals: %w", err)
+	}
+	return nil
 }
 
 // CategoryPriceTotalFilter provides type-safe filtering for the category_price_totals table.
@@ -861,7 +867,7 @@ func (c *workspaceNoteSummaryClient) Get(ctx context.Context, id uuid.UUID, opts
 		return workspaceNoteSummaries[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get workspace_note_summary: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -917,7 +923,7 @@ func (c *workspaceNoteSummaryClient) GetMany(ctx context.Context, input *GetWork
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get workspace_note_summary: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -954,7 +960,7 @@ func (c *workspaceNoteSummaryClient) GetMany(ctx context.Context, input *GetWork
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get workspace_note_summary: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -966,7 +972,7 @@ func (c *workspaceNoteSummaryClient) GetMany(ctx context.Context, input *GetWork
 		return workspaceNoteSummaries, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many workspace_note_summary: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -994,7 +1000,7 @@ func (c *workspaceNoteSummaryClient) Count(ctx context.Context, filter *Workspac
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return int64(0), fmt.Errorf("count workspace_note_summary: resolve tenant: %w", err)
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -1005,12 +1011,12 @@ func (c *workspaceNoteSummaryClient) Count(ctx context.Context, filter *Workspac
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count workspace_note_summary: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count workspace_note_summary: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1037,7 +1043,7 @@ func (c *workspaceNoteSummaryClient) Paginate(ctx context.Context, input Paginat
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate workspace_note_summary count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -1048,7 +1054,7 @@ func (c *workspaceNoteSummaryClient) Paginate(ctx context.Context, input Paginat
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate workspace_note_summary: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[WorkspaceNoteSummary]{
@@ -1056,11 +1062,11 @@ func (c *workspaceNoteSummaryClient) Paginate(ctx context.Context, input Paginat
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate workspace_note_summary: %w", err)
 	}
 	return result.(*PaginateResult[WorkspaceNoteSummary]), nil
 }
@@ -1094,7 +1100,7 @@ func (c *workspaceNoteSummaryClient) Connection(ctx context.Context, input Conne
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection workspace_note_summary count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1138,7 +1144,7 @@ func (c *workspaceNoteSummaryClient) Connection(ctx context.Context, input Conne
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection workspace_note_summary: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1177,7 +1183,7 @@ func (c *workspaceNoteSummaryClient) Connection(ctx context.Context, input Conne
 		return &Connection[WorkspaceNoteSummary]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection workspace_note_summary: %w", err)
 	}
 	return result.(*Connection[WorkspaceNoteSummary]), nil
 }

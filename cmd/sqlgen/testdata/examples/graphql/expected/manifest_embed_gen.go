@@ -45,15 +45,14 @@ func (c *Client) Manifest() *manifest.Document {
 	return &sqlgenManifestDoc
 }
 
-// ManifestEntity returns the full record for the given SQL table name,
-// identically across the single and per_entity disk layouts. It returns
-// (nil, manifest.ErrEntityNotFound) for unknown tables.
+// ManifestEntity returns the full record for the given table, identically
+// across the single and per_entity disk layouts. Name a table with a schema as
+// schema.table, or by its bare name when no other schema has a table of that
+// name. It returns (nil, manifest.ErrEntityNotFound) for unknown tables, and nil
+// with an error wrapping manifest.ErrEntityNotFound for a bare name that
+// several schemas share.
 func (c *Client) ManifestEntity(table string) (*manifest.Entity, error) {
-	e, ok := sqlgenManifestEntities[table]
-	if !ok {
-		return nil, manifest.ErrEntityNotFound
-	}
-	return e, nil
+	return manifest.FindEntity(sqlgenManifestEntities, table)
 }
 
 // ManifestVersion returns the manifest schema_version string, pre-extracted at

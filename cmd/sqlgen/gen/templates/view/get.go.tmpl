@@ -69,7 +69,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Get(ctx context.Context, {{ if .
 		return {{ $resultVar }}[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get {{ .ViewName | toSingular }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -129,7 +129,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .ViewName }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
@@ -167,7 +167,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get {{ .ViewName }}: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -179,7 +179,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		return {{ $resultVar }}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many {{ .ViewName }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil

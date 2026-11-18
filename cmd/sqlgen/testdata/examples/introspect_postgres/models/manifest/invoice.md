@@ -60,19 +60,6 @@ postgres:
 SELECT "account_id", "id", "subtotal_cents", "tax_cents", "total_cents" FROM "billing"."invoices" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *InvoiceFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "billing"."invoices" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -97,6 +84,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "billing"."invoices" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *InvoiceFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "billing"."invoices" WHERE <filter>
 ```
 
 ### Paginate
@@ -157,36 +157,6 @@ postgres:
 INSERT INTO "billing"."invoices" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateInvoiceInput`, `target InvoiceConflictTarget`
-- Returns: `*Invoice`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated InvoiceConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "billing"."invoices" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateInvoiceInput`, `target InvoiceConflictTarget`
-- Returns: `[]*Invoice`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same InvoiceConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "billing"."invoices" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateInvoiceInput`
@@ -230,6 +200,36 @@ postgres:
 
 ```sql
 UPDATE "billing"."invoices" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateInvoiceInput`, `target InvoiceConflictTarget`
+- Returns: `*Invoice`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated InvoiceConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "billing"."invoices" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateInvoiceInput`, `target InvoiceConflictTarget`
+- Returns: `[]*Invoice`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same InvoiceConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "billing"."invoices" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment
@@ -309,3 +309,17 @@ Type `InvoiceFilter`.
 Type `InvoiceSort`.
 
 Fields: AccountID, ID, SubtotalCents, TaxCents, TotalCents
+
+## Read examples
+
+```go
+row, err := client.Invoices().Get(ctx, 1)
+rows, err := client.Invoices().GetMany(ctx, &models.GetInvoicesInput{Filter: &models.InvoiceFilter{AccountID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Invoices().Create(ctx, &models.CreateInvoiceInput{AccountID: 1, SubtotalCents: 1, TaxCents: 1})
+updated, err := client.Invoices().Update(ctx, 1, &models.UpdateInvoiceInput{AccountID: omittable.Set(int64(1))})
+```

@@ -200,14 +200,6 @@ func TestUUIDIntegrationIn(t *testing.T) {
 			},
 			want: "",
 		},
-		{
-			name: "two UUID libraries resolve to the minimum, deterministically",
-			overrides: map[string]config.TypeOverride{
-				"uuid": {Type: "uuid.UUID", Import: "github.com/google/uuid"},
-				"blob": {Type: "uuid.UUID", Import: "github.com/gofrs/uuid/v5"},
-			},
-			want: "github.com/gofrs/uuid/v5",
-		},
 	}
 
 	for _, tt := range tests {
@@ -221,4 +213,22 @@ func TestUUIDIntegrationIn(t *testing.T) {
 			}
 		})
 	}
+
+	// A config naming two libraries is rejected at validation; the pick is
+	// only required to be one of them, and the same one on every call.
+	t.Run("two UUID libraries resolve to one of them, deterministically", func(t *testing.T) {
+		overrides := map[string]config.TypeOverride{
+			"uuid": {Type: "uuid.UUID", Import: "github.com/google/uuid"},
+			"blob": {Type: "uuid.UUID", Import: "github.com/gofrs/uuid/v5"},
+		}
+		first := gotype.UUIDIntegrationIn(overrides)
+		if first != "github.com/google/uuid" && first != "github.com/gofrs/uuid/v5" {
+			t.Fatalf("UUIDIntegrationIn() = %q, want one of the two named libraries", first)
+		}
+		for range 20 {
+			if got := gotype.UUIDIntegrationIn(overrides); got != first {
+				t.Fatalf("UUIDIntegrationIn() = %q, earlier call gave %q", got, first)
+			}
+		}
+	})
 }

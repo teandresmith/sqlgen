@@ -14,6 +14,7 @@ import (
 	"github.com/teandresmith/sqlgen/hook"
 	"github.com/teandresmith/sqlgen/omittable"
 	"github.com/teandresmith/sqlgen/sql"
+	"golang.org/x/sync/errgroup"
 )
 
 type Owner struct {
@@ -22,6 +23,8 @@ type Owner struct {
 
 	// OwnerProfile - one-to-one relationship with the owner_profiles table.
 	OwnerProfile *OwnerProfile `db:"-" json:"owner_profile"`
+	// Badges - many-to-many relationship with the badges table.
+	Badges []*Badge `db:"-" json:"badges"`
 }
 
 // OwnerClient provides type-safe operations for the owners table.
@@ -32,6 +35,9 @@ type OwnerClient interface {
 	Get(ctx context.Context, id int64, opts ...func(*CallOptions[OwnerFieldOptions])) (*Owner, error)
 
 	// GetMany returns owners matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
 	GetMany(ctx context.Context, input *GetOwnersInput, opts ...func(*CallOptions[OwnerFieldOptions])) ([]*Owner, error)
 
 	// Exists returns true if a owner with the given primary key exists.
@@ -120,6 +126,9 @@ type ownerClient struct {
 	queryHooks         []hook.QueryHook
 	panicHandler       hook.PanicHandler
 	callbackMode       database.CallbackMode
+	badgesDefaultSort  []sql.Sort
+	badgeClient        *badgeClient
+	ownerBadgeClient   *ownerBadgeClient
 	ownerProfileClient *ownerProfileClient
 }
 
@@ -212,6 +221,11 @@ func (c *ownerClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[OwnerFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -234,7 +248,7 @@ func (c *ownerClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 		return owners[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get owner: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -243,6 +257,9 @@ func (c *ownerClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 }
 
 // GetMany returns owners matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
 func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts ...func(*CallOptions[OwnerFieldOptions])) ([]*Owner, error) {
 	// A nil input is the zero-value input — no filter, no sorts, no
 	// limit. Normalized before the hook context is built, so a hook never sees
@@ -253,7 +270,7 @@ func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts .
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get owners: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many owners: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableOwners, Schema: "",
@@ -271,12 +288,16 @@ func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts .
 
 		// Determine columns from FieldOptions. A narrowed projection still
 		// carries the columns this call structurally requires — the cursor keys
-		// an internal caller declares. An all-false FieldOptions is
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
 		// untouched: it short-circuits above.
 		columns := ownerAllColumns
 		if fieldOptions != nil {
 			if selected := fieldOptions.Columns(); len(selected) > 0 {
 				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "owner_key")
+				}
 			}
 		}
 
@@ -325,14 +346,14 @@ func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts .
 
 			rows, err := conn.Query(ctx, result, resultArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("get owners: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
 			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
 			joinColumns, err := rows.Columns()
 			if err != nil {
-				return nil, fmt.Errorf("get owners columns: %w", err)
+				return nil, fmt.Errorf("columns: %w", err)
 			}
 			owners, err = scanOwnersWithOneToOneJoins(rows, joinColumns)
 			if err != nil {
@@ -350,7 +371,7 @@ func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts .
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("get owners: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
@@ -360,15 +381,234 @@ func (c *ownerClient) GetMany(ctx context.Context, input *GetOwnersInput, opts .
 			}
 		}
 
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, owners, options); err != nil {
+				return nil, err
+			}
+		}
+
 		return owners, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many owners: %w", err)
 	}
 	if result == nil {
 		return nil, nil
 	}
 	return result.([]*Owner), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the owner_key column into a narrowed projection when one is:
+// loadRelationships maps every child back through o.OwnerKey, which
+// an unselected column would leave at its zero value.
+func (fo *OwnerFieldOptions) loadsRelationships() bool {
+	if fo.Badges != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *ownerClient) loadRelationships(ctx context.Context, conn database.Querier, owners []*Owner, options CallOptions[OwnerFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Badges != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			ownerIDs := make([]int64, len(owners))
+			for idx, o := range owners {
+				ownerIDs[idx] = o.OwnerKey
+			}
+
+			sorts := fo.Badges.Sorts
+			if len(sorts) == 0 {
+				sorts = c.badgesDefaultSort
+			}
+
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(ownerIDs); start += 16383 {
+				chunk := ownerIDs[start:min(start+16383, len(ownerIDs))]
+
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key column
+				// only; step 2 decides which targets load.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: "", Name: "owner_badges"}, []sql.JoinClause{{
+						Table:   sql.Table{Schema: "", Name: "badges"},
+						Alias:   "t",
+						On:      "t." + c.dialect.QuoteIdentifier("code") + " = j." + c.dialect.QuoteIdentifier("badge_code"),
+						Columns: []string{"code"},
+					}}, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{"owner_id"},
+						Conditions: []sql.Condition{
+							sql.Where("j." + c.dialect.QuoteIdentifier("owner_id")).In(toAnySlice(chunk)...),
+							// The builder's join is a LEFT JOIN: a junction row whose
+							// target is gone maps nothing.
+							sql.Where("t." + c.dialect.QuoteIdentifier("code")).IsNotNull(),
+						},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load owner badges junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load owner badges junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "j.owner_id":
+							localIdx = i
+						case "t.code":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var target Badge
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &target.Code
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan owner badges junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), target.Code
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate owner badges junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("owner_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("code")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("badge_code") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "owner_badges"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &BadgeFilter{}
+				if fo.Badges.Filter != nil {
+					filter.And = append(filter.And, fo.Badges.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (owners) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedBadges, err := c.badgeClient.GetMany(ctx, &GetBadgesInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"code"},
+				}, func(co *CallOptions[BadgeFieldOptions]) {
+					co.FieldOptions = fo.Badges.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load owner badges: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the column's comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
+				parentsByTarget := make(map[string][]int, len(relatedBadges))
+				matched := make(map[string]struct{}, len(parentToTargetIDs))
+				for i := start; i < start+len(chunk); i++ {
+					key := fmt.Sprint(owners[i].OwnerKey)
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load owner badges junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
+				}
+				for _, t := range relatedBadges {
+					for _, i := range parentsByTarget[t.Code] {
+						owners[i].Badges = append(owners[i].Badges, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
 }
 
 // Create inserts a new owner and returns the created entity.
@@ -379,7 +619,7 @@ func (c *ownerClient) Create(ctx context.Context, input *CreateOwnerInput, opts 
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create owner: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -393,7 +633,7 @@ func (c *ownerClient) Create(ctx context.Context, input *CreateOwnerInput, opts 
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create owner: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -409,7 +649,7 @@ func (c *ownerClient) Create(ctx context.Context, input *CreateOwnerInput, opts 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create owner: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -425,7 +665,7 @@ func (c *ownerClient) CreateMany(ctx context.Context, inputs []*CreateOwnerInput
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many owners: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -458,7 +698,7 @@ func (c *ownerClient) CreateMany(ctx context.Context, inputs []*CreateOwnerInput
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create owners batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -481,7 +721,7 @@ func (c *ownerClient) CreateMany(ctx context.Context, inputs []*CreateOwnerInput
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many owners: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -540,7 +780,7 @@ func (c *ownerClient) Update(ctx context.Context, id int64, input *UpdateOwnerIn
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update owner: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -576,13 +816,13 @@ func (c *ownerClient) Update(ctx context.Context, id int64, input *UpdateOwnerIn
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update owner: %w", err)
+			return nil, err
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update owner rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -599,7 +839,7 @@ func (c *ownerClient) Update(ctx context.Context, id int64, input *UpdateOwnerIn
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update owner: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -615,14 +855,16 @@ type UpdateOwnerItem struct {
 
 // UpdateMany partially updates multiple owners and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *ownerClient) UpdateMany(ctx context.Context, items []UpdateOwnerItem, opts ...func(*CallOptions[OwnerFieldOptions])) ([]*Owner, error) {
 	// UpdateOwnerItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many owners: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -630,7 +872,6 @@ func (c *ownerClient) UpdateMany(ctx context.Context, items []UpdateOwnerItem, o
 		Op: hook.OpUpdateMany, Table: TableOwners, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -640,36 +881,67 @@ func (c *ownerClient) UpdateMany(ctx context.Context, items []UpdateOwnerItem, o
 			return []*Owner{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateOwnerItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Name.Get(); ok {
-					setClauses["name"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_owner", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.OwnerKey)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("owner_key")).Eq(item.OwnerKey)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.OwnerKey, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.OwnerKey, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.OwnerKey)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("owner_key")).Eq(item.OwnerKey)},
-				})
-
-				_, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update owner %v: %w", item.OwnerKey, err)
-				}
-				allIDs = append(allIDs, item.OwnerKey)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.OwnerKey
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -687,7 +959,7 @@ func (c *ownerClient) UpdateMany(ctx context.Context, items []UpdateOwnerItem, o
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many owners: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -705,7 +977,7 @@ func (c *ownerClient) UpdateWhere(ctx context.Context, filter *OwnerFilter, inpu
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update owners where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -749,7 +1021,7 @@ func (c *ownerClient) UpdateWhere(ctx context.Context, filter *OwnerFilter, inpu
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update owners where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -786,7 +1058,7 @@ func (c *ownerClient) UpdateWhere(ctx context.Context, filter *OwnerFilter, inpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update owners where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -807,14 +1079,25 @@ func (c *ownerClient) HardDelete(ctx context.Context, id int64, opts ...func(*Ca
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("owner_key")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete owner: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete owner: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple owners from the database.
@@ -826,20 +1109,57 @@ func (c *ownerClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...f
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier("owner_key")).In(toAnySlice(ids)...),
-			},
-		})
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete owners: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("owner_key")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"owner_key"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted owner key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many owners: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all owners matching the filter.
@@ -866,7 +1186,7 @@ func (c *ownerClient) HardDeleteWhere(ctx context.Context, filter *OwnerFilter, 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete owners where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -883,7 +1203,36 @@ func (c *ownerClient) HardDeleteWhere(ctx context.Context, filter *OwnerFilter, 
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete owners where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *ownerClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // OwnerConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -912,7 +1261,7 @@ func (c *ownerClient) Upsert(ctx context.Context, input *CreateOwnerInput, targe
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert owner: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -932,7 +1281,7 @@ func (c *ownerClient) Upsert(ctx context.Context, input *CreateOwnerInput, targe
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert owner: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -948,7 +1297,7 @@ func (c *ownerClient) Upsert(ctx context.Context, input *CreateOwnerInput, targe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert owner: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1006,9 +1355,9 @@ func (c *ownerClient) insertUpsertAndResolveID(ctx context.Context, conn databas
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -1084,7 +1433,7 @@ func (c *ownerClient) UpsertMany(ctx context.Context, inputs []*CreateOwnerInput
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many owners: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1115,7 +1464,7 @@ func (c *ownerClient) UpsertMany(ctx context.Context, inputs []*CreateOwnerInput
 		updateColumns := excludeColumns(columns, append(conflictColumns, "owner_key"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert owners: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -1145,7 +1494,7 @@ func (c *ownerClient) UpsertMany(ctx context.Context, inputs []*CreateOwnerInput
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert owners: input %d supplies no definite value for every conflict column, so its generated owner_key cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated owner_key cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -1177,12 +1526,12 @@ func (c *ownerClient) UpsertMany(ctx context.Context, inputs []*CreateOwnerInput
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert owners batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert owners batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -1194,7 +1543,7 @@ func (c *ownerClient) UpsertMany(ctx context.Context, inputs []*CreateOwnerInput
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOwnersInput{
+		written, err := c.GetMany(ctx, &GetOwnersInput{
 			Filter: &OwnerFilter{
 				OwnerKey: &comparator.Number[int64]{In: rowIDs},
 			},
@@ -1204,9 +1553,20 @@ func (c *ownerClient) UpsertMany(ctx context.Context, inputs []*CreateOwnerInput
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many owners: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1231,8 +1591,8 @@ func (c *ownerClient) UpsertMany(ctx context.Context, inputs []*CreateOwnerInput
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -1345,12 +1705,12 @@ func (c *ownerClient) Exists(ctx context.Context, id int64, opts ...func(*CallOp
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists owner: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists owner: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1373,12 +1733,12 @@ func (c *ownerClient) ExistsWhere(ctx context.Context, filter *OwnerFilter, opts
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists owner where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists owners where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1402,12 +1762,12 @@ func (c *ownerClient) Count(ctx context.Context, filter *OwnerFilter, opts ...fu
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count owners: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count owners: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1416,6 +1776,10 @@ func (c *ownerClient) Count(ctx context.Context, filter *OwnerFilter, opts ...fu
 // A nil filter paginates all owners.
 func (c *ownerClient) Paginate(ctx context.Context, input PaginateInput[OwnerFilter], opts ...func(*CallOptions[OwnerFieldOptions])) (*PaginateResult[Owner], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate owners: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOwners, Schema: "",
 		Input: input, CallOptions: options,
@@ -1429,7 +1793,7 @@ func (c *ownerClient) Paginate(ctx context.Context, input PaginateInput[OwnerFil
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate owners count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1440,7 +1804,7 @@ func (c *ownerClient) Paginate(ctx context.Context, input PaginateInput[OwnerFil
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate owners: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Owner]{
@@ -1448,11 +1812,11 @@ func (c *ownerClient) Paginate(ctx context.Context, input PaginateInput[OwnerFil
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate owners: %w", err)
 	}
 	return result.(*PaginateResult[Owner]), nil
 }
@@ -1484,7 +1848,7 @@ func (c *ownerClient) Connection(ctx context.Context, input ConnectionInput[Owne
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection owners count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1528,7 +1892,7 @@ func (c *ownerClient) Connection(ctx context.Context, input ConnectionInput[Owne
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection owners: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1567,7 +1931,7 @@ func (c *ownerClient) Connection(ctx context.Context, input ConnectionInput[Owne
 		return &Connection[Owner]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection owners: %w", err)
 	}
 	return result.(*Connection[Owner]), nil
 }
@@ -1718,9 +2082,13 @@ func (c *ownerClient) Stream(ctx context.Context, input *StreamOwnersInput, opts
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Owner, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream owners: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -1759,7 +2127,7 @@ func (c *ownerClient) Stream(ctx context.Context, input *StreamOwnersInput, opts
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream owners: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -1782,7 +2150,7 @@ func (c *ownerClient) Stream(ctx context.Context, input *StreamOwnersInput, opts
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream owners: %w", err))
 		}
 	}
 }
@@ -1791,6 +2159,7 @@ func (c *ownerClient) Stream(ctx context.Context, input *StreamOwnersInput, opts
 type OwnerFilter struct {
 	Name     *comparator.String        `json:"name"`
 	OwnerKey *comparator.Number[int64] `json:"owner_key"`
+	Badges   *BadgeFilter              `json:"badges"`
 	And      []*OwnerFilter            `json:"and"`
 	Or       []*OwnerFilter            `json:"or"`
 }
@@ -1816,6 +2185,10 @@ func (f *OwnerFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 
 	if f.OwnerKey != nil {
 		conds = append(conds, f.OwnerKey.Parse(dialect.QuoteIdentifier("owner_key"), dialect)...)
+	}
+
+	if f.Badges != nil {
+		conds = append(conds, ownerBadgesFilterExists(f.Badges, dialect, opts))
 	}
 
 	for _, sub := range f.And {
@@ -1849,11 +2222,51 @@ func (f *OwnerFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 	return conds
 }
 
+// ownerBadgesFilterExists compiles a BadgeFilter set on the
+// Badges relationship into a correlated EXISTS over badges, joined through the owner_badges junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func ownerBadgesFilterExists(f *BadgeFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "owner_badges"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "badges"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("code") + " = " + jn + "." + dialect.QuoteIdentifier("badge_code") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("owner_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("owner_key", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
 // OwnerFieldOptions controls column selection and relationship loading for owners queries.
 type OwnerFieldOptions struct {
 	OwnerKey     bool                      `json:"owner_key"`
 	Name         bool                      `json:"name"`
 	OwnerProfile *OwnerProfileFieldOptions `json:"owner_profile"`
+	Badges       *BadgeRelationshipOptions `json:"badges"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -1887,6 +2300,9 @@ func (fo *OwnerFieldOptions) HasSelectedColumns() bool {
 		return true
 	}
 	if fo.OwnerProfile != nil {
+		return true
+	}
+	if fo.Badges != nil {
 		return true
 	}
 	return false

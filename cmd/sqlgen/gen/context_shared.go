@@ -43,9 +43,53 @@ func BuildSharedTypesContext(pkg string, tenancyEnabled bool, tenantGoType, tena
 		Imports: imports,
 		Types:   sharedTypeDefinitions(tenancyEnabled, tenantGoType),
 		Helpers: sharedHelperDefinitions(hasExplicitTenant, hasUpsertMany, nestedHelperShape{emit: hasNested, tenancyEnabled: tenancyEnabled, explicitTenant: hasExplicitTenant}),
-		Decls:   decls,
+		Decls:   append(decls, callerOptionsDecl),
 	}
 }
+
+// withDateTimeKeys adds dateTimeKeys to a shared-types context. A table keyed
+// by types.DateTime collects its keys as []types.DateTime, and comparator.Time
+// takes the []time.Time they wrap.
+func withDateTimeKeys(ctx SharedTypesContext) SharedTypesContext {
+	ctx.Imports = UniqueImports(append(ctx.Imports, "time", "github.com/teandresmith/sqlgen/types"))
+	ctx.Helpers = append(ctx.Helpers, SharedHelperDefinition{
+		Name:      "dateTimeKeys",
+		Signature: "(keys []types.DateTime) []time.Time",
+		Doc:       "dateTimeKeys returns the time.Time each key wraps.",
+		Body: `	times := make([]time.Time, len(keys))
+	for i, k := range keys {
+		times[i] = k.Time
+	}
+	return times`,
+	})
+	slices.SortFunc(ctx.Helpers, func(a, b SharedHelperDefinition) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return ctx
+}
+
+// tableHasDateTimeKey reports whether a table has a PK or FK column bound to
+// types.DateTime, whose key lists pkFilterInExpr passes through dateTimeKeys.
+func tableHasDateTimeKey(tc TableContext) bool {
+	return slices.ContainsFunc(tc.Columns, func(col ColumnContext) bool {
+		base := strings.TrimPrefix(col.GoType, "*")
+		return (col.PrimaryKey || col.FKReference != nil) && (base == dateTimeGoType || base == "types.NullDateTime")
+	})
+}
+
+// callerOptionsDecl declares the record CallOptions.caller holds; the
+// emitted doc comment explains why internal hops need it.
+const callerOptionsDecl = `// callerOptions is the SkipHooks / SkipCache / SkipEvents triple a call's
+// first resolveCallOptions recorded. An internal call that reuses its caller's
+// options and sets SkipHooks to keep the caller's hook chain from firing twice
+// carries this record through unchanged, so the relationship loads that call
+// triggers run under the caller's toggles rather than its own.
+type callerOptions struct {
+	set        bool
+	skipHooks  bool
+	skipCache  bool
+	skipEvents bool
+}`
 
 // filterOptionDecls returns the FilterOption plumbing a package needs once its
 // filters carry relationship members (PRD §11.1). Two things travel down the
@@ -178,6 +222,12 @@ func sharedTypeDefinitions(tenancyEnabled bool, tenantGoType string) []SharedTyp
 	callOptionsFields = append(callOptionsFields, SharedFieldDefinition{
 		Name: "AllowInTransaction", GoType: "bool", JSONTag: "allow_in_transaction",
 		Doc: "permit Stream inside a transaction; commits the caller to issuing nothing else on that txCtx",
+	})
+	// Unexported, so it is neither part of the consumer surface nor encoded.
+	// Recorded by resolveCallOptions; read by the relationship loaders.
+	callOptionsFields = append(callOptionsFields, SharedFieldDefinition{
+		Name: "caller", GoType: "callerOptions",
+		Doc: "the hook toggles the outermost call resolved; survives internal hops",
 	})
 
 	return []SharedTypeDefinition{
@@ -431,6 +481,11 @@ func resolveCallOptionsBody(hasExplicitTenant bool) string {
 	if options.SkipHooks {
 		options.SkipCache = true
 		options.SkipEvents = true
+	}
+	// The first resolution records the caller's toggles; an internal call that
+	// copied these options keeps the record it inherited.
+	if !options.caller.set {
+		options.caller = callerOptions{set: true, skipHooks: options.SkipHooks, skipCache: options.SkipCache, skipEvents: options.SkipEvents}
 	}
 `
 	if hasExplicitTenant {

@@ -54,12 +54,13 @@ type Dialect interface {
     ReturningClause(columns []string) string
     UpsertClause(opts UpsertClauseOptions) string
     SupportsArrayParams() bool
-    SupportsTupleIN() bool
     BackslashEscapes() bool
     DefaultValuesClause() string
-    LockClause(mode LockMode) string
+    LockClause(mode LockMode, of string) string
 }
 ```
+
+Composite-key batches use tuple IN on every dialect, so no capability flag selects it: they render `("a", "b") IN (($1, $2), …)` on PostgreSQL and `(a, b) IN ((?, ?), …)` on MySQL and SQLite. MySQL 8.0 and 8.4 evaluate it with the same composite-index range scan as an OR of ANDs, and far faster (PRD §8.7). `PrefixConditions` qualifies each column of a tuple-IN condition, `(c."workspace_id", c."id") IN (…)`; prefixing the tuple as a whole, `c.("workspace_id", "id")`, is a syntax error on PostgreSQL and SQLite.
 
 ### Implementation Rules
 
@@ -259,7 +260,9 @@ Building the literal by hand means `sliceToArrayLiteral` owns PostgreSQL's array
 
 ### Implementation
 
-The comparators choose the row: `parseIn` / `parseNin` (`comparator/comparator.go`) emit `col = ANY($)` / `col != ALL($)` with one slice arg when `Dialect.SupportsArrayParams()` is true, and `col IN $` / `col NOT IN $` with `[]any` otherwise. The builder expands a `col IN $` clause carrying `[]any` to one placeholder per value on **every** dialect and never rewrites it to `ANY` — that is what lets `comparator.Enum` opt out. `sql.Where(col).In(...)` therefore always takes the expanded form, and so do the generated code paths built on it: the `SoftDeleteMany` / `RestoreMany` / `HardDeleteMany` id lists, the `UpdateMany` / `UpsertMany` tenant-capture pre-reads, and the M2M junction loader. Filter-driven reads (`GetMany`, the O2M loader, the M2M target fetch) go through the comparators and take the pgx row. An empty list renders `1 = 0` (IN) or `1 = 1` (NOT IN).
+The comparators choose the row: `parseIn` / `parseNin` (`comparator/comparator.go`) emit `col = ANY($)` / `col != ALL($)` with one slice arg when `Dialect.SupportsArrayParams()` is true, and `col IN $` / `col NOT IN $` with `[]any` otherwise. The builder expands a `col IN $` clause carrying `[]any` to one placeholder per value on **every** dialect and never rewrites it to `ANY` — that is what lets `comparator.Enum` opt out. `sql.Where(col).In(...)` therefore always takes the expanded form, and so do the generated code paths built on it: the `SoftDeleteMany` / `RestoreMany` / `HardDeleteMany` id lists, the `UpdateMany` / `UpsertMany` tenant-capture pre-reads, and both M2M loader steps (the junction read, and the target fetch's `target_pk IN (SELECT … FROM junction j WHERE j.local_fk IN (…))` subquery). Filter-driven reads (`GetMany`, the O2M loader) go through the comparators and take the pgx row. An empty list renders `1 = 0` (IN) or `1 = 1` (NOT IN).
+
+A relationship loader therefore expands one placeholder per parent key on both M2M steps, and on the O2M step outside PostgreSQL. It chunks the keys of every step except the pgx O2M one to stay under the dialect's bind-parameter limit. §14 has the chunk sizes.
 
 ---
 
@@ -477,7 +480,7 @@ conditions := sql.And(
 
 `sql.Where` and every comparator's `Parse` write the column token they are given verbatim, into both `Clause` and `Column`; they never quote. The caller quotes through `Dialect.QuoteIdentifier`, and generated code always does. `sql.Where("status")` renders `status = $1`, which is invalid SQL for a keyword, mixed-case or digit-leading column. The quoted forms in the operator tables above assume a quoted column. Because the token is verbatim, a caller can also pass an already-qualified one, such as `j.Alias + "." + d.QuoteIdentifier(col)`.
 
-The builder helpers that take a column name rather than a WHERE token quote it themselves, so they take a raw name: `sql.Exists(correlationColumn, …)` (qualified with the enclosing alias at build time), `BuildCompositePKConditions` / `BuildCompositePKBatchCondition`, `SoftDeleteOptions.Column` and `BuildIncrement`. Passing them a quoted name quotes it twice.
+The builder helpers that take a column name rather than a WHERE token quote it themselves, so they take a raw name: `sql.Exists` with its correlation columns, one per pair of the relationship's key, each qualified with the enclosing alias at build time, `BuildCompositePKConditions` / `BuildCompositePKBatchCondition`, `SoftDeleteOptions.Column` and `BuildIncrement`. Passing them a quoted name quotes it twice.
 
 ### Subquery Support
 
@@ -560,7 +563,21 @@ Results are grouped by the FK column in Go code and attached to the parent entit
 
 ### Many-to-Many (junction table)
 
-M2M relationships query through the junction table. The SQL depends on the specific junction table schema.
+M2M relationships query through the junction table in two steps. The junction read resolves the parent→target mapping; the target fetch goes through the target client's `GetMany` and matches the target PK against the same junction rows, never against a list of collected target keys:
+
+```sql
+SELECT "product_id", "tag_id" FROM "public"."product_tags" WHERE "product_id" IN ($1, $2, ...)
+
+SELECT "id", "name" FROM "public"."tags"
+WHERE "id" IN (SELECT j."tag_id" FROM "public"."product_tags" j WHERE j."product_id" IN ($1, $2, ...))
+ORDER BY "name" ASC
+```
+
+The target fetch binds the parent keys, not one key per junction row, so parents sharing many targets cannot push it past the limit, and each parent's targets come from one sorted statement.
+
+### Chunking at the bind-parameter limit
+
+Every loader step binds parent keys in chunks of `floor(L / 2 / N)`, where `N` is the key's column count and `L` is the dialect's bind-parameter limit (SQLite 32766, MySQL and PostgreSQL 65535). The funcmap's `loadChunkSize N` bakes the size into the template as a literal: 16383 on SQLite and 32767 on MySQL and PostgreSQL for `N = 1`. On PostgreSQL a key of several columns is also capped at 4000 keys, because a longer tuple `IN` fails with `stack depth limit exceeded` at the default `max_stack_depth`. Half the budget is left for the relationship filter, tenancy, soft-delete and static `filter:` parameters; a chunk of the full limit fails once the consumer filter adds one. The pgx O2M step for a one-column key over a NOT NULL column is the one exception: its `= ANY($1)` binds one parameter at any count, so it runs unchunked (`TableContext.O2MLoadUnchunked`). PRD §25.1 gives the resulting query count.
 
 ---
 
@@ -633,7 +650,7 @@ BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE
 | Option | PostgreSQL | MySQL | SQLite |
 |--------|-----------|-------|--------|
 | `ReadOnly` | Yes | Yes (`START TRANSACTION READ ONLY`) | No |
-| `Deferrable` | Yes | No (ignored) | No (ignored) |
+| `Deferrable` | Yes (pgx only; ignored through stdlib) | No (ignored) | No (ignored) |
 
 SQLite only supports `SERIALIZABLE`. Other isolation levels are silently ignored.
 
@@ -645,9 +662,9 @@ Savepoints enable nested transactions.
 |-----------|-----------|-------|--------|
 | Create | `SAVEPOINT name` | `SAVEPOINT name` | `SAVEPOINT name` |
 | Release | `RELEASE SAVEPOINT name` | `RELEASE SAVEPOINT name` | `RELEASE SAVEPOINT name` |
-| Rollback | `ROLLBACK TO SAVEPOINT name` | `ROLLBACK TO SAVEPOINT name` | `ROLLBACK TRANSACTION TO SAVEPOINT name` |
+| Rollback | `ROLLBACK TO SAVEPOINT name` | `ROLLBACK TO SAVEPOINT name` | `ROLLBACK TO SAVEPOINT name` |
 
-Note the SQLite difference: `ROLLBACK TRANSACTION TO SAVEPOINT` vs `ROLLBACK TO SAVEPOINT`. This must be handled in the SQLite dialect implementation.
+The `Tx` issues the same statements on every dialect; SQLite accepts `ROLLBACK TO SAVEPOINT` as a spelling of `ROLLBACK TRANSACTION TO SAVEPOINT`.
 
 ### Driver Differences
 
@@ -669,7 +686,7 @@ SQL errors from different databases must be mapped to a common error hierarchy. 
 | Unique violation | `23505` | `1062` | `2067` (`SQLITE_CONSTRAINT_UNIQUE`) |
 | FK violation | `23503` | `1451` / `1452` | `787` (`SQLITE_CONSTRAINT_FOREIGNKEY`) |
 | Check violation | `23514` | `3819` | `275` (`SQLITE_CONSTRAINT_CHECK`) |
-| Not null violation | `23502` | `1048` | `1299` (`SQLITE_CONSTRAINT_NOTNULL`) |
+| Not null violation | `23502` | `1048` / `1364` | `1299` (`SQLITE_CONSTRAINT_NOTNULL`) |
 | Deadlock | `40P01` | `1213` | N/A (file-level locking) |
 | Connection failed | `08*` class | `2002`, `2006`, `1040` | `5` (`SQLITE_BUSY`), `14` (`SQLITE_CANTOPEN`) |
 
@@ -715,6 +732,8 @@ Quick reference for what each dialect supports.
 | `ALTER TABLE DROP COLUMN` | Yes | Yes | Yes (3.35+) |
 | `ALTER TABLE MODIFY COLUMN` | Yes | Yes | No |
 | Partial unique indexes | Yes | No | Yes (3.8.0+) |
+| Tuple `IN` (`(a, b) IN ((…), …)`) | Yes | Yes | Yes |
+| `MATCH FULL` foreign keys enforced | Yes | No (parsed, ignored) | No (parsed, ignored) |
 | `DEFAULT` in VALUES clause | Yes | Yes | No (use `sql.DefaultExpr` instead) |
 
 ### Transaction Features

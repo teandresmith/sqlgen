@@ -7,6 +7,8 @@ import (
 	"testing"
 	"text/template"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/parser"
@@ -122,7 +124,8 @@ func TestTenancyTemplate_getMany_emitsTenantFilter(t *testing.T) {
 	wants := []string{
 		"if !options.SkipTenancy {",
 		"resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)",
-		`return nil, fmt.Errorf("get products: resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("get many products: %w", err)`,
 		`conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))`,
 	}
 	for _, want := range wants {
@@ -141,7 +144,8 @@ func TestTenancyTemplate_create_emitsMismatchAndAutoSet(t *testing.T) {
 	wants := []string{
 		"if !options.SkipTenancy {",
 		"resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)",
-		`return nil, fmt.Errorf("create product: resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("create product: %w", err)`,
 		`if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {`,
 		"return nil, tenancy.ErrMismatch",
 		`columns = append(columns, "workspace_id")`,
@@ -450,7 +454,8 @@ func TestTenancyTemplate_o2o_bothTenanted_emitsBothFilters(t *testing.T) {
 		// o2o branch resolves tenant again for the child filter.
 		"prefixedConds := sql.PrefixConditions(\"p\", conds)",
 		"if !options.SkipTenancy {",
-		`return nil, fmt.Errorf("get products: resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("get many products: %w", err)`,
 		// Static map from alias → tenant column (tenantedAliases literal).
 		"tenantedAliases := map[string]string{",
 		`"c": "workspace_id",`,
@@ -700,16 +705,16 @@ func TestTenancyTemplate_loadRelationships_propagatesSkipTenancy(t *testing.T) {
 			FieldName: "Reviews", GoType: "[]*Review", JSONTag: "reviews", FKGoType: "uuid.UUID",
 		},
 	}
+	tc = withParentKeys(tc)
 
 	out := renderTenancyTableBody(t, tc, "table/get")
 
 	wants := []string{
-		// loadRelationships signature carries skipTenancy under tenancy.
-		"func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, fo *ProductFieldOptions, skipTenancy bool) error {",
-		// Call site passes options.SkipTenancy through.
-		"if err := c.loadRelationships(ctx, conn, products, options.FieldOptions, options.SkipTenancy); err != nil {",
+		// loadRelationships receives the parent's resolved options.
+		"func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, options CallOptions[ProductFieldOptions]) error {",
+		"if err := c.loadRelationships(ctx, conn, products, options); err != nil {",
 		// Child GetMany callback forwards the flag.
-		"co.SkipTenancy = skipTenancy",
+		"co.SkipTenancy = options.SkipTenancy",
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {
@@ -759,7 +764,8 @@ func TestTenancyTemplate_upsert_autoSetAcrossDialects(t *testing.T) {
 	wants := []string{
 		"if !options.SkipTenancy {",
 		"resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)",
-		`return nil, fmt.Errorf("upsert product: resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("upsert product: %w", err)`,
 		`if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {`,
 		"return nil, tenancy.ErrMismatch",
 		`columns = append(columns, "workspace_id")`,
@@ -967,7 +973,7 @@ func TestTenancyTemplate_tenantInPK_getEmitsVerifyMatch(t *testing.T) {
 		"if !options.SkipTenancy {",
 		"resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)",
 		"if pk.WorkspaceID != resolvedTenant {",
-		"return nil, tenancy.ErrMismatch",
+		`return nil, fmt.Errorf("get order_item: %w", tenancy.ErrMismatch)`,
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {
@@ -1140,5 +1146,219 @@ func TestTenancyTemplate_tenantInPK_existsEmitsVerify(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("tenant-in-PK Exists missing %q\nfull output:\n%s", want, out)
 		}
+	}
+}
+
+// `access` composes with tenancy: a tenant column classified `read_only` or
+// `internal` — the natural roles for a server-injected column — keeps every
+// tenancy-scoped client method exactly as a `public` tenant column has it.
+func TestTenancyTemplate_restrictedTenantColumnKeepsScoping(t *testing.T) {
+	build := func(t *testing.T, role string) gen.TableContext {
+		t.Helper()
+		schema := &parser.Schema{Tables: []parser.Table{{
+			Name:   "products",
+			Schema: "public",
+			Columns: []parser.Column{
+				tableCol("id", "uuid", false, true),
+				tableCol("workspace_id", "uuid", false, false),
+				tableCol("name", "text", false, false),
+			},
+		}}}
+		cfg := testInput(schema).Config
+		cfg.Tenancy = &config.TenancyConfig{Enabled: true, Column: "workspace_id", Required: new(true)}
+		cfg.Tables["products"] = config.TableConfig{
+			ColumnMap: map[string]config.ColumnOverride{"workspace_id": {Access: role}},
+		}
+		tables, err := gen.BuildTableContextsFromSchema(schema, cfg)
+		if err != nil {
+			t.Fatalf("BuildTableContextsFromSchema: %v", err)
+		}
+		tc := tables[0]
+		if tc.Tenancy == nil || !tc.Tenancy.Tenanted || tc.Tenancy.Column != "workspace_id" {
+			t.Fatalf("products tenancy = %+v, want tenanted on workspace_id", tc.Tenancy)
+		}
+		if i := slices.IndexFunc(tc.Columns, func(c gen.ColumnContext) bool { return c.Name == "workspace_id" }); i < 0 || tc.Columns[i].Access != role {
+			t.Fatalf("control: workspace_id did not resolve to access %q", role)
+		}
+		return tc
+	}
+	public := build(t, config.AccessPublic)
+
+	templates := []string{"table/get", "table/create", "table/update", "table/delete"}
+	tests := []struct {
+		name string
+		role string
+	}{
+		{name: "read_only tenant column", role: config.AccessReadOnly},
+		{name: "internal tenant column", role: config.AccessInternal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restricted := build(t, tt.role)
+			for _, name := range templates {
+				want := renderTenancyTableBody(t, public, name)
+				got := renderTenancyTableBody(t, restricted, name)
+				if diff := cmp.Diff(want, got); diff != "" {
+					t.Errorf("%s with a %s tenant column differs from the public one (-public +%s):\n%s", name, tt.role, tt.role, diff)
+				}
+			}
+			get := renderTenancyTableBody(t, restricted, "table/get")
+			if w := `conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))`; !strings.Contains(get, w) {
+				t.Errorf("Get with a %s tenant column lost the tenant predicate %q\nfull output:\n%s", tt.role, w, get)
+			}
+			create := renderTenancyTableBody(t, restricted, "table/create")
+			if w := `columns = append(columns, "workspace_id")`; !strings.Contains(create, w) {
+				t.Errorf("Create with a %s tenant column lost the tenant auto-set %q\nfull output:\n%s", tt.role, w, create)
+			}
+		})
+	}
+}
+
+// generateTenantedSoftDeleteArticles generates a package holding one
+// soft-delete table, articles, with workspace_id tenancy switched on or off,
+// and returns models_gen.go.
+func generateTenantedSoftDeleteArticles(t *testing.T, dialect config.Dialect, ddl string, tenancyOn bool) string {
+	t.Helper()
+	extra := `generation:
+  soft_delete_columns:
+    - name: deleted_at
+      type: timestamp
+`
+	if tenancyOn {
+		extra += `tenancy:
+  enabled: true
+  column: workspace_id
+  required: true
+`
+	}
+	outDir := t.TempDir()
+	cfg := loadGenerateConfig(t, outDir, dialect, extra)
+	if _, err := gen.Generate(parseDDLForTest(t, dialect, ddl), cfg, "test"); err != nil {
+		t.Fatalf("Generate() error: %v", err)
+	}
+	return readGenFile(t, outDir, "models_gen.go")
+}
+
+// projectionSource returns the parts of a generated package that decide which
+// columns an articles read selects: the all-columns list, the FieldOptions
+// Columns method, and GetMany's projection block.
+func projectionSource(t *testing.T, src string) string {
+	t.Helper()
+	allCols := ""
+	for line := range strings.Lines(src) {
+		if strings.HasPrefix(line, "var articleAllColumns = ") {
+			allCols = line
+		}
+	}
+	if allCols == "" {
+		t.Fatalf("generated source has no articleAllColumns")
+	}
+	getMany := extractTopLevelFunc(t, src, "func (c *articleClient) GetMany(")
+	start := strings.Index(getMany, "// Determine columns from FieldOptions.")
+	end := strings.Index(getMany, "// Build conditions from filter")
+	if start < 0 || end < start {
+		t.Fatalf("GetMany has no projection block:\n%s", getMany)
+	}
+	return allCols + extractTopLevelFunc(t, src, "func (fo *ArticleFieldOptions) Columns()") + getMany[start:end]
+}
+
+// TestGenerate_TenantedSoftDeleteTable covers a table that is both tenanted
+// and soft-deleted, on every dialect: reads carry both filters, the
+// soft-delete and restore methods carry the tenant filter beside their own
+// soft-delete scoping without taking a tenant argument, and the column
+// projection is the one the same table gets with tenancy off.
+func TestGenerate_TenantedSoftDeleteTable(t *testing.T) {
+	const tenantFilter = `sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant)`
+	dialects := []struct {
+		name    string
+		dialect config.Dialect
+		ddl     string
+	}{
+		{
+			name:    "postgres",
+			dialect: config.DialectPostgres,
+			ddl: `CREATE TABLE articles (
+				id bigserial PRIMARY KEY,
+				workspace_id bigint NOT NULL,
+				title text NOT NULL,
+				deleted_at timestamptz
+			);`,
+		},
+		{
+			name:    "mysql",
+			dialect: config.DialectMySQL,
+			ddl: "CREATE TABLE articles (" +
+				"id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, " +
+				"workspace_id BIGINT NOT NULL, " +
+				"title VARCHAR(255) NOT NULL, " +
+				"deleted_at DATETIME NULL);",
+		},
+		{
+			name:    "sqlite",
+			dialect: config.DialectSQLite,
+			ddl: `CREATE TABLE articles (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				workspace_id INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				deleted_at DATETIME
+			);`,
+		},
+	}
+
+	for _, d := range dialects {
+		t.Run(d.name, func(t *testing.T) {
+			tenanted := generateTenantedSoftDeleteArticles(t, d.dialect, d.ddl, true)
+
+			t.Run("reads AND the tenant and soft-delete filters", func(t *testing.T) {
+				body := extractTopLevelFunc(t, tenanted, "func (c *articleClient) GetMany(")
+				for _, want := range []string{
+					tenantFilter,
+					`sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull()`,
+				} {
+					if !strings.Contains(body, want) {
+						t.Errorf("GetMany missing %q\nfull method:\n%s", want, body)
+					}
+				}
+			})
+
+			t.Run("soft-delete and restore methods take the tenant filter and no tenant argument", func(t *testing.T) {
+				for _, m := range []struct {
+					decl string
+					// scope is the method's own soft-delete condition, which
+					// the tenant filter is AND'd with; empty when the method
+					// has none.
+					scope string
+				}{
+					{decl: "func (c *articleClient) SoftDelete("},
+					{decl: "func (c *articleClient) SoftDeleteMany("},
+					{decl: "func (c *articleClient) SoftDeleteWhere(", scope: `sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull()`},
+					{decl: "func (c *articleClient) Restore("},
+					{decl: "func (c *articleClient) RestoreMany("},
+					{decl: "func (c *articleClient) RestoreWhere(", scope: `sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNotNull()`},
+				} {
+					body := extractTopLevelFunc(t, tenanted, m.decl)
+					if !strings.Contains(body, tenantFilter) {
+						t.Errorf("%s... has no tenant filter\nfull method:\n%s", m.decl, body)
+					}
+					if m.scope != "" && !strings.Contains(body, m.scope) {
+						t.Errorf("%s... has no soft-delete scope %q\nfull method:\n%s", m.decl, m.scope, body)
+					}
+					signature, _, _ := strings.Cut(body, "\n")
+					if strings.Contains(strings.ToLower(signature), "workspace") || strings.Contains(strings.ToLower(signature), "tenant") {
+						t.Errorf("%s... exposes a tenant parameter: %s", m.decl, signature)
+					}
+				}
+			})
+
+			t.Run("field-options projection is the same with tenancy on and off", func(t *testing.T) {
+				shared := generateTenantedSoftDeleteArticles(t, d.dialect, d.ddl, false)
+				if strings.Contains(extractTopLevelFunc(t, shared, "func (c *articleClient) GetMany("), tenantFilter) {
+					t.Fatalf("tenancy-off package still filters on the tenant; the comparison is meaningless")
+				}
+				if diff := cmp.Diff(projectionSource(t, shared), projectionSource(t, tenanted)); diff != "" {
+					t.Errorf("projection differs with tenancy on (-off +on):\n%s", diff)
+				}
+			})
+		})
 	}
 }

@@ -63,7 +63,7 @@ input CreateWarehouseInput {
   name: String!
   price: Decimal!
   nullablePrice: NullDecimal
-  createdAt: DateTime!
+  createdAt: DateTime
 }
 input UpdateWarehouseInput {
   externalID: KSUID

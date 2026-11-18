@@ -55,9 +55,6 @@ output:
 	if diff := cmp.Diff([]string{"./migrations"}, cfg.Input.Paths); diff != "" {
 		t.Errorf("Input.Paths mismatch (-want +got):\n%s", diff)
 	}
-	if cfg.Input.ParseMode != "strict" {
-		t.Errorf("Input.ParseMode = %q, want %q", cfg.Input.ParseMode, "strict")
-	}
 
 	// Output defaults.
 	if cfg.Output.Driver != "pgx" {
@@ -189,7 +186,6 @@ input:
   schema: "public"
   paths:
     - "./migrations"
-  parse_mode: strict
   connection:
     url: "postgres://localhost/mydb"
     host: localhost
@@ -309,7 +305,6 @@ tables:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: "./views/product_summary.sql"
 
 extras:
   MemeMetadata:
@@ -504,9 +499,6 @@ extras:
 	if view.StructName != "ProductSummary" {
 		t.Errorf("product_summary.StructName = %q, want %q", view.StructName, "ProductSummary")
 	}
-	if view.SQL != "./views/product_summary.sql" {
-		t.Errorf("product_summary.SQL = %q, want %q", view.SQL, "./views/product_summary.sql")
-	}
 
 	// Extras.
 	extra, ok := cfg.Extras["MemeMetadata"]
@@ -634,6 +626,7 @@ func TestLoadConfig_OutputPackageDerivedFromDir(t *testing.T) {
 	tests := []struct {
 		name    string
 		dir     string
+		cwd     string // working directory to run from, under a temp dir
 		wantPkg string
 	}{
 		{
@@ -652,14 +645,34 @@ func TestLoadConfig_OutputPackageDerivedFromDir(t *testing.T) {
 			wantPkg: "my_models",
 		},
 		{
-			name:    "current directory",
+			name:    "current directory takes the working directory's name",
 			dir:     ".",
-			wantPkg: ".",
+			cwd:     "Billing-Models",
+			wantPkg: "billing_models",
+		},
+		{
+			name:    "omitted directory takes the working directory's name",
+			dir:     "",
+			cwd:     "models",
+			wantPkg: "models",
+		},
+		{
+			name:    "parent directory takes that directory's name",
+			dir:     "..",
+			cwd:     "inventory/generated",
+			wantPkg: "inventory",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.cwd != "" {
+				wd := filepath.Join(t.TempDir(), tt.cwd)
+				if err := os.MkdirAll(wd, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				t.Chdir(wd)
+			}
 			path := writeTestConfig(t, `
 input:
   dialect: postgres
@@ -1008,7 +1021,7 @@ func TestLeftoverOperationsKeyPointsAtTheAPIMask(t *testing.T) {
 		{
 			name:  "under generation",
 			yaml:  "generation:\n  operations: read_only\n",
-			wants: []string{"generation.operations: the Go client generates every method the schema allows; use api.operations"},
+			wants: []string{"generation.operations: the Go client generates every method the schema allows; use api.operations to control what the API exposes"},
 		},
 		{
 			name:  "under a table, as a toggle map",
@@ -1219,19 +1232,27 @@ func TestResolveTableEventsEnabled(t *testing.T) {
 			want:   false,
 		},
 		{
-			name: "table override true takes precedence over global false",
+			name: "table override true cannot opt in under global false",
 			table: config.TableConfig{
 				Events: &config.TableEventConfig{Enabled: new(true)},
 			},
 			global: &config.EventConfig{Enabled: false},
-			want:   true,
+			want:   false,
 		},
 		{
-			name: "table override true with nil global",
+			name: "table override true cannot opt in with nil global",
 			table: config.TableConfig{
 				Events: &config.TableEventConfig{Enabled: new(true)},
 			},
 			global: nil,
+			want:   false,
+		},
+		{
+			name: "table override true with global true",
+			table: config.TableConfig{
+				Events: &config.TableEventConfig{Enabled: new(true)},
+			},
+			global: &config.EventConfig{Enabled: true},
 			want:   true,
 		},
 		{
@@ -1750,5 +1771,54 @@ input:
 	_, err := config.LoadConfig(path)
 	if err == nil {
 		t.Error("LoadConfig() should return error for invalid YAML")
+	}
+}
+
+// TestLoadConfig_CacheDefaultsForPerEntityOptIn pins PRD §27.2: a per-table
+// (or per-view) cache.enabled: true opts in even with no `cache:` block, so the
+// block is materialized with enabled: false and the §27.2 defaults the cached
+// entities inherit. With no opt-in and no block, there is nothing to default.
+func TestLoadConfig_CacheDefaultsForPerEntityOptIn(t *testing.T) {
+	const base = "input:\n  dialect: postgres\n  paths: [\"./migrations\"]\noutput:\n  dir: ./models\n"
+	tests := []struct {
+		name      string
+		yaml      string
+		wantBlock bool
+	}{
+		{name: "no block and no opt-in", yaml: "", wantBlock: false},
+		{name: "no block and a table opt-out", yaml: "tables:\n  products:\n    cache:\n      enabled: false\n", wantBlock: false},
+		{name: "no block and a table opt-in", yaml: "tables:\n  products:\n    cache:\n      enabled: true\n", wantBlock: true},
+		{name: "no block and a view opt-in", yaml: "views:\n  product_summary:\n    invalidate_on: [products]\n    cache:\n      enabled: true\n", wantBlock: true},
+		{name: "block off and a table opt-in", yaml: "cache:\n  enabled: false\ntables:\n  products:\n    cache:\n      enabled: true\n", wantBlock: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.LoadConfig(writeTestConfig(t, base+tt.yaml))
+			if err != nil {
+				t.Fatalf("LoadConfig() error: %v", err)
+			}
+			if !tt.wantBlock {
+				if cfg.Cache != nil {
+					t.Errorf("Cache = %+v, want nil", cfg.Cache)
+				}
+				return
+			}
+			if cfg.Cache == nil {
+				t.Fatal("Cache = nil, want the block materialized with its defaults")
+			}
+			want := config.CacheConfig{
+				TTL:            "1h",
+				Serializer:     config.SerializerJSON,
+				KeyPrefix:      "sqlgen",
+				Hydration:      &config.HydrationConfig{Enabled: true, Timeout: "30s"},
+				CircuitBreaker: &config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 5, ProbeInterval: "30s", HalfOpenMaxProbes: 1},
+			}
+			if diff := cmp.Diff(want, *cfg.Cache); diff != "" {
+				t.Errorf("Cache mismatch (-want +got):\n%s", diff)
+			}
+			if !cfg.CacheKeyPrefixDefaulted {
+				t.Error("CacheKeyPrefixDefaulted = false, want true so the key_prefix warning fires")
+			}
+		})
 	}
 }

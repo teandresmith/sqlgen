@@ -60,20 +60,6 @@ postgres:
 SELECT "created_at", "key", "value", "workspace_id" FROM "public"."workspace_settings" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *WorkspaceSettingFilter`
-- Returns: `int64`, `error`
-- Errors: `tenancy.ErrMissing`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."workspace_settings" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk WorkspaceSettingPK`
@@ -100,6 +86,20 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."workspace_settings" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *WorkspaceSettingFilter`
+- Returns: `int64`, `error`
+- Errors: `tenancy.ErrMissing`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."workspace_settings" WHERE <filter>
 ```
 
 ### Paginate
@@ -162,36 +162,6 @@ postgres:
 INSERT INTO "public"."workspace_settings" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateWorkspaceSettingInput`, `target WorkspaceSettingConflictTarget`
-- Returns: `*WorkspaceSetting`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: One method over the generated WorkspaceSettingConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."workspace_settings" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateWorkspaceSettingInput`, `target WorkspaceSettingConflictTarget`
-- Returns: `[]*WorkspaceSetting`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Batched in generation.batch_size chunks over the same WorkspaceSettingConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."workspace_settings" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk WorkspaceSettingPK`, `input *UpdateWorkspaceSettingInput`
@@ -235,6 +205,36 @@ postgres:
 
 ```sql
 UPDATE "public"."workspace_settings" SET <set> WHERE <filter> RETURNING "workspace_id", "key"
+```
+
+### Upsert
+
+- Params: `input *CreateWorkspaceSettingInput`, `target WorkspaceSettingConflictTarget`
+- Returns: `*WorkspaceSetting`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: One method over the generated WorkspaceSettingConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."workspace_settings" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateWorkspaceSettingInput`, `target WorkspaceSettingConflictTarget`
+- Returns: `[]*WorkspaceSetting`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: Batched in generation.batch_size chunks over the same WorkspaceSettingConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."workspace_settings" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -300,3 +300,17 @@ Type `WorkspaceSettingFilter`.
 Type `WorkspaceSettingSort`.
 
 Fields: CreatedAt, Key, Value, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.WorkspaceSettings().Get(ctx, models.WorkspaceSettingPK{WorkspaceID: uuid.NewV4(), Key: "example"})
+rows, err := client.WorkspaceSettings().GetMany(ctx, &models.GetWorkspaceSettingsInput{Filter: &models.WorkspaceSettingFilter{Value: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.WorkspaceSettings().Create(ctx, &models.CreateWorkspaceSettingInput{WorkspaceID: uuid.NewV4(), Key: "example", Value: "example"})
+updated, err := client.WorkspaceSettings().Update(ctx, models.WorkspaceSettingPK{WorkspaceID: uuid.NewV4(), Key: "example"}, &models.UpdateWorkspaceSettingInput{Value: omittable.Set("example")})
+```

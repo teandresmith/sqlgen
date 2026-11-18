@@ -4,11 +4,7 @@
 // {{ .Doc }}
 type {{ .Name }}{{ .TypeParams }} struct {
 {{- range .Fields }}
-{{- if .Doc }}
-	{{ .Name }} {{ .GoType }} `json:"{{ .JSONTag }}"` // {{ .Doc }}
-{{- else }}
-	{{ .Name }} {{ .GoType }} `json:"{{ .JSONTag }}"`
-{{- end }}
+	{{ .Name }} {{ .GoType }}{{ if .JSONTag }} `json:"{{ .JSONTag }}"`{{ end }}{{ if .Doc }} // {{ .Doc }}{{ end }}
 {{- end }}
 }
 {{- end }}

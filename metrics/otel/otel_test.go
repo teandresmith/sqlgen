@@ -61,6 +61,9 @@ func findSumPoint(t *testing.T, m *metricdata.Metrics, want map[string]string) *
 	if !ok {
 		t.Fatalf("metric %q aggregation = %T, want Sum[int64]", m.Name, m.Data)
 	}
+	if !sum.IsMonotonic {
+		t.Fatalf("metric %q is not monotonic, want a Counter", m.Name)
+	}
 	return findPoint(t, m.Name, sum.DataPoints, want)
 }
 
@@ -372,8 +375,10 @@ func TestHydrationStartIsNoop(t *testing.T) {
 	rec, reader := newTestRecorder(t)
 	rec.HydrationStart("public", hook.TableName("products"))
 
-	if m := findMetric(collect(t, reader), "sqlgen.cache.hydrations"); m != nil {
-		t.Errorf("HydrationStart unexpectedly recorded on sqlgen.cache.hydrations: %+v", m)
+	for _, sm := range collect(t, reader).ScopeMetrics {
+		for _, m := range sm.Metrics {
+			t.Errorf("HydrationStart recorded on %s, want no instrument at all", m.Name)
+		}
 	}
 }
 
@@ -499,5 +504,23 @@ func TestNewExplicitProvider(t *testing.T) {
 	}
 	if m := findMetric(collect(t, globalReader), "sqlgen.cache.hits"); m != nil {
 		t.Error("global provider unexpectedly received the metric — explicit provider leaked")
+	}
+}
+
+func TestCircuitBreakerGaugeShowsOnlyTheCurrentState(t *testing.T) {
+	rec, reader := newTestRecorder(t)
+	rec.CircuitBreakerStateChange(cache.StateClosed, cache.StateOpen)
+	rec.CircuitBreakerStateChange(cache.StateOpen, cache.StateHalfOpen)
+	rec.CircuitBreakerStateChange(cache.StateHalfOpen, cache.StateClosed)
+
+	m := findMetric(collect(t, reader), "sqlgen.cache.circuit_breaker")
+	if m == nil {
+		t.Fatal("sqlgen.cache.circuit_breaker not recorded")
+	}
+	want := map[string]int64{"closed": 1, "open": 0, "half_open": 0}
+	for state, v := range want {
+		if got := findGaugePoint(t, m, map[string]string{"state": state}).Value; got != v {
+			t.Errorf("circuit_breaker{state=%s} = %d, want %d", state, got, v)
+		}
 	}
 }

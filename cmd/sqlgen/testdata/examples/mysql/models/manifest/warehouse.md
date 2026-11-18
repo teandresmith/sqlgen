@@ -62,19 +62,6 @@ mysql:
 SELECT `created_at`, `external_id`, `id`, `inspected_at`, `name`, `nullable_price`, `price` FROM `warehouses` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *WarehouseFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `warehouses` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -99,6 +86,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `warehouses` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *WarehouseFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `warehouses` WHERE <filter>
 ```
 
 ### Paginate
@@ -159,36 +159,6 @@ mysql:
 INSERT INTO `warehouses` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateWarehouseInput`, `target WarehouseConflictTarget`
-- Returns: `*Warehouse`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated WarehouseConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `warehouses` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateWarehouseInput`, `target WarehouseConflictTarget`
-- Returns: `[]*Warehouse`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same WarehouseConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `warehouses` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateWarehouseInput`
@@ -232,6 +202,36 @@ mysql:
 
 ```sql
 UPDATE `warehouses` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateWarehouseInput`, `target WarehouseConflictTarget`
+- Returns: `*Warehouse`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated WarehouseConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `warehouses` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateWarehouseInput`, `target WarehouseConflictTarget`
+- Returns: `[]*Warehouse`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same WarehouseConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `warehouses` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### Increment
@@ -313,3 +313,17 @@ Type `WarehouseFilter`.
 Type `WarehouseSort`.
 
 Fields: CreatedAt, ExternalID, ID, InspectedAt, Name, NullablePrice, Price
+
+## Read examples
+
+```go
+row, err := client.Warehouses().Get(ctx, 1)
+rows, err := client.Warehouses().GetMany(ctx, &models.GetWarehousesInput{Filter: &models.WarehouseFilter{ExternalID: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Warehouses().Create(ctx, &models.CreateWarehouseInput{ExternalID: *new(ksuid.KSUID), Name: "example", Price: decimal.NewFromInt(1)})
+updated, err := client.Warehouses().Update(ctx, 1, &models.UpdateWarehouseInput{Name: omittable.Set("example")})
+```

@@ -212,22 +212,22 @@ func TestEmitMarkdown_FKCell(t *testing.T) {
 	}{
 		{
 			name: "junction with a schema renders qualified",
-			rel:  manifest.Relationship{Name: "tags", Kind: "m2m", TargetEntity: "Tag", Junction: &manifest.Junction{Table: "document_labels", Schema: "audit", LocalFK: "document_id", TargetFK: "tag_id"}},
+			rel:  manifest.Relationship{Name: "tags", Kind: "m2m", TargetEntity: "Tag", Junction: &manifest.Junction{Table: "document_labels", Schema: "audit", LocalFK: manifest.JunctionKey{Columns: []string{"document_id"}}, TargetFK: manifest.JunctionKey{Columns: []string{"tag_id"}}}},
 			want: "| tags | m2m | Tag | audit.document_labels (document_id → tag_id) |  |",
 		},
 		{
 			name: "junction without a schema renders bare",
-			rel:  manifest.Relationship{Name: "tags", Kind: "m2m", TargetEntity: "Tag", Junction: &manifest.Junction{Table: "document_labels", LocalFK: "document_id", TargetFK: "tag_id"}},
+			rel:  manifest.Relationship{Name: "tags", Kind: "m2m", TargetEntity: "Tag", Junction: &manifest.Junction{Table: "document_labels", LocalFK: manifest.JunctionKey{Columns: []string{"document_id"}}, TargetFK: manifest.JunctionKey{Columns: []string{"tag_id"}}}},
 			want: "| tags | m2m | Tag | document_labels (document_id → tag_id) |  |",
 		},
 		{
 			name: "fk with a schema renders qualified",
-			rel:  manifest.Relationship{Name: "notes", Kind: "o2m", TargetEntity: "Note", FK: &manifest.FK{Table: "document_notes", Schema: "audit", Column: "document_id"}},
+			rel:  manifest.Relationship{Name: "notes", Kind: "o2m", TargetEntity: "Note", FK: &manifest.FK{Table: "document_notes", Schema: "audit", Columns: []string{"document_id"}}},
 			want: "| notes | o2m | Note | audit.document_notes.document_id |  |",
 		},
 		{
 			name: "fk without a schema renders bare",
-			rel:  manifest.Relationship{Name: "notes", Kind: "o2m", TargetEntity: "Note", FK: &manifest.FK{Table: "document_notes", Column: "document_id"}},
+			rel:  manifest.Relationship{Name: "notes", Kind: "o2m", TargetEntity: "Note", FK: &manifest.FK{Table: "document_notes", Columns: []string{"document_id"}}},
 			want: "| notes | o2m | Note | document_notes.document_id |  |",
 		},
 	}

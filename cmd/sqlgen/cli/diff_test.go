@@ -100,7 +100,7 @@ func orDefault(v, fallback string) string {
 
 func writeFileOrFail(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { //nolint:gosec // test-local temp tree
 		t.Fatalf("writing %s: %v", path, err)
 	}
 }
@@ -479,5 +479,32 @@ func TestGenerateInto_redirectsEveryWrite_andKeepsImportsConfigured(t *testing.T
 
 	if !sawGraph {
 		t.Error("no file was written to the graph package; the fixture is not exercising the path that escaped the redirect")
+	}
+}
+
+// TestDiff_absoluteEnumsFileInOutputDir_pairsLikeGenerate pins diff's handling
+// of an absolute output.enums.file in output.dir (PRD §4.5): the preview pairs
+// the enums file with its real absolute path, so an up-to-date tree reports
+// neither a change nor a deletion of the enums file generate just wrote.
+func TestDiff_absoluteEnumsFileInOutputDir_pairsLikeGenerate(t *testing.T) {
+	cfgPath := setupDiffProject(t, diffProjectOptions{
+		schema:    "CREATE TYPE status AS ENUM ('active', 'archived');\nCREATE TABLE users (id serial PRIMARY KEY, status status NOT NULL);",
+		noGraphQL: true,
+	})
+	root := filepath.Dir(cfgPath)
+	enumsFile := filepath.Join(root, "internal", "database", "enums_gen.go")
+	cfg, err := os.ReadFile(cfgPath) //nolint:gosec // test-local temp tree
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFileOrFail(t, cfgPath, string(cfg)+"  enums:\n    file: "+enumsFile+"\n")
+	generateForDiff(t, cfgPath)
+	if _, err := os.Stat(enumsFile); err != nil {
+		t.Fatalf("generate did not write the enums file at its absolute path: %v", err)
+	}
+
+	stdout, code := runDiff(t, cfgPath)
+	if code != 0 {
+		t.Errorf("diff exit code = %d, want 0 for an up-to-date tree; stdout:\n%s", code, stdout)
 	}
 }

@@ -20,6 +20,16 @@ For each PRD section referenced by the phase, read the relevant content from `do
 - Expected inputs/outputs
 - Test requirements
 
+### Step 2.5: Carry the design note's behavior contract
+
+If a design note in `docs/design/` fronts this phase (its status line or §9 names the phase), read its §6 behavior contract and §9 plan. Each row becomes a **Tests Required** item on the sub-item §9 assigns it to:
+
+- §6.2 regression guards marked `unguarded` go on the regression-guards sub-item (N.1), each phrased "passes on current code before any change".
+- §6.1 rows go on their implementing sub-items, each phrased "fails before the change, passes after", with the planned test name and its dialects.
+- Carry each row's test name and PRD anchor, never its ID. IDs stay in the design note and the registry.
+
+If no design note fronts the phase, say so in the report. The phase then has no recorded contract beyond the PRD.
+
 ### Step 3: Generate the phase task file
 
 Write a task file to `docs/tracker/phase-{N}.md` using this format:

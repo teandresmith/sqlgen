@@ -1,204 +1,353 @@
 package parser
 
-import "strings"
+import (
+	"cmp"
+	"fmt"
+	"slices"
+	"strings"
+)
 
-// DetectRelationships detects relationships from foreign key constraints in the
-// schema. It identifies Many-to-Many (junction tables with exactly 2 FKs in a
-// composite PK/UNIQUE), One-to-One (FK column with UNIQUE), and One-to-Many
-// (FK column without UNIQUE, the default fallback). Detected relationships are
-// appended to schema.Relationships.
-func DetectRelationships(schema *Schema) {
+// DetectRelationships replaces schema.Relationships with the edges its
+// FOREIGN KEY constraints give (PRD §5.3), so running it twice changes
+// nothing. Each FOREIGN KEY gives at most one edge: an M2M edge when its table
+// is a junction, else an O2O edge when a key of its table lies within its
+// columns, else an O2M edge.
+//
+// Run it after ResolveReferenceNames and the primary-key overrides: it compares
+// referenced columns with the target's spelling and reads the resolved primary
+// key off the column flags.
+//
+// It returns one warning per foreign key whose referenced columns are not a
+// key of the target, since such a key gives no edge.
+func DetectRelationships(schema *Schema) []string {
+	var (
+		edges    []detectedEdge
+		warnings []string
+	)
 	for i := range schema.Tables {
 		table := &schema.Tables[i]
-		fkCols := fkColumns(table)
-		if len(fkCols) == 0 {
+		fks, tableWarnings := foreignKeys(schema, table)
+		warnings = append(warnings, tableWarnings...)
+		if len(fks) == 0 {
 			continue
 		}
-
-		// M2M: exactly 2 FK columns, both in a composite PK or UNIQUE.
-		if len(fkCols) == 2 && junctionConstraint(table, fkCols) {
-			addM2M(schema, table, fkCols)
+		if a, b, ok := junctionKeys(table, fks); ok {
+			// A junction gives only its M2M edge, so one with an end that
+			// gives no edge gives none.
+			if !a.noEdge && !b.noEdge {
+				edges = append(edges, m2mEdges(table, a, b, fks)...)
+			}
 			continue
 		}
-
-		// O2O / O2M per FK column.
-		for _, col := range fkCols {
-			if columnUnique(table, col) {
-				addO2O(schema, table, col)
-			} else {
-				addO2M(schema, table, col)
+		for _, fk := range fks {
+			if !fk.noEdge {
+				edges = append(edges, keyEdge(table, fk, fks))
 			}
 		}
 	}
 
-	disambiguateRelationshipNames(schema)
+	disambiguateRelationshipNames(edges)
+	schema.Relationships = make([]Relationship, len(edges))
+	for i, e := range edges {
+		schema.Relationships[i] = e.Relationship
+	}
+	return warnings
 }
 
-// fkColumns returns all columns in the table that have a foreign key reference.
-func fkColumns(table *Table) []Column {
-	var cols []Column
-	for _, c := range table.Columns {
-		if c.FKReference != nil {
-			cols = append(cols, c)
-		}
-	}
-	return cols
+// detectedEdge is a relationship with the member column its name is derived
+// from when it collides (PRD §5.3 rule 5): the naming member of an O2O / O2M
+// edge's key, or of an M2M edge's reference key. Empty when there is none.
+type detectedEdge struct {
+	Relationship
+	namingMember string
 }
 
-// junctionConstraint reports whether both FK columns appear in a composite
-// PRIMARY KEY or UNIQUE constraint on the table. Partial UNIQUE constraints
-// (Where != "") are ignored: their uniqueness applies only to rows matching
-// the predicate, so they cannot anchor an M2M junction detection.
-func junctionConstraint(table *Table, fkCols []Column) bool {
-	fkNames := map[string]bool{
-		fkCols[0].Name: true,
-		fkCols[1].Name: true,
-	}
+// foreignKey is a FOREIGN KEY of a table. noEdge marks one whose target is not
+// in the schema or whose referenced columns are not a key of it: it gives no
+// edge, but it still counts when deciding whether its table is a junction.
+type foreignKey struct {
+	constraint *Constraint
+	target     *Table
+	key        []KeyPair
+	name       string
+	positions  []int // the local columns' positions in the table, for ordering
+	noEdge     bool
+	declared   int // the index in Table.Constraints
+}
 
-	for _, c := range table.Constraints {
-		if c.Type != PrimaryKey && c.Type != Unique {
+func (fk foreignKey) localColumns() []string { return fk.constraint.Columns }
+
+// foreignKeys returns the table's foreign keys less the redundant ones (PRD
+// §5.3 rules 1 and 2), ordered by the positions of their columns.
+func foreignKeys(schema *Schema, table *Table) ([]foreignKey, []string) {
+	var (
+		fks      []foreignKey
+		warnings []string
+	)
+	for j := range table.Constraints {
+		c := &table.Constraints[j]
+		if c.Type != ForeignKey {
 			continue
 		}
-		if c.Type == Unique && c.Where != "" {
-			continue
-		}
-		if len(c.Columns) < 2 {
-			continue
-		}
-		matched := 0
+		fk := foreignKey{constraint: c, name: foreignKeyName(table, c), declared: j}
 		for _, name := range c.Columns {
-			if fkNames[name] {
-				matched++
+			fk.positions = append(fk.positions, slices.IndexFunc(table.Columns, func(col Column) bool { return col.Name == name }))
+		}
+		fk.target = findTable(schema, c.ReferenceSchema, c.ReferenceTable)
+		switch {
+		case fk.target == nil:
+			// A key into a table the schema does not hold gives no edge (PRD §5.5).
+			fk.noEdge = true
+		case len(c.ReferenceColumns) != len(c.Columns) || !isKey(tableKeys(fk.target, true, true), c.ReferenceColumns):
+			fk.noEdge = true
+			warnings = append(warnings, fmt.Sprintf(
+				"tables.%s: foreign key %s references columns that are neither the primary key nor a non-partial UNIQUE constraint of %s, so it gives no relationship; declare one by hand if you need it (PRD §5.3, §13.4)",
+				qualifiedTableName(table.Schema, table.Name), fk.name, qualifiedTableName(fk.target.Schema, fk.target.Name),
+			))
+		default:
+			fk.key = make([]KeyPair, len(c.Columns))
+			for k := range c.Columns {
+				fk.key[k] = KeyPair{Local: c.Columns[k], Referenced: c.ReferenceColumns[k]}
 			}
 		}
-		if matched == 2 {
-			return true
-		}
+		fks = append(fks, fk)
 	}
-	return false
+	slices.SortStableFunc(fks, func(a, b foreignKey) int {
+		return slices.Compare(a.positions, b.positions)
+	})
+	return withoutRedundant(fks), warnings
 }
 
-// columnUnique reports whether the column is unique, either via the Column.Unique
-// flag (inline UNIQUE), by being the table's sole primary-key column, or by
-// being the sole column in a table-level UNIQUE constraint. Partial UNIQUE
-// constraints (Where != "") are ignored: a column constrained only within a
-// predicate is not unique enough to promote an FK edge from O2M to O2O.
-func columnUnique(table *Table, col Column) bool {
-	if col.Unique {
-		return true
+// withoutRedundant applies PRD §5.3 rule 2: a key whose pairs lie within
+// another's to the same target is redundant. Of identical keys, whatever
+// order each lists its columns in, the one whose name sorts first is kept, so
+// every source keeps the same one: the introspectors list constraints by
+// name. Unnamed keys (SQLite) keep the first declared.
+func withoutRedundant(fks []foreignKey) []foreignKey {
+	var kept []foreignKey
+	for i, fk := range fks {
+		redundant := false
+		for j, o := range fks {
+			if j != i && !fk.noEdge && !o.noEdge && o.target == fk.target && within(fk.key, o.key) && (len(fk.key) < len(o.key) || firstOfIdentical(o, fk)) {
+				redundant = true
+				break
+			}
+		}
+		if !redundant {
+			kept = append(kept, fk)
+		}
 	}
-	// A single-column PRIMARY KEY is implicitly unique on every dialect, so a
-	// 1:1 extension table (`profiles(user_id ... PRIMARY KEY REFERENCES
-	// users(id))`) holds at most one row per parent and its edge is O2O. A
-	// member of a *composite* key carries no such guarantee on its own, which
-	// is why this tests the whole key rather than the column's flag — an M2M
-	// junction's FK columns must keep falling through to the O2M arm.
-	//
-	// This clause assumes every FKReference it sees is schema-declared, which
-	// holds only because DetectRelationships runs before the CLI hands the
-	// schema to gen — gen's applyConfigDeclaredFKs stamps *synthetic*
-	// references onto the same schema afterwards, and one landing on a
-	// sole-PK column would be promoted to a spurious O2O here. Re-running
-	// detection after context building would break that; don't.
-	//
-	// It makes no such assumption about PrimaryKey. The CLI resolves
-	// tables.<name>.primary_key.columns onto these flags immediately before
-	// calling this (cli.applyPrimaryKeyOverrides), so an override-declared
-	// sole key is unique here exactly as a schema-declared one is — which is
-	// what PRD §8.6 means by "functionally identical to a real PRIMARY KEY
-	// constraint", and what §13.1 means by "the table's sole PRIMARY KEY
-	// column".
-	if col.PrimaryKey && singleColumnPK(table) {
-		return true
+	return kept
+}
+
+// firstOfIdentical reports whether a is kept over b, an identical key.
+func firstOfIdentical(a, b foreignKey) bool {
+	return cmp.Or(strings.Compare(a.constraint.Name, b.constraint.Name), cmp.Compare(a.declared, b.declared)) < 0
+}
+
+// foreignKeyName is the constraint's name, or "table(columns) →
+// target(columns)" for an unnamed one, as SQLite's usually are.
+func foreignKeyName(table *Table, c *Constraint) string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return fmt.Sprintf("%s(%s) → %s(%s)", table.Name, strings.Join(c.Columns, ", "), c.ReferenceTable, strings.Join(c.ReferenceColumns, ", "))
+}
+
+func findTable(schema *Schema, tableSchema, name string) *Table {
+	for i := range schema.Tables {
+		if t := &schema.Tables[i]; t.Schema == tableSchema && t.Name == name {
+			return t
+		}
+	}
+	return nil
+}
+
+// resolvedPK returns the table's primary-key columns in column order. The
+// column flags carry any primary_key override.
+func resolvedPK(table *Table) []string {
+	var pk []string
+	for _, col := range table.Columns {
+		if col.PrimaryKey {
+			pk = append(pk, col.Name)
+		}
+	}
+	return pk
+}
+
+// tableKeys returns the column sets the table holds unique: every non-partial
+// UNIQUE (constraint or column flag), plus its resolved primary key when
+// resolved is set and its declared PRIMARY KEY constraint when declared is
+// set. The database enforces the declared key even when an override moves the
+// primary key, and an override is the table's key for everything sqlgen
+// generates (PRD §8.6).
+func tableKeys(table *Table, resolved, declared bool) [][]string {
+	var keys [][]string
+	if pk := resolvedPK(table); resolved && len(pk) > 0 {
+		keys = append(keys, pk)
 	}
 	for _, c := range table.Constraints {
-		if c.Type == Unique && c.Where == "" && len(c.Columns) == 1 && c.Columns[0] == col.Name {
-			return true
+		unique := c.Type == Unique && c.Where == "" || c.Type == PrimaryKey && declared
+		if unique && len(c.Columns) > 0 {
+			keys = append(keys, c.Columns)
 		}
 	}
-	return false
+	for _, col := range table.Columns {
+		if col.Unique {
+			keys = append(keys, []string{col.Name})
+		}
+	}
+	return keys
 }
 
-// singleColumnPK reports whether exactly one column on the table is marked
-// PrimaryKey. Composite keys are declared by flagging every member column, so
-// counting is the only way to tell the two apart.
-func singleColumnPK(table *Table) bool {
-	n := 0
-	for _, c := range table.Columns {
-		if c.PrimaryKey {
-			n++
-			if n > 1 {
-				return false
+// isKey reports whether cols, as a set, is one of keys.
+func isKey(keys [][]string, cols []string) bool {
+	return slices.ContainsFunc(keys, func(k []string) bool {
+		return len(k) == len(cols) && within(k, cols)
+	})
+}
+
+// within reports whether every element of a is in b.
+func within[T comparable](a, b []T) bool {
+	for _, x := range a {
+		if !slices.Contains(b, x) {
+			return false
+		}
+	}
+	return true
+}
+
+// junctionKeys applies PRD §5.3 rule 4. It sets aside every foreign key whose
+// columns all belong to the table's other foreign keys; the table is a
+// junction when exactly two remain and a PRIMARY KEY or non-partial UNIQUE
+// constraint contains their columns. A primary_key override is not such a constraint, so
+// declaring one over two foreign keys does not make their table a junction.
+func junctionKeys(table *Table, fks []foreignKey) (foreignKey, foreignKey, bool) {
+	var remain []foreignKey
+	for i, fk := range fks {
+		var others []string
+		for j, o := range fks {
+			if j != i {
+				others = append(others, o.localColumns()...)
+			}
+		}
+		if !within(fk.localColumns(), others) {
+			remain = append(remain, fk)
+		}
+	}
+	if len(remain) != 2 {
+		return foreignKey{}, foreignKey{}, false
+	}
+	union := slices.Clone(remain[0].localColumns())
+	for _, col := range remain[1].localColumns() {
+		if !slices.Contains(union, col) {
+			union = append(union, col)
+		}
+	}
+	if len(union) < 2 {
+		return foreignKey{}, foreignKey{}, false
+	}
+	for _, k := range tableKeys(table, false, true) {
+		if within(union, k) {
+			return remain[0], remain[1], true
+		}
+	}
+	return foreignKey{}, foreignKey{}, false
+}
+
+// keyEdge returns the O2O or O2M edge of a foreign key on a table that is not
+// a junction (PRD §5.3 rule 3). It is O2O when one of the table's keys lies
+// within the key's columns, which makes the whole key unique.
+func keyEdge(table *Table, fk foreignKey, fks []foreignKey) detectedEdge {
+	holder := qualifiedTableName(table.Schema, table.Name)
+	target := qualifiedTableName(fk.target.Schema, fk.target.Name)
+	e := detectedEdge{
+		Relationship: Relationship{
+			Name:        table.Name,
+			BaseName:    table.Name,
+			Type:        OneToMany,
+			Side:        SideParent,
+			SourceTable: target,
+			TargetTable: holder,
+			Constraint:  fk.name,
+			Key:         fk.key,
+		},
+		namingMember: namingMember(fk, fks, resolvedPK(table)),
+	}
+	cols := fk.localColumns()
+	if slices.ContainsFunc(tableKeys(table, true, false), func(k []string) bool { return within(k, cols) }) {
+		e.Name, e.BaseName, e.Type = fk.target.Name, fk.target.Name, OneToOne
+		e.SourceTable, e.TargetTable = holder, target
+	}
+	return e
+}
+
+// m2mEdges returns both directions of the M2M edge through junction.
+func m2mEdges(junction *Table, a, b foreignKey, fks []foreignKey) []detectedEdge {
+	jqn := qualifiedTableName(junction.Schema, junction.Name)
+	edge := func(local, ref foreignKey) detectedEdge {
+		return detectedEdge{
+			Relationship: Relationship{
+				Name:                        ref.target.Name,
+				BaseName:                    ref.target.Name,
+				Type:                        ManyToMany,
+				Side:                        SideParent,
+				SourceTable:                 qualifiedTableName(local.target.Schema, local.target.Name),
+				TargetTable:                 qualifiedTableName(ref.target.Schema, ref.target.Name),
+				JunctionTable:               jqn,
+				JunctionLocal:               local.key,
+				JunctionReference:           ref.key,
+				JunctionLocalConstraint:     local.name,
+				JunctionReferenceConstraint: ref.name,
+			},
+			namingMember: namingMember(ref, fks, resolvedPK(junction)),
+		}
+	}
+	return []detectedEdge{edge(a, b), edge(b, a)}
+}
+
+// namingMember returns the key member an edge's name is derived from (PRD
+// §5.3 rule 5), the first of these that is exactly one column:
+//  1. the member neither in the table's primary key pk nor in another of its
+//     foreign keys;
+//  2. the member in no other foreign key;
+//  3. the member paired with the target's single-column primary key.
+//
+// Otherwise it returns "". The other foreign keys are fks, the table's keys
+// less the redundant ones: a duplicate of the key, or a key inside it, does
+// not take its naming member. For a single-column key that column is the
+// naming member whenever it is the target's primary key or in no other
+// foreign key.
+func namingMember(fk foreignKey, fks []foreignKey, pk []string) string {
+	shared := func(col string) bool {
+		return slices.ContainsFunc(fks, func(o foreignKey) bool {
+			return o.constraint != fk.constraint && slices.Contains(o.constraint.Columns, col)
+		})
+	}
+	var free, unshared []string
+	for _, p := range fk.key {
+		if shared(p.Local) {
+			continue
+		}
+		unshared = append(unshared, p.Local)
+		if !slices.Contains(pk, p.Local) {
+			free = append(free, p.Local)
+		}
+	}
+	switch {
+	case len(free) == 1:
+		return free[0]
+	case len(unshared) == 1:
+		return unshared[0]
+	}
+	if tpk := resolvedPK(fk.target); len(tpk) == 1 {
+		for _, p := range fk.key {
+			if p.Referenced == tpk[0] {
+				return p.Local
 			}
 		}
 	}
-	return n == 1
-}
-
-// addM2M creates bidirectional Many-to-Many relationships through a junction table.
-func addM2M(schema *Schema, junction *Table, fkCols []Column) {
-	jqn := qualifiedTableName(junction.Schema, junction.Name)
-
-	ref0 := fkCols[0].FKReference
-	ref1 := fkCols[1].FKReference
-	target0 := qualifiedTableName(ref0.Schema, ref0.Table)
-	target1 := qualifiedTableName(ref1.Schema, ref1.Table)
-
-	// Forward: target0 -> target1 through junction.
-	schema.Relationships = append(schema.Relationships, Relationship{
-		Name:                ref1.Table,
-		BaseName:            ref1.Table,
-		Type:                ManyToMany,
-		Side:                SideParent,
-		SourceTable:         target0,
-		TargetTable:         target1,
-		JunctionTable:       jqn,
-		JunctionLocalFK:     fkCols[0].Name,
-		JunctionReferenceFK: fkCols[1].Name,
-	})
-
-	// Reverse: target1 -> target0 through junction.
-	schema.Relationships = append(schema.Relationships, Relationship{
-		Name:                ref0.Table,
-		BaseName:            ref0.Table,
-		Type:                ManyToMany,
-		Side:                SideParent,
-		SourceTable:         target1,
-		TargetTable:         target0,
-		JunctionTable:       jqn,
-		JunctionLocalFK:     fkCols[1].Name,
-		JunctionReferenceFK: fkCols[0].Name,
-	})
-}
-
-// addO2O creates a One-to-One relationship. The source is the table holding the
-// FK column, the target is the referenced table.
-func addO2O(schema *Schema, table *Table, col Column) {
-	ref := col.FKReference
-	schema.Relationships = append(schema.Relationships, Relationship{
-		Name:        ref.Table,
-		BaseName:    ref.Table,
-		Type:        OneToOne,
-		Side:        SideParent,
-		SourceTable: qualifiedTableName(table.Schema, table.Name),
-		TargetTable: qualifiedTableName(ref.Schema, ref.Table),
-		FKColumn:    col.Name,
-	})
-}
-
-// addO2M creates a One-to-Many relationship. The source is the referenced (one)
-// table, the target is the FK-holding (many) table.
-func addO2M(schema *Schema, table *Table, col Column) {
-	ref := col.FKReference
-	schema.Relationships = append(schema.Relationships, Relationship{
-		Name:        table.Name,
-		BaseName:    table.Name,
-		Type:        OneToMany,
-		Side:        SideParent,
-		SourceTable: qualifiedTableName(ref.Schema, ref.Table),
-		TargetTable: qualifiedTableName(table.Schema, table.Name),
-		FKColumn:    col.Name,
-	})
+	return ""
 }
 
 // qualifiedTableName returns "schema.name" when schema is non-empty, or just "name".
@@ -224,13 +373,14 @@ func qualifiedTableName(schema, name string) string {
 // derived from its own metadata; BaseName is preserved across the rewrite
 // so `exclude_relationships` entries written against the bare table name
 // continue to match every disambiguated edge in the group. Naming
-// convention per relationship type:
+// convention per relationship type, where <stem> is the naming member
+// without its `_id` suffix:
 //
-//   - O2M: "<fk-stem>_<base>" so the generated field reads as
-//     "<FkStem><Base>" (e.g. "developer_asset" → "DeveloperAsset" — "the
+//   - O2M: "<stem>_<base>" so the generated field reads as
+//     "<Stem><Base>" (e.g. "developer_asset" → "DeveloperAsset" — "the
 //     asset I am the developer of"). The role qualifier comes first so the
 //     target type-noun anchors the read.
-//   - O2O: "<fk-stem>" alone. The FK column is itself the natural
+//   - O2O: "<stem>" alone. The FK column is itself the natural
 //     identifier (e.g. "primary_profile") and the Go target type is visible
 //     on the field declaration.
 //   - M2M: junction table base name (e.g. "team_members" → "TeamMembers")
@@ -238,16 +388,17 @@ func qualifiedTableName(schema, name string) string {
 //     team↔users) renders as Team.TeamMembers / Team.TeamManagers rather
 //     than UsersTeamMembers / UsersTeamManagers.
 //
-// Single-edge groups are left untouched so existing schemas keep their
-// current names and downstream goldens stay byte-stable.
-func disambiguateRelationshipNames(schema *Schema) {
+// An edge with no naming member keeps its name. Single-edge groups are left
+// untouched so existing schemas keep their current names and downstream
+// goldens stay byte-stable.
+func disambiguateRelationshipNames(edges []detectedEdge) {
 	type key struct {
 		source string
 		target string
 	}
 	groups := make(map[key][]int)
-	for i, r := range schema.Relationships {
-		k := key{source: r.SourceTable, target: r.TargetTable}
+	for i, e := range edges {
+		k := key{source: e.SourceTable, target: e.TargetTable}
 		groups[k] = append(groups[k], i)
 	}
 	for _, idxs := range groups {
@@ -255,12 +406,10 @@ func disambiguateRelationshipNames(schema *Schema) {
 			continue
 		}
 		for _, idx := range idxs {
-			r := &schema.Relationships[idx]
-			newName := disambiguatedRelationshipName(*r)
-			if newName == "" {
-				continue
+			e := &edges[idx]
+			if newName := disambiguatedRelationshipName(*e); newName != "" {
+				e.Name = newName
 			}
-			r.Name = newName
 		}
 	}
 }
@@ -268,28 +417,28 @@ func disambiguateRelationshipNames(schema *Schema) {
 // disambiguatedRelationshipName computes the rewritten Name for a colliding
 // relationship. See disambiguateRelationshipNames for the per-type
 // convention.
-func disambiguatedRelationshipName(r Relationship) string {
-	switch r.Type {
+func disambiguatedRelationshipName(e detectedEdge) string {
+	switch e.Type {
 	case OneToMany:
-		stem := strings.TrimSuffix(r.FKColumn, "_id")
+		stem := strings.TrimSuffix(e.namingMember, "_id")
 		if stem == "" {
 			return ""
 		}
-		return stem + "_" + r.BaseName
+		return stem + "_" + e.BaseName
 	case OneToOne:
-		return strings.TrimSuffix(r.FKColumn, "_id")
+		return strings.TrimSuffix(e.namingMember, "_id")
 	case ManyToMany:
 		// Self-referential M2M (both junction FKs target the same table, so
 		// SourceTable == TargetTable): naming both directions after the shared
 		// junction table would collide and emit two identically-named fields.
-		// Derive each direction's name from its own reference FK column instead
-		// — the two FK columns are distinct by construction (e.g. task_id vs
-		// depends_on_task_id → Tasks vs DependsOnTasks), so the names differ.
-		// Users can still rename or exclude+redeclare as with any auto edge.
-		if r.SourceTable == r.TargetTable && r.JunctionReferenceFK != "" {
-			return strings.TrimSuffix(r.JunctionReferenceFK, "_id")
+		// Derive each direction's name from its own reference key's naming
+		// member instead (e.g. task_id vs depends_on_task_id → Tasks vs
+		// DependsOnTasks). Users can still rename or exclude+redeclare as with
+		// any auto edge.
+		if e.SourceTable == e.TargetTable && e.namingMember != "" {
+			return strings.TrimSuffix(e.namingMember, "_id")
 		}
-		_, name := splitQualifiedRelationshipTable(r.JunctionTable)
+		_, name := splitQualifiedRelationshipTable(e.JunctionTable)
 		return name
 	}
 	return ""

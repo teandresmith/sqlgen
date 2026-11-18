@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/cache"
 )
 
@@ -89,7 +91,7 @@ func TestBreaker_NthFailureTripsAndFiresStateChange(t *testing.T) {
 func TestBreaker_OpenAllowReturnsFalseUntilProbeIntervalElapses(t *testing.T) {
 	b := cache.NewBreaker(cache.BreakerConfig{
 		FailureThreshold:  1,
-		ProbeInterval:     50 * time.Millisecond,
+		ProbeInterval:     time.Hour,
 		HalfOpenMaxProbes: 1,
 	})
 	b.RecordFailure() // trip immediately
@@ -139,10 +141,12 @@ func TestBreaker_AllowPostProbeIntervalTransitionsToHalfOpen(t *testing.T) {
 
 // --- Case (f) ---
 func TestBreaker_HalfOpenSuccessReturnsToClosed(t *testing.T) {
+	onChange, snap := newStateRecorder()
 	b := cache.NewBreaker(cache.BreakerConfig{
 		FailureThreshold:  2,
 		ProbeInterval:     10 * time.Millisecond,
 		HalfOpenMaxProbes: 1,
+		OnStateChange:     onChange,
 	})
 	b.RecordFailure()
 	b.RecordFailure()
@@ -153,6 +157,14 @@ func TestBreaker_HalfOpenSuccessReturnsToClosed(t *testing.T) {
 	b.RecordSuccess()
 	if got := b.State(); got != cache.StateClosed {
 		t.Errorf("State() after HalfOpen success = %v, want Closed", got)
+	}
+	want := []stateRecord{
+		{cache.StateClosed, cache.StateOpen},
+		{cache.StateOpen, cache.StateHalfOpen},
+		{cache.StateHalfOpen, cache.StateClosed},
+	}
+	if diff := cmp.Diff(want, snap(), cmp.AllowUnexported(stateRecord{})); diff != "" {
+		t.Errorf("OnStateChange records mismatch (-want +got):\n%s", diff)
 	}
 	// Counter must be reset: N-1 failures must not trip.
 	b.RecordFailure()
@@ -165,12 +177,14 @@ func TestBreaker_HalfOpenSuccessReturnsToClosed(t *testing.T) {
 func TestBreaker_HalfOpenFailureReopensImmediately(t *testing.T) {
 	onChange, snap := newStateRecorder()
 	b := cache.NewBreaker(cache.BreakerConfig{
-		FailureThreshold:  1,
+		FailureThreshold:  3,
 		ProbeInterval:     10 * time.Millisecond,
 		HalfOpenMaxProbes: 1,
 		OnStateChange:     onChange,
 	})
-	b.RecordFailure()
+	for range 3 {
+		b.RecordFailure()
+	}
 	time.Sleep(25 * time.Millisecond)
 	if !b.Allow() {
 		t.Fatalf("Allow() post-interval = false, want true")
@@ -180,10 +194,13 @@ func TestBreaker_HalfOpenFailureReopensImmediately(t *testing.T) {
 		t.Errorf("State() after HalfOpen failure = %v, want Open", got)
 	}
 	// Final record should be HalfOpen → Open.
-	records := snap()
-	last := records[len(records)-1]
-	if last != (stateRecord{cache.StateHalfOpen, cache.StateOpen}) {
-		t.Errorf("last OnStateChange = %v, want {HalfOpen Open}", last)
+	want := []stateRecord{
+		{cache.StateClosed, cache.StateOpen},
+		{cache.StateOpen, cache.StateHalfOpen},
+		{cache.StateHalfOpen, cache.StateOpen},
+	}
+	if diff := cmp.Diff(want, snap(), cmp.AllowUnexported(stateRecord{})); diff != "" {
+		t.Errorf("OnStateChange records mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -279,5 +296,21 @@ func TestBreaker_ConcurrentAllowAndRecordRaceFree(t *testing.T) {
 	}
 	if ops.Load() == 0 {
 		t.Errorf("expected ops > 0, got 0")
+	}
+}
+
+func TestBreaker_HalfOpenSingleProbe(t *testing.T) {
+	b := cache.NewBreaker(cache.BreakerConfig{
+		FailureThreshold:  1,
+		ProbeInterval:     10 * time.Millisecond,
+		HalfOpenMaxProbes: 1,
+	})
+	b.RecordFailure()
+	time.Sleep(25 * time.Millisecond)
+	if !b.Allow() {
+		t.Fatalf("1st Allow() in HalfOpen = false, want true")
+	}
+	if b.Allow() {
+		t.Errorf("2nd Allow() in HalfOpen = true, want false (one probe allowed)")
 	}
 }

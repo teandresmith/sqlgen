@@ -219,6 +219,11 @@ func (c *productTagLabelClient) Get(ctx context.Context, pk ProductTagLabelPK, o
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ProductTagLabelFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -243,7 +248,7 @@ func (c *productTagLabelClient) Get(ctx context.Context, pk ProductTagLabelPK, o
 		return productTagLabels[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get product_tag_label: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -262,7 +267,7 @@ func (c *productTagLabelClient) GetMany(ctx context.Context, input *GetProductTa
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get product_tag_labels: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many product_tag_labels: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableProductTagLabels, Schema: "",
@@ -327,7 +332,7 @@ func (c *productTagLabelClient) GetMany(ctx context.Context, input *GetProductTa
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get product_tag_labels: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -339,7 +344,7 @@ func (c *productTagLabelClient) GetMany(ctx context.Context, input *GetProductTa
 		return productTagLabels, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many product_tag_labels: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -355,7 +360,7 @@ func (c *productTagLabelClient) Create(ctx context.Context, input *CreateProduct
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create product_tag_label: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -378,7 +383,7 @@ func (c *productTagLabelClient) Create(ctx context.Context, input *CreateProduct
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create product_tag_label: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{ProductTagLabelPK{ProductID: input.ProductID, TagName: input.TagName, Label: input.Label}}
@@ -395,7 +400,7 @@ func (c *productTagLabelClient) Create(ctx context.Context, input *CreateProduct
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create product_tag_label: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -411,7 +416,7 @@ func (c *productTagLabelClient) CreateMany(ctx context.Context, inputs []*Create
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many product_tag_labels: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -455,7 +460,7 @@ func (c *productTagLabelClient) CreateMany(ctx context.Context, inputs []*Create
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create product_tag_labels batch: %w", err)
+				return nil, err
 			}
 			for _, input := range batch {
 				allPKs = append(allPKs, ProductTagLabelPK{ProductID: input.ProductID, TagName: input.TagName, Label: input.Label})
@@ -480,7 +485,7 @@ func (c *productTagLabelClient) CreateMany(ctx context.Context, inputs []*Create
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many product_tag_labels: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -497,7 +502,7 @@ func (c *productTagLabelClient) Update(ctx context.Context, pk ProductTagLabelPK
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update product_tag_label: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -535,13 +540,13 @@ func (c *productTagLabelClient) Update(ctx context.Context, pk ProductTagLabelPK
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update product_tag_label: %w", err)
+			return nil, err
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update product_tag_label rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{pk}
@@ -558,7 +563,7 @@ func (c *productTagLabelClient) Update(ctx context.Context, pk ProductTagLabelPK
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update product_tag_label: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -574,14 +579,16 @@ type UpdateProductTagLabelItem struct {
 
 // UpdateMany partially updates multiple product_tag_labels and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdateProductTagLabelItem, opts ...func(*CallOptions[ProductTagLabelFieldOptions])) ([]*ProductTagLabel, error) {
 	// UpdateProductTagLabelItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many product_tag_labels: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -589,7 +596,6 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 		Op: hook.OpUpdateMany, Table: TableProductTagLabels, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -599,38 +605,69 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 			return []*ProductTagLabel{}, nil
 		}
 		var allPKs []ProductTagLabelPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProductTagLabelItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Description.Get(); ok {
-					setClauses["description"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_product_tag_label", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Description.Get(); ok {
+						setClauses["description"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allPKs = append(allPKs, item.PK)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: sql.BuildCompositePKConditions(c.dialect,
+							[]string{"product_id", "tag_name", "label"},
+							[]any{item.PK.ProductID, item.PK.TagName, item.PK.Label}),
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.PK, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allPKs = append(allPKs, item.PK)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: sql.BuildCompositePKConditions(c.dialect,
-						[]string{"product_id", "tag_name", "label"},
-						[]any{item.PK.ProductID, item.PK.TagName, item.PK.Label}),
-				})
-
-				_, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update product_tag_label %v: %w", item.PK, err)
-				}
-				allPKs = append(allPKs, item.PK)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allPKs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -647,7 +684,7 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many product_tag_labels: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -665,7 +702,7 @@ func (c *productTagLabelClient) UpdateWhere(ctx context.Context, filter *Product
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update product_tag_labels where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -709,7 +746,7 @@ func (c *productTagLabelClient) UpdateWhere(ctx context.Context, filter *Product
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update product_tag_labels where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -744,7 +781,7 @@ func (c *productTagLabelClient) UpdateWhere(ctx context.Context, filter *Product
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update product_tag_labels where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -767,14 +804,25 @@ func (c *productTagLabelClient) HardDelete(ctx context.Context, pk ProductTagLab
 				[]any{pk.ProductID, pk.TagName, pk.Label}),
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete product_tag_label: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{pk}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete product_tag_label: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple product_tag_labels from the database.
@@ -786,25 +834,63 @@ func (c *productTagLabelClient) HardDeleteMany(ctx context.Context, pks []Produc
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		pkValues := make([][]any, len(pks))
-		for i, pk := range pks {
-			pkValues[i] = []any{pk.ProductID, pk.TagName, pk.Label}
-		}
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[ProductTagLabelPK]struct{}, len(pks))
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.ProductID, pk.TagName, pk.Label}
+			}
+			hardConds := []sql.Condition{
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"product_id", "tag_name", "label"}, pkValues),
-			},
-		})
+			}
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete product_tag_labels: %w", err)
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"product_id", "tag_name", "label"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[ProductTagLabelPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK ProductTagLabelPK
+				if err := rows.Scan(&rowPK.ProductID, &rowPK.TagName, &rowPK.Label); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted product_tag_label key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(pks)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many product_tag_labels: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all product_tag_labels matching the filter.
@@ -831,7 +917,7 @@ func (c *productTagLabelClient) HardDeleteWhere(ctx context.Context, filter *Pro
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete product_tag_labels where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -849,7 +935,36 @@ func (c *productTagLabelClient) HardDeleteWhere(ctx context.Context, filter *Pro
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete product_tag_labels where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *productTagLabelClient) recordWrittenKeys(written map[ProductTagLabelPK]struct{}, listed []ProductTagLabelPK, rowKeys map[ProductTagLabelPK]struct{}) {
+	found := make(map[ProductTagLabelPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // ProductTagLabelConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -878,7 +993,7 @@ func (c *productTagLabelClient) Upsert(ctx context.Context, input *CreateProduct
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert product_tag_label: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -909,7 +1024,7 @@ func (c *productTagLabelClient) Upsert(ctx context.Context, input *CreateProduct
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("upsert product_tag_label: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{ProductTagLabelPK{ProductID: input.ProductID, TagName: input.TagName, Label: input.Label}}
@@ -926,7 +1041,7 @@ func (c *productTagLabelClient) Upsert(ctx context.Context, input *CreateProduct
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert product_tag_label: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -959,7 +1074,7 @@ func (c *productTagLabelClient) UpsertMany(ctx context.Context, inputs []*Create
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many product_tag_labels: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1054,7 +1169,7 @@ func (c *productTagLabelClient) UpsertMany(ctx context.Context, inputs []*Create
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert product_tag_labels batch: %w", err)
+				return nil, err
 			}
 		}
 
@@ -1066,7 +1181,7 @@ func (c *productTagLabelClient) UpsertMany(ctx context.Context, inputs []*Create
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetProductTagLabelsInput{
+		written, err := c.GetMany(ctx, &GetProductTagLabelsInput{
 			Filter: &ProductTagLabelFilter{PKs: rowPKs},
 			Limit:  new(0),
 		}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
@@ -1074,9 +1189,20 @@ func (c *productTagLabelClient) UpsertMany(ctx context.Context, inputs []*Create
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many product_tag_labels: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1100,12 +1226,12 @@ func (c *productTagLabelClient) Exists(ctx context.Context, pk ProductTagLabelPK
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists product_tag_label: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists product_tag_label: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1128,12 +1254,12 @@ func (c *productTagLabelClient) ExistsWhere(ctx context.Context, filter *Product
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists product_tag_label where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists product_tag_labels where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1157,12 +1283,12 @@ func (c *productTagLabelClient) Count(ctx context.Context, filter *ProductTagLab
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count product_tag_labels: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count product_tag_labels: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1171,6 +1297,10 @@ func (c *productTagLabelClient) Count(ctx context.Context, filter *ProductTagLab
 // A nil filter paginates all product_tag_labels.
 func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInput[ProductTagLabelFilter], opts ...func(*CallOptions[ProductTagLabelFieldOptions])) (*PaginateResult[ProductTagLabel], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate product_tag_labels: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProductTagLabels, Schema: "",
 		Input: input, CallOptions: options,
@@ -1184,7 +1314,7 @@ func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInpu
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate product_tag_labels count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1195,7 +1325,7 @@ func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInpu
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate product_tag_labels: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[ProductTagLabel]{
@@ -1203,11 +1333,11 @@ func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInpu
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate product_tag_labels: %w", err)
 	}
 	return result.(*PaginateResult[ProductTagLabel]), nil
 }
@@ -1239,7 +1369,7 @@ func (c *productTagLabelClient) Connection(ctx context.Context, input Connection
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection product_tag_labels count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1283,7 +1413,7 @@ func (c *productTagLabelClient) Connection(ctx context.Context, input Connection
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection product_tag_labels: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1322,7 +1452,7 @@ func (c *productTagLabelClient) Connection(ctx context.Context, input Connection
 		return &Connection[ProductTagLabel]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection product_tag_labels: %w", err)
 	}
 	return result.(*Connection[ProductTagLabel]), nil
 }
@@ -1501,9 +1631,13 @@ func (c *productTagLabelClient) Stream(ctx context.Context, input *StreamProduct
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *ProductTagLabel, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream product_tag_labels: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -1542,7 +1676,7 @@ func (c *productTagLabelClient) Stream(ctx context.Context, input *StreamProduct
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream product_tag_labels: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -1565,7 +1699,7 @@ func (c *productTagLabelClient) Stream(ctx context.Context, input *StreamProduct
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream product_tag_labels: %w", err))
 		}
 	}
 }

@@ -58,6 +58,13 @@ func (o Value[T]) MarshalJSON() ([]byte, error) {
 // A JSON null will set the zero value for T (nil for pointer types).
 func (o *Value[T]) UnmarshalJSON(data []byte) error {
 	o.set = true
+	if string(data) == "null" {
+		// Null is always the zero T, even for a T whose own UnmarshalJSON
+		// handles null, so a JSON column's null becomes SQL NULL.
+		var zero T
+		o.value = zero
+		return nil
+	}
 	if err := json.Unmarshal(data, &o.value); err != nil {
 		return fmt.Errorf("omittable unmarshal: %w", err)
 	}

@@ -97,15 +97,15 @@ input UserSort {
 input CreateUserInput {
   name: String!
   email: String!
-  role: String!
+  role: String
   age: Int
   bio: String
-  isActive: Boolean!
-  balance: Float!
-  loginCount: Int!
+  isActive: Boolean
+  balance: Float
+  loginCount: Int
   avatar: Bytes
   score: Float
-  createdAt: DateTime!
+  createdAt: DateTime
   updatedAt: NullDateTime
 }
 input UpdateUserInput {

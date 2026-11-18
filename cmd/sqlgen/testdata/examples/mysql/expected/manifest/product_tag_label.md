@@ -62,19 +62,6 @@ mysql:
 SELECT `description`, `label`, `product_id`, `tag_name` FROM `product_tag_labels` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ProductTagLabelFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `product_tag_labels` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk ProductTagLabelPK`
@@ -99,6 +86,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `product_tag_labels` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ProductTagLabelFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `product_tag_labels` WHERE <filter>
 ```
 
 ### Paginate
@@ -159,36 +159,6 @@ mysql:
 INSERT INTO `product_tag_labels` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateProductTagLabelInput`, `target ProductTagLabelConflictTarget`
-- Returns: `*ProductTagLabel`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ProductTagLabelConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `product_tag_labels` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateProductTagLabelInput`, `target ProductTagLabelConflictTarget`
-- Returns: `[]*ProductTagLabel`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ProductTagLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `product_tag_labels` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `pk ProductTagLabelPK`, `input *UpdateProductTagLabelInput`
@@ -234,6 +204,36 @@ mysql:
 UPDATE `product_tag_labels` SET <set> WHERE <filter>
 ```
 
+### Upsert
+
+- Params: `input *CreateProductTagLabelInput`, `target ProductTagLabelConflictTarget`
+- Returns: `*ProductTagLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ProductTagLabelConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `product_tag_labels` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateProductTagLabelInput`, `target ProductTagLabelConflictTarget`
+- Returns: `[]*ProductTagLabel`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ProductTagLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `product_tag_labels` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
+```
+
 ### HardDelete
 
 - Params: `pk ProductTagLabelPK`
@@ -259,7 +259,7 @@ Generated SQL:
 mysql:
 
 ```sql
-DELETE FROM `product_tag_labels` WHERE <pks>
+DELETE FROM `product_tag_labels` WHERE (`product_id`, `tag_name`, `label`) IN (<pks>)
 ```
 
 ### HardDeleteWhere
@@ -295,3 +295,17 @@ Type `ProductTagLabelFilter`.
 Type `ProductTagLabelSort`.
 
 Fields: Description, Label, ProductID, TagName
+
+## Read examples
+
+```go
+row, err := client.ProductTagLabels().Get(ctx, models.ProductTagLabelPK{ProductID: 1, TagName: "example", Label: "example"})
+rows, err := client.ProductTagLabels().GetMany(ctx, &models.GetProductTagLabelsInput{Filter: &models.ProductTagLabelFilter{Description: &comparator.NullableString{Null: new(true)}}})
+```
+
+## Write examples
+
+```go
+created, err := client.ProductTagLabels().Create(ctx, &models.CreateProductTagLabelInput{ProductID: 1, TagName: "example", Label: "example"})
+updated, err := client.ProductTagLabels().Update(ctx, models.ProductTagLabelPK{ProductID: 1, TagName: "example", Label: "example"}, &models.UpdateProductTagLabelInput{Description: omittable.Set(new("example"))})
+```

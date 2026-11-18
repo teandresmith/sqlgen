@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
+	gotypeliteral "github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/literal"
 )
 
 // This file rejects a by-SQL-type Go type literal whose package could never be
@@ -115,6 +116,13 @@ func typeOverrideImportErrors(scope string, types map[string]config.TypeOverride
 			// inherit, and `nullable: pkg.NullT` would resolve to a package
 			// nothing imports. The `nullable: uuid.NullUUID` shorthand is
 			// untouched: its parent carries the import it inherits.
+			errs = append(errs, unimportableTypeError(
+				scope+"."+sqlType+".nullable", override.Nullable.Type,
+			))
+		case override.Import != "" && override.Nullable.Import == "" &&
+			gotypeliteral.NullableNeedsOwnImport(override.Type, override.Nullable.Type):
+			// The variant inherits the parent's import, which names another
+			// package, so its own would never be imported.
 			errs = append(errs, unimportableTypeError(
 				scope+"."+sqlType+".nullable", override.Nullable.Type,
 			))

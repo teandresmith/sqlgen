@@ -10,6 +10,8 @@ type BinaryKey {
   createdAt: DateTime!
   "one-to-many relationship with the binary_key_events table."
   events: [BinaryKeyEvent!]!
+  "many-to-many relationship with the badges table."
+  badges: [Badge!]!
   "one-to-many relationship with the binary_key_events table."
   binaryKeyEvents: [BinaryKeyEvent!]!
 }
@@ -36,6 +38,7 @@ type BinaryKeyListResult {
 input BinaryKeyFilter {
   name: StringComparator
   createdAt: TimeComparator
+  badges: BadgeFilter
   binaryKeyEvents: BinaryKeyEventFilter
   events: BinaryKeyEventFilter
   and: [BinaryKeyFilter!]
@@ -55,7 +58,7 @@ input BinaryKeySort {
 input CreateBinaryKeyInput {
   id: Bytes!
   name: String!
-  createdAt: DateTime!
+  createdAt: DateTime
 }
 input UpdateBinaryKeyInput {
   name: String

@@ -178,7 +178,12 @@ func hasPrefix(s, p string) bool { return len(s) >= len(p) && s[:len(p)] == p }
 // resetDB clears every table between tests.
 func resetDB(t *testing.T) {
 	t.Helper()
-	for _, table := range []string{"articles", "line_items", "documents"} {
+	for _, table := range []string{
+		"articles", "line_items", "documents",
+		"template_stamps", "stamps", "template_labels", "template_steps", "templates", "tasks", "cycles", "labels",
+		"moment_tag_links", "moment_tags", "moments", "moment_owners",
+		"workspace_notes", "workspaces",
+	} {
 		if _, err := testDB.Exec("DELETE FROM " + table); err != nil {
 			t.Fatalf("reset %s: %v", table, err)
 		}

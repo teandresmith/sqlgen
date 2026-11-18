@@ -518,11 +518,11 @@ func assertM2MCreateLinksTheRowsItInserted(t *testing.T, client *models.Client, 
 	}
 }
 
-// TestNestedMutations_O2MAdoption walks the adoption path end to end on MySQL:
-// §9.9.6's three-way `connect`, then `disconnect` and `clear`. Each unlink
-// reads the column back rather than trusting the call: leaving the FK out
-// of the SET list and setting it NULL are both expressible, both match their
-// rows and both report success, but only the second unlinks anything.
+// TestNestedMutations_O2MAdoption pins the O2M adoption's lost-race case on
+// MySQL, the one dialect whose `*Where` pre-SELECT reads from the transaction's
+// REPEATABLE READ snapshot. The rest of the adoption path (the three-way
+// `connect`, `disconnect` and `clear`) is in the cross-dialect conformance
+// suite, which runs on MySQL too.
 func TestNestedMutations_O2MAdoption(t *testing.T) {
 	ctx := context.Background()
 	client := newClient()
@@ -538,88 +538,6 @@ func TestNestedMutations_O2MAdoption(t *testing.T) {
 
 	user := seedNestedUser(t, client, "adoption@example.com")
 	other := seedNestedUser(t, client, "adoption-other@example.com")
-
-	t.Run("an orphan is adopted", func(t *testing.T) {
-		orphan := seedUserEvent(t, client, nil, "adoption-orphan")
-		if _, err := client.Users().UpdateWithRelated(ctx, user, &models.UpdateUserWithRelatedInput{
-			UserEvents: &models.UserUserEventsUpdateNested{Connect: []int64{orphan}},
-		}); err != nil {
-			t.Fatalf("UpdateWithRelated: %v", err)
-		}
-		if got := owner(t, orphan); got == nil || *got != user {
-			t.Errorf("user_id = %v, want %d", got, user)
-		}
-	})
-
-	t.Run("already ours is a no-op", func(t *testing.T) {
-		ours := seedUserEvent(t, client, &user, "adoption-ours")
-		if _, err := client.Users().UpdateWithRelated(ctx, user, &models.UpdateUserWithRelatedInput{
-			UserEvents: &models.UserUserEventsUpdateNested{Connect: []int64{ours}},
-		}); err != nil {
-			t.Fatalf("connecting a row already on the edge: %v — the requested end state holds", err)
-		}
-		if got := owner(t, ours); got == nil || *got != user {
-			t.Errorf("user_id = %v, want it still %d", got, user)
-		}
-	})
-
-	t.Run("parented elsewhere is ErrAlreadyRelated", func(t *testing.T) {
-		taken := seedUserEvent(t, client, &other, "adoption-taken")
-		_, err := client.Users().UpdateWithRelated(ctx, user, &models.UpdateUserWithRelatedInput{
-			UserEvents: &models.UserUserEventsUpdateNested{Connect: []int64{taken}},
-		})
-		if !errors.Is(err, models.ErrAlreadyRelated) {
-			t.Fatalf("err = %v, want ErrAlreadyRelated", err)
-		}
-		var nested *models.NestedMutationError
-		if !errors.As(err, &nested) || nested.Edge != "UserEvents" || nested.Verb != "connect" || nested.ID != taken {
-			t.Errorf("attribution = %v, want UserEvents/connect naming %d", err, taken)
-		}
-		if got := owner(t, taken); got == nil || *got != other {
-			t.Errorf("user_id = %v, want it still %d", got, other)
-		}
-	})
-
-	t.Run("not visible is ErrNotFound", func(t *testing.T) {
-		_, err := client.Users().UpdateWithRelated(ctx, user, &models.UpdateUserWithRelatedInput{
-			UserEvents: &models.UserUserEventsUpdateNested{Connect: []int64{9_000_000_000}},
-		})
-		if !errors.Is(err, models.ErrNotFound) {
-			t.Fatalf("err = %v, want ErrNotFound — never CONFLICT, which would confirm the row exists", err)
-		}
-	})
-
-	t.Run("disconnect sets the FK NULL", func(t *testing.T) {
-		child := seedUserEvent(t, client, &user, "adoption-disconnect")
-		if _, err := client.Users().UpdateWithRelated(ctx, user, &models.UpdateUserWithRelatedInput{
-			UserEvents: &models.UserUserEventsUpdateNested{Disconnect: []int64{child}},
-		}); err != nil {
-			t.Fatalf("UpdateWithRelated: %v", err)
-		}
-		if got := owner(t, child); got != nil {
-			t.Errorf("user_id = %d, want NULL", *got)
-		}
-	})
-
-	t.Run("clear sets every FK on the edge NULL, and only on the edge", func(t *testing.T) {
-		parent := seedNestedUser(t, client, "adoption-clear@example.com")
-		a := seedUserEvent(t, client, &parent, "adoption-clear-a")
-		b := seedUserEvent(t, client, &parent, "adoption-clear-b")
-		bystander := seedUserEvent(t, client, &other, "adoption-clear-bystander")
-		if _, err := client.Users().UpdateWithRelated(ctx, parent, &models.UpdateUserWithRelatedInput{
-			UserEvents: &models.UserUserEventsUpdateNested{Clear: true},
-		}); err != nil {
-			t.Fatalf("UpdateWithRelated: %v", err)
-		}
-		for _, id := range []int64{a, b} {
-			if got := owner(t, id); got != nil {
-				t.Errorf("event %d: user_id = %d, want NULL", id, *got)
-			}
-		}
-		if got := owner(t, bystander); got == nil || *got != other {
-			t.Errorf("clear reached another parent's event: user_id = %v, want %d", got, other)
-		}
-	})
 
 	// This is the case §9.9.6's `fk IS NULL` guard exists for: the row is
 	// unparented when the visibility read looks at it and parented by another

@@ -345,7 +345,6 @@ Controls where the schema is read from.
 | `schema` | `string` | `"*"` | — | PostgreSQL only: the schema that an unqualified table name, view name or `REFERENCES` target resolves to when parsing SQL files. `"*"` resolves to `public`. It does not filter which schemas are parsed or generated; `introspect.schemas` filters introspection. On MySQL/SQLite a value other than `"*"` is ignored with a warning ([4.13](#413-config-validation-rules)). See [5.5](#55-schema-qualification--table-naming). |
 | `paths` | `[]string` | `["."]` | — | SQL file/directory paths to parse (when source is `files` or `both`). Ignored under `source: database`, including the `["."]` default: no file is read. Setting it explicitly there warns ([4.13](#413-config-validation-rules)). |
 | `views` | `[]string` | `[]` | — | Paths to view annotation files or directories containing them. Files here are parsed exclusively as views — not as DDL. See [Section 16.1](#161-annotation-files-file-sourced-views). |
-| `parse_mode` | `string` | `"strict"` | `strict`, `merge` | How duplicate table definitions across files are handled. See [5.6](#56-multi-file-parsing-order). |
 | `connection` | `ConnectionConfig` | — | — | Required when `source` is `database` or `both`. |
 | `introspect` | `IntrospectConfig` | — | — | Schema/table filtering for introspection. Has no effect under `source: files`, and setting it there warns ([4.13](#413-config-validation-rules)). |
 
@@ -409,11 +408,13 @@ Controls where generated code is written. All artifact-specific paths default to
 |-------|------|---------|--------------|-------------|
 | `driver` | `string` | `"pgx"` | `pgx`, `stdlib` | Go database driver imported by generated code. |
 | `dir` | `string` | `"."` | — | Default output directory for all generated artifacts. |
-| `package` | `string` | derived from `dir` | — | Default Go package name. If omitted, derived from the directory name. |
+| `package` | `string` | derived from `dir` | — | Default Go package name. If omitted, derived from the name of the directory `dir` resolves to, so the default `"."` takes the working directory's name. |
 | `layout` | `string` | `"single_file"` | `single_file`, `file_per_table` | File layout strategy for tables. |
-| `enums` | `EnumOutputConfig` | — | — | Override output location for enums. |
-| `types` | `TypeOutputConfig` | — | — | Override output location for composite/domain types. |
+| `enums` | `EnumOutputConfig` | — | — | Override the enums file name. |
+| `types` | `TypeOutputConfig` | — | — | Override the composite/domain types file name. |
 | `client` | `ClientOutputConfig` | — | — | Unified client output settings. |
+
+The enums and types files are part of the models package: generated models name their types unqualified and never import another package for them. So each file must resolve to a path directly in `output.dir`, and its `package`, when set, must equal `output.package`. Anything else is a validation error naming the key ([4.13](#413-config-validation-rules)).
 
 **EnumOutputConfig:**
 
@@ -440,7 +441,7 @@ The unified client is always generated. It is the primary API surface for consum
 
 ### 4.6 GenerationConfig
 
-Global defaults that control how code is generated and how generated code behaves at runtime. **Every field in this section can be overridden per-table** in the `tables.<table>` config (see [4.8](#48-tableconfig-per-table)).
+Global defaults that control how code is generated and how generated code behaves at runtime. **`query_limit`, `batch_size`, `page_size`, `cursor_keys`, `exclude_columns` and `strict_updates` can be overridden per-table** in the `tables.<table>` config, and `uuid_version` through `tables.<table>.primary_key` (see [4.8](#48-tableconfig-per-table)). The other fields are global only; setting one under `tables.<table>` is an unknown key.
 
 Resolution order for any generation field:
 1. Table-level value (if set)
@@ -460,7 +461,7 @@ Resolution order for any generation field:
 | `page_size` | `int` | `100` | Default page size for pagination when none specified. |
 | `cursor_keys` | `[]string` | `["id"]` | Columns used for cursor encoding in keyset pagination. Applied as the default to every table and view unless overridden. When inherited (i.e. not explicitly set on a table/view), missing or nullable columns trigger a fallback instead of an error — see [4.13](#413-config-validation-rules). |
 | `uuid_version` | `string` | `"v4"` | UUID generation strategy for app-generated UUID PKs. `v4` = random, `v7` = time-ordered. |
-| `strict_updates` | `bool` | `true` | When true, `Update` and `Increment` return `ErrNotFound` if the target PK does not exist. When false, they return `nil` (idempotent). See [9.5](#95-edge-case-behaviors). |
+| `strict_updates` | `bool` | `true` | When true, `Update` and `Increment` return `ErrNotFound` if the target PK does not exist. When false, they return `nil` (idempotent), with or without fields to set, and `UpdateWithRelated` on a missing parent returns `nil` and writes nothing nested. See [9.5](#95-edge-case-behaviors). |
 
 #### Schema Detection
 
@@ -492,6 +493,8 @@ The `integer` type supports `0`/`1` soft delete patterns common in legacy schema
 Custom soft delete value mappings — `varchar` columns carrying `"yes"`/`"no"` or `"active"`/`"deleted"` — are out of scope. The supported column types are those listed above, and no other.
 
 **Default `update_columns`:** `[updated_at, updated_datetime, last_modified_at, modified_on]`
+
+The defaults apply only when a key is absent. An explicit empty list is kept: `soft_delete_columns: []` turns soft-delete detection off and `update_columns: []` turns update tracking off. `cursor_keys: []`, global or per table or view, is a validation error ([4.13](#413-config-validation-rules)): a cursor needs a key.
 
 #### Column Exclusion
 
@@ -566,7 +569,7 @@ Optional, AI-friendly structured description of the generated package. Emits JSO
 | `type` | `string` | Yes | Go type name (e.g., `uuid.UUID`, `ksuid.KSUID`). |
 | `import` | `string` | Conditional | Import path for the type. **Required** when `type` names a package sqlgen does not already know — the same rule `column_map.<col>.import` carries ([4.8](#column-overrides)). Omit it for builtins (`string`, `int64`, …), same-package types (`Address`), and built-in literals that resolve their own import (`time.Time`, `json.RawMessage`, `types.JSON`, `net.IP`). A package-qualified `type` with no `import` is a config error, because nothing else would put the package in the generated file's import block. |
 | `zero_value` | `string` | No | Zero value literal. Derived automatically (`Type{}` for structs, `""` for strings, `0` for numbers). Override only when derivation is wrong. |
-| `nullable` | `string` or `NullableOverride` | No | Nullable variant. Shorthand: `"uuid.NullUUID"` (same import as parent). Full form: `{type, import, underlying_field, valid_field, valid_method, valid_invert}`. If omitted, uses `*T` when `use_pointers` is true, or `sql.Null*` when false. |
+| `nullable` | `string` or `NullableOverride` | No | Nullable variant. Shorthand: `"uuid.NullUUID"` (same import as parent). Full form: `{type, import, underlying_field, valid_field, valid_method, valid_invert}`. If omitted, uses `*T` when `use_pointers` is true, or `sql.Null*` when false; for a wrapper-backed built-in integration ([7.4](#74-built-in-type-integrations): `github.com/google/uuid`, `github.com/gofrs/uuid/v5`, `github.com/shopspring/decimal`) it is the integration's wrapper (`uuid.NullUUID`, `decimal.NullDecimal`) under either setting. |
 
 **The named type must cross the driver boundary on its own.** It either implements `sql.Scanner` and `driver.Valuer`, or the driver special-cases it — `database/sql` handles the standard library's `uuid.UUID` in both directions and pgx routes it through `UUIDCodec` ([7.4](#74-built-in-type-integrations)). A type that does neither cannot be named directly; wrap it in a type of your own that implements the two methods and point the override at the wrapper:
 
@@ -597,13 +600,13 @@ sqlgen performs no conversion of its own: the scan target is always the resolved
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `type` | `string` | Yes | Nullable Go type (e.g., `uuid.NullUUID`). |
-| `import` | `string` | Conditional | Import path. Needed when it differs from the parent type's import, **or** when the parent needed none — a builtin or same-package parent has no import for the nullable variant to inherit, so `{type: string, nullable: sql.NullString}` must spell `nullable.import: database/sql` in the full form. A package-qualified `nullable.type` with no import on either half is a config error, on the same terms as [4.7](#47-overrideconfig)'s `import` row. |
+| `import` | `string` | Conditional | Import path. Needed when it differs from the parent type's import, **or** when the parent needed none — a builtin or same-package parent has no import for the nullable variant to inherit, so `{type: string, nullable: sql.NullString}` must spell `nullable.import: database/sql` in the full form. A package-qualified `nullable.type` with no import on either half is a config error, on the same terms as [4.7](#47-overrideconfig)'s `import` row. So is one with no `nullable.import` whose package differs from the parent `type`'s (`{type: pgtype.Text, import: …, nullable: types.JSON}`): it would inherit the parent's import. |
 | `underlying_field` | `string` | No | Name of the embedded scalar field on the wrapper struct (e.g., `"UUID"` for `uuid.NullUUID`, `"Decimal"` for `decimal.NullDecimal`). Required for FK stringification when the wrapper does not itself implement `String()`. Built-in integrations populate this automatically; user-declared wrappers must set it. |
 | `valid_field` | `string` | No | Bool field on the wrapper that signals validity. Defaults to `"Valid"` (the `database/sql.NullX`, `uuid.NullUUID`, `decimal.NullDecimal` convention). Mutually exclusive with `valid_method`. |
 | `valid_method` | `string` | No | Method on the wrapper returning a bool — alternative to `valid_field` for wrappers that expose validity via a method (e.g., `IsValid`, `IsPresent`, `IsZero`). Mutually exclusive with `valid_field`. |
 | `valid_invert` | `bool` | No | Negates the `valid_method` result. Use when the method signals *invalidity* — e.g., `time.Time.IsZero()` returns true when the value is empty, so set `valid_invert: true` to interpret it as "not valid." Only meaningful with `valid_method`. |
 
-`underlying_field` powers the FK stringification path used by O2M relationship loaders (the loader unwraps a possibly-null FK value before stringifying it for parent/child bucket lookup). Without it, a FK column resolved to a `Null*` wrapper that lacks `String()` would generate code that fails to compile. Built-in integrations (`uuid.NullUUID` → `UUID`, `decimal.NullDecimal` → `Decimal`, `types.NullDateTime` → `DateTime`) and `database/sql.NullX` types are recognized automatically — users only declare these fields for custom wrappers.
+`underlying_field` powers the FK stringification path used by O2M relationship loaders (the loader unwraps a possibly-null FK value before stringifying it for parent/child bucket lookup). Without it, a FK column resolved to a `Null*` wrapper that lacks `String()` would generate code that fails to compile. Built-in integrations (`uuid.NullUUID` → `UUID`, `decimal.NullDecimal` → `Decimal`, `types.NullDateTime` → `Time`) and `database/sql.NullX` types are recognized automatically — users only declare these fields for custom wrappers.
 
 **Validation:**
 - Setting both `valid_field` and `valid_method` is rejected.
@@ -653,7 +656,7 @@ overrides:
 3. **Pointer type (`*T`)** — guard is `<var> != nil`; unwrap is `(*<var>)`; string conversion is derived from the pointed-to type.
 4. **Bare type** — no guard. If the type has a `.String()` method (UUID-style, `time.Time`, `time.Duration`, `net.IP`, `net.IPNet`, `net.HardwareAddr`, `types.DateTime`, `*.UUID`) → call `.String()`. If the type is `string` → pass through. Otherwise → `fmt.Sprint(<var>)`.
 
-This applies only when the FK column is read off a *child* entity in a relationship loader. Parent-side / target-side PK reads never hit a Null wrapper because primary keys are never nullable.
+This applies to every FK column read off a *child* entity in a relationship loader, one per member of a composite key. Parent-side / target-side reads are of the columns the key references: a primary key is never nullable, and a referenced UNIQUE column holding a NULL is skipped before the query ([13.3](#133-fk-type-conversion)).
 
 ### 4.8 TableConfig (per-table)
 
@@ -665,19 +668,19 @@ Each entry in the `tables` map customizes a specific table. Key is the table nam
 |-------|------|-------------|
 | `struct_name` | `string` | Override Go struct name. Defaults to singular PascalCase of table name. |
 | `description` | `string` | Override Go doc comment for the struct. If omitted, the parsed SQL comment (`COMMENT ON TABLE` in PostgreSQL, inline `COMMENT` in MySQL) is used. If no SQL comment exists, no doc comment is generated. |
-| `overrides` | `OverrideConfig` | Table-specific type overrides (same structure as global). |
+| `overrides` | `OverrideConfig` | Table-specific type overrides: `types` only, with the same structure as the global `overrides.types`. `use_pointers` is global; setting it here is a validation error ([4.13](#413-config-validation-rules)). |
 | `primary_key` | `TablePrimaryKeyConfig` | Override PK strategy and/or declare PK columns for this table (`{strategy, uuid_version, columns}`). `columns` is the explicit column-set override used when the schema has no `PRIMARY KEY` clause — see [8.6 PK Column Override](#86-primary-key-strategy). |
 | `exclude_relationships` | `[]string` | Disable auto-detected relationships by name. E.g., `[Company, AssignedTo]`. |
 | `relationships` | `[]TableRelationship` | Explicitly defined relationships. If a manual relationship resolves to the same Go field name as an auto-detected one, the manual definition replaces it — with a non-fatal warning. See [13.4](#134-manual-relationship-configuration). |
 | `cache` | `TableCacheConfig` | Per-table cache overrides (`enabled`, `ttl` — tri-state pointers; unset means inherit global). A per-table `enabled: true` can opt into caching even when global `cache.enabled: false`. See [Section 27](#27-caching). |
-| `events` | `TableEventConfig` | Per-table event overrides (enabled). Overrides global `events`. See [Section 28](#28-event-system). |
-| `tenancy` | `TableTenancyConfig` | Per-table tenancy overrides (`enabled`, `column`, `required`, `type` — tri-state pointers; unset means inherit global). Use to opt tables out of tenant scoping or to override the tenant column name for legacy schemas. See [Section 29](#29-tenancy). |
+| `events` | `TableEventConfig` | Per-table event override (`enabled`). It only opts a table out: `enabled: true` while global `events.enabled` is off is a validation error. See [Section 28](#28-event-system). |
+| `tenancy` | `TableTenancyConfig` | Per-table tenancy overrides (`enabled`, `column`, `required`, `type` — tri-state pointers; unset means inherit global). Use to opt tables out of tenant scoping or to override the tenant column name for legacy schemas. `enabled` only opts a table out: `enabled: true` while global `tenancy.enabled` is off is a validation error. See [Section 29](#29-tenancy). |
 | `api` | `TableAPIConfig` | Per-table API settings. `{enabled: bool, path: string}`. See [26.10](#2610-per-table-api-configuration). |
 | `nested_mutations` | `TableNestedMutationsConfig` | Per-table nested-mutation settings — the optional edge allowlist and its per-edge options. See [Nested mutations per table](#nested-mutations-per-table) below and [9.9](#99-nested-mutations). |
 
 #### Generation Overrides
 
-Any field from `generation` can be set per-table to override the global default. Table-level values take precedence.
+These `generation` fields can be set per-table to override the global default; no other `generation` field can. Table-level values take precedence.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -801,10 +804,10 @@ When both `column_map` and `type_map` specify a type for the same column, `colum
 | `type` | `string` | Yes | Relationship cardinality: `o2o`, `o2m`, `m2m`, or the long spellings `one_to_one`, `one_to_many`, `many_to_many` (case-insensitive). Any other value, or an omitted `type`, is a config error. |
 | `side` | `string` | No (O2O only) | Which end of the edge this entry represents. `parent` (default) for the FK-holder side; `child` for the inverse view from the referenced side. Either value is case-insensitive. The manifest emits `kind: "o2o"` for `parent` and `kind: "m2o"` for `child`. Ignored for `o2m` and `m2m` (auto-detection emits both peers as parent-side). |
 | `table` | `string` | Yes | Related table name (bare or schema-qualified). |
-| `fk` | `string` | Yes (O2O/O2M) | The FK column that creates the link. For O2M: column on the **related** table pointing to this table's PK. For O2O: column on **this** table pointing to the related table's PK (belongs-to), or on the **related** table pointing to this table's PK (has-one); which one is derived from where the column is declared ([13.1](#131-relationship-types)). |
-| `junction` | `string` | Yes (M2M) | Junction table name (bare or schema-qualified). FK column names are inferred from the linked table names (e.g., `product_id`, `tag_id`). |
-| `junction_local_fk` | `string` | No (M2M) | Override inferred FK column in junction table for this table. Only needed when column name doesn't follow `{table_singular}_id` convention. |
-| `junction_reference_fk` | `string` | No (M2M) | Override inferred FK column in junction table for the related table. |
+| `fk` | `string` or `[]string` | Yes (O2O/O2M) | The FK column or columns that create the link. For O2M: columns on the **related** table pointing to this table's PK. For O2O: columns on **this** table pointing to the related table's PK (belongs-to), or on the **related** table pointing to this table's PK (has-one); which one is derived from where the columns are declared ([13.1](#131-relationship-types)). A list maps by position onto the primary key of the table it references, in that key's `PRIMARY KEY (...)` order (or its `primary_key.columns` order when overridden), and its length must equal that key's column count ([4.13](#413-config-validation-rules)). A string is a one-item list. |
+| `junction` | `string` | Yes (M2M) | Junction table name (bare or schema-qualified). FK column names are inferred from the linked table names (e.g., `product_id`, `tag_id`). Inference gives one column per side, so a linked table with a composite primary key needs `junction_local_fk` or `junction_reference_fk`. |
+| `junction_local_fk` | `string` or `[]string` | No (M2M) | Override the inferred FK column or columns in the junction table for this table. Only needed when the column name doesn't follow the `{table_singular}_id` convention, or when this table's primary key is composite. A list maps by position onto this table's primary key, as `fk` does. |
+| `junction_reference_fk` | `string` or `[]string` | No (M2M) | Override the inferred FK column or columns in the junction table for the related table. A list maps by position onto the related table's primary key, as `fk` does. |
 | `filter` | `string` | No | Static SQL condition appended to the relationship loader's WHERE clause. Used for discriminator-based (polymorphic) relationships. The condition is injected as-is — it must be valid SQL for the configured dialect. Mutually exclusive with `discriminator`. See [Polymorphic Relationships](#polymorphic-relationships) below. |
 | `discriminator` | `RelationshipDiscriminator` | No | Structured `{column, value}` form of a polymorphic predicate — the column lives on the related table and the value is bound as a parameter on every read path that can carry one ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) names the one that cannot). Compiles to the same equality predicate the equivalent `filter` produced, and is the **only** polymorphic form that is write-eligible for nested mutations. Mutually exclusive with `filter`. See [13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge). |
 | `sort` | `[]RelationshipSort` | No | Default ordering for loaded related entities, **O2M and M2M only**. Applied as `ORDER BY` in the relationship loader query when the caller passes no `Sorts` ([12.1](#relationship-loading-options)). If omitted, no ordering is applied (database-default order). Rejected on an O2O relationship, which is loaded by a `LEFT JOIN` in the parent query and has no loader query to order ([13.2](#132-loading-strategy)); see [4.13](#413-config-validation-rules). |
@@ -818,6 +821,8 @@ When both `column_map` and `type_map` specify a type for the same column, `colum
 | `o2o` belongs-to | This table | Column on this table that references the related table's PK |
 | `o2o` has-one | Related table | Column on the related table that references this table's PK |
 | `m2m` | N/A | Not used — junction table handles the link |
+
+**A manual relationship joins the primary key.** `fk` and the two junction keys name the FK columns only; there is no key naming the columns they reference. A list's first column references the first primary-key column, its second the second, and so on, in the order the primary key declares them. A foreign key to a non-PK UNIQUE key is detected ([5.3](#53-relationship-detection)) but cannot be declared.
 
 **RelationshipDiscriminator:**
 
@@ -878,6 +883,15 @@ tables:
         table: comments
         fk: commentable_id
         filter: "commentable_type = 'products'"
+
+  workspace_settings:          # primary key (workspace_id, key)
+    relationships:
+      # O2M to a composite primary key, mapped by position:
+      # setting_overrides(workspace_id, setting_key) → workspace_settings(workspace_id, key)
+      - name: Overrides
+        type: o2m
+        table: setting_overrides
+        fk: [workspace_id, setting_key]
 ```
 
 #### Polymorphic Relationships
@@ -965,7 +979,7 @@ tables:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | `string` | — | The relationship's resolved Go field name, as it appears on the entity struct. Required. |
-| `allow_reparent` | `bool` | `false` | Lets an O2M `connect` on this edge adopt a row that is already parented elsewhere. With the default, such a row is `ErrAlreadyRelated`. This is per-edge config and never a per-call option: moving a row between parents is a static, reviewable policy decision, and a `CallOptions` flag would make it a per-request authorization decision, which [29.11](#2911-constraints) puts out of scope. |
+| `allow_reparent` | `bool` | `false` | Lets an O2M `connect` on this edge adopt a row that is already parented elsewhere. With the default, such a row is `ErrAlreadyRelated`. A reparent writes only the key's free members; a target whose pinned member differs from the parent's is still `ErrAlreadyRelated` ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)). This is per-edge config and never a per-call option: moving a row between parents is a static, reviewable policy decision, and a `CallOptions` flag would make it a per-request authorization decision, which [29.11](#2911-constraints) puts out of scope. |
 
 ### 4.9 ViewConfig (per-view)
 
@@ -973,8 +987,7 @@ Each entry in the `views` map defines a read-only view. Key is view identifier.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `struct_name` | `string` | Yes | Go struct name. |
-| `sql` | `string` | Yes | Path to SQL file containing the SELECT statement. |
+| `struct_name` | `string` | No | Override the Go struct name, which otherwise derives from the view name ([8.5](#85-naming-rules)). The view itself comes from `input.views` annotation files ([16.1](#161-annotation-files-file-sourced-views)) or introspection ([16.2](#162-introspected-views-db-sourced-views)), not from this block. |
 | `cache` | `ViewCacheConfig` | No | View cache overrides (`enabled`, `ttl` — tri-state pointers). **Opt-in:** views do NOT inherit global `cache.enabled`; a view is cached only when `view.cache.enabled: true` is set explicitly AND `invalidate_on` is non-empty. See [Section 27](#27-caching). |
 | `invalidate_on` | `[]string` | Conditional | Table names whose mutations invalidate this view's cache. **Required** when `cache.enabled: true` (hard validation error if missing). Table names must resolve to parsed tables that are included in generation (excluded tables are a hard error — no mutation hook fires for them). See [27.11](#2711-view-cache-invalidation). |
 | `cursor_keys` | `[]string` | No | Override `generation.cursor_keys` for this view. When set explicitly, every listed column must exist on this view and be NOT NULL (hard error). When omitted, the global value is applied if all its columns exist on the view and are NOT NULL; otherwise the view's `Connection` method is omitted with a warning. Views have no primary key, so there is no PK fallback. See [4.13](#413-config-validation-rules). |
@@ -1007,7 +1020,7 @@ Per-enum overrides live in the **top-level `enums:` map**, a sibling of `tables:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `struct_name` | `string` | Override the generated Go type name. Defaults to the PascalCased SQL enum name. |
+| `struct_name` | `string` | Override the generated Go type name. Defaults to the singular PascalCase of the SQL enum name, as a table's struct name does ([8.5](#85-naming-rules)). |
 | `description` | `string` | Go doc comment on the generated type. Overrides the SQL `COMMENT ON TYPE` when both are present. |
 
 ```yaml
@@ -1143,7 +1156,6 @@ tables:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: "./views/product_summary.sql"
     cache:
       enabled: true
       ttl: "15m"
@@ -1167,12 +1179,15 @@ extras:
 
 ### 4.13 Config Validation Rules
 
-The config is validated immediately after loading, before parsing or generation begins. All validation errors are reported together (not one at a time) so the consumer can fix them in one pass. Validation errors cause the CLI to exit with code `2`.
+The config is validated immediately after loading, before parsing or generation begins. All validation errors are reported together (not one at a time) so the consumer can fix them in one pass. Validation errors cause the CLI to exit with code `2`, except the resolution-level rules (phase 3 below): they are found while the generator's contexts are built, so they exit `1` like any other generation error ([23.9](#239-exit-codes)), under `generate`, `validate` and `lint` alike.
 
 | Rule | Severity | Message |
 |------|----------|---------|
 | **Driver/dialect mismatch** | Error | `output.driver: pgx` is only compatible with `input.dialect: postgres`. Using pgx with MySQL or SQLite is a validation error. |
 | **Table-level `cursor_keys` referencing non-existent columns** | Error | When `tables.<name>.cursor_keys` is set explicitly, every listed column must exist on that table. |
+| **An `extras` key or `fields` key that is not an exported Go identifier** | Error | An `extras` key is the generated struct's Go name and a `fields` key the field's Go name ([4.10](#410-extratype-custom-structs)), used as written; one that is not an exported Go identifier is a validation error naming the key. |
+| **An enums or types file outside the models package** | Error | `output.enums.file` / `output.types.file` must resolve directly into `output.dir`, and `output.enums.package` / `output.types.package`, when set, must equal `output.package` ([4.5](#45-outputconfig)). The error names the key. |
+| **An empty `cursor_keys` list** | Error | `generation.cursor_keys`, `tables.<name>.cursor_keys` or `views.<name>.cursor_keys` set to `[]`: a cursor needs at least one key column. Omit the key to inherit the default. |
 | **View-level `cursor_keys` referencing non-existent columns** | Error | When `views.<name>.cursor_keys` is set explicitly, every listed column must exist on that view. |
 | **Explicit `cursor_keys` naming a nullable column** | Error | When `tables.<name>.cursor_keys` or `views.<name>.cursor_keys` is set explicitly, every listed column must be NOT NULL: a NULL key value encodes into a cursor that cannot be decoded back, so no row past it can be paged to. A view column's nullability is the one [16.3](#163-column-type-resolution) resolves. The error names the table or view and the column. |
 | **Inherited `cursor_keys` naming a nullable column** | As a missing column | An inherited key that names a nullable column does not resolve, exactly as a missing one does: a table falls back to its primary key, a table without one and a view omit `Connection` with a warning (rules below). On a view, `@type` or `@pk` on the column makes it NOT NULL ([16.3](#163-column-type-resolution)). |
@@ -1181,6 +1196,7 @@ The config is validated immediately after loading, before parsing or generation 
 | **Inherited `cursor_keys` missing on a table without a PK** | Warning | When a table inherits `generation.cursor_keys`, any listed column is missing, and the table has no primary key, the table's `Connection` method is omitted. A warning is emitted naming the table. |
 | **Table has no primary key after override resolution** | Warning | When a table has no `PRIMARY KEY` clause and no `tables.<name>.primary_key.columns` override, the table is skipped from generation entirely (see [No-PK tables are skipped](#94b-no-pk-tables-are-skipped)). No client, model, filter type, cache entry, or event hook is emitted; other tables are unaffected. Warning text: `table %s has no primary key; skipped from generation`. Use `tables.<name>.primary_key.columns` to declare a PK or `exclude_tables` to silence the warning. |
 | **`primary_key.columns` references non-existent column** | Error | Every column listed in `tables.<name>.primary_key.columns` must exist on the table after `exclude_columns` is applied. |
+| **`exclude_columns` removes a primary-key column** | Error *(schema-level)* | When a table has no `primary_key.columns` override, global + table-level `exclude_columns` must not remove a member of its detected primary key: every generated method, cache key and event payload is keyed on it ([9.4b](#94b-no-pk-tables-are-skipped)), and generating on the members that remain would key `Get`, `Update` and `HardDelete` on a column set that is not unique. The error names the `exclude_columns` key that removes the column (`tables.<name>.exclude_columns` or `generation.exclude_columns`), the column and the table. Keep the column, declare `primary_key.columns` over columns that remain, or drop the table with `exclude_tables`. A table whose every column is excluded is the exhaustion warning below instead, and a table `exclude_tables` drops is not checked. |
 | **`primary_key.columns` lists a nullable column** | Error | Primary key columns must be NOT NULL. A nullable column in `primary_key.columns` is a validation error. |
 | **`primary_key.columns` has no UNIQUE coverage** | Warning | When no `PRIMARY KEY` or non-partial `UNIQUE` constraint at the DB level has exactly the column set in `tables.<name>.primary_key.columns` (order-independent; for a single-column override an inline `UNIQUE` on that column also counts), a warning is emitted: `no UNIQUE constraint covers the declared PK; sqlgen assumes uniqueness — enforce it at the application level if not at the DB level`. The test is set equality, the same evidence the `{Table}ConflictPK` target needs ([9.5](#95-edge-case-behaviors)): a `UNIQUE` on `(a)` makes `(a, b)` unique but gives `ON CONFLICT (a, b)` no index to match, so that override still warns. The user is the only one who knows whether uniqueness is enforced in app code; sqlgen does not block on this. |
 | **`primary_key.strategy: db` or `app` on a composite key** | Error *(schema-level)* | A composite key is always `caller` ([8.6](#86-primary-key-strategy)). The generator has no per-column strategy: `Create`, `CreateMany`, `Upsert` and `UpsertMany` build the returned key from the create input's key fields, which `db` drops and `app` wraps in `omittable.Value`, so the generated package would not compile. The key is resolved as the generator resolves it, so a composite `primary_key.columns` override is covered too. The error names the table, the strategy and the key columns, and points at a single-column `primary_key.columns` override for a key the database generates. |
@@ -1189,13 +1205,14 @@ The config is validated immediately after loading, before parsing or generation 
 | **Nullable tenant column on a detected tenanted view** | Warning | The view is still scoped — `WHERE <tenant> = $1` excludes NULL rows, so the fail-closed outcome is already safe. A `LEFT JOIN` or aggregate legitimately widens a NOT NULL base column in a view's projection, so this is not an error. See [29.2.5](#2925-view-tenancy). |
 | **Nullable tenant column on a view with explicit `tenancy.enabled: true`** | Error | The user asserted the view is tenant-scoped; a nullable tenant column contradicts the assertion, and silently hiding NULL rows is not an acceptable resolution of it. |
 | **Tenant type divergence including a tenanted view** | Error | Every tenanted entity — tables **and** views — must resolve to the same tenant Go type; the package exposes one `TenantResolver[T]`. The aggregated error names every offender. See [29.2.4](#2924-type-resolution). |
+| **`tenancy.enabled: true` with no tenanted table or view** | Error (resolution-level) | No entity carries the tenant column, or every one that does opts out, so `TenantResolver[T]` has no type to take. Reported only when no per-entity tenancy error already explains it. The error names `tenancy.column`. See [29.2.3](#2923-detection). |
 | **Mutation operation named in `views.<name>.api.operations`** | Error | A view is read-only ([16.4](#164-generated-artifacts-views-vs-tables)); only `get`, `paginate`, `connection` are expressible. Silently ignoring a knob the user deliberately turned is worse than rejecting it. |
 | **`views.<name>.api.enabled: true` with global `api.enabled: false`** | Error | Per-view flag is opt-*out* only, matching the `tables.<name>.manifest` precedent — a single entity cannot be opted in without the package-level opt-in. |
-| **`soft_delete_columns` type mismatch** | Error | If a configured soft delete column name matches a table column but the column's SQL type is not compatible (`timestamp`, `bool`, or `integer` — see [4.6](#46-generationconfig)), it is a validation error. Incompatible types include `varchar`, `text`, `uuid`, `json`, etc. |
+| **`soft_delete_columns` type mismatch** | Error | If a configured soft delete column name matches a table column but the column's SQL type is not compatible (`timestamp`, `bool`, or `integer` — see [4.6](#46-generationconfig)), it is a validation error. Incompatible types include `varchar`, `text`, `uuid`, `json`, etc. This rule and the two below check only a table's first matching column, in `soft_delete_columns` priority order, and a column of an incompatible type reports this error only. |
 | **`NOT NULL` `timestamp` soft delete column** | Error | A `timestamp` soft delete column marks a live row with `NULL` ([4.6](#46-generationconfig)), so a `NOT NULL` one can never hold a live row: the default "is not deleted" filter (`IS NULL`) matches nothing and Restore violates the constraint. The error names the column and the table; make the column nullable or soft delete with a `bool` or `integer` column. |
 | **Nullable `bool` / `integer` soft delete column with no `DEFAULT`** | Error | These strategies mark a live row with `FALSE` / `0` ([4.6](#46-generationconfig)), and the default "is not deleted" filter (`= FALSE` / `= 0`) excludes `NULL`, so every row created without the column is hidden: `Create` returns `ErrNotFound` for the row it just inserted. The error names the column and the table; make the column `NOT NULL` or give it `DEFAULT FALSE` / `DEFAULT 0`. `DEFAULT NULL` counts as no default. |
 | **Resolved name collisions** | Error (resolution-level) | If two schema entities — tables, views, enums, SET types, composite types, domain types — resolve to the same Go type name, the same file stem, or the same `hook.TableName` constant, it is a validation error. Singularization is what makes this reachable: `users` and `user`, or `people` and `person`, are different SQL names that land on one `User` / `Person`. Guidance: use `tables.<table>.struct_name` / `views.<view>.struct_name` / `enums.<enum>.struct_name` ([4.11](#411-enum-overrides)) to disambiguate. See [8.5](#85-naming-rules) "Resolved type names and file stems". |
-| **An `enums:` key that matches no enum** | Warning *(schema-level)* | An `enums.<name>` entry is looked up by each schema enum's schema-qualified name, then its bare one ([4.11](#411-enum-overrides)), so a key no enum answers to — a typo, or a MySQL key in the `<table>_<column>_enum` form rather than `<table>__<column>_enum` ([8.3](#83-generated-artifacts--other)) — would do nothing. It warns under `sqlgen validate` and `sqlgen generate`, naming the key; a key naming a MySQL SET type says instead that a SET takes no override. A warning rather than an error, because a schema narrowed by `introspect.schemas` or `introspect.tables` can legitimately leave a key unmatched. |
+| **An `enums:` key that matches no enum** | Warning *(resolution-level — see phase 3 below)* | An `enums.<name>` entry is looked up by each schema enum's schema-qualified name, then its bare one ([4.11](#411-enum-overrides)), so a key no enum answers to — a typo, or a MySQL key in the `<table>_<column>_enum` form rather than `<table>__<column>_enum` ([8.3](#83-generated-artifacts--other)) — would do nothing. It warns under `sqlgen validate` and `sqlgen generate`, naming the key; a key naming a MySQL SET type says instead that a SET takes no override. A warning rather than an error, because a schema narrowed by `introspect.schemas` or `introspect.tables` can legitimately leave a key unmatched. |
 | **A resolved name sqlgen already declares** | Error (resolution-level) | If an entity resolves to a Go type name or a file stem the generated package emits on its own behalf — `Client`, `Connection`, `Edge`, `ErrNotFound`, `sorter_gen.go`, … — it is a validation error. A table named `clients` or `connections` is the shape this catches. See [8.5](#85-naming-rules) "Resolved type names and file stems". |
 | **A nested-mutation name colliding with an entity's** | Error (resolution-level) | The nested-mutation type names ([9.9.5](#995-generated-surface)) key on a **(parent, edge)** pair, so they are injective in no entity's primary name and the two rules above cannot see them. A collision against an entity's Go type name, or against the `Create<T>Input` / `Update<T>Input` a table derives, is an error naming both the relationship and the entity. The claim is structural — it does not consult `nested_mutations.enabled` or the `api.operations` mask, so enabling the feature later never turns a valid config invalid. Guidance: `tables.<table>.struct_name` on either entity — the wrapper names are spelled from the parent's struct name alone, so renaming the parent fixes those; a per-edge name can also be moved by renaming the relationship under `tables.<parent>.relationships`. See [8.5](#85-naming-rules). |
 | **Two claims on one GraphQL type name** | Error (codegen-level) | When the GraphQL surface is generated, two entities resolving to the same GraphQL type name — an enum against a declared scalar, a table against another table, an enum against `PageInfo`, a consumer scalar against a comparator input — is a generation error naming both claimants. Distinct from the Go rule above: the namespaces differ, and a document valid in Go can be invalid in GraphQL (a SQL enum named `duration` gives a legal Go `Duration` beside a `Duration` scalar that gqlparser rejects). Guidance: `enums.<enum>.struct_name`, `tables.<table>.struct_name`, `views.<view>.struct_name`, or rename the `api.graphql.scalars` entry. See [26.4](#graphql-type-name-ownership). |
@@ -1215,14 +1232,23 @@ The config is validated immediately after loading, before parsing or generation 
 | **A `discriminator.value` the read paths cannot compare with its column** | Error *(resolution-level)* | A value of the wrong kind for a basic or enum column, a PostgreSQL `json` / `jsonb` column, or a SQLite column bound to `[]byte` or `types.JSON`. Each fails, or silently matches the wrong rows, on the edge's first read ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) **Validation**). The column's resolved Go binding decides it, so the rule runs after type resolution. The error names the relationship, the column, the value and the reason. |
 | **`sort` on an O2O relationship, or a malformed `sort` entry** | Error | An O2O edge is loaded by a `LEFT JOIN` in the parent query ([13.2](#132-loading-strategy)) and has no loader query of its own, so a static `sort` there would be ignored — the accept-and-drop shape. On O2M and M2M, every entry needs a `column`, and `direction` is `asc` or `desc` (either case); an empty column or an unknown direction would otherwise surface only as an SQL error on every load. The error names the relationship and the entry. |
 | **A `sort` column is not a column on the related table** | Error *(schema-level)* | The loader hands the static sort to the related table's query, so an unknown column would fail every relationship load at runtime. The error names the relationship, the column, and the related table. The check reads the parsed tables only, as the `discriminator.column` row's does: a target absent from them is left to relationship resolution, and a view target's sort column is not checked here — a bad one fails as an SQL error on the edge's first load. |
+| **A relationship missing `table`** | Error | [4.8](#48-tableconfig-per-table) marks `table` required: it names the related table. The error names the relationship and the key, and is reported alongside a missing `name` or `type`. |
 | **A relationship missing `name`** | Error | [4.8](#48-tableconfig-per-table) marks `name` required: it is the relationship's Go field on the entity struct. Without it an `o2o` edge panics the generator, and an `o2m` or `m2m` edge emits an entity-struct field with no name, so the generated package does not parse. The error names the relationship and the key, and is reported alongside a missing or invalid `type`. |
 | **A relationship missing the link key its type requires** | Error | [4.8](#48-tableconfig-per-table) marks `fk` required on `o2o` and `o2m`, and `junction` on `m2m`: each names what creates the link. Without `fk` an `o2m` edge generates a filter field on an empty column name and the generated package does not parse, and an `o2o` edge generates a `LEFT JOIN` on an empty identifier that fails on its first load; without `junction` an `m2m` edge generates a package that does not compile. The error names the relationship and the key. An entry whose `type` is missing or invalid reports the type error instead of a link-key error. |
-| **A relationship's `fk` is not a column where its type puts it** | Error *(schema-level)* | An `o2m` `fk` must be a column on the related table; an `o2o` `fk` must be a column on this table (belongs-to) or on the related table (has-one), since [13.1](#131-relationship-types) derives which one from where it is declared ([4.8](#48-tableconfig-per-table)). A column on neither side would otherwise be read as belongs-to: an `o2m` edge then fails in the Go compile of the generated package, and an `o2o` edge on its first load. The error names the relationship, the column, and the table or tables it was looked up on. `m2m` is not checked, since its link columns are the junction's own fields. The check reads the parsed tables only, as the `sort` row's does: a target absent from them, a view target included, is left to relationship resolution. |
+| **A relationship's `fk` is not a column where its type puts it** | Error *(schema-level)* | Every `fk` column of an `o2m` edge must be a column on the related table; the `fk` columns of an `o2o` edge must all be on this table (belongs-to) or all on the related table (has-one), since [13.1](#131-relationship-types) derives which one from where it is declared ([4.8](#48-tableconfig-per-table)). A column on neither side would otherwise be read as belongs-to: an `o2m` edge then fails in the Go compile of the generated package, and an `o2o` edge on its first load. The error names the relationship, the column, and the table or tables it was looked up on. `m2m` is not checked, since its link columns are the junction's own fields. The check reads the parsed tables only, as the `sort` row's does: a target absent from them, a view target included, is left to relationship resolution. |
 | **A declared relationship's `table:` resolves to no generated entity** | Error *(resolution-level — see phase 3 below)* | A `tables.<name>.relationships` entry must target a table or view that generates. A table excluded by `exclude_tables` ([6.4](#64-filtering)), a table with no primary key ([9.4b](#94b-no-pk-tables-are-skipped)), or a name not in the schema is an error. It names the table, the relationship, the target and the three causes, because the user declared the edge by name. Every such entry is reported in one pass. The FK-inferred counterpart is silently omitted instead, by the same listed / auto-included rule as nested-mutation edges below: an FK into a skipped table was never asked for, so it cannot break the tables that reference it. The same row covers the ambiguity rule in [5.5](#55-schema-qualification--table-naming): a bare `table:` or `junction:` that names an entity in more than one schema is an error, and the message names each qualified spelling. |
+| **`exclude_columns` removes a relationship's link column** | Warning (FK-inferred) / Error (declared) *(resolution-level — see phase 3 below)* | Every column a relationship joins on must be in the generated model on both sides: every FK column of an `o2o` / `o2m` edge's key, every column of both junction keys of an `m2m` edge, and, for an FK-inferred edge, every column each one references. Otherwise the loader, the filter member and the nested writer would name a field the struct does not have, and an `o2m` edge does not compile. An FK-inferred edge with such a column is omitted with a warning naming the table, the edge and the column, since the user excluded a column, not the edge; an edge also listed in `exclude_relationships` is omitted silently. A declared relationship with an excluded column in its `fk` (or `junction_local_fk` / `junction_reference_fk`) is an error naming the relationship and the column, because the user declared the edge by name. To hide a column from the API while keeping the edge, use `column_map.<col>.access: hidden` ([32](#32-column-access-control)) instead. |
+| **A foreign key whose referenced columns are not a key** | Warning *(schema-level)* | Relationship detection ([5.3](#53-relationship-detection) rule 1) gives an edge only to a FOREIGN KEY whose referenced columns are, as a set, the target's resolved primary key, its declared PRIMARY KEY constraint, or one of its non-partial UNIQUE constraints. Any other foreign key gives no edge and this warning, which names the constraint and points to manual relationships ([13.4](#134-manual-relationship-configuration)). An unnamed SQLite foreign key is named `table(columns) → target(columns)`. PostgreSQL refuses such a key; MySQL 8.0 (and 8.4 with `restrict_fk_on_non_standard_key` off) and SQLite accept it, so the warning is reached on MySQL and SQLite. It is printed after relationship detection, after the parser's schema warnings. |
+| **A primary-key column whose Go type cannot key a Go map** | Error *(resolution-level — see phase 3 below)* | `Get` and the batch writes filter on a table's primary key, and the batch writes and the relationship loaders collect its values into Go maps. So every primary-key column, detected or listed in `tables.<name>.primary_key.columns`, must be one that can key a map. A MySQL `SET`, a PostgreSQL array (an enum array included) or a JSON (`json` / `jsonb`) column is refused whatever its Go type: at its generated type it would not compile, and a retype through `column_map`, `type_map` or `overrides.types` (even to `string`) does not make it a key. Any other column bound to a Go type that cannot key a map, such as `types.JSON`, is refused too. A `[]byte`, `net.IP`, `net.IPNet` or `net.HardwareAddr` key filters through `comparator.Opaque` ([11.2](#112-comparator-types)) and is keyed through its string form, so it is accepted. The error names the column, its table and its Go type (and, for a `SET`, array or JSON column, its kind), and points to `tables.<name>.primary_key.columns` and `exclude_tables`. |
+| **A to-many relationship's key column whose Go type cannot key a Go map** | Warning (FK-inferred) / Error (declared) *(resolution-level — see phase 3 below)* | The rule above, applied to the columns a to-many relationship joins on: every FK column of an `o2m` edge's key, every column of both junction keys of an `m2m` edge, and, for an FK-inferred edge, every column each one references. Its loader collects those values into a Go map, so the generated package would not compile. An `o2o` edge over such columns, detected or declared, is exempt: it is loaded by a `LEFT JOIN` in the parent query ([13.2](#132-loading-strategy)), which compares them in SQL and keys no map, so it keeps its edge with no warning. A `SET`, array or JSON column is refused here whatever its Go type, as above. A foreign key into the resolved primary key is already refused by the rule above, so what reaches this one is a non-unique key over `SET` or array columns into a non-partial `UNIQUE` key, or into a declared PRIMARY KEY that `primary_key.columns` replaced, of the same type, which relationship detection ([5.3](#53-relationship-detection) rule 1) would otherwise give an `o2m` edge, or an `m2m` edge through a junction. An FK-inferred edge with such a column gives no edge and a warning naming the table, the constraint, the edge, the column and its Go type, as a foreign key into non-key columns does; an edge also listed in `exclude_relationships` is omitted silently. A declared relationship with such a column in its `fk` (or `junction_local_fk` / `junction_reference_fk`) is an error naming the relationship, the column and its Go type, because the user declared the edge by name. |
+| **Two detected relationships keep one name after disambiguation** | Error *(resolution-level — see phase 3 below)* | Disambiguation ([5.3](#53-relationship-detection) rule 6) renames edges that share a source and a target from their own keys. A name two edges of one table still share afterwards would put one field on the entity struct twice. The check runs after `exclude_relationships` and manual replacements ([13.4](#134-manual-relationship-configuration)) are applied, so an excluded or replaced edge does not count, and the remedy below clears it. The error names both FOREIGN KEY constraints and points to [13.4](#134-manual-relationship-configuration): list the name in `exclude_relationships` and declare the edges by hand. |
+| **A relationship's `fk` list does not match the referenced primary key** | Error *(schema-level)* | A list in `fk`, `junction_local_fk` or `junction_reference_fk` maps by position onto the primary key of the table it references ([13.4](#134-manual-relationship-configuration)), so its length must equal that key's column count. A string is a one-item list, so a single string into a table with a composite primary key fails this rule as well. The error names the relationship, the key, the list and the primary key's columns. |
+| **A relationship's key references a view without `@pk`** | Error *(schema-level)* | A key into a view maps by position onto the view's `@pk` columns ([16.1](#161-annotation-files-file-sourced-views)), and is checked against them as the row above checks a table's key. A view without `@pk` has no key to map onto ([13.4](#134-manual-relationship-configuration)), so a belongs-to `o2o` whose `fk` is on this table, and an `m2m` whose `junction_reference_fk` would reference the view, are errors there, whether the key is written or inferred. An `o2m` edge or a has-one `o2o` into a view is unaffected: its `fk` is on the view and references this table's primary key. The error names the relationship, the key and the view. |
+| **A relationship key pairing a time column with a column of another type** | Error *(resolution-level — see phase 3 below)* | A key member whose column and the column it references do not both hold a time — a SQLite `DATETIME` primary key with a `TEXT` foreign key, the reverse, or a `DATETIME` foreign key into an `INTEGER` key — has no loader that can compare the two ([13.3](#133-fk-type-conversion)), on any edge type or key shape. The error names the edge, both columns and their storage classes, and suggests declaring both columns with the same storage class. PostgreSQL and MySQL refuse such a foreign key, so they meet it only from a schema file, and the error names SQL types there. The check reads each column's resolved Go type, so an override that retypes one of two time columns trips it too, and the error also suggests giving both columns the same Go type. |
 | **`nested_mutations.max_depth` is not `1`** | Error | Depth greater than 1 is not implemented in v1 ([9.9](#99-nested-mutations)); `0` disables nothing that `enabled: false` does not already disable. Rejecting is what keeps a future depth from silently meaning depth 1. |
 | **Unknown value in `nested_mutations.operations` or `nested_mutations.verbs`** | Error | Both are closed sets — `{create, update, upsert}` and `{create, connect, disconnect, clear}`. A typo'd verb would otherwise silently narrow the generated surface. |
 | **A `…_with_related` mask key enabled without its base** | Error | In an `api.operations` or `tables.<name>.api.operations` mask, `create_with_related: true` beside `create: false` is rejected, and likewise for update and upsert. The mask conjoins each `…_with_related` key with its masked base ([26.5.1](#2651-exposed-resolver-surface)), so that a mask written to leave a single hand-guarded door into a table does not leave a second, generated one through the nested mutation. The pair would therefore drop the nested mutation from the API with no signal; failing at validate time names the key that is wrong. The Go client is untouched either way: it generates the nested methods whenever `nested_mutations` enables them ([4.6](#46-generationconfig)). |
-| **An edge listed in `tables.<name>.nested_mutations.relationships` is not nestable** | Error *(resolution-level — see phase 3 below)* | A listed edge that fails any eligibility rule ([9.9](#99-nested-mutations)) is a hard error naming the edge and the rule it failed — the user asked for it by name. An **auto-included** edge that fails a rule is silently omitted instead, so one ineligible edge cannot break a build that never asked for it. The same rule rejects a listed name that matches no relationship on the table. |
+| **An edge listed in `tables.<name>.nested_mutations.relationships` is not nestable** | Error *(resolution-level — see phase 3 below)* | A listed edge that fails any eligibility rule ([9.9](#99-nested-mutations)) is a hard error naming the edge and the rule it failed — the user asked for it by name. An **auto-included** edge that fails a rule is silently omitted instead, so one ineligible edge cannot break a build that never asked for it. The same rule rejects a listed name that matches no relationship on the table. `sqlgen validate` reports each such edge once. |
 | **Invalid `api.operations` preset** | Error | If `api.operations`, `tables.<table>.api.operations` or `views.<view>.api.operations` is a string, or carries a `preset`, that doesn't match a known preset (`all`, `read_only`, `append_only`, `no_delete`, `no_hard_delete`), it is a validation error. |
 | **An `operations` key under `generation` or `tables.<table>`** | Error | The client has no per-operation switch; it generates every method the schema allows ([4.6](#46-generationconfig)). The key is rejected with a message that names its path and points at `api.operations`, the only per-operation control: `generation.operations: the Go client generates every method the schema allows; use api.operations to control what the API exposes`. A plain unknown-field error would not say where the control went. |
 | **A client-only key named in an `api.operations` mask** | Error | `get_many`, `update_many`, `exists`, `count`, `increment`, `stream` and `upsert_many` name client methods no API surface calls ([26.5.1](#2651-exposed-resolver-surface)), so naming one in any `api.operations` block is rejected rather than silently ignored. Every mask key names the client method its surface calls. |
@@ -1236,13 +1262,18 @@ The config is validated immediately after loading, before parsing or generation 
 | **`tables.<name>.manifest.enabled: true` with global `manifest.enabled: false`** | Error | Per-table flag is opt-*out* only. Cannot opt a single entity in without the package-level opt-in. |
 | **`manifest.breadcrumbs.*: true` with `manifest.enabled: false`** | Error | Breadcrumbs only make sense when there is a manifest to point at. |
 | **`manifest.embed_in_client: true` with `manifest.enabled: false`** | Error | The runtime methods only make sense when a manifest is being emitted to embed. |
+| **`tables.<name>.events.enabled: true` with `events.enabled` off** | Error | A per-table `events.enabled` only opts a table out (§28.8); event hooks are generated only under the global flag. |
+| **`tables.<name>.tenancy.enabled: true` or `views.<name>.tenancy.enabled: true` with `tenancy.enabled` off** | Error | A per-entity `tenancy.enabled` only opts an entity out ([29.2.2](#2922-per-table-override)); no tenancy codegen runs without the global switch, so the opt-in would scope nothing. The error names the entity's key. |
+| **`tables.<name>.overrides.use_pointers` is set** | Error | The pointer policy is package-wide ([4.7](#47-overrideconfig)); a table's `overrides` block takes `types` only. The error names the key and points at the global `overrides.use_pointers`. |
 | **`manifest.mcp.emit_project_config: true` with `manifest.enabled: false`** | Error | The MCP registration entry points at the emitted manifest; without one there is nothing to serve. See [31.2](#312-configuration). |
 | **`manifest.mcp.project_configs` entry absolute or escaping the module root** | Error | Every target must be a module-root-relative path; absolute paths, empty entries, and any `..` segment are rejected. Enforced regardless of the enabled state (the opt-out removal path walks the same targets). See [31.2](#312-configuration). |
 | **`column_map.<col>.name` is not a valid exported Go identifier** | Error | The override becomes a generated struct field, so it must be a legal Go identifier starting with an upper-case letter. A PascalCase keyword (`Type`, `Map`) is accepted. See [8.5](#85-naming-rules). |
 | **`column_map.<col>.name` on a non-existent or excluded column** | Error | The override must name a real column that survives `exclude_columns` — otherwise there is no field to rename and the entry is a silent no-op. See [8.5](#85-naming-rules). |
 | **`column_map.<col>.name` collides with another resolved field name** | Error *(resolution-level — see phase 3 below)* | Two columns, or a column and a relationship, cannot claim the same Go field on the entity struct. Only collisions an override introduces are reported. See [8.5](#85-naming-rules). |
-| **A resolved field name is one the generated code already declares** | Error *(resolution-level — see phase 3 below)* | `Columns`, `ColumnMap`, `HasSelectedColumns`, `And`, `Or`, `ToConditions`, `PKs`, `Input` and `Column` are claimed by generated declarations on the structs a column field lands on, each in the shapes listed in [8.5](#85-naming-rules) "Field Name Resolution". Unlike the collision rule above this one is **not** override-gated — the name is rejected wherever it comes from, including a plain SQL column name and a derived relationship field, because no such name can produce compiling code. View columns are covered too. |
-| **`column_map.<col>.type` is not a Go type expression** | Error | The override is written verbatim into the generated struct, so it must parse as a type — an identifier, a qualified identifier, or a composition of those (`*T`, `[]T`, `map[K]V`). Whether the named type exists is the compiler's verdict; sqlgen never loads consumer packages. See [7.1](#71-type-resolution-chain). |
+| **A resolved field name is one the generated code already declares** | Error *(resolution-level — see phase 3 below)* | `Columns`, `ColumnMap`, `HasSelectedColumns`, `And`, `Or`, `ToConditions`, `PKs`, `Input` and `Column` are claimed by generated declarations on the structs a column field lands on, each in the shapes listed in [8.5](#85-naming-rules) "Field Name Resolution". Unlike the collision rule above this one is **not** override-gated — the name is rejected wherever it comes from, including a plain SQL column name and a derived relationship field, because each name is reserved against the full generated surface. View columns are covered too. |
+| **`column_map.<col>.type` or a `type_map` value is not a Go type expression** | Error | The override is written verbatim into the generated struct, so it must parse as a type — an identifier, a qualified identifier, or a composition of those (`*T`, `[]T`, `[N]T`, `map[K]V`, a generic instantiation such as `pkg.T[A, B]`). An empty `type_map` value is rejected. Whether the named type exists is the compiler's verdict; sqlgen never loads consumer packages. See [7.1](#71-type-resolution-chain). |
+| **A PostgreSQL `overrides.types` key spelled as a synonym** | Error | With `input.dialect: postgres`, a key in `overrides.types` or `tables.<name>.overrides.types` that the parser never writes (`int4`, `bool`, `float8`, `character varying`, `timestamp with time zone`, a `serial` spelling, or one of those as an array) would match no column ([7.2](#72-built-in-type-mappings)). The message names the key and the catalog spelling to write instead. |
+| **Two `overrides.types` keys that differ only in case** | Error | Keys match SQL types case-insensitively ([7.1](#71-type-resolution-chain)), so `NUMERIC` and `numeric` in one scope (`overrides.types` or one table's `tables.<name>.overrides.types`) name the same type. The message names both keys. |
 | **`column_map.<col>.type` on a non-existent or excluded column** | Error | The override must name a real column that survives `exclude_columns` — otherwise there is no field to retype and the entry is a silent no-op. See [7.1](#71-type-resolution-chain). |
 | **`column_map.<col>.import` without `type`** | Error | An import path with nothing to import for. See [7.1](#71-type-resolution-chain). |
 | **Package-qualified `column_map.<col>.type` with no `import`** | Error *(resolution-level — see phase 3 below)* | Nothing else would place the package in the generated file's import block. Literals sqlgen already knows (`time.Time`, `json.RawMessage`, …) are exempt — they resolve their own import. See [7.1](#71-type-resolution-chain). |
@@ -1250,14 +1281,14 @@ The config is validated immediately after loading, before parsing or generation 
 | **Two UUID libraries resolved in one generated package** | Error *(resolution-level — see phase 3 below)* | Every UUID import path resolved across the generated package — global `overrides.types.uuid`, table-scoped `overrides.types`, and `column_map.<col>.import` alike — must be the same one. View columns participate too, through the global binding they resolve under ([4.9](#49-viewconfig-per-view)). All three supported integrations bind the file-local package name `uuid` and export a type named `UUID`, so a package resolving two of them emits source that does not compile, and the resolved Go type string `uuid.UUID` cannot say which package is meant ([7.4](#74-built-in-type-integrations)). The error names both import paths, at least one table that selected each, and the remedy: split them across separate `output.dir` packages. Per generated package, not per module — two packages in one module, each with its own library, are legal. |
 | **Invalid `column_map.<col>.access` value** | Error | `access` must be one of `public`, `read_only`, `write_only`, `hidden`, `internal`. Any other value is rejected. See [Section 32](#32-column-access-control). |
 | **`access` on a non-existent or excluded column** | Error | `column_map.<col>.access` must name a real column that survives `exclude_columns`. Classifying an excluded column has no surface to act on and is a config error. |
-| **`access` on a primary-key column outside `{public, read_only}`** | Error | PK columns must stay API-readable (the GraphQL `id` argument, cursor encoding, and relationship targeting all require it). `write_only`, `hidden`, and `internal` on any PK member is rejected. See [32.4](#324-validation). |
+| **`access` on a primary-key column outside `{public, read_only}`** | Error | PK columns must stay API-readable (the GraphQL `id` argument, cursor encoding, and relationship targeting all require it). `write_only`, `hidden`, and `internal` on any PK member is rejected. A column reports at most one `access` error: this rule takes precedence over the cursor-key rule, and the cursor-key rule over required-on-create. See [32.4](#324-validation). |
 | **`access` removes a required-on-create column from API input** | Error | A NOT NULL column with no default that is neither auto-generated nor PK-generated cannot be given a role that drops it from the API create input (`read_only` / `hidden` / `internal`) **while** the create / createMany API op is enabled — the API could never satisfy the INSERT. (`write_only` is allowed; server-side Go `Create` is unaffected either way.) See [32.4](#324-validation). |
 | **`access` removes the filter surface from the soft-delete column** | Warning | Giving the soft-delete column a role that drops its filter (`write_only` / `hidden` / `internal`) removes the §26.5.3 "pass `deletedAt: {}` to include soft-deleted rows" path from the API. Emitted as a warning — it may be intentional. |
 
 Validation runs in three phases:
 1. **Config-level** (before parsing) — driver/dialect mismatch, missing connection, invalid `api.operations` presets, a leftover client `operations` key, client-only keys in an `api.operations` mask, duplicate struct names
-2. **Schema-level** (after parsing) — cursor_keys existence and nullability, soft_delete type mismatch, `NOT NULL` timestamp column and nullable no-`DEFAULT` bool / integer column, struct name collisions from auto-detection, exclude_columns exhaustion
-3. **Resolution-level** (during generation) — the few rules that need the naming or type engine to have run, and so cannot be answered from the config text alone: the `api.operations` over-reach warning (which reads each table's resolved operations), the resolved-field-name rules (collision and reserved name), whether a declared relationship's target generates at all (which needs `exclude_tables` and the primary-key rule applied, and the target's `struct_name` resolved), the two rules that ask whether a Go type literal needs an explicit import, and the one-UUID-library-per-package rule, which has to collect the import path every column actually resolved to across the whole package before it can count them. They live in the generator rather than in config validation, and the table above marks them — but `sqlgen validate` still reports them: it builds the table, view and API contexts in memory and discards them, so every phase-3 rule is answered at validate time without loading a template or writing a file.
+2. **Schema-level** (after parsing) — cursor_keys existence and nullability, soft_delete type mismatch, `NOT NULL` timestamp column and nullable no-`DEFAULT` bool / integer column, struct name collisions from auto-detection, exclude_columns exhaustion, an excluded primary-key column, a foreign key to non-key columns, a manual `fk` list that does not match the referenced primary key
+3. **Resolution-level** (during generation) — the few rules that need the naming or type engine to have run, and so cannot be answered from the config text alone: the `api.operations` over-reach warning (which reads each table's resolved operations), the unmatched `enums:` key warning, the resolved-field-name rules (collision and reserved name), whether a declared relationship's target generates at all (which needs `exclude_tables` and the primary-key rule applied, and the target's `struct_name` resolved), whether a relationship's link columns survive `exclude_columns`, whether a primary-key or to-many relationship key column's resolved Go type can key a Go map, whether two detected relationships still share a name once exclusions and manual replacements apply, whether a relationship key pairs a time column with one of another type, the two rules that ask whether a Go type literal needs an explicit import, and the one-UUID-library-per-package rule, which has to collect the import path every column actually resolved to across the whole package before it can count them. They live in the generator rather than in config validation, and the table above marks them — but `sqlgen validate` still reports them: it builds the table, view and API contexts in memory and discards them, so every phase-3 rule is answered at validate time without loading a template or writing a file.
 
 **Cursor key resolution — fallback semantics.** `cursor_keys` resolution is lenient for inherited values and strict for explicit values. The rationale: explicit configuration is a user assertion that must be honored or flagged; an inherited default should degrade gracefully because the global default cannot know every table's schema shape. Partial matches (some columns present, others missing) always trigger a full fallback — never a subset — because a partial cursor would silently change sort semantics. Resolution rules:
 
@@ -1396,7 +1427,7 @@ Each dialect parser lives in the **parser module** (`github.com/teandresmith/sql
 - Inline ENUM values from column type definitions (table-scoped naming: `<table>__<column>_enum`, auto-resolved via `RegisterEnum`)
 - Inline SET values from column type definitions (table-scoped naming: `<table>__<column>_set`, auto-resolved via `RegisterSet`)
 - Generated columns: `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]` and shorthand `AS (expr)` (5.7+)
-- ALTER TABLE: ADD/DROP/MODIFY COLUMN, ADD/DROP INDEX, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME INDEX / KEY, RENAME TABLE, CHANGE COLUMN. `DROP CONSTRAINT` drops the CHECK, FOREIGN KEY, UNIQUE or `PRIMARY` key of that name, as MySQL 8.0.19+ does. As in MySQL, a statement's key drops and then its key renames apply before any key it adds, whatever the clause order
+- ALTER TABLE: ADD/DROP/MODIFY COLUMN, ALTER COLUMN SET/DROP DEFAULT, ADD/DROP INDEX, ADD/DROP CONSTRAINT, RENAME COLUMN, RENAME INDEX / KEY, RENAME TABLE, CHANGE COLUMN. `DROP CONSTRAINT` drops the CHECK, FOREIGN KEY, UNIQUE or `PRIMARY` key of that name, as MySQL 8.0.19+ does. As in MySQL, a statement's key drops and then its key renames apply before any key it adds, whatever the clause order
 - Standalone `RENAME TABLE a TO b [, c TO d ...]`, applied pair by pair, left to right
 - No native enum type, composite type, or domain type support
 - Uses databases instead of schemas
@@ -1427,6 +1458,8 @@ PostgreSQL names follow its own rules: `<cols>` joins the column names with `_`,
 - **SQLite** drops a UNIQUE only when an identical index already exists. A rowid-alias `INTEGER PRIMARY KEY` has no index, so a UNIQUE on it is kept.
 - **MySQL** keeps every duplicate.
 
+**A FOREIGN KEY keeps every column pair and, on PostgreSQL, its MATCH type.** A composite key's columns and referenced columns are kept in declared order on every dialect and source. A PostgreSQL key records `MATCH SIMPLE` or `MATCH FULL`, from the DDL under `files` and from `pg_constraint.confmatchtype` under `database`, because PostgreSQL enforces `MATCH FULL` and nested `disconnect` depends on it ([9.9.3](#993-the-eligibility-matrix)). MySQL and SQLite accept any `MATCH` clause, `PARTIAL` included, and enforce `MATCH SIMPLE` whatever it says, so their keys are always recorded as `MATCH SIMPLE`. On PostgreSQL `MATCH PARTIAL` is a parse error, as PostgreSQL rejects it.
+
 **Indexes get the database's names too.** SQLite requires every `CREATE INDEX` to be named. On PostgreSQL an unnamed `CREATE INDEX` is `<table>_<cols>_idx`, with the collision suffix. On MySQL an unnamed `KEY` / `INDEX` takes its first column's name, numbered together with the unnamed UNIQUEs (`c`, `c_2`, `c_3`). MySQL also builds an index for a FOREIGN KEY when no existing index starts with the key's columns, and drops it once a later index does. That index is named after the constraint when the constraint is named, then after the index name a `FOREIGN KEY <name> (…)` clause declares, and after the key's first column otherwise. The MySQL parser adds it as well, so both paths list it. UNIQUE and index `method` defaults to `btree` on PostgreSQL and MySQL, and a CHECK's columns are the columns its expression references.
 
 **A table states its columns.** A `CREATE TABLE` whose columns come from another table, a type or a query is a parse error on every dialect, temporary tables included, since the file parser does not read those columns: PostgreSQL `LIKE`, `INHERITS` (outside `PARTITION OF`), `CREATE TABLE … OF type`, `CREATE TABLE … AS` and `SELECT … INTO`; MySQL `LIKE` and `CREATE TABLE … [AS] SELECT`; SQLite `CREATE TABLE … AS SELECT`. The error says to write the columns out, or to create the table in the database and read it from there (`source: database` or `both`), since the catalog holds its columns. A PostgreSQL `CREATE MATERIALIZED VIEW`, which has the same form as `CREATE TABLE … AS`, is skipped as a view.
@@ -1435,20 +1468,26 @@ PostgreSQL names follow its own rules: `<cols>` joins the column names with `_`,
 
 ### 5.3 Relationship Detection
 
-Automatic relationship detection runs after all tables are parsed:
+Automatic relationship detection runs after all tables are parsed, after every foreign key's referenced table and columns are rewritten to the spelling the target declares, and after `tables.<name>.primary_key` overrides ([8.6](#86-primary-key-strategy)) are applied. It reads the table constraints ([5.2](#52-dialect-parsers)): **each FOREIGN KEY constraint gives at most one edge**, joining every column pair the constraint declares. A single-column foreign key is the one-pair case of the same rule.
 
-**Many-to-Many (M2M):**
-- Table has exactly 2 foreign key columns
-- Both FK columns are part of a composite PRIMARY KEY or UNIQUE constraint
-- Creates bidirectional relationships (TableA ↔ TableB through JunctionTable)
+An edge's **key** is its list of pairs, each a column on the table holding the foreign key and the column it references, in the constraint's declared column order. An M2M edge has one key per junction foreign key. Every member of any FOREIGN KEY constraint is a foreign-key column for increment exclusion ([8.2](#82-generated-artifacts-per-table)) and PK strategy ([8.6](#86-primary-key-strategy)). A column's own FK reference stays a single-column property: only a single-column foreign key sets it, and it types the column's comparator ([13.3](#133-fk-type-conversion)).
 
-**One-to-One (O2O):**
-- Column has FOREIGN KEY constraint
-- Column is marked UNIQUE or part of a UNIQUE constraint
+1. **Target key.** The referenced columns must be, as a set, the target's resolved primary key (after `primary_key` overrides), its declared PRIMARY KEY constraint, or the columns of one of its non-partial UNIQUE constraints. This rule reads both primary keys: the resolved one is the key sqlgen generates against, and the declared constraint counts even when an override moves the primary key, because the database still enforces it: with `primary_key.columns: [code]` on `cycles(id PRIMARY KEY, code UNIQUE)`, `tasks.cycle_id → cycles(id)` keeps its edge and joins through `id`. A `REFERENCES t` with no column list (PostgreSQL and SQLite; MySQL requires the list) references the primary key. Any other foreign key gives no edge and a warning naming the constraint and pointing to manual relationships ([13.4](#134-manual-relationship-configuration), [4.13](#413-config-validation-rules)). On SQLite, a `REFERENCES t` whose parent key could not be resolved has no referenced columns and is such a key. PostgreSQL refuses a foreign key to non-key columns at DDL time. MySQL 8.0 accepts one to any indexed columns, and 8.4 refuses it only while `restrict_fk_on_non_standard_key` is on, its default. SQLite accepts it and fails at DML time. So the warning is reached on MySQL and SQLite, from either source. SQLite foreign keys are usually unnamed, so the warning names one as `table(columns) → target(columns)`.
+2. **Redundant foreign keys.** A foreign key whose pairs are a subset of another foreign key's pairs to the same target gives no edge. Of two identical foreign keys, the one whose name sorts first gives the edge, whatever order each lists its columns in; of two unnamed ones (SQLite), the first declared. Every source agrees on both, since each keeps the constraint names and SQLite keeps the declared order. A schema mid-migration that holds both `cycle_id → cycles(id)` and `(workspace_id, cycle_id) → cycles(workspace_id, id)` gets one edge, through the composite key.
+3. **O2O or O2M.** An edge is O2O when the table holding the foreign key has a PRIMARY KEY or non-partial UNIQUE constraint whose columns are a subset of the key's columns: a unique subset makes the whole key unique. A single-column foreign key is therefore O2O when its column is unique or is the table's sole primary-key column ([13.1](#131-relationship-types)). This rule reads the resolved primary key, after `primary_key` overrides: a declared PRIMARY KEY that an override moves no longer makes an edge O2O. Every other edge is O2M.
+4. **M2M.** First, every foreign key whose columns all belong to the table's other foreign keys is set aside. The table is a junction when exactly two foreign keys remain and a PRIMARY KEY or non-partial UNIQUE constraint contains the union of their columns. This rule reads the declared PRIMARY KEY constraint, not a `primary_key` override, so an override over two foreign keys does not make their table a junction. Every foreign key counts, including one into a table the schema does not hold and one whose referenced columns are not a key; a junction with such an end gives no edge. The two keys may share columns. A junction gives one bidirectional M2M edge (TableA ↔ TableB through the junction) instead of an O2O or O2M edge per foreign key. Two consequences follow:
+   - **On a junction, a set-aside foreign key gives no edge.** On a table that is not a junction it is detected like any other. The tenant junction `task_labels(workspace_id, task_id, label_id)` with `(workspace_id, task_id) → tasks`, `(workspace_id, label_id) → labels` and `workspace_id → workspaces` is M2M: the workspace key lies inside both composite keys, so it is set aside and `workspaces → task_labels` has no O2M. A junction with three single-column foreign keys keeps all three and gives three O2M edges.
+   - **A set-aside foreign key can be a real parent, not only the tenant column.** `order_items` with `order_id → orders`, `product_id → products` and `(warehouse_id, product_id) → stock`, keyed on all three columns, is a junction between orders and stock. The products key lies inside the stock key and is set aside, so `Order.Products` is not detected; a manual relationship ([13.4](#134-manual-relationship-configuration)) restores it. Both consequences need a composite foreign key, so no schema without one is affected.
+5. **Naming member.** An O2M edge is named after the table holding the foreign key, an O2O edge after the referenced table, and an M2M edge after the table at its other end. Disambiguation (rule 6) derives a name from one member column of the key, the **naming member**, chosen by the first step that yields exactly one column:
+   1. the only member that is neither in the primary key of the table holding the foreign key nor a member of another foreign key on that table;
+   2. else the only member that is not a member of another foreign key on that table, ignoring the primary key;
+   3. else the member paired with the target's single-column primary key;
+   4. else none, and the edge keeps its name.
 
-**One-to-Many (O2M):**
-- Column has FOREIGN KEY constraint
-- Column is NOT unique (default fallback for FKs not matching O2O or M2M)
+   The tenant key `(workspace_id, cycle_id) → cycles(workspace_id, id)` names from `cycle_id`, as the single-column `cycle_id → cycles(id)` would. Step 2 covers `cycle_notes(workspace_id, cycle_id, prev_cycle_id, n)`, keyed on all four columns, with `(workspace_id, cycle_id)` and `(workspace_id, prev_cycle_id)` both referencing `cycles(workspace_id, id)`. It is a self-referential M2M on `cycles`, and its two directions are `cycle` and `prev_cycle`.
+6. **Disambiguation.** When two or more edges share a source and a target table, each is renamed from its own key, where `<stem>` is the naming member without its `_id` suffix: an O2M edge to `<stem>_<name>`, an O2O edge to `<stem>`, an M2M edge to its junction table's name, and a self-referential M2M edge to the stem of its reference key's naming member. An edge with no naming member keeps its name. `exclude_relationships` also matches the name an edge had before it was renamed. A name that two edges of one table still share after this step, once `exclude_relationships` and manual replacements are applied, is a generation error naming both constraints and pointing to `exclude_relationships` plus a manual relationship ([13.4](#134-manual-relationship-configuration), [4.13](#413-config-validation-rules)). Two fields of one name are never emitted.
+
+Detection reads the schema alone, so it gives the same answer under `files`, `database` and `both` ([6.1](#61-source-modes)). A foreign key into a table the generated schema does not hold gives no edge ([5.5](#55-schema-qualification--table-naming)). An edge with a member column that `exclude_columns` removes, on either side, is dropped later, with a warning ([4.13](#413-config-validation-rules)).
 
 Relationships can also be manually configured via `tables.<table>.relationships` (see [4.8](#48-tableconfig-per-table)).
 
@@ -1612,7 +1651,7 @@ If a `CREATE TABLE`, `CREATE TYPE`, `CREATE DOMAIN`, or other `CREATE` statement
 
 ### 5.7 Deterministic Output
 
-All schema elements (tables, columns, enums, types) are sorted before generation to ensure deterministic, reproducible output across runs.
+All schema elements (tables, views, enums and the other types) are sorted by schema, then name, before generation to ensure deterministic, reproducible output across runs. A table's columns are not sorted: they keep their declared order, which introspection reads as the ordinal position.
 
 ---
 
@@ -1650,7 +1689,7 @@ The database is the **source of truth**. File-based changes are applied as an ov
 
 **Use case:** The database contains the production schema, and the SQL files contain pending migrations that haven't been applied yet. `both` mode lets the generator produce code that reflects the *future* schema (after migrations run), while the database provides the *current* baseline.
 
-`paths` therefore holds only the migrations the database has not run. An applied migration's `CREATE TABLE` names a table the database already has, which is the validation error above. A pending migration changes an existing table with `ALTER TABLE`, or with `DROP TABLE` followed by `CREATE TABLE`. It can change only tables the introspected schema includes ([6.4](#64-filtering)). A pending change to a view does not apply: the database's view stands ([16.2](#162-introspected-views-db-sourced-views)), but its columns are read again against the migrated tables, so a pending change to a table a view reads reaches the view. A pending rename of a table or column a view reads is applied to the view as the database applies it: PostgreSQL keeps the view's column name and reads the renamed table or column (a table's `SET SCHEMA` too), and SQLite does the same, except that a view column named after the column it reads, with no `AS` and no view column list, takes the new name.
+`paths` therefore holds only the migrations the database has not run. An applied migration's `CREATE TABLE` names a table the database already has, which is the validation error above. A pending migration changes an existing table with `ALTER TABLE`, or with `DROP TABLE` followed by `CREATE TABLE`. It can change only tables the introspected schema includes ([6.4](#64-filtering)). On PostgreSQL and MySQL a pending change to a view does not apply: the database's view stands ([16.2](#162-introspected-views-db-sourced-views)), but its columns are read again against the migrated tables; on SQLite a file that drops and creates a view again changes its columns (below), so a pending change to a table a view reads reaches the view. A pending rename of a table or column a view reads is applied to the view as the database applies it: PostgreSQL keeps the view's column name and reads the renamed table or column (a table's `SET SCHEMA` too), and SQLite does the same, except that a view column named after the column it reads, with no `AS` and no view column list, takes the new name.
 
 A pending migration that breaks a view the database has is an error. The database decides which migrations do, where it can, and the check covers every view in the database, whatever `introspect` leaves out ([6.4](#64-filtering)), except MySQL's column check, which covers only the views `introspect` includes:
 
@@ -1658,7 +1697,7 @@ A pending migration that breaks a view the database has is an error. The databas
 - **SQLite** is checked by SQLite itself. The database's schema statements are run in an in-memory database, then each file in `paths`, in order. A statement SQLite refuses is an error naming the file, with SQLite's message (`error in view r after drop column: no such column: role`), and so is a view that ran before a file and fails after it (a dropped table it reads). A refusal that involves no view is reported the same way, such as dropping a column a generated column or a trigger on its table reads. Each view's columns are then read from the view as SQLite leaves it, so a file that drops and creates a view again changes the view's columns. The copy has the database's schema but none of its rows, and SQLite's default settings, so it misses a failure that depends on the data (`CREATE UNIQUE INDEX` over duplicate values), a table rename under `PRAGMA legacy_alter_table` set on the connection that runs the migrations, which leaves a view reading the old name (the same `PRAGMA` inside a file is run with it), and a trigger on another table that reads a dropped column, which SQLite checks only when the trigger fires. A table or index the database has that names a collation or function only the application registers (`COLLATE nocase_tr`, an index on `myfn(email)`, a `CHECK` that calls one), or a virtual table whose module sqlgen's SQLite lacks, is copied as the database stores it, so dropping a column such an index reads is the error SQLite gives (`error in index ix after drop column: no such column: email`). A view that does not run in the copy before the files, such as one comparing a column whose collation is missing (`no such collation sequence`), is not checked after them, though SQLite's own check when a column is dropped or renamed still covers it. A view that reads a virtual table whose module is missing is replaced in the copy by one that reads nothing, with a warning, since SQLite would otherwise refuse every `ALTER TABLE`. A file that needs a collation, function or virtual-table module sqlgen's SQLite lacks, which the tool that runs the migrations may have, is a warning naming the file and the name, not an error, and that file and the files after it are not checked: a statement that names one, an `INSERT` into a table with an index on such a function, a `DROP TABLE` of such a virtual table, or any `ALTER TABLE` in a database with an index on a column whose collation is missing, which SQLite cannot check without it. A file that runs `ATTACH DATABASE` or `VACUUM` (`VACUUM INTO` included) is also a warning naming the file, and stops the check the same way, since the copy attaches no database, so neither writes a file. After such a warning the views' columns do not follow the files left unchecked: they are read from the copy as it stood when SQLite stopped, so a rename after that point does not reach a view.
 - **MySQL** records only the tables a view reads (`information_schema.VIEW_TABLE_USAGE`, MySQL 8.0.13 and later). Dropping or renaming one is an error naming the view and the table, as MySQL leaves the view invalid; a table created again under the name satisfies it. The columns a view reads are found by reading its definition, which is best-effort. Dropping or renaming a column the view's select list reads, through a derived table or a common table expression too, is an error naming the view and its column. A column the query reads elsewhere is treated the same way: one in `WHERE`, `JOIN … ON`, `GROUP BY`, `HAVING`, `ORDER BY` or a window, inside a select-list expression, in the arguments of a function in `FROM`, in the select list of a derived table or common table expression whether or not the view selects it, in any arm of a compound (`UNION`) subquery, in a subquery in an expression (`IN`, `EXISTS`, a scalar subquery), or in a `VALUES` statement, including an enclosing query's column such a subquery, a `LATERAL` derived table or a subquery inside either reads; that error names the view and the table column. A name in `GROUP BY`, `HAVING` or `ORDER BY` that MySQL stores as a select-list alias is not such a read.
 
-A view whose columns come from the catalog (its definition cannot be read) is also checked by its types: a migration that removes an ENUM or SET type one of its columns has is the same error. On PostgreSQL the `DROP TYPE` that would remove it is refused first, as for any type a view uses ([5.6](#56-multi-file-parsing-order)).
+A view whose columns come from the catalog (its definition cannot be read) is checked by its types on PostgreSQL only: the `DROP TYPE` that would remove a type one of its columns has is refused, as for any type a view uses ([5.6](#56-multi-file-parsing-order)).
 
 **Conflict rule:** If a file-based column definition conflicts with an introspected column (same name, different type), it is a **validation error**. The file cannot silently redefine what the database already has — use explicit `ALTER TABLE ... ALTER COLUMN` to express the change.
 
@@ -1735,11 +1774,13 @@ A per-column override changes the Go type only — it does not restate what the 
 
 Steps 1 and 2 are by **column**; steps 3–6 are by **SQL type**. The two per-column forms differ only in whether they can carry an import: `type_map` cannot, so it is limited to builtins, types in the generated package, and the literals sqlgen resolves imports for on its own; `column_map.<col>.type` pairs with `.import` and is the escape hatch for anything external. Naming an unknown package-qualified type in `type_map`, or in `column_map` without an `import`, is a config error rather than a generated file that references a package nothing imports. See ["Column Overrides"](#column-overrides) and ["Type Map"](#type-map).
 
-Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved by step 1 or 2 gets `*T` (or bare `T` when the type is natively nilable). Steps 1 and 2 also resolve a literal as an opaque type: a slice literal (`[]T`) is *not* treated as an array column, so it filters through the scalar comparator rather than `comparator.Slice[T]`. Use `overrides.types` when array semantics matter.
+Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved by step 1 or 2 gets `*T` (or bare `T` when the type is natively nilable). A retype does not change how a PostgreSQL array column filters: whatever Go type steps 1–4 give it (a slice literal such as `[]string`, the enum's own `KindSlice`, a local named slice), it keeps `comparator.Slice[E]` / `NullableSlice[E]`, where `E` is the Go type its element SQL type resolves to, exactly as the unretyped column does ([11.2](#112-comparator-types)). An array of `json` / `jsonb` stays non-filterable.
 
-**How steps 3–5 match a SQL type.** The column's SQL type is looked up as written first, then with its modifiers stripped: a `numeric(12,2)` column takes an `overrides.types."numeric(12,2)"` entry when there is one and the `numeric` entry otherwise. A MySQL integer `… unsigned` type with a modifier is looked up as `<base> unsigned`, never as the signed base, so `int(10) unsigned zerofill` takes an `int unsigned` entry. An `… unsigned` type on a non-integer base, MySQL's or SQLite's, is looked up as written, then as `<base> unsigned`, then as the signed base, which has the same Go type: `double unsigned zerofill` takes a `double unsigned` entry, else a `double` one. PostgreSQL types are written without a space inside the modifiers, by the parser and the introspector alike ([5.2](#52-dialect-parsers)), so `"numeric(12,2)"` is the key to write. A column of a table, view, composite type or domain in a schema first tries each of those keys qualified with that schema, then bare: a type in the column's own schema is written bare ("Enum, SET and domain names" below), so an `overrides.types."app.status_enum"` key reaches a `status_enum` column of `app.accounts` as well as an `app.status_enum` column of a table in another schema, and never a same-named type in a third schema. A qualified key wins over the bare one for the same column. A domain's base type is matched as a column of that domain, in the domain's schema, and each link of a domain chain is tried at steps 3–5 before the next: an `overrides.types.email` key reaches a column of a domain defined over the domain `email`.
+**How steps 3–5 match a SQL type.** The column's SQL type is looked up as written first, then with its modifiers stripped: a `numeric(12,2)` column takes an `overrides.types."numeric(12,2)"` entry when there is one and the `numeric` entry otherwise. A MySQL integer `… unsigned` type with a modifier is looked up as `<base> unsigned`, never as the signed base, so `int(10) unsigned zerofill` takes an `int unsigned` entry. An `… unsigned` type on a non-integer base, MySQL's or SQLite's, is looked up as written, then as `<base> unsigned`, then as the signed base, which has the same Go type: `double unsigned zerofill` takes a `double unsigned` entry, else a `double` one. PostgreSQL types are written without a space inside the modifiers, by the parser and the introspector alike ([5.2](#52-dialect-parsers)), so `"numeric(12,2)"` is the key to write. A column of a table, view, composite type or domain in a schema first tries each of those keys qualified with that schema, then bare: a type in the column's own schema is written bare ("Enum, SET and domain names" below), so an `overrides.types."app.status_enum"` key reaches a `status_enum` column of `app.accounts` as well as an `app.status_enum` column of a table in another schema, and never a same-named type in a third schema. A qualified key wins over the bare one for the same column. A domain's base type is matched as a column of that domain, in the domain's schema, and each link of a domain chain is tried at steps 3–5 before the next: an `overrides.types.email` key reaches a column of a domain defined over the domain `email`. Every lookup ignores case: SQL type names, enum, SET and domain names, schema qualifiers and `overrides.types` keys. Two keys of one scope that differ only in case name the same type and are a config error ([4.13](#413-config-validation-rules)).
 
-**Enum, SET and domain names.** The parser and the introspector write a column's type the same way: bare when the type is in the column's own schema, schema-qualified when it is in another. A schema-qualified name (`billing.status`) resolves to that schema's type. A bare name (`status`) is looked up first in the schema of the table, view, composite type or domain the column belongs to, and then as a bare name, which answers only while no other schema has a type by that name. So two same-named enums in different schemas never collide: a column whose type is in its own schema resolves to that schema's enum, and a column in any other schema reaches it by its qualified name. A column of an `input.views` annotation-file view ([16.1](#161-annotation-files-file-sourced-views)) copies its source column's type, rewritten the same way for the view's schema, and its source table is found in the schema the `FROM` clause names (an unqualified one in `input.schema`).
+**A SQL type no step resolves is a `string`.** A column whose SQL type has no override, integration, enum, SET or domain and no built-in mapping (PostgreSQL `money` or `xml`, say) resolves to `string` (`*string` / `sql.NullString` when nullable), and generation warns, naming the column, its SQL type and the `overrides.types.<sql_type>` key that would type it. The config still generates.
+
+**Enum, SET and domain names.** The parser and the introspector write a column's type the same way: bare when the type is in the column's own schema, schema-qualified when it is in another. A schema-qualified name (`billing.status`) resolves to that schema's type. A bare name (`status`) is looked up first in the schema of the table, view, composite type or domain the column belongs to, and then as a bare name, which answers only while no other schema has a type by that name. A name the dialect's built-in mapping knows (`integer`, `text`) never takes that second lookup: a type of that name in another schema leaves the column's built-in type alone, as PostgreSQL resolves it. So two same-named enums in different schemas never collide: a column whose type is in its own schema resolves to that schema's enum, and a column in any other schema reaches it by its qualified name. A column of an `input.views` annotation-file view ([16.1](#161-annotation-files-file-sourced-views)) copies its source column's type, rewritten the same way for the view's schema, and its source table is found in the schema the `FROM` clause names (an unqualified one in `input.schema`).
 
 ### 7.2 Built-In Type Mappings
 
@@ -1749,7 +1790,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | SQL Type | Go Type | Nullable Go Type |
 |----------|---------|------------------|
 | `text`, `varchar`, `char`, `name` | `string` | `sql.NullString` / `*string` |
-| `int2`, `smallint` | `int16` | `sql.NullInt16` / `*int16` |
+| `int2`, `smallint`, `smallserial` | `int16` | `sql.NullInt16` / `*int16` |
 | `int4`, `integer`, `serial`, `integer GENERATED AS IDENTITY` | `int32` | `sql.NullInt32` / `*int32` |
 | `int8`, `bigint`, `bigserial`, `bigint GENERATED AS IDENTITY` | `int64` | `sql.NullInt64` / `*int64` |
 | `float4`, `real` | `float32` | `sql.NullFloat64` / `*float32` |
@@ -1759,6 +1800,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `bytea` | `[]byte` | `[]byte` |
 | `timestamp`, `timestamptz` | `time.Time` | `sql.NullTime` / `*time.Time` |
 | `date` | `time.Time` | `sql.NullTime` / `*time.Time` |
+| `time` | `string` | `sql.NullString` / `*string` |
 | `interval` | `time.Duration` | `*time.Duration` |
 | `uuid` | `uuid.UUID` | `*uuid.UUID` |
 | `json`, `jsonb` | `types.JSON` | `types.JSON` (nil = NULL) |
@@ -1776,7 +1818,9 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `numeric[]`, `decimal[]` | `[]float64` | `[]float64` |
 | `timestamp[]`, `timestamptz[]` | `[]time.Time` | `[]time.Time` |
 
-**Array type rule:** Any PostgreSQL array type (`T[]`) maps to a Go slice of the base type's **resolved** Go mapping (`[]GoT`) — the base type's built-in mapping, or whatever an `overrides.types.<base>` entry resolves it to. The base type is always resolved in its non-null form, so the element type never carries a `sql.Null*` or pointer shape; nullable array columns use the same slice type (slices are already reference types with a `nil` zero value). `uuid[]` is therefore `[]uuid.UUID` on the default binding and on every UUID integration alike ([7.4](#74-built-in-type-integrations)), all of which spell the Go type `uuid.UUID`; a `numeric` override to `github.com/shopspring/decimal` makes `numeric[]` resolve to `[]decimal.Decimal`. A schema enum's array is the exception: it always resolves to the generated `<Enum>Slice` ([8.3](#83-generated-artifacts--other)), because pgx cannot scan or bind an unregistered enum OID into any other slice, so an `overrides.types.<enum>` entry does not reach it. Retype the array with an `overrides.types."<enum>[]"` key.
+**Array type rule:** Any PostgreSQL array type (`T[]`) maps to a Go slice of the base type's **resolved** Go mapping (`[]GoT`) — the base type's built-in mapping, or whatever an `overrides.types.<base>` entry resolves it to. The base type is always resolved in its non-null form, so the element type never carries a `sql.Null*` or pointer shape; nullable array columns use the same slice type (slices are already reference types with a `nil` zero value). `uuid[]` is therefore `[]uuid.UUID` on the default binding and on every UUID integration alike ([7.4](#74-built-in-type-integrations)), all of which spell the Go type `uuid.UUID`; a `numeric` override to `github.com/shopspring/decimal` makes `numeric[]` resolve to `[]decimal.Decimal`. A schema enum's array is the exception: it always resolves to the generated `<Enum>Slice` ([8.3](#83-generated-artifacts--other)), because pgx cannot scan or bind an unregistered enum OID into any other slice, so an `overrides.types.<enum>` entry does not reach it. Retype the array with an `overrides.types."<enum>[]"` key. A `"<T>[]"` key, for an enum or any other type, retypes the whole column to the entry's type as written, an opaque type rather than an array column, as a per-column override does ([7.1](#71-type-resolution-chain)).
+
+**PostgreSQL column types are written as the catalog spells them**, on both schema sources, and `overrides.types` keys match that form: `smallint`, `integer`, `bigint`, `real`, `double precision`, `boolean`, `char`, `varchar`, `timestamp`, `timestamptz`. `serial`, `bigserial` and `smallserial` columns are written as `integer`, `bigint` and `smallint`, and an identity column as its base type. A key spelled as a synonym the parser never writes (`int4`, `bool`, `float8`, `character varying`) would match no column, so it is a config error naming the key to write instead ([4.13](#413-config-validation-rules)).
 
 </details>
 
@@ -1795,8 +1839,9 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `bigint unsigned` | `uint64` | `sql.NullInt64` |
 | `float` | `float32` | `sql.NullFloat64` |
 | `double`, `decimal` | `float64` | `sql.NullFloat64` |
-| `varchar`, `text`, `char`, `enum` | `string` | `sql.NullString` |
-| `set` | `<Table><Column>Set` (named `[]<Table><Column>SetValue` slice) | same (reference type) |
+| `varchar`, `text`, `char`, `enum` (no values recorded) | `string` | `sql.NullString` |
+| `enum` (values in the schema) | `<Table><Column>Enum` ([8.3](#83-generated-artifacts--other)) | `*<Table><Column>Enum` |
+| `set` (values in the schema) | `<Table><Column>Set` (named `[]<Table><Column>SetValue` slice) | same (reference type) |
 | `datetime`, `timestamp` | `time.Time` | `sql.NullTime` |
 | `date` | `time.Time` | `sql.NullTime` |
 | `json` | `types.JSON` | `types.JSON` (nil = NULL) |
@@ -1804,7 +1849,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 | `tinyint(1)` (`bool`, `boolean`) | `bool` | `sql.NullBool` |
 | `time` | `string` | `sql.NullString` / `*string` |
 | `year` | `int16` | `sql.NullInt16` / `*int16` |
-| `set` | `string` | `sql.NullString` / `*string` |
+| `set` (no values recorded) | `string` | `sql.NullString` / `*string` |
 | `tinytext`, `mediumtext`, `longtext` | `string` | `sql.NullString` / `*string` |
 | `tinyblob`, `mediumblob`, `longblob` | `[]byte` | `[]byte` |
 | `bit(1)` | `bool` | `sql.NullBool` / `*bool` |
@@ -1812,7 +1857,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 
 MySQL column types are written on both schema sources as MySQL 8.0.19+ stores them, and `overrides.types` keys match that form. An integer type has no display width (`int(11)` is `int`), except `tinyint(1)`. A synonym takes its stored form: `bool` and `boolean` are `tinyint(1)`, `integer` is `int`, `numeric` is `decimal`, `real` is `double`, `float4` is `float` and `float8` is `double`. `decimal` keeps its precision and scale (`decimal` is `decimal(10,0)`, `decimal(5)` is `decimal(5,0)`), `float(p)` is `float`, or `double` when `p` is over 24, `char`, `binary` and `bit` keep their length (`char` is `char(1)`), and `year(4)` is `year`. So an `overrides.types` key spelled `boolean`, `integer`, `numeric` or `real` matches no MySQL column; write `tinyint(1)`, `int`, `decimal` or `double`. Every `tinyint(1)` column is `bool`, whether written `BOOLEAN` or `TINYINT(1)`, as MySQL cannot tell them apart; a stored value other than 0 or 1 does not scan into it. `ZEROFILL` makes a numeric type unsigned, and an integer one keeps its width (`int(10) unsigned zerofill` resolves as `int unsigned`, `double unsigned zerofill` as `double`).
 
-A column overridden to `types.DateTime` / `types.NullDateTime` binds as the `time.Time` the value wraps (SQL NULL for an invalid `types.NullDateTime` or a nil `*types.DateTime`), whether it is a written value or a cursor keyset value; its filter operands are `time.Time` already. The driver then writes it as wall time in its DSN `loc` and reads a `DATETIME` back in that `loc`, exactly as it does for a `time.Time` column. The RFC 3339 text `types.DateTime.Value()` writes does not work on MySQL: MySQL rejects the `Z` of a UTC time (`Error 1292`), and moves any other offset to the session time zone, so a `DATETIME` written that way reads back shifted whenever `loc` and the session time zone differ. An `overrides.types` key for a fractional-second column keeps its precision: `datetime(6)` matches a `DATETIME(6)` column and `datetime` does not.
+A column overridden to `types.DateTime` / `types.NullDateTime` binds as the `time.Time` the value wraps (SQL NULL for an invalid `types.NullDateTime` or a nil `*types.DateTime`), whether it is a written value or a cursor keyset value; its filter operands are `time.Time` already. The driver then writes it as wall time in its DSN `loc` and reads a `DATETIME` back in that `loc`, exactly as it does for a `time.Time` column. The RFC 3339 text `types.DateTime.Value()` writes does not work on MySQL: MySQL rejects the `Z` of a UTC time (`Error 1292`), and moves any other offset to the session time zone, so a `DATETIME` written that way reads back shifted whenever `loc` and the session time zone differ. An `overrides.types` key for a fractional-second column keeps its precision: a `datetime(6)` key matches a `DATETIME(6)` column and wins over a bare `datetime` key, which still reaches the column when no `datetime(6)` entry exists, by the modifier-stripped lookup of [7.1](#71-type-resolution-chain).
 
 </details>
 
@@ -1822,11 +1867,11 @@ A column overridden to `types.DateTime` / `types.NullDateTime` binds as the `tim
 | SQL Type | Go Type | Nullable Go Type |
 |----------|---------|------------------|
 | `integer`, `int`, `tinyint`, `smallint`, `bigint` | `int64` | `sql.NullInt64` |
-| `text`, `varchar`, `char`, `clob` | `string` | `sql.NullString` |
+| `text`, `varchar`, `char`, `clob`, `time` | `string` | `sql.NullString` |
 | `real`, `float`, `double`, `numeric`, `decimal` | `float64` | `sql.NullFloat64` |
 | `blob` | `[]byte` | `[]byte` |
 | `boolean`, `bool` | `bool` | `sql.NullBool` |
-| `datetime`, `timestamp`, `timestamptz`, `date` | `types.DateTime` | `types.NullDateTime` |
+| `datetime`, `timestamp`, `timestamptz`, `date` | `types.DateTime` | `types.NullDateTime` (either `use_pointers` setting) |
 
 SQLite has no date/time storage class and compares these columns as text, so on SQLite the SQL builders bind every time value in the text SQLite's own `datetime()` and `CURRENT_TIMESTAMP` write: `YYYY-MM-DD HH:MM:SS` in UTC, followed by the fractional seconds the Go time carries, with trailing zeros dropped (`2026-01-01 00:00:00`, `2026-01-01 00:00:00.5`). This covers a `time.Time`, `*time.Time`, `sql.NullTime`, `types.DateTime`, `*types.DateTime` or `types.NullDateTime` argument, whether it is a written value, a filter operand or a cursor keyset value, so all three compare against a row a `DEFAULT (datetime('now'))` wrote. PostgreSQL binds the value unchanged, and MySQL binds a `types.DateTime` as the MySQL Type Mappings above describe. `types.SetOutputLayout` therefore does not affect a SQLite or MySQL statement sqlgen builds.
 
@@ -1840,7 +1885,7 @@ Controlled by `overrides.use_pointers`:
 - **`true` (default):** Nullable columns use `*T` (e.g., `*string`, `*int32`)
 - **`false`:** Nullable columns use `sql.Null*` types (e.g., `sql.NullString`, `sql.NullInt32`)
 
-Custom nullable types can be specified per SQL type via `overrides.types.<type>.nullable`.
+Custom nullable types can be specified per SQL type via `overrides.types.<type>.nullable`. A wrapper-backed integration's wrapper ([7.4](#74-built-in-type-integrations)), SQLite's `types.NullDateTime` ([7.2](#72-built-in-type-mappings)) and an explicit `nullable:` apply at either setting.
 
 **`use_pointers` applies only where a `sql.Null*` equivalent exists.** Some Go types have no `database/sql` wrapper to fall back to, so their nullable form is always `*T` regardless of the flag. `uuid.UUID` ([7.4](#74-built-in-type-integrations)) is one of them — the standard library ships no `NullUUID` — alongside `time.Duration` (`interval`) and `net.IPNet` (`cidr`). Setting `overrides.use_pointers: false` does not turn a nullable `uuid` column into a wrapper struct; it stays `*uuid.UUID`, and `IS NULL` is `v != nil`. A consumer who wants the wrapper shape selects a UUID library that ships one, via `overrides.types.uuid` ([7.4](#74-built-in-type-integrations)) — the flag is not the lever for it. This is distinct from reference types (`[]byte`, `net.IP`, `types.JSON`), whose nullable form is the bare type because `nil` is already their zero value.
 
@@ -1859,8 +1904,8 @@ The standard library's `uuid` package is the **default** binding: a `uuid` colum
 | Integration | `import` value | Go type | Zero value | Nullable Go type |
 |-------------|----------------|---------|------------|------------------|
 | **Standard library** (default) | `uuid` | `uuid.UUID` | `uuid.UUID{}` | `*uuid.UUID` — **no null wrapper** |
-| `github.com/google/uuid` | `github.com/google/uuid` | `uuid.UUID` | `uuid.UUID{}` | `*uuid.UUID` (pointers) or `uuid.NullUUID` |
-| `github.com/gofrs/uuid/v5` | `github.com/gofrs/uuid/v5` | `uuid.UUID` | `uuid.Nil` | `*uuid.UUID` (pointers) or `uuid.NullUUID` |
+| `github.com/google/uuid` | `github.com/google/uuid` | `uuid.UUID` | `uuid.UUID{}` | `uuid.NullUUID` |
+| `github.com/gofrs/uuid/v5` | `github.com/gofrs/uuid/v5` | `uuid.UUID` | `uuid.Nil` | `uuid.NullUUID` |
 
 All three match the single SQL type `uuid`, and PostgreSQL is the only dialect that declares one — MySQL and SQLite have no `uuid` SQL type, so no mapping of theirs is affected by the choice.
 
@@ -1869,12 +1914,12 @@ All three match the single SQL type `uuid`, and PostgreSQL is the only dialect t
 - **No null wrapper.** The package ships no `NullUUID`, so `uuid.UUID` is classified `nullPtrOnly` ([7.3](#73-nullable-handling)): a nullable `uuid` column is `*uuid.UUID` and `overrides.use_pointers: false` does not change it. Null is `v != nil`, the value is `*v`. There is nothing for `overrides.types.uuid.nullable` to name, and the integration sets no nullable variant.
 - **No `driver.Valuer` / `sql.Scanner`, and none needed — for a `uuid` column.** `database/sql` special-cases `uuid.UUID` in both directions — `driver/types.go` on write, `convert.go` on read, for both `string` and `[]byte` driver values — and pgx routes the type through the same path `github.com/google/uuid` has always taken, unwrapping the named type to its underlying `[16]byte` and wrapping that in `pgtype.byte16Wrapper`, which satisfies `UUIDValuer` and dispatches to `UUIDCodec`. Neither `overrides.types.uuid.convert` nor a custom codec is required on either `output.driver` value. Generated code scans into the resolved type directly and never into `pgtype.UUID`, which would cost a conversion step and lose the nil-pointer NULL representation.
 
-- **A column whose SQL type is *not* `uuid` cannot be retyped to the standard library's `uuid.UUID` under pgx.** The claim above is scoped to the column's SQL type, because that is what pgx's codec lookup keys on: `UUIDCodec` is registered for the `uuid` OID, so a `text` column retyped to `uuid.UUID` through `tables.<t>.column_map.<col>` or `type_map` fails at scan time with `cannot scan text (OID 25) in text format into *uuid.UUID`. The standard library's `uuid.UUID` carries `MarshalText` / `UnmarshalText` but neither `sql.Scanner` nor `driver.Valuer`, so there is nothing for the text path to dispatch to. Both wrapper-backed integrations *do* ship `Scan` / `Value` on the bare `uuid.UUID`, so the same retype works under either of them, and under `output.driver: stdlib` on any integration (`database/sql`'s `convert.go` special-case applies to the destination type, not the column). A project that stores UUIDs in a `text` column and wants them typed selects `github.com/google/uuid` or `github.com/gofrs/uuid/v5` for that generated package.
+- **A column whose SQL type is *not* `uuid` cannot be retyped to the standard library's `uuid.UUID` under pgx.** The claim above is scoped to the column's SQL type, because that is what pgx's codec lookup keys on: `UUIDCodec` is registered for the `uuid` OID, so a `text` column retyped to `uuid.UUID` through `tables.<t>.column_map.<col>` fails at scan time with `cannot scan text (OID 25) in text format into *uuid.UUID`. The standard library's `uuid.UUID` carries `MarshalText` / `UnmarshalText` but neither `sql.Scanner` nor `driver.Valuer`, so there is nothing for the text path to dispatch to. Both wrapper-backed integrations *do* ship `Scan` / `Value` on the bare `uuid.UUID`, so the same retype works under either of them, and under `output.driver: stdlib` on any integration (`database/sql`'s `convert.go` special-case applies to the destination type, not the column). A project that stores UUIDs in a `text` column and wants them typed selects `github.com/google/uuid` or `github.com/gofrs/uuid/v5` for that generated package.
 - **Comparable.** `uuid.UUID` is an array type, so it satisfies `comparable` and `uuid[]` columns filter through `comparator.Slice[uuid.UUID]` ([11.2](#112-comparator-types)).
 
 On the GraphQL surface ([26.4.1](#2641-scalar-marshaling)) a stdlib-bound package declares the `UUID` scalar only: a nullable `uuid` column is a nullable field of scalar `UUID`, no `NullUUID` scalar is declared, and no `MarshalNullUUID` / `UnmarshalNullUUID` pair is emitted. Filter inputs are unaffected — a nullable UUID column takes `NullableIDComparator` under every integration, because comparator selection reads through the wrapper ([7.3](#73-nullable-handling)).
 
-**Alternative integrations.** `github.com/google/uuid` and `github.com/gofrs/uuid/v5` are selected by pointing `overrides.types.uuid.import` at the library. Both ship a `uuid.NullUUID` wrapper, so both offer the wrapper shape for nullable columns — `*uuid.UUID` under `use_pointers: true`, `uuid.NullUUID` under `use_pointers: false`, or `uuid.NullUUID` named explicitly via `nullable:` at either setting. Choosing one is the supported way to keep the wrapper shape, the `NullUUID` GraphQL scalar, and the `.Valid` / `.UUID` field access a consumer may already depend on.
+**Alternative integrations.** `github.com/google/uuid` and `github.com/gofrs/uuid/v5` are selected by pointing `overrides.types.uuid.import` at the library. Both ship a `uuid.NullUUID` wrapper, and the integration supplies it as the nullable variant: a nullable `uuid` column is `uuid.NullUUID` under either `use_pointers` setting, whether `nullable:` names it or is omitted. A `nullable:` that names a pointer (`*uuid.UUID`) gives the pointer form instead. Choosing one is the supported way to keep the wrapper shape, the `NullUUID` GraphQL scalar, and the `.Valid` / `.UUID` field access a consumer may already depend on.
 
 **Three spellings of the zero UUID.** The three integrations agree on the Go type string `uuid.UUID` and disagree on how the zero value is written: google spells it as the composite literal `uuid.UUID{}`, gofrs as the package **variable** `uuid.Nil`, and the standard library as neither — its `Nil` is a **function**, so the literal `uuid.UUID{}` is what the generator must emit. This is why `ZeroValue` is a per-integration field rather than something derived from the type name.
 
@@ -1892,6 +1937,8 @@ The **value** columns are used where the target is a `uuid.UUID`; the **string**
 2. **What the global `overrides.types` names**, when step 1 found nothing. Detection is by import path, not by key, on the same scope-independent terms as the rest of this section. This step matters because "no column resolved `uuid`-qualified" and "this package uses no UUID library" are different statements: a `uuid` primary key overridden to a Go `string` leaves an explicit `overrides.types` binding with no resolved type to carry it, and the generated PK must still come from the library the consumer named.
 3. **The standard library**, when neither named anything — so a consumer who mentions no UUID library anywhere acquires no module dependency by enabling event IDs.
 
+An import path that names none of the three libraries is a custom override ([7.5](#75-custom-type-overrides)), not an integration: it keeps its own import, and the generating and parse calls are spelled as the standard library's.
+
 **Parsing a UUID from a string.** The GraphQL `UUID` and `NullUUID` scalar unmarshalers ([26.4.1](#2641-scalar-marshaling)) turn a wire string into a `uuid.UUID`, and that call is the **selected integration's** on the same terms as the generating calls above. The three libraries disagree here too, and not on the same axis: the standard library and google both export `Parse`, while gofrs exports **no `Parse` at all** — its string constructor is `FromString`.
 
 | Integration | Parse from string |
@@ -1900,7 +1947,7 @@ The **value** columns are used where the target is a `uuid.UUID`; the **string**
 | `github.com/google/uuid` | `uuid.Parse(s)` |
 | `github.com/gofrs/uuid/v5` | `uuid.FromString(s)` |
 
-All three return `(uuid.UUID, error)`, so only the function name varies and the call site's shape is identical under every integration. The `OrNil` variants gofrs also exports are deliberately not used: an unparseable scalar input is a client error the unmarshaler must report, not silently collapse to the zero UUID.
+All three return `(uuid.UUID, error)`, so only the function name varies and the call site's shape is identical under every integration. The parse call follows the same three steps as the generating calls, so a package that names no library parses with the standard library's `uuid.Parse`. The `OrNil` variants gofrs also exports are deliberately not used: an unparseable scalar input is a client error the unmarshaler must report, not silently collapse to the zero UUID.
 
 **All three integrations provide:**
 - Correct zero values, per the table above
@@ -1944,11 +1991,11 @@ overrides:
 
 | SQL Type | Go Type | Nullable Go Type | Zero Value |
 |----------|---------|------------------|------------|
-| `numeric`, `decimal` | `decimal.Decimal` | `*decimal.Decimal` (pointers) or `decimal.NullDecimal` | `decimal.Decimal{}` |
+| `numeric`, `decimal` | `decimal.Decimal` | `decimal.NullDecimal` | `decimal.Decimal{}` |
 
 This integration provides:
 - Arbitrary-precision decimal arithmetic instead of lossy `float64`
-- Correct `NullDecimal` handling when `use_pointers: false`, including the `Decimal` underlying-field unwrap so nullable decimal FK columns stringify correctly in O2M relationship loaders
+- `NullDecimal` as the nullable variant under either `use_pointers` setting (a `nullable:` naming `*decimal.Decimal` gives the pointer form instead), including the `Decimal` underlying-field unwrap so nullable decimal FK columns stringify correctly in O2M relationship loaders
 - Scanner/Valuer interface compliance for database drivers
 
 **If no decimal override is configured**, `numeric`/`decimal` SQL columns map to `float64` / `sql.NullFloat64` (the default).
@@ -1968,7 +2015,7 @@ overrides:
 
 The code generator includes built-in knowledge of these popular libraries (via the `gotype/` packages in the CLI module). When a consumer configures one of these types, the generator automatically resolves the full mapping — zero value, nullable variant, scanner/valuer support, FK conversion, and the wrapper's `underlying_field` (the embedded scalar field used by O2M relationship loaders to unwrap a nullable FK before stringifying) — without the consumer needing to specify every field. Consumers can override any field explicitly via `overrides.types` if they need different behavior. Explicit overrides always take precedence over built-in knowledge, **except** for the FK extraction path — built-in wrappers (`uuid.NullUUID`, `decimal.NullDecimal`, `types.NullDateTime`) always use their canonical underlying field and `Valid` guard, so a user who points `nullable.type` at one of those names cannot accidentally redirect the unwrap to the wrong field.
 
-**Integration detection is scope-independent.** An `overrides.types.<sql_type>` entry naming a known library's import path activates that integration and receives the same enrichment wherever it is declared — globally, or under `tables.<table>.overrides.types`. Identical override text selects the same integration and resolves to the same Go type, zero value and nullable variant at both scopes; nesting depth is not part of integration resolution. The claim is about the built-in integrations, which is what this section governs — a wrapper the consumer declares themselves is [7.5](#75-custom-type-overrides)'s mechanism, not this one. A consumer who drops `nullable:` from a table-scoped `github.com/google/uuid` override gets `uuid.NullUUID` back from enrichment exactly as the same edit at global scope does, and a table-scoped override gains the same FK-extraction metadata (`underlying_field`, `valid_field`) as a global one. "Activates" covers the integration's other SQL types as well: a table-scoped `numeric` override naming `github.com/shopspring/decimal` binds that table's `decimal` columns to `decimal.Decimal` too, exactly as the same entry does globally. A table-scoped activation is still an *integration*, so it enters the chain at step 5 of [7.1](#71-type-resolution-chain) — ahead of a global integration, behind any explicit override at either scope. An explicit value the consumer did write is never overwritten at any scope, per the precedence rule above.
+**Integration detection is scope-independent.** An `overrides.types.<sql_type>` entry naming a known library's import path activates that integration and receives the same enrichment wherever it is declared — globally, or under `tables.<table>.overrides.types`. Identical override text selects the same integration and resolves to the same Go type, zero value and nullable variant at both scopes; nesting depth is not part of integration resolution. The claim is about the built-in integrations, which is what this section governs — a wrapper the consumer declares themselves is [7.5](#75-custom-type-overrides)'s mechanism, not this one. A consumer who drops `nullable:` from a table-scoped `github.com/google/uuid` override gets `uuid.NullUUID` back from enrichment exactly as the same edit at global scope does, and a table-scoped override gains the same FK-extraction metadata (`underlying_field`, `valid_field`) as a global one. "Activates" covers the integration's other SQL types as well: a table-scoped `numeric` override naming `github.com/shopspring/decimal` binds that table's `decimal` columns to `decimal.Decimal` too, exactly as the same entry does globally. A table-scoped activation is still an *integration*, so it enters the chain at step 5 of [7.1](#71-type-resolution-chain) — ahead of a global integration, behind any explicit override at either scope. An explicit value the consumer did write is never overwritten at any scope, per the precedence rule above. Enrichment never crosses libraries: an integration fills in only an entry whose `import` names that library or names no import at all, so an entry importing another library is left as written. An entry with no `import` is not a competing claim, and the integration that claims its SQL type enriches it, as it does a sibling SQL type.
 
 These are the only two scopes. A view carries no `overrides` block ([4.9](#49-viewconfig-per-view)), so a view column resolves its type under the global scope alone; per-view type control is a column's `@type` annotation in the view SQL.
 
@@ -2037,7 +2084,7 @@ package types
 // JSON holds a raw JSON document of any shape — object, array, scalar,
 // or null. It is the default Go type for `json` and `jsonb` columns
 // when no typed Go struct is configured. Decode opportunistically with
-// AsMap/AsSlice/Decode, or override the column's go_type to a concrete
+// AsMap/AsSlice/Decode, or override the column's Go type to a concrete
 // struct via overrides.types or per-column override for typed access at
 // the field level.
 type JSON json.RawMessage
@@ -2047,16 +2094,16 @@ type JSON json.RawMessage
 
 | Method | Returns | Semantics |
 |--------|---------|-----------|
-| `(*JSON).Scan(src any)` | `error` | `sql.Scanner`. Accepts `[]byte` or `string`. Stores a defensive copy of the raw bytes (drivers may reuse buffers across rows). SQL `NULL` produces a `nil JSON`. No shape validation. |
+| `(*JSON).Scan(src any)` | `error` | `sql.Scanner`. Accepts `[]byte` or `string`. Stores a defensive copy of the raw bytes (drivers may reuse buffers across rows). SQL `NULL`, or a nil `[]byte`, produces a `nil JSON`. Any other source type is an error naming it. No shape validation. |
 | `JSON.Value()` | `(driver.Value, error)` | `driver.Valuer`. Returns the raw bytes verbatim. `nil` or empty `JSON` returns SQL `NULL`. |
-| `JSON.MarshalJSON()` | `([]byte, error)` | Delegates to `json.RawMessage.MarshalJSON`. `nil` emits `"null"`. |
-| `(*JSON).UnmarshalJSON(data []byte)` | `error` | Delegates to `json.RawMessage.UnmarshalJSON` (validates well-formedness). |
+| `JSON.MarshalJSON()` | `([]byte, error)` | Delegates to `json.RawMessage.MarshalJSON`. `nil` or empty emits `"null"`. |
+| `(*JSON).UnmarshalJSON(data []byte)` | `error` | Rejects input that is not well-formed JSON, then delegates to `json.RawMessage.UnmarshalJSON`. |
 | `JSON.MarshalGQL(w io.Writer)` | — | gqlgen `Marshaler`. Writes the raw bytes verbatim; nil/empty writes `"null"`. |
-| `(*JSON).UnmarshalGQL(v any)` | `error` | gqlgen `Unmarshaler`. Accepts any shape gqlgen produces (`map[string]any`, `[]any`, primitives, `nil`) and re-encodes to bytes. Unlike the prior `JSONMap.UnmarshalGQL`, this does **not** reject non-object inputs — shape validation is a resolver-layer concern (see §26.4.1). |
+| `(*JSON).UnmarshalGQL(v any)` | `error` | gqlgen `Unmarshaler`. Accepts any shape gqlgen produces (`map[string]any`, `[]any`, primitives, `nil`) and re-encodes to bytes; `nil` (a GraphQL `null`) sets a nil `JSON`, which `Value` writes as SQL `NULL`. Unlike the prior `JSONMap.UnmarshalGQL`, this does **not** reject non-object inputs — shape validation is a resolver-layer concern (see §26.4.1). |
 | `JSON.Decode(v any)` | `error` | Typed-decode escape hatch. Delegates to `json.Unmarshal(j, v)`. Empty `JSON` returns the stdlib's `"unexpected end of JSON input"` error wrapped with context; `"null"` literal nils out the target via standard `encoding/json` behavior. |
 | `JSON.AsMap()` | `(map[string]any, error)` | Strict object decode. Returns an error when the value is not a JSON object (probe with `IsObject` to branch without decoding). |
 | `JSON.AsSlice()` | `([]any, error)` | Strict array decode. Returns an error when the value is not a JSON array (probe with `IsArray` to branch without decoding). |
-| `JSON.IsNull()` | `bool` | True when the value is empty (SQL NULL) **or** holds the JSON `null` literal. The two are indistinguishable to most application code; `len(j) == 0` distinguishes them where it matters. |
+| `JSON.IsNull()` | `bool` | True when the value is empty (SQL NULL) or whitespace-only, **or** holds the JSON `null` literal, with any surrounding whitespace. The two are indistinguishable to most application code; `len(j) == 0` distinguishes them where it matters. |
 | `JSON.IsObject()` | `bool` | First non-whitespace byte is `{`. Cheap structural probe; does not validate the entire payload. |
 | `JSON.IsArray()` | `bool` | First non-whitespace byte is `[`. Cheap structural probe; does not validate the entire payload. |
 | `JSON.String()` | `string` | Returns `string(j)` so `%v` / `%s` formatting emit the raw JSON document. No truncation. |
@@ -2067,9 +2114,9 @@ type JSON json.RawMessage
 # sqlgen.yml
 tables:
   asset:
-    columns:
+    column_map:
       property_tax_rate:
-        go_type: "[]assettypes.YearValue"
+        type: "[]assettypes.YearValue"
         import: "example.com/assettypes"
 ```
 
@@ -2083,11 +2130,11 @@ type YearValue struct {
 }
 ```
 
-The column scans as `PropertyTaxRate []YearValue` directly, no per-read decode. `types.JSON` remains for the cases where a column's shape genuinely is dynamic (event payloads, audit-log details, third-party integration responses) or where typing has not been done yet.
+Under `output.driver: pgx` the column scans as `PropertyTaxRate []YearValue` directly, no per-read decode: pgx decodes JSON into the field's type. A `database/sql` driver (`stdlib` on any dialect) has no such codec, so there the override names a type that crosses the driver boundary on its own ([4.8](#48-tableconfig-per-table)): a named slice or struct whose `Scan` JSON-decodes the column's `[]byte` or `string` value and whose `Value` returns the JSON encoding. `types.JSON` remains for the cases where a column's shape genuinely is dynamic (event payloads, audit-log details, third-party integration responses) or where typing has not been done yet.
 
 **Why not split into `JSONObject` / `JSONArray`?** A jsonb column can hold any JSON value at any time — there is no SQL-level guarantee that the shape is uniform across rows. Splitting at the type level forces every consumer to pick a shape upfront, which is exactly the bug the polymorphic default avoids. Callers that genuinely need shape constraints define a Go struct (or `[]Struct`) and override; that's a stronger guarantee than two narrowly-typed default types.
 
-**`jsonb[]` arrays.** PostgreSQL's `jsonb[]` (a SQL array of jsonb values, distinct from a single jsonb holding a JSON array) resolves to `[]types.JSON`. Each element is independently shape-agnostic and supports the same method surface, so per-element decoding composes cleanly:
+**`jsonb[]` arrays.** PostgreSQL's `jsonb[]` (a SQL array of jsonb values, distinct from a single jsonb holding a JSON array) resolves to `[]types.JSON`, and so does `json[]`. Each element is independently shape-agnostic and supports the same method surface, so per-element decoding composes cleanly:
 
 ```go
 for _, t := range asset.Tags {
@@ -2098,7 +2145,7 @@ for _, t := range asset.Tags {
 }
 ```
 
-`jsonb[]` columns are excluded from the generated filter context: `[]types.JSON` is `[][]byte`, which does not satisfy the comparator package's `comparable` constraint. Schemas needing list-of-JSON semantics use a single `jsonb` column holding a JSON array (`'[{...}, {...}]'::jsonb`) rather than `jsonb[]` — `jsonb[]` is queried with PostgreSQL array operators, while a JSON array inside `jsonb` is queried with JSON operators (`->`, `@>`).
+`json[]` and `jsonb[]` columns are excluded from the generated filter context: `[]types.JSON` is `[][]byte`, which does not satisfy the comparator package's `comparable` constraint. Schemas needing list-of-JSON semantics use a single `jsonb` column holding a JSON array (`'[{...}, {...}]'::jsonb`) rather than `jsonb[]` — `jsonb[]` is queried with PostgreSQL array operators, while a JSON array inside `jsonb` is queried with JSON operators (`->`, `@>`).
 
 **Nullability.** `types.JSON` is a reference type (`json.RawMessage` is `[]byte` underneath), so nullability is conveyed by `nil`. There is no `NullJSON` wrapper — a SQL NULL column scans as `nil JSON`, and `Value()` of a nil/empty `JSON` returns SQL NULL. The gotype resolver classifies it as `nullRef`.
 
@@ -2185,7 +2232,7 @@ After template execution, every generated file passes through:
 
 1. **Header injection** — the generated file header is prepended (see below)
 2. **`goimports`** (`golang.org/x/tools/imports`) — adds missing imports, removes unused imports, formats code
-3. **Write** — output to disk with `0o600` permissions. Output directories are auto-created with `os.MkdirAll` if they do not exist.
+3. **Write** — output to disk with `0o600` permissions; auto-created output directories get `0o755`. Output directories are auto-created with `os.MkdirAll` if they do not exist.
 
 If `goimports` fails, the raw template output is included in the error message for debugging. This catches template bugs early.
 
@@ -2194,11 +2241,11 @@ If `goimports` fails, the raw template output is included in the error message f
 Every generated file includes a standard header comment:
 
 ```go
-// Code generated by sqlgen v1.2.0. DO NOT EDIT.
+// Code generated by sqlgen 1.2.0. DO NOT EDIT.
 ```
 
 - The `// Code generated ... DO NOT EDIT.` pattern is recognized by Go tooling — `go generate`, `golangci-lint`, and IDEs use it to skip generated files from analysis and formatting.
-- The version is the sqlgen CLI binary version (e.g., `v1.2.0`), not the config `version` field. This helps consumers track which sqlgen version produced their generated code.
+- The version is the sqlgen CLI binary version without the release tag's leading `v` (e.g., `1.2.0` for tag `v1.2.0`), not the config `version` field. This helps consumers track which sqlgen version produced their generated code.
 - The header is always the first line of the file, before the `package` declaration.
 - **The header is load-bearing for stale-file cleanup** ([§23.8](#238-stale-file-cleanup)): the sweep deletes an orphaned `*_gen.go` only when it carries this header, which is what keeps another generator's `_gen.go` output — and any file a consumer has adopted by removing the header — out of the sweep. It names `sqlgen` specifically rather than matching Go's generic `// Code generated ... DO NOT EDIT.` form, and that distinction is the whole safeguard.
 
@@ -2252,7 +2299,7 @@ This catches template regressions without running the full generation pipeline.
 - Enum/composite/domain type parsing (PostgreSQL)
 - Relationship detection: O2O, O2M, M2M (junction table detection with composite PK)
 - Self-referential and circular FK handling
-- Multi-file parsing: strict mode (duplicate = error), merge mode (sequential apply, destructive DDL)
+- Multi-file parsing: sequential apply, a duplicate definition is an error, destructive DDL
 - Migration file filtering: `*.down.sql`/`*_down.sql` skipped, `*.up.sql`/`*_up.sql` included
 - Edge cases: reserved word column names, quoted identifiers, empty tables, tables with no PK
 
@@ -2275,6 +2322,7 @@ This catches template regressions without running the full generation pipeline.
 - Resolved `cursor_keys` naming a `write_only` / `hidden` / `internal` column → error (§32.4); exempt when `Connection` is off or the keys do not resolve
 - Table with no PK and no `primary_key.columns` override → skipped from generation, warning
 - `primary_key.columns` lists a non-existent column → error
+- `exclude_columns` removing a member of a detected primary key (no `primary_key.columns` override) → error
 - `primary_key.columns` lists a nullable column → error
 - `primary_key.columns` columns lack a UNIQUE constraint → warning (not error — uniqueness may be app-enforced)
 - `primary_key.columns` set alongside an auto-detected PK → override wins silently (no warning)
@@ -2283,6 +2331,7 @@ This catches template regressions without running the full generation pipeline.
 - `soft_delete_columns` `bool` / `integer` column that is nullable with no `DEFAULT`
 - Struct name collisions (auto-detected and explicit `struct_name`)
 - `exclude_columns` removing all columns (warning, table skipped)
+- `exclude_columns` removing a relationship's link column (FK-inferred: warning, edge omitted; declared: error)
 - `input.schema` on MySQL/SQLite (warning, ignored)
 - Missing `connection` for `database`/`both` source
 - Invalid `api.operations` preset names; a leftover `operations` key under `generation` or `tables.<t>` (error naming `api.operations`); a client-only key in an `api.operations` mask
@@ -2301,7 +2350,8 @@ This catches template regressions without running the full generation pipeline.
 - Placeholder styles: `$1, $2` (PostgreSQL) vs `?` (MySQL/SQLite)
 - Identifier quoting: `"double"` (PostgreSQL/SQLite) vs `` `backtick` `` (MySQL)
 - `In`/`Nin` conditions: expanded `IN ($1, $2, ...)` / `IN (?, ?, ...)` on every dialect, including a single-`Subquery` argument rendered as a nested SELECT
-- Composite PK: tuple `IN` (PostgreSQL), expanded `OR` (MySQL)
+- Composite PK: tuple `IN` on every dialect, and a prefixed tuple `IN` that qualifies each column (`(c."workspace_id", c."id") IN (…)`)
+- Correlated `Exists` with one and with several correlation pairs, rendered SQL and argument order
 - Edge cases: empty filter (returns all rows), nil FieldOptions (SELECT *), zero-length IN list
 
 **Integration tests:** Generated SQL is executed against real databases to verify it produces correct results — not just correct syntax.
@@ -2328,7 +2378,7 @@ Additional cases:
 **Unit tests:** Each driver's error translation (Section 22.2) is tested with real driver error types:
 - PostgreSQL (pgx): `*pgconn.PgError` with codes `23505`, `23503`, `23502`, `23514`, `40P01`, `08*` class
 - PostgreSQL (lib/pq): `*pq.Error` with same codes
-- MySQL: `*mysql.MySQLError` with numbers `1062`, `1451`, `1452`, `1048`, `3819`, `1213`, `2002`, `2006`
+- MySQL: `*mysql.MySQLError` with numbers `1062`, `1451`, `1452`, `1048`, `1364`, `3819`, `1213`, `2002`, `2006`
 - SQLite (modernc): `*sqlite.Error` with extended codes `2067`, `787`, `1299`, `275`
 
 For MySQL and SQLite, message parsing tests cover known message formats and graceful fallback (empty `Constraint`/`Column` fields) when the format is unrecognized.
@@ -2344,7 +2394,7 @@ For MySQL and SQLite, message parsing tests cover known message formats and grac
 
 **Unit tests:** Each CLI command has tests covering:
 - `init`: generates valid YAML, prompts for dialect in TTY mode, defaults to postgres in non-TTY
-- `validate`: reports all errors together (not one at a time), exit code 2 on validation failure
+- `validate`: reports all errors together (not one at a time), exit code 2 on a config-validation failure and 1 on a resolution-level one
 - `lint`: detects hook table/type mismatches, invalid operations for table, correct exit codes per `--fail-on` severity
 - `diff`: correct file-level summary (create/modify/delete), exit code 0 for no changes, 1 for changes
 - `generate`: correct file output, stale file cleanup in `file_per_table` mode, generated header includes CLI version
@@ -2527,7 +2577,7 @@ client.Products().Increment(ctx, productID, <pkg>.ProductIncrementStock, 5)
 **Eligibility: numeric, and identifying nothing.** A column is incrementable when its resolved Go type is numeric AND it identifies no row AND it is writable:
 
 - **Primary key columns are excluded** — a row's identity is not an amount.
-- **Foreign key columns are excluded** — `category_id + 1` is arithmetic on *another* row's identity and lands on whichever row happens to sit at the next value. There is no schema in which that is the intended operation. This covers config-declared synthetic FKs (`tables.<t>.relationships[].fk`) as well as schema-declared ones, so a polymorphic pointer named as a relationship FK is excluded too. Only integer-typed FKs were ever affected — a `uuid` or `text` FK is not a numeric Go type — which is why the distinction is easy to miss.
+- **Foreign key columns are excluded** — `category_id + 1` is arithmetic on *another* row's identity and lands on whichever row happens to sit at the next value. There is no schema in which that is the intended operation. Every member of any FOREIGN KEY constraint is excluded, a composite one included: `workspace_id` in `tasks`, a member of `(workspace_id, cycle_id) → cycles(workspace_id, id)`, could only break that key if incremented ([5.3](#53-relationship-detection)). This covers config-declared synthetic FKs (`tables.<t>.relationships[].fk`) as well as schema-declared ones, so a polymorphic pointer named as a relationship FK is excluded too. Only integer-typed FKs were ever affected — a `uuid` or `text` FK is not a numeric Go type — which is why the distinction is easy to miss.
 
   On a tenanted schema the exclusion is load-bearing rather than merely tidy: `Increment` constrains which rows it *matches* but not which column it *targets*, so incrementing a foreign key walks a reference into another tenant's row. No pre-write check can catch it, because the destination value is not known until after the arithmetic — see [TENANT_SCOPED_REFERENCES.md](./design/TENANT_SCOPED_REFERENCES.md) §5.
 
@@ -2758,24 +2808,24 @@ Override: `tables.<table>.column_map.<column>.name`. This is the escape hatch fo
 | The tenant column's field, the soft-delete column's field, an auto-set `update_columns` field | Yes |
 | Manifest `go_field` | Yes |
 | `<T>IncrementXxx` constant names — the increment enum and the resolver constant it references must agree | Yes |
-| `db:` / `json:` struct tags, `<T>ConflictXxx` constant names, SQL column constants | **No** — SQL name |
+| `db:` / `json:` struct tags, `<T>ConflictXxx` constant names, the `<T>Increment<Field>` constant values, the `<t>AllColumns` / `<t>ConflictColumns` lists | **No** — SQL name |
 | GraphQL field name, `<T>SortField` enum value | **No** — wire contract, derived from the SQL name |
 
 A consumer who wants a different GraphQL field name has `api.graphql.field_casing`; renaming a column's Go field never moves the published API. On the GraphQL side the rename is safe because sqlgen *dictates* Go field names to gqlgen rather than predicting them ([§26.5.6](#2656-module-boundary--wrapper-subcommand), "Go field naming") — including, for a renamed column only, on the **bound** row type, which gqlgen would otherwise bind by comparing against the name it derives from the GraphQL field.
 
 **Validation.** The value must be a valid **exported** Go identifier — generated struct fields must be reachable from consumer code and from database scanning. A PascalCase form of a Go keyword (`Type`, `Range`, `Map`) is a legal identifier and is accepted; the reserved-word escape below applies only to generated locals. Renaming a column removed by `exclude_columns`, or one that does not exist on the table, is an error rather than a silent no-op. A resolved name that collides with another column's resolved name or with a relationship field on the same struct is an error — all three land on the same entity struct. Only collisions an override *introduces* are reported: a schema that already produces two identical field names without any override is a pre-existing condition sqlgen does not start failing on, and `go build` still catches it.
 
-**Reserved field names.** A resolved name may also not be one the generated code already declares on a struct the field lands on. These are not collisions between two user-named things — the second name is sqlgen's own — so the rule is **not** override-gated: it applies to every column's resolved name whether an override produced it or the SQL column name did, to derived relationship field names, and to view columns. The distinction is that no such name can produce compiling code in any circumstance, so rejecting it at config time strictly replaces a duplicate-field or duplicate-method error inside generated code with an actionable message naming the owner.
+**Reserved field names.** A resolved name may also not be one the generated code already declares on a struct the field lands on. These are not collisions between two user-named things — the second name is sqlgen's own — so the rule is **not** override-gated: it applies to every column's resolved name whether an override produced it or the SQL column name did, to derived relationship field names, and to view columns. The distinction is that a name is reserved against the full generated surface, so rejecting it at config time replaces a duplicate-field or duplicate-method error inside generated code with an actionable message naming the owner. A list relationship's name is reserved even where its filter member is not generated today (a composite-PK parent, an edge whose member is skipped), so the config stays valid as that surface grows.
 
 | Reserved | Claimed by | Applies to |
 |----------|-----------|-----------|
 | `Columns` | `<T>FieldOptions.Columns()`, `Stream<T>FieldOptions.Columns()` | every column; every relationship |
 | `ColumnMap` | `<T>FieldOptions.ColumnMap()` | every column; every relationship |
 | `HasSelectedColumns` | `<T>FieldOptions.HasSelectedColumns()`, `Stream<T>FieldOptions.HasSelectedColumns()` | every column; every relationship |
-| `And` | `<T>Filter.And` | filterable columns |
-| `Or` | `<T>Filter.Or` | filterable columns |
-| `ToConditions` | `<T>Filter.ToConditions()` | filterable columns |
-| `PKs` | `<T>Filter.PKs` | filterable columns on a composite-PK entity |
+| `And` | `<T>Filter.And` | filterable columns; list relationships (O2M / M2M) |
+| `Or` | `<T>Filter.Or` | filterable columns; list relationships (O2M / M2M) |
+| `ToConditions` | `<T>Filter.ToConditions()` | filterable columns; list relationships (O2M / M2M) |
+| `PKs` | `<T>Filter.PKs` | filterable columns and list relationships on a composite-PK entity |
 | `Input` | `Update<T>Item.Input` | the sole PK column of a single-PK table |
 | `Column` | the `<T>IncrementColumn` type, which the per-column `<T>Increment<Field>` constant would redeclare at package scope | increment-eligible columns ([§9.8.9a](#989a-increment)) |
 
@@ -2795,7 +2845,7 @@ Each schema entity claims three things at package scope, and any one of them can
 | The file stem | Tables and views | Under `file_per_table` the second `<stem>_gen.go` overwrites the first, and the entity disappears from the package; the accompanying `<stem>_gen.graphqls` goes with it |
 | The `hook.TableName` constant | Tables and views | The constant block redeclares the name; pluralization is not injective, so two distinct struct names can still meet here |
 
-**Two entities may not claim the same one.** This is what `user_roles` / `userroles` was meant to illustrate and does not: those resolve to `UserRole` and `Userrole`, generate fine, and are legal. The pairs that do collide are the ones singularization creates — `users` + `user`, `people` + `person`, `osi_layers` + `osi_layer` — a table and a view whose stems meet, and a `struct_name` override that lands on a name another entity already derived. The escape hatch is `tables.<table>.struct_name` or `views.<view>.struct_name` on either side; the other categories have no override and are renamed in the schema.
+**Two entities may not claim the same one.** This is what `user_roles` / `userroles` was meant to illustrate and does not: those resolve to `UserRole` and `Userrole`, generate fine, and are legal. The pairs that do collide are the ones singularization creates — `users` + `user`, `people` + `person`, `osi_layers` + `osi_layer` — a table and a view whose stems meet, and a `struct_name` override that lands on a name another entity already derived. The escape hatch is `tables.<table>.struct_name` or `views.<view>.struct_name` on either side, and `enums.<enum>.struct_name` ([4.11](#411-enum-overrides)) for an enum; SET, composite and domain types have no override and are renamed in the schema.
 
 **No entity may claim a name the generated package already declares.** These are not collisions between two user-named things — the second name is sqlgen's own — so the rule is not override-gated, exactly as for reserved field names.
 
@@ -2805,7 +2855,7 @@ Each schema entity claims three things at package scope, and any one of them can
 | `Connection`, `ConnectionInput`, `Edge`, `PageInfo` | the cursor-pagination types |
 | `PaginateInput`, `PaginateResult` | the offset-pagination types |
 | `CallOptions`, `IncrementInput` | the shared types |
-| `ErrNotFound`, `ErrConstraintViolation`, `ErrDeadlock`, `ErrConnectionFailed`, `ErrInvalidCursor`, `ErrEmptyFilter`, `ErrAmbiguousFilter`, `ErrNilInput`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ConstraintError`, `ConstraintType`, `ConstraintCheck`, `ConstraintForeignKey`, `ConstraintNotNull`, `ConstraintUnique`, `NestedMutationError` | the error types |
+| `ErrNotFound`, `ErrConstraintViolation`, `ErrDeadlock`, `ErrConnectionFailed`, `ErrTxDone`, `ErrInvalidCursor`, `ErrEmptyFilter`, `ErrAmbiguousFilter`, `ErrNilInput`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ConstraintError`, `ConstraintType`, `ConstraintCheck`, `ConstraintForeignKey`, `ConstraintNotNull`, `ConstraintUnique`, `NestedMutationError` | the error types |
 | `Cache`, `CacheOption`, `NewCache`, `WithSerializer`, `WithCircuitBreaker`, `WithInvalidationSource`, `WithMetricsRecorder`, `WithOnError` | the cache hooks |
 | `WithEventPublisher` | the event hooks |
 | The stems `models`, `views`, `errors`, `tablenames`, `sorter`, `pagination`, `connection`, `shared_types`, `sets`, `cache`, `event_hooks`, `api_envelopes`, `manifest_embed`, plus `output.client.file`, `output.enums.file` and `output.types.file` | the fixed filenames the generator writes |
@@ -2838,7 +2888,7 @@ Conditioning stops where it stops everywhere else in this section: the claim is 
 
 The naming engine recognizes common acronyms and preserves their uppercase form instead of applying standard PascalCase. This applies to both struct names and field names.
 
-**One canonical list, one splitter (invariant).** The acronym set **and** the word-splitting rule are sqlgen-owned. Both are defined once, in `cmd/sqlgen/gen/acronyms.go`, and every naming site reaches them through `toPascalCase` / `toCamelCase` / `toSnakeName` / `toSnakeCase` in `cmd/sqlgen/gen/naming.go`. Neither is inherited from a casing library's built-in defaults, and neither depends on process-global state.
+**One canonical list, one splitter (invariant).** The acronym set **and** the word-splitting rule are sqlgen-owned. Both are defined once, in `cmd/sqlgen/gen/acronyms.go`, and every casing site reaches them through `toPascalCase` / `toCamelCase` / `toSnakeName` / `toSnakeCase` in `cmd/sqlgen/gen/naming.go`. Inflection reads the set's membership directly, for the freeze rule below, and never the splitter. Neither is inherited from a casing library's built-in defaults, and neither depends on process-global state.
 
 **snake_case is spelled from the SQL name, not read back out of the Go name.** The PascalCase form is lossy: `OSIDValue` is what both `os_id_value` and `osi_dvalue` produce, and `AVPNB` is what both `a_vpn_b` and `avpnb` produce. Any rule that reads a snake_case name back out of it is therefore a guess, and every rule guesses wrong somewhere. The SQL name still carries the boundaries, so it is the source: `toSnakeName` spells a table, view, column, relationship or enum value directly from what the schema declared, using the same delimiters and case rules as `toPascalCase`. `SnakeName(table, schema, collisions)` is the exact parallel of `StructName` and supplies the stem shared by the generated `<stem>_gen.go`, the API schema `<stem>_gen.graphqls` and the gqlgen resolver seed — one field on the context, so the three filenames cannot drift apart. `toSnakeCase` remains only for `tables.<t>.struct_name` / `views.<v>.struct_name`, where the user supplies a Go identifier and there is no SQL name to consult; there it takes the **longest** canonical acronym at each position, which is the best available reading rather than an inverse.
 
@@ -2913,7 +2963,7 @@ The set is not consumer-configurable. Per-column escapes go through `tables.<tab
 
 #### Reserved Word Handling
 
-Column names whose camelCase form would collide with a Go reserved word are escaped with the suffix `Val` **only when emitted as a local variable in generated code**. Exposed identifiers (struct fields, method names, type names) are not affected — they are PascalCase, and capitalized forms of Go keywords (`Type`, `Range`, `Error`, `Map`) are valid Go identifiers.
+Column names, and the struct names of tables and views, whose camelCase form would collide with a Go reserved word are escaped with the suffix `Val` **only where that form is emitted bare in generated code — as a local variable or an unexported struct field**; an identifier with a static suffix needs no escape. For a table or view the bare form is the unified client's field: a `maps` table gives the struct `Map`, the client type `mapClient` and the `Client` field `mapVal`. Exposed identifiers (struct fields, method names, type names) are not affected — they are PascalCase, and capitalized forms of Go keywords (`Type`, `Range`, `Error`, `Map`) are valid Go identifiers.
 
 A column named `type` (or any column whose lowercase form matches a reserved word) produces an exposed Go field `Type` and a code-internal local variable `typeVal`. The escape is invisible at the public API surface.
 
@@ -2983,7 +3033,7 @@ The `db:` and `json:` struct tags carry the original SQL column name, so the wir
 | `camel_case` (default) | `2010_revenue` | `col2010Revenue` | `Col2010Revenue` |
 | `snake_case` | `2010_revenue` | `col_2010_revenue` | `Col2010Revenue` |
 
-gqlgen's PascalCase↔camelCase auto-binding lines up `col2010Revenue` ↔ `Col2010Revenue` in camel mode; the snake-mode binding is explicit in `gqlgen.yml` via the field map sqlgen emits. The `db:` / `json:` struct tags continue to carry the raw `2010_revenue` so the SQL identifier and the JSON wire name are unaffected by the GraphQL casing choice.
+On the row type, gqlgen binds the field itself, comparing names case-insensitively after stripping underscores, so `col2010Revenue` (camel mode) and `col_2010_revenue` (snake mode) both bind to `Col2010Revenue`; only a renamed column gets an explicit row-type entry ("Field Name Resolution" above). The filter and the create and update inputs carry an explicit entry for every field in the `gqlgen.yml` field map sqlgen emits, in both modes. The `db:` / `json:` struct tags continue to carry the raw `2010_revenue` so the SQL identifier and the JSON wire name are unaffected by the GraphQL casing choice.
 
 **GraphQL enum values.** Enum values carry the same `Name` constraint, so a value derived from a column name takes the same `col_` guard before SCREAMING_SNAKE_CASE — in **both** `field_casing` modes, since enum values are casing-independent: `2010_revenue` → `COL_2010_REVENUE`. A bare `2010_REVENUE` is not a legal GraphQL `Name` and the emitted schema would fail to parse. This is the canonical spelling for every generated enum value derived from a column name, and in particular for the `<T>SortField` enum and the `<t>SortFieldToColumn` switch that consumes it — which [§26.5.3](#2653-filter--sort--pagination-translation)'s single-derivation invariant requires to agree.
 
@@ -3005,25 +3055,25 @@ The strategy is derived from the PK column's type, default expression, and diale
 
 | Dialect | PK Type | Has DB Default? | Detected Strategy | CreateInput | Rationale |
 |---------|---------|:---------------:|:-----------------:|-------------|-----------|
-| **Any** | **Any, and the column is a FOREIGN KEY** | — | **`caller`** | Required (bare type) | **Checked first, ahead of every row below.** The value must equal an existing parent row's key, so nothing may mint it. |
+| **Any** | **Any, and the column is a member of a FOREIGN KEY constraint** | — | **`caller`** | Required (bare type) | **Checked first, ahead of every row below.** The value must equal an existing parent row's key, so nothing may mint it. |
 | PostgreSQL | UUID | Yes (`DEFAULT gen_random_uuid()`) | `db` | `omittable.Value[T]` | DB applies default if omitted; caller may override |
 | PostgreSQL | UUID | No | `app` | `omittable.Value[T]` | App generates UUID if omitted; caller may override |
 | PostgreSQL | SERIAL/BIGSERIAL | Yes | `db` | Excluded | Sequence-based — caller cannot provide |
 | PostgreSQL | GENERATED AS IDENTITY | Yes | `db` | Excluded | Identity-based — caller cannot provide |
+| PostgreSQL | Any other type | Yes | `db` | `omittable.Value[T]` | DB applies default if omitted; caller may override |
 | MySQL | INT AUTO_INCREMENT | Yes | `db` | Excluded | Sequence-based — caller cannot provide |
-| MySQL | UUID | Yes (`DEFAULT (UUID())`) | **`app`** | `omittable.Value[T]` | **No RETURNING, no LastInsertId() for UUIDs** — DB-generated UUID is unretrievable. Caller may override. |
-| MySQL | UUID | No | `app` | `omittable.Value[T]` | Must generate client-side; caller may override |
-| MySQL | Any other, no default | — | `caller` | Required (bare type) | No auto-generation mechanism |
+| MySQL | Any other, with or without a default | — | `caller` | Required (bare type) | No auto-generation mechanism: without `RETURNING`, a DB default's value cannot be read back |
 | SQLite | INTEGER AUTOINCREMENT | Yes | `db` | Excluded | Sequence-based — caller cannot provide |
-| SQLite | UUID | Yes | `db` | `omittable.Value[T]` | RETURNING supported (3.35+); caller may override |
-| SQLite | UUID | No | `app` | `omittable.Value[T]` | No default → app must generate; caller may override |
+| SQLite | Integer, not AUTOINCREMENT | Yes | `db` | `omittable.Value[T]` | DB applies default if omitted; caller may override |
 
-**Summary rule:** A UUID PK that is *not* a foreign key is `omittable.Value[T]` in CreateInput — the caller can always provide or defer to generation. Auto-increment/serial/identity PKs are excluded. Strategy `caller` PKs — including every PK that is a foreign key, and every composite key — are required.
+**UUID keys on MySQL and SQLite.** Neither dialect has a `uuid` SQL type ([7.4](#74-built-in-type-integrations)), so a UUID key is stored under another type (`CHAR(36)`, `BINARY(16)`, `TEXT`, `BLOB`), and detection classifies it by that type like any other column: `caller`, unless it auto-increments. A type override ([7.1](#71-type-resolution-chain)) changes the key's Go type, not its detected strategy. Set `primary_key.strategy: app` to have the generated client mint the key. On MySQL that is the only way to get one without the caller: a DB-generated UUID cannot be read back, since MySQL has no `RETURNING` and `LastInsertId()` covers integer auto-increment only.
 
-**Key rule: MySQL + UUID PK always defaults to `app`**, regardless of whether the schema has a DEFAULT expression. This is because MySQL has no mechanism to retrieve a DB-generated UUID after INSERT (`RETURNING` is not supported, and `LastInsertId()` only works for integer auto-increment).
+**Summary rule:** A PostgreSQL `uuid` PK that is *not* a foreign key is `omittable.Value[T]` in CreateInput — the caller can always provide or defer to generation. Auto-increment/serial/identity PKs are excluded. Strategy `caller` PKs — including every PK that is a foreign key, and every composite key — are required.
 
-**Key rule: a single-column PK that is also a foreign key is always `caller`**, on every dialect,
-whatever its SQL type or default. This is the 1:1 extension shape —
+**Key rule: a single-column PK that is also a foreign-key column is always `caller`**, on every dialect,
+whatever its SQL type or default. A foreign-key column is a member of any FOREIGN KEY constraint, a
+composite one included ([5.3](#53-relationship-detection)), so a UUID key that is a member of a
+composite foreign key is not minted by the client. The common case is the 1:1 extension shape —
 `user_credentials(user_id UUID PRIMARY KEY REFERENCES users(id))`, `profiles(user_id UUID PRIMARY
 KEY REFERENCES users(id))`. Such a key is caller-supplied by definition: its value must equal an
 existing parent row's key, so neither the database nor the generated client may mint one. The
@@ -3039,7 +3089,7 @@ the ordinary `default:` arm and needs no special handling.
 a tuple of foreign keys ([§8.7](#87-composite-primary-keys)).
 
 **Scope of the foreign-key check.** Only references the schema declares — a `REFERENCES` clause or a
-`FOREIGN KEY` constraint — move the strategy. A reference *synthesized* from a config
+`FOREIGN KEY` constraint, single-column or composite — move the strategy. A reference *synthesized* from a config
 `relationships.fk` entry (§7, used to type polymorphic FK columns that carry no SQL-level
 constraint) does not: it asserts how a column is loaded and filtered, not that the database enforces
 a parent row, and it resolves against the related table by column name, so it can name a column that
@@ -3059,12 +3109,14 @@ When the strategy is `app`, the generated code creates a UUID using the version 
 
 #### PK Retrieval After INSERT
 
-| Dialect | Strategy `db` | Strategy `app` |
-|---------|--------------|----------------|
-| PostgreSQL | `RETURNING id` | `RETURNING id` (PK already known, but confirms write) |
-| MySQL (integer) | `LastInsertId()` | N/A |
-| MySQL (UUID) | N/A (never `db` for UUIDs) | PK known before INSERT — no retrieval needed |
-| SQLite | `RETURNING id` or `LastInsertId()` | `RETURNING id` |
+| Dialect | Strategy `db` | Strategy `app` | Strategy `caller` |
+|---------|--------------|----------------|-------------------|
+| PostgreSQL | `RETURNING id` | `RETURNING id` (PK already known, but confirms write) | `RETURNING id` |
+| MySQL (integer) | `LastInsertId()` | N/A | PK used as supplied — no retrieval |
+| MySQL (other) | N/A | PK known before INSERT — no retrieval needed | PK used as supplied — no retrieval |
+| SQLite | `RETURNING id` or `LastInsertId()` | `RETURNING id` | `RETURNING id` |
+
+A single-column `caller` key is read back through `RETURNING` where the dialect has it, and used as supplied elsewhere. A composite key is always used as supplied.
 
 #### Per-Table Override
 
@@ -3171,17 +3223,17 @@ type OrderItem struct {
 
 #### Method Signatures
 
-All client methods that accept a PK adapt their signature:
+All client methods that accept a PK adapt their signature (the trailing `opts ...func(*CallOptions[FO])` parameter is omitted below):
 
 **Single PK:**
 
 ```go
 func (c *productClient) Get(ctx context.Context, id uuid.UUID) (*Product, error)
 func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateProductInput) (*Product, error)
-func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID) error
+func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID) (*Product, error)
 func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID) error
 func (c *productClient) Exists(ctx context.Context, id uuid.UUID) (bool, error)
-func (c *productClient) Increment(ctx context.Context, id uuid.UUID, column ProductIncrementColumn, amount int) error
+func (c *productClient) Increment(ctx context.Context, id uuid.UUID, input IncrementInput[ProductIncrementColumn]) error
 ```
 
 **Composite PK:**
@@ -3189,10 +3241,10 @@ func (c *productClient) Increment(ctx context.Context, id uuid.UUID, column Prod
 ```go
 func (c *orderItemClient) Get(ctx context.Context, pk OrderItemPK) (*OrderItem, error)
 func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *UpdateOrderItemInput) (*OrderItem, error)
-func (c *orderItemClient) SoftDelete(ctx context.Context, pk OrderItemPK) error
+func (c *orderItemClient) SoftDelete(ctx context.Context, pk OrderItemPK) (*OrderItem, error)
 func (c *orderItemClient) HardDelete(ctx context.Context, pk OrderItemPK) error
 func (c *orderItemClient) Exists(ctx context.Context, pk OrderItemPK) (bool, error)
-func (c *orderItemClient) Increment(ctx context.Context, pk OrderItemPK, column OrderItemIncrementColumn, amount int) error
+func (c *orderItemClient) Increment(ctx context.Context, pk OrderItemPK, input IncrementInput[OrderItemIncrementColumn]) error
 ```
 
 **Batch operations** accept slices of the PK type:
@@ -3224,13 +3276,11 @@ SELECT * FROM "public"."order_items" WHERE "order_id" = $1 AND "product_id" = $2
 -- Composite PK — batch (PostgreSQL: tuple IN)
 DELETE FROM "public"."order_items" WHERE ("order_id", "product_id") IN (($1, $2), ($3, $4))
 
--- Composite PK — batch (MySQL: expanded OR, no tuple IN support)
-DELETE FROM `order_items`
-WHERE (`order_id` = ? AND `product_id` = ?)
-   OR (`order_id` = ? AND `product_id` = ?)
+-- Composite PK — batch (MySQL and SQLite: tuple IN)
+DELETE FROM `order_items` WHERE (`order_id`, `product_id`) IN ((?, ?), (?, ?))
 ```
 
-Note: single-column list operations build their condition with `sql.Where(pk).In(...)`, which expands to one placeholder per id on every dialect, PostgreSQL+pgx included; the `= ANY($1)` array form belongs to the comparators only ([11.5](#115-condition-composition)). Composite PK batch operations use tuple `IN` on PostgreSQL/SQLite and expanded `OR` on MySQL.
+Note: single-column list operations build their condition with `sql.Where(pk).In(...)`, which expands to one placeholder per id on every dialect, PostgreSQL+pgx included; the `= ANY($1)` array form belongs to the comparators only ([11.5](#115-condition-composition)). Composite PK batch operations use tuple `IN` on every dialect. On MySQL 8.0 and 8.4, `(a, b) IN ((?, ?), …)` takes the same composite-index range scan as the equivalent OR of ANDs and is far faster (32 ms against 1.49 s at 10000 keys).
 
 #### Create/Update Inputs
 
@@ -3255,7 +3305,7 @@ For composite PKs, the strategy is always `caller`, and `primary_key.strategy: d
 
 #### Relationship Loading with Composite PKs
 
-When a relationship's FK references a composite PK table, the generated loader uses all PK columns in the filter:
+When a relationship's target has a composite primary key, the generated loader filters the target on the edge's FK column:
 
 ```go
 // Loading order items for an order
@@ -3264,7 +3314,7 @@ filter := &OrderItemFilter{
 }
 ```
 
-For M2M junction tables with composite PKs, the junction table detection logic already requires exactly 2 FK columns in a composite PK (section 5.3).
+For M2M junction tables with composite PKs, junction detection requires the PK or a UNIQUE constraint to contain the columns of both junction foreign keys (section 5.3).
 
 #### Unified Client Accessor
 
@@ -3306,13 +3356,13 @@ All methods accept an optional trailing `...func(*CallOptions[{Table}FieldOption
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `Create` | `(ctx, *CreateInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Insert with PK resolution per strategy. Returns created entity via `Get`. Returns `ErrNilInput` when input is nil ([9.4c](#94c-nil-input-handling)). |
-| `CreateMany` | `(ctx, []*CreateInput, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch insert. Returns `ErrNilInput` when any element is nil ([9.4c](#94c-nil-input-handling)). Splits into batches of `generation.batch_size`. Returns all created entities. Sub-batches are not auto-rolled back — wrap in transaction for atomicity. |
-| `Update` | `(ctx, pk, *UpdateInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Partial update. Only fields where `IsSet()` is true are in the SET clause. If no fields are set, no UPDATE is executed and the current entity is returned unchanged. Returns `ErrNilInput` when input is nil ([9.4c](#94c-nil-input-handling)) — distinct from an empty-but-non-nil input, which is the documented no-op. Returns `ErrNotFound` if PK does not exist (configurable, see [9.5](#95-edge-case-behaviors)). Honours the empty-`FieldOptions` skip like every sibling write method — a non-nil `FieldOptions` that selects nothing suppresses the trailing re-fetch and the method returns `nil, nil` ([9.6](#96-per-call-options)), on the empty-update path as well as the normal one. |
-| `UpdateMany` | `(ctx, []UpdateItem, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch update. Each item is (pk, input). Returns `ErrNilInput` when any item's `Input` is nil ([9.4c](#94c-nil-input-handling)). Returns all updated entities. |
-| `UpdateWhere` | `(ctx, *Filter, *UpdateInput, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Bulk update all rows matching filter. Returns all affected entities. Returns `ErrNilInput` when input is nil, checked before the filter ([9.4c](#94c-nil-input-handling)). Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns empty slice when no rows match. |
-| `Upsert` | `(ctx, *CreateInput, {Table}ConflictTarget, ...func(*CallOptions[FO])) → (*Entity, error)` | Insert or update on conflict. Returns `ErrNilInput` when input is nil ([9.4c](#94c-nil-input-handling)). Conflict target is a generated type-safe enum restricting to valid unique constraints (see [9.5 Upsert Conflict Keys](#upsert-conflict-keys)). Dialect-aware: PostgreSQL uses `ON CONFLICT ... DO UPDATE SET`, MySQL uses `ON DUPLICATE KEY UPDATE`. |
-| `UpsertMany` | `(ctx, []*CreateInput, {Table}ConflictTarget, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch insert-or-update on conflict. Mirrors `Upsert`'s signature — one conflict target for the whole batch, drawn from the same generated enum. Returns `ErrNilInput` when any element is nil ([9.4c](#94c-nil-input-handling)). Splits into batches of `generation.batch_size`, one statement per sub-batch ([25.1](#251-query-count-guarantee)). **Inputs resolving to the same conflict target are deduped before the statement is built, last occurrence wins** — PostgreSQL rejects an `ON CONFLICT ... DO UPDATE` that would affect one row twice, while MySQL and SQLite accept it and keep the last row, so the dedupe is what makes one spelling behave identically on all three. Returns one entity per deduped input on every dialect, the `DO NOTHING` branch included: entities come from a re-fetch by key, never from `RETURNING` ([9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)). A sub-batch whose written keys the input cannot name — a database-generated key, or any conflict target that does not cover the primary key — adds a key-resolution read ([9.7](#97-pk-resolution-and-entity-return-path)). Generated whenever `Upsert` is, that is, when the table emits a conflict target ([4.6 Operations](#operations)). |
+| `Create` | `(ctx, *CreateInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Insert with PK resolution per strategy. Returns the created entity, soft-deleted or not: an input that sets the soft-delete column still returns the row it wrote ([9.8](#98-generated-method-patterns) principle 4). Returns `ErrNilInput` when input is nil ([9.4c](#94c-nil-input-handling)). |
+| `CreateMany` | `(ctx, []*CreateInput, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch insert. Returns `ErrNilInput` when any element is nil ([9.4c](#94c-nil-input-handling)). Splits into batches of `generation.batch_size`. Returns all created entities, soft-deleted ones included. Sub-batches are not auto-rolled back — wrap in transaction for atomicity. |
+| `Update` | `(ctx, pk, *UpdateInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Partial update. Only fields where `IsSet()` is true are in the SET clause. If no fields are set, no UPDATE is executed and the current entity is returned unchanged. On both paths the entity is returned whether or not it is soft-deleted, so an update that sets the soft-delete column, or one addressed to a soft-deleted row, returns the row. Returns `ErrNilInput` when input is nil ([9.4c](#94c-nil-input-handling)) — distinct from an empty-but-non-nil input, which is the documented no-op. Returns `ErrNotFound` if PK does not exist (configurable, see [9.5](#95-edge-case-behaviors)). Honours the empty-`FieldOptions` skip like every sibling write method — a non-nil `FieldOptions` that selects nothing suppresses the trailing re-fetch and the method returns `nil, nil` ([9.6](#96-per-call-options)), on the empty-update path as well as the normal one. |
+| `UpdateMany` | `(ctx, []UpdateItem, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch update. Each item is (pk, input). Returns `ErrNilInput` when any item's `Input` is nil ([9.4c](#94c-nil-input-handling)). Returns all updated entities, soft-deleted ones included. |
+| `UpdateWhere` | `(ctx, *Filter, *UpdateInput, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Bulk update all rows matching filter. Returns all affected entities, soft-deleted ones included; with no fields set it writes nothing and returns every row the filter matches, soft-deleted ones included. Returns `ErrNilInput` when input is nil, checked before the filter ([9.4c](#94c-nil-input-handling)). Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns empty slice when no rows match. |
+| `Upsert` | `(ctx, *CreateInput, {Table}ConflictTarget, ...func(*CallOptions[FO])) → (*Entity, error)` | Insert or update on conflict. Returns the row it wrote, soft-deleted or not: an insert that sets the soft-delete column, or a conflict with a soft-deleted row, returns that row. Returns `ErrNilInput` when input is nil ([9.4c](#94c-nil-input-handling)). Conflict target is a generated type-safe enum restricting to valid unique constraints (see [9.5 Upsert Conflict Keys](#upsert-conflict-keys)). Dialect-aware: PostgreSQL uses `ON CONFLICT ... DO UPDATE SET`, MySQL uses `ON DUPLICATE KEY UPDATE`. |
+| `UpsertMany` | `(ctx, []*CreateInput, {Table}ConflictTarget, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch insert-or-update on conflict. Mirrors `Upsert`'s signature — one conflict target for the whole batch, drawn from the same generated enum. Returns `ErrNilInput` when any element is nil ([9.4c](#94c-nil-input-handling)). Splits into batches of `generation.batch_size`, one statement per sub-batch ([25.1](#251-query-count-guarantee)). **Inputs resolving to the same conflict target are deduped before the statement is built, last occurrence wins** — PostgreSQL rejects an `ON CONFLICT ... DO UPDATE` that would affect one row twice, while MySQL and SQLite accept it and keep the last row, so the dedupe is what makes one spelling behave identically on all three. Returns one entity per deduped input on every dialect, the `DO NOTHING` branch included, soft-deleted rows included: entities come from a re-fetch by key, never from `RETURNING` ([9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)). A re-fetch that finds fewer rows than deduped inputs is an error, not a short slice. A sub-batch whose written keys the input cannot name — a database-generated key, or any conflict target that does not cover the primary key — adds a key-resolution read ([9.7](#97-pk-resolution-and-entity-return-path)). Generated whenever `Upsert` is, that is, when the table emits a conflict target ([4.6 Operations](#operations)). |
 | `CreateWithRelated` | `(ctx, *Create{Table}WithRelatedInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Creates the row together with rows on its eligible relationships, in one transaction. See [9.9](#99-nested-mutations). |
 | `UpdateWithRelated` | `(ctx, pk, *Update{Table}WithRelatedInput, ...func(*CallOptions[FO])) → (*Entity, error)` | Updates the row and applies a verb block per eligible relationship, in one transaction. See [9.9](#99-nested-mutations). |
 | `UpsertWithRelated` | `(ctx, *Upsert{Table}WithRelatedInput, {Table}ConflictTarget, ...func(*CallOptions[FO])) → (*Entity, error)` | Inserts or updates the row and applies the same verb blocks `UpdateWithRelated` accepts, in one transaction. See [9.9](#99-nested-mutations). |
@@ -3326,10 +3376,10 @@ All methods accept an optional trailing `...func(*CallOptions[{Table}FieldOption
 |--------|-----------|-------------|
 | `SoftDelete` | `(ctx, pk, ...func(*CallOptions[FO])) → (*Entity, error)` | Sets soft delete column and returns the updated entity. Only generated if table has a matching soft delete column. Idempotent — returns `nil, nil` if PK does not exist. |
 | `SoftDeleteMany` | `(ctx, []pk, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch soft delete. Returns all affected entities. |
-| `SoftDeleteWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Conditional soft delete. Returns all affected entities. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns empty slice when no rows match. |
+| `SoftDeleteWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Conditional soft delete. Returns all affected entities. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns no entities and no error when no rows match. |
 | `Restore` | `(ctx, pk, ...func(*CallOptions[FO])) → (*Entity, error)` | Clears soft delete column, restoring a soft-deleted row, and returns the restored entity. Only generated if table has a matching soft delete column. Idempotent — returns `nil, nil` if PK does not exist. |
 | `RestoreMany` | `(ctx, []pk, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch restore. Returns all restored entities. |
-| `RestoreWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Conditional restore. Returns all restored entities. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns empty slice when no rows match. |
+| `RestoreWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Conditional restore. Returns all restored entities. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns no entities and no error when no rows match. |
 | `HardDelete` | `(ctx, pk, ...func(*CallOptions[FO])) → error` | Physical DELETE. Always generated. Idempotent — returns `nil` if PK does not exist. |
 | `HardDeleteMany` | `(ctx, []pk, ...func(*CallOptions[FO])) → error` | Batch hard delete. |
 | `HardDeleteWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → error` | Conditional hard delete. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns `nil` when no rows match. |
@@ -3346,6 +3396,7 @@ All methods accept an optional trailing `...func(*CallOptions[{Table}FieldOption
 ```go
 type PaginateInput[F any] struct {
     Filter *F
+    Sort   []sql.Sort
     Limit  int
     Offset int
 }
@@ -3364,13 +3415,11 @@ type IncrementInput[C ~string] struct {
 }
 
 type PaginateResult[T any] struct {
-    Items           []*T
-    TotalCount      int64
-    TotalPages      int
-    PageSize        int
-    CurrentPage     int
-    HasNextPage     bool
-    HasPreviousPage bool
+    Items      []*T
+    TotalCount int64
+    Offset     int
+    Limit      int
+    HasMore    bool
 }
 ```
 
@@ -3434,6 +3483,8 @@ Stream yields `*{Table}` — the same entity struct used by `Get`/`GetMany`. Rel
 - **Cache always bypassed.** `CallOptions.SkipCache` is forced to `true` regardless of caller setting. Streaming a million rows through a cache layer makes no sense — the cache is for hot-path entity reads.
 - **DB connection held for the duration of iteration.** Long-running streams reduce pool capacity for concurrent requests. Document and accept the tradeoff.
 - **Refused inside a transaction unless the caller opts in.** See *Stream inside a transaction* below.
+- **An error reading the result set ends the stream.** It is yielded after the rows read before it, and no row follows it. A row that fails to scan is yielded as an error, and iteration continues.
+- **Breaking out ends the iteration.** Nothing is yielded after the consumer breaks out of the loop, and the result set is closed, so the connection is free for the next statement.
 - **Not resumable across processes.** The cursor is in-process. `Connection` is the method for pausing and resuming, since its cursor is durable across processes.
 - **Not exposed via the GraphQL/REST API layers.** Stream is a backend primitive for Go consumers, not a surface for external clients.
 
@@ -3472,6 +3523,8 @@ Three things the opt-in does and does not do:
 
 Stream fires the query-hook chain once per call, with `Op: hook.OpStream` — **except when the in-transaction guard refuses the call**, which returns through `yield` before the chain is built, so a refused `Stream` issues no SQL and fires no hooks at all, global authorization included. That matches [9.6a](#96a-lock-modes)'s `LockMode` precondition, which likewise rejects before the chain. Tenancy, soft-delete, and other condition-injecting hooks add WHERE conditions to the input the same way they do for `OpGetMany`. The cache hook does not need an op-specific dispatch — Stream forces `options.SkipCache = true` in the method body (see Constraints above), and the existing `cacheSkipper` short-circuit (Section 27) routes the call straight to `next` without any read-through or write-through.
 
+A hook's abort error ([21.5](#215-hook-lifecycle)) or a recovered panic ([21.6](#216-panic-recovery)) is yielded once, as the stream's last value, unless the consumer has already broken out of the loop.
+
 Read-side events do not fire on `OpStream` (consistent with `OpGetMany` — only mutations emit events).
 
 #### Implementation pattern
@@ -3493,6 +3546,9 @@ func (c *productClient) Stream(ctx context.Context, input *StreamProductsInput, 
         // breaks or panics out of yield; yield must not be called after either.
         var stopped bool
         emit := func(p *Product, err error) bool {
+            if err != nil {
+                err = fmt.Errorf("stream products: %w", err)
+            }
             stopped = true
             if !yield(p, err) { return false }
             stopped = false
@@ -3526,7 +3582,7 @@ func (c *productClient) Stream(ctx context.Context, input *StreamProductsInput, 
 
             rows, err := conn.Query(ctx, query, args...)
             if err != nil {
-                emit(nil, fmt.Errorf("stream products: %w", err))
+                emit(nil, err)
                 return nil, nil
             }
             defer rows.Close()
@@ -3547,7 +3603,7 @@ func (c *productClient) Stream(ctx context.Context, input *StreamProductsInput, 
         // A recovered panic (21.6) or a hook's abort error (21.5) is the chain's
         // return value; Stream has no error return, so it is yielded last.
         if err != nil && !stopped {
-            yield(nil, err)
+            yield(nil, fmt.Errorf("stream products: %w", err))
         }
     }
 }
@@ -3642,13 +3698,15 @@ Every generated method that takes a pointer input must behave predictably when a
 
 The rule splits on direction, because "no values supplied" means something coherent on a read and nothing coherent on a write.
 
-**Reads — `GetMany`, `Stream` — normalize `nil` to the zero-value input.** The normalization happens at the top of the method, before the hook context is built, so a hook never observes a nil `QueryContext.Input` either. This invents no behavior: the zero-value input is already a legal, meaningful argument (no filter, no sorts, no limit), and every sibling read already treats "no criteria" the same way — `Count(nil)` counts all rows, `ExistsWhere(nil)` tests for any row, and `PaginateInput` / `ConnectionInput` are value types whose zero value pages everything. `GetMany(ctx, nil)` and `GetMany(ctx, &Get<T>Input{})` are therefore the same call.
+**Reads — `GetMany`, `Stream` — normalize `nil` to the zero-value input.** The normalization happens at the top of the method, before the hook context is built, so a hook never observes a nil `QueryContext.Input` either. This invents no behavior: the zero-value input is already a legal, meaningful argument (no filter, no sorts, no limit), and every sibling read already treats "no criteria" the same way — `Count(nil)` counts all rows and `ExistsWhere(nil)` tests for any row (on a soft-delete table, the not-deleted ones, [9.8](#98-generated-method-patterns) item 4), and `PaginateInput` / `ConnectionInput` are value types whose zero value pages everything. `GetMany(ctx, nil)` and `GetMany(ctx, &Get<T>Input{})` are therefore the same call.
 
 **Writes — `Create`, `Update`, `Upsert` — return [`ErrNilInput`](#22-error-handling).** These must *not* normalize to the zero value. A zero `Create<T>Input` is a legal argument that writes a row: it sends each required field's zero value, and with no required field the row takes every column's default — a nullable column with no `DEFAULT` takes NULL. That last case supplies no column at all, and the INSERT takes the dialect's all-defaults form ([Appendix A](#appendix-a-sql-builder-functions)). Treating a nil input as the zero value would therefore turn a caller's mistake into a silently written row — worse than the panic it replaces. The guard runs before the mutation executor, so a nil input fires no hook, publishes no event, and invalidates no cache entry.
 
+The three `…WithRelated` methods ([9.9](#99-nested-mutations)) follow the same rule: a nil input returns `ErrNilInput` before the transaction opens, so it issues no statement and fires no hook. Inside a non-nil input, a nil verb block, or one that sets no verb (no `create` or `connect` entry, no `disconnect`, `clear` false), writes nothing on that edge. A nil entry in a nested `create` list is the nil-element error below: the call returns `ErrNilInput`, attributed to that edge's `create`, and rolls back.
+
 `UpdateWhere` takes both a filter and an input, and checks the **input first**: argument validity is a property of the call, while `ErrEmptyFilter` is a safety guard on what the filter compiles to, so `UpdateWhere(ctx, nil, nil)` reports `ErrNilInput`. A non-nil input with an empty filter still returns `ErrEmptyFilter`.
 
-`ErrNilInput` is distinct from `ErrEmptyFilter` (a `*Where` op whose filter compiles to zero conditions) and from the documented no-op of an **empty but non-nil** `Update<T>Input`, which still returns the current entity unchanged. Bulk write variants distinguish the two nils. A nil **slice** is simply no rows: `CreateMany(ctx, nil)` and `UpdateMany(ctx, nil)` do nothing, since nil and empty already mean the same thing there. A nil **element** is the same caller error a nil single-row input is, and returns `ErrNilInput` — skipping it silently would drop a row the caller asked to write. `Update<T>Item.Input` is a pointer, so a zero-valued item carries a nil one and is rejected on the same rule; `[]Update<T>Item{{ID: id}}` is a shape that compiles naturally.
+`ErrNilInput` is distinct from `ErrEmptyFilter` (a `*Where` op whose filter compiles to zero conditions) and from the documented no-op of an **empty but non-nil** `Update<T>Input`, which still returns the current entity unchanged. Bulk write variants distinguish the two nils. A nil **slice** is simply no rows: `CreateMany(ctx, nil)` and `UpdateMany(ctx, nil)` do nothing, since nil and empty already mean the same thing there. Every batch method (`CreateMany`, `UpdateMany`, `UpsertMany`, `SoftDeleteMany`, `RestoreMany` and `HardDeleteMany`) sends no statement for a nil or empty slice and reads nothing back. A nil **element** is the same caller error a nil single-row input is, and returns `ErrNilInput` — skipping it silently would drop a row the caller asked to write. `Update<T>Item.Input` is a pointer, so a zero-valued item carries a nil one and is rejected on the same rule; `[]Update<T>Item{{ID: id}}` is a shape that compiles naturally.
 
 **Why this is stated here rather than left to each operation.** The failure mode is not uniform, and the quietest case is the easiest to miss. Panic recovery ([§21.6](#216-panic-recovery)) turns an unguarded nil dereference into an error rather than a crash, so a read the caller meant as "no criteria" returns `sqlgen: panic in …` instead of rows — and on `Stream` that error arrives only as the iterator's final yield, after zero rows. A rule that only covered the loud panics would leave that one standing.
 
@@ -3658,7 +3716,7 @@ The rule splits on direction, because "no values supplied" means something coher
 
 #### Batch Failure Semantics
 
-`CreateMany`, `UpdateMany`, `HardDeleteMany`, and `SoftDeleteMany` split their input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately. **Previously executed sub-batches within the same call are not automatically rolled back.**
+`CreateMany`, `UpdateMany`, `UpsertMany`, `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` split their input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately. **Previously executed sub-batches within the same call are not automatically rolled back.**
 
 Consumers are expected to wrap batch mutations in a transaction when atomicity is required:
 
@@ -3680,6 +3738,8 @@ When `Update` is called with an `UpdateInput` where no fields are set (all `omit
 
 `UpdateWhere`, `SoftDeleteWhere`, `RestoreWhere`, and `HardDeleteWhere` are idempotent — when no rows match the filter, they return `nil` (no error). This simplifies consumer code by not requiring callers to distinguish "nothing matched" from success.
 
+Reads treat a filter that matches nothing the same way: `GetMany`, `Stream`, `Paginate` and `Connection` return no entities, `Count` returns 0 and `ExistsWhere` returns `false`, each with no error.
+
 #### Non-Existent PK Behavior
 
 When an operation targets a PK that does not exist in the database:
@@ -3691,6 +3751,8 @@ When an operation targets a PK that does not exist in the database:
 | `HardDelete` | Returns `nil` (idempotent) | Deletion is the desired outcome. The row not existing achieves the goal. |
 | `SoftDelete` | Returns `nil` (idempotent) | Same rationale as HardDelete. |
 | `Restore` | Returns `nil` (idempotent) | Same rationale — restoring a non-existent row is a no-op. |
+
+A by-key `SoftDelete`, `Restore` or `HardDelete` whose key matches no row records no affected key, so it invalidates no cache entry ([27](#27-caching)) and publishes no event ([28](#28-event-system)). The mutation hooks ([21.5](#215-hook-lifecycle)) still run around it. A row counts when the write's key matched it, on every dialect, whether or not the write changed a value: on MySQL, whose driver counts only changed rows, a write that reports none looks the row up once (`EXISTS` with the write's own conditions) before it concludes the key matched nothing, so a strict `Update` or `Increment` that leaves a row as it was succeeds rather than returning `ErrNotFound`. A batch `SoftDeleteMany`, `RestoreMany` or `HardDeleteMany` records only the keys whose rows it wrote, in list order; when the database matched more rows in a sub-batch than the listed keys equal to its returned keys (a case-insensitive collation, `citext`), it records every listed key of that sub-batch (a listed key that matched no row may be among them), so a written row is never left out. An `Update`, `UpdateMany` or `Increment` records only the rows its key matched. A pre-read that learns the keys a write will touch (MySQL, which has no `RETURNING`) binds each selected column to its own key field.
 
 **Configuration:** The Update/Increment behavior is configurable globally and per-table via `generation.strict_updates`:
 
@@ -3710,7 +3772,7 @@ tables:
     strict_updates: false
 ```
 
-Delete operations are always idempotent regardless of this setting — there is no `strict_deletes` option.
+Delete operations are always idempotent regardless of this setting — there is no `strict_deletes` option. An `UpdateMany` key matching no row is neither an error nor returned, whatever `strict_updates` says.
 
 #### Upsert Conflict Keys
 
@@ -3765,7 +3827,7 @@ product, err := client.Products().Upsert(ctx, input, <pkg>.ProductConflictRegion
 
 **MySQL note:** MySQL's `ON DUPLICATE KEY UPDATE` does not accept an explicit conflict target — it triggers on any unique constraint violation. The `conflictKeys` parameter is accepted for API consistency but does not affect the generated MySQL SQL. The consumer should be aware that MySQL may trigger on a different constraint than the one specified. The one case the generator rules out is a target naming a column the INSERT does not write, which carries no conflict clause on any dialect (below).
 
-**Update columns in upsert:** The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from the `CreateInput`. Columns that are part of the conflict target or PK are excluded from the SET clause (they are the identity, not the payload). `UpsertMany` also excludes every non-PK auto-increment column: `serial`, an identity column (`BY DEFAULT` or `ALWAYS`), MySQL `AUTO_INCREMENT`, a column whose default is `nextval(…)`, or a SQLite rowid alias that `primary_key.columns` demoted ([8.6](#86-primary-key-strategy)). A batch binds every input column in every row, so a row that leaves such a column unset carries `DEFAULT` (`NULL` on SQLite), and setting it from that row would draw a new value on every conflict. PostgreSQL rejects the clause outright on a `GENERATED ALWAYS` identity (SQLSTATE `428C9`, whether or not a row conflicts), a `serial` or `AUTO_INCREMENT` column is redrawn, and a demoted rowid alias re-keys the row. A value the caller sets for such a column therefore applies on insert, not on conflict. The single-row `Upsert` keeps the rule as stated: it writes only the columns the caller set, so it updates such a column only when asked to.
+**Update columns in upsert:** The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from the `CreateInput`. Columns that are part of the conflict target or PK are excluded from the SET clause (they are the identity, not the payload). `UpsertMany` also excludes every non-PK auto-increment column: `serial`, an identity column (`BY DEFAULT` or `ALWAYS`), MySQL `AUTO_INCREMENT`, a column whose default is `nextval(…)`, or a SQLite rowid alias that `primary_key.columns` demoted ([8.6](#86-primary-key-strategy)). A batch binds every input column in every row, so a row that leaves such a column unset carries `DEFAULT` (`NULL` on SQLite), and setting it from that row would draw a new value on every conflict. PostgreSQL rejects the clause outright on a `GENERATED ALWAYS` identity (SQLSTATE `428C9`, whether or not a row conflicts), a `serial` or `AUTO_INCREMENT` column is redrawn, and a demoted rowid alias re-keys the row. A value the caller sets for such a column therefore applies on insert, not on conflict. The single-row `Upsert` keeps the rule as stated: it writes only the columns the caller set, so it updates such a column only when asked to. On conflict, `UpsertMany` sets each column of that SET clause from the row, and a field the row left unset takes its `DEFAULT` (`NULL` without one), because a batch binds every input column in every row. A soft-deleted conflicting row is therefore restored unless the row sets the soft-delete column; the single-row `Upsert` leaves an unset column, the soft-delete column included, as the conflicting row has it.
 
 **Tables with no unique constraints:** If a table has no UNIQUE constraints, `{Table}ConflictPK` is the only conflict target generated.
 
@@ -3798,9 +3860,9 @@ Where the key is not knowable before the write (`db` strategy: `serial`, `AUTO_I
 | Dialect | Why the statement cannot name the rows |
 |---------|----------------------------------------|
 | MySQL | `LAST_INSERT_ID()` after a batch that mixed inserts with conflicts names the first **newly inserted** row, not the batch's first row. Fabricating keys from the first — which `CreateMany` does for a plain multi-row INSERT, as `firstID + i × auto_increment_increment` ([9.8.5](#985-createmany)) — yields a wrong key for every row |
-| PostgreSQL / SQLite | `RETURNING` omits every row that took the `DO NOTHING` branch, and its row order is not contractual |
+| PostgreSQL / SQLite | `RETURNING` omits every row that took the `DO NOTHING` branch, so its rows cannot be paired with the inputs by position |
 
-**Both halves compare values as Go sees them, which the database's own equality can outrun.** Row identity — for the dedupe, and for matching a written row to the row read back for it — is computed from the bound value, while the unique index compares under the column's collation and storage rules. Where the two disagree the Go side is the stricter: a case-insensitive collation (MySQL's default `utf8mb4_0900_ai_ci`), `CHAR(n)` padding, or a timestamp precision the column truncates. Two rows the database would call one are then left undeduped (PostgreSQL rejects the statement, loudly), and on a database-generated key a written row may fail to match its read-back (an error naming the cause, after the write). Neither is silent. A conflict target on a case-sensitively-compared column — which every UUID, integer and default-collation text key is — is unaffected.
+**Both halves compare values as Go sees them, which the database's own equality can outrun.** Row identity — for the dedupe, and for matching a written row to the row read back for it — is computed from the bound value, while the unique index compares under the column's collation and storage rules. Where the two disagree the Go side is the stricter: a case-insensitive collation (MySQL's default `utf8mb4_0900_ai_ci`), `CHAR(n)` padding, or a timestamp precision the column truncates. Two rows the database would call one are then left undeduped. PostgreSQL rejects the statement, loudly; MySQL and SQLite accept it and write one row for the two, and the terminal read, which then finds fewer rows than deduped inputs, returns an error naming the cause, after the write. Where the key is read back (a database-generated key, or a target that does not cover the primary key), a written row may also fail to match its key read (an error naming the cause, after the write). Neither is silent when the call reads its rows back; a call whose `FieldOptions` selects nothing skips the terminal read ([9.8](#98-generated-method-patterns) item 3), and with it the count check, and records the keys as supplied. A conflict target on a case-sensitively-compared column — which every UUID, integer and default-collation text key is — is unaffected.
 
 Those rows are read back by the conflict target after the sub-batch is written — the batched form of the lookup [9.7](#97-pk-resolution-and-entity-return-path) already specifies for a single-row upsert, and unambiguous for the same reason: an explicit conflict target can only have fired on those columns. It costs a second statement per sub-batch, and it is a key-resolution read, so [25.1](#251-query-count-guarantee)'s write bound is unchanged. Like the single-row lookup it applies neither the soft-delete filter nor a tenant predicate — the unique index matched regardless of either — and the terminal `GetMany` applies the read path's own filters afterwards.
 
@@ -3834,21 +3896,22 @@ This listing is the struct's full shape and its field order. **Two fields are ga
 | `&ProductFieldOptions{Name: true, Price: true}` | Select specific columns + relationships | Partial entity returned |
 | `&ProductFieldOptions{}` (all false) | Caller doesn't need the result | Skip entity fetch entirely, return `nil` |
 
-The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips any follow-up queries (ID collection, `Get`/`GetMany`) and returns `nil`. This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
+The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips its follow-up entity read (`Get`/`GetMany`) and returns `nil`. It still learns the keys it writes (a `Where` variant's ID collection, MySQL's key pre-read), because they drive cache invalidation and events ([9.8.8](#988-softdelete--restore)). This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
 
-**On the read path an all-false selection means "no rows", and the loud spelling is deliberate.** `GetMany` returns an empty slice and `Get` returns **`ErrNotFound`** — the single-row spelling of the same answer, not an inconsistency between the two. The alternative was to let a read short-circuit silently the way a mutation does and return `nil, nil`; that was rejected. On a *read*, an all-false selection is almost always a caller mistake — asking to load a row while selecting nothing from it — and a silent nil hands back a result indistinguishable from a legitimately absent row, so the mistake surfaces later and somewhere else. A clear error shows the problem where it was made. The read path is therefore **not** where the mutation-side `nil, nil` contract above gets spelled, and every entity-returning mutation guards its own trailing read rather than relying on the read to stay quiet. A mutation that forwards an all-false `FieldOptions` into its terminal `Get` unguarded reports `ErrNotFound` for a write that already committed — the defect single-row `Update` carried until [9.2](#92-write-operations)'s escape was added to it.
+**On the read path an all-false selection means "no rows", and the loud spelling is deliberate.** `GetMany` returns no entities and no error, and `Get` returns **`ErrNotFound`** — the single-row spelling of the same answer, not an inconsistency between the two. The alternative was to let `Get` short-circuit silently the way a mutation does and return `nil, nil`; that was rejected. On a *read*, an all-false selection is almost always a caller mistake — asking to load a row while selecting nothing from it — and a silent nil hands back a result indistinguishable from a legitimately absent row, so the mistake surfaces later and somewhere else. A clear error shows the problem where it was made. The read path is therefore **not** where the mutation-side `nil, nil` contract above gets spelled, and every entity-returning mutation guards its own trailing read rather than relying on the read to stay quiet. A mutation that forwards an all-false `FieldOptions` into its terminal read unguarded reports `ErrNotFound` for a write that already committed — the defect single-row `Update` carried until [9.2](#92-write-operations)'s escape was added to it.
 
 **Structurally required columns.** A narrowed projection selects what the caller asked for *plus* the columns the call itself has to read back, unioned in and re-sorted before the `SELECT` is built:
 
 | Consumer | Column unioned in | Read by |
 |----------|-------------------|---------|
 | `Connection` | the entity's `cursor_keys` | `encode<T>Cursor`, which builds each edge's cursor from the returned row |
-| `GetMany` with any O2M / M2M relationship selected | the parent's first PK column | the relationship loaders, which collect the parent side of every mapping off the scanned row |
+| `GetMany` with any O2M / M2M relationship selected | every parent column the relationship's key references — for an edge into the parent's primary key, the primary key | the relationship loaders, which collect the parent side of every mapping off the scanned row |
 | an O2O relationship | the target's first PK column | the JOIN scan, which distinguishes a LEFT JOIN miss by testing that PK against its zero value |
-| an O2M relationship | the child's FK column, declared on the child fetch | the parent-child bucketing, which is keyed on it |
-| an M2M relationship | the target's first PK column, declared on the target fetch | the target-to-parent map, which is keyed on it |
+| an O2M relationship | every FK column of the edge's key, declared on the child fetch | the parent-child bucketing, which is keyed on them |
+| an M2M relationship | every target column the junction's target key references, declared on the target fetch | the target-to-parent map, which is keyed on them |
+| the parent write of a `*WithRelated` call | the primary key and every parent column an edge's key references | the nested writes ([9.9.6](#996-execution-order)), which copy those values into the keys they write |
 
-This is a pure over-fetch of the entity struct: it never widens what a consumer surface renders, since the GraphQL layer serializes only the fields the request selected ([26.5.2](#2652-field-selection-translation--the-central-mechanism)). Every column it adds is a key, and all but one are kept API-readable by [32.4](#324-validation) for exactly this reason — primary keys under the PK rule, and resolved `cursor_keys` (PK or not) under the cursor-key rule, so a column whose value reaches an edge cursor is never one `access` has restricted. The O2M child FK is the exception, deliberately: [32.5](#325-interactions) allows `access` on an FK column precisely so a config can hide the raw id while leaving the nested relationship object exposable, so a restricted FK still joins the child projection. It is safe for the same reason the rest of the over-fetch is — the loader reads the value to bucket children by parent and nothing serializes it, and the walker emits no `case` for a restricted column, so no request can name it.
+The union is taken into the read's own column list: no read writes to a `FieldOptions` the caller passed in, at any depth, so one value can be reused across calls and shared between edges. This is a pure over-fetch of the entity struct: it never widens what a consumer surface renders, since the GraphQL layer serializes only the fields the request selected ([26.5.2](#2652-field-selection-translation--the-central-mechanism)). Every column it adds is a key, and all but one are kept API-readable by [32.4](#324-validation) for exactly this reason — primary keys under the PK rule, and resolved `cursor_keys` (PK or not) under the cursor-key rule, so a column whose value reaches an edge cursor is never one `access` has restricted. The O2M child FK columns are the exception, deliberately: [32.5](#325-interactions) allows `access` on an FK column precisely so a config can hide the raw id while leaving the nested relationship object exposable, so a restricted FK still joins the child projection. It is safe for the same reason the rest of the over-fetch is — the loader reads the value to bucket children by parent and nothing serializes it, and the walker emits no `case` for a restricted column, so no request can name it.
 
 The union applies **only** when the caller's selection is non-empty, so an all-false `&FieldOptions{}` still short-circuits its own entity fetch per the table above and a count-only query issues no entity fetch at all. This holds identically at every depth and for both list loaders: an all-false `FieldOptions` on a nested O2M *or* M2M relationship skips that child fetch and leaves the parent's relationship slice nil, rather than returning rows carrying nothing but the mapping key. The short-circuit is a Go-client affordance: below the envelope a GraphQL request cannot express it, because every selection set asks for the row it is written against. The generated walker therefore never hands an all-false value to a read for a row that was requested — it projects the entity's row identity instead ([26.5.2](#2652-field-selection-translation--the-central-mechanism), "Row identity"), and the only GraphQL selection that reaches a client method with an all-false `FieldOptions` is a count-only envelope, which never reaches the entity at all. O2O is the exception in kind rather than in rule: its target is columns on the parent's JOIN rather than a separate fetch, so an all-false O2O `FieldOptions` still contributes the target's key column — the value that separates a real row from a LEFT JOIN miss. `Stream` is exempt entirely: `Stream{Table}FieldOptions` carries no relationships ([9.4a](#94a-streaming-operations)) and `Stream` encodes no cursors.
 
@@ -3901,13 +3964,13 @@ products, err := client.Products().GetMany(ctx, input, func(o *<pkg>.CallOptions
 })
 ```
 
-The generated relationship loader receives the resolved `CallOptions` from the parent `GetMany` and applies them to each child query. There is no way to set different options per relationship — the options are per-operation, not per-query.
+The generated relationship loader receives the resolved `CallOptions` from the parent `GetMany` and applies them to each child query. The toggles it applies are the caller's: `SkipHooks`, `SkipCache` and `SkipEvents` as the caller set them (with `SkipHooks` implying the other two), not the ones sqlgen sets on its own internal reads, so a `Get`, `Connection` or write read-back loads relationships with the caller's hooks. `LockMode` is the exception (Section 9.6a). There is no way to set different options per relationship — the options are per-operation, not per-query.
 
 ### 9.6a Lock Modes
 
-`LockMode` is a `CallOptions` field that adds a row-level locking clause to read methods (`Get`, `GetMany`, `Connection`). It enables read-modify-write workflows, job queue dispatchers, and other concurrency primitives that require holding a database lock on the selected rows for the duration of the enclosing transaction.
+`LockMode` is a `CallOptions` field that adds a row-level locking clause to read methods (`Get`, `GetMany`, `Paginate`, `Connection`). It enables read-modify-write workflows, job queue dispatchers, and other concurrency primitives that require holding a database lock on the selected rows for the duration of the enclosing transaction.
 
-LockMode applies to read methods only. Write methods (`Create`, `Update`, `Upsert`, `*Delete*`) acquire row locks implicitly via the `INSERT`/`UPDATE`/`DELETE` itself; LockMode is ignored on those methods.
+LockMode applies to read methods only. Write methods (`Create`, `CreateMany`, `Update`, `UpdateMany`, `UpdateWhere`, `Upsert`, `UpsertMany`, `Increment`, `*Delete*`, `Restore*`, and the three `…WithRelated` methods) acquire row locks implicitly via the `INSERT`/`UPDATE`/`DELETE` itself; LockMode is ignored on those methods. A `…WithRelated` method passes it to none of its inner calls, the terminal read included. It is ignored too on `Count`, `Exists`, `ExistsWhere` and `Stream`, which add no lock clause, so the total that `Paginate` and `Connection` read through `Count` is never locked.
 
 #### Lock Mode Constants
 
@@ -3935,9 +3998,13 @@ const (
 
 The clause is appended to the `SELECT` statement after the `ORDER BY`/`LIMIT`/`OFFSET` clauses by the dialect-specific `BuildSelect` implementation.
 
+**A read that joins O2O edges locks only the parent rows.** When `FieldOptions` selects an O2O relationship, the read is one `BuildSelectJoin` statement that LEFT JOINs the related tables ([13.2](#132-loading-strategy)). Its lock clause names the parent alias, so only the primary rows are locked: `FOR UPDATE OF u`, `FOR SHARE OF u`, `FOR UPDATE OF u NOWAIT`, `FOR UPDATE OF u SKIP LOCKED`. MySQL takes the same forms, with `FOR SHARE OF u` for `LockForShare`, since `LOCK IN SHARE MODE` has no `OF` form. An unqualified clause would be wrong on both servers. PostgreSQL rejects it on the nullable side of an outer join. MySQL would lock the joined rows too, so `LockForUpdateNoWait` would fail on a child another transaction holds, and `LockForUpdateSkipLocked` would return the parent with the O2O field nil. `BuildSelect`, which reads one table, keeps the unqualified clause.
+
 **SQLite limitation.** SQLite has no per-row locking — its concurrency model uses whole-database write locks via `BEGIN IMMEDIATE` / `BEGIN EXCLUSIVE`. Setting any `LockMode` other than `LockNone` against the SQLite dialect returns a sqlgen error at the runtime guard (see "Transaction precondition" below); no SQL is issued. Cross-dialect codebases must branch their concurrency design at the application layer for SQLite.
 
-**MySQL version requirement.** `NOWAIT` and `SKIP LOCKED` modifiers require MySQL 8.0+. On older MySQL versions, the runtime rejects these modes — the generator emits a version-aware guard that returns an error at call time. The MySQL client probes the server with `SELECT VERSION()` lazily on the first `LockForUpdateNoWait`/`LockForUpdateSkipLocked` call, gated by `sync.Once` so the probe runs at most once per client lifetime; the probe result (success or error) is cached so a transient probe failure surfaces immediately to every caller. PostgreSQL and SQLite client structs do not carry the version cache. MariaDB (`10.x-MariaDB` version strings) parses to major version 10 and trivially clears the `< 8` check — MariaDB 10.6+ supports `NOWAIT` / `SKIP LOCKED`.
+**MySQL version requirement.** `NOWAIT` and `SKIP LOCKED` modifiers require MySQL 8.0+. On older MySQL versions, the runtime rejects these modes — the generator emits a version-aware guard that returns an error at call time. The MySQL client probes the server with `SELECT VERSION()` lazily on the first call that needs it (`LockForUpdateNoWait`/`LockForUpdateSkipLocked`, or a locked read that selects an O2O edge, below), gated by `sync.Once` so the probe runs at most once per client lifetime; the probe result (success or error) is cached so a transient probe failure surfaces immediately to every caller. PostgreSQL and SQLite client structs do not carry the version cache. MariaDB (`10.x-MariaDB` version strings) parses to major version 10 and trivially clears the `< 8` check — MariaDB 10.6+ supports `NOWAIT` / `SKIP LOCKED`.
+
+The `OF` form a read that joins O2O edges uses also requires MySQL 8.0+, in every mode, and MariaDB does not accept it. On a table with O2O relationships, a locked read that selects one probes the same cached version first. On MySQL before 8.0, or on a server whose version string contains `MariaDB`, it returns a sqlgen error before SQL. A read that selects no O2O relationship is unaffected: it needs no probe for `LockForUpdate` or `LockForShare`, and MariaDB still clears the `NOWAIT` / `SKIP LOCKED` check.
 
 #### Transaction precondition
 
@@ -3946,7 +4013,7 @@ Row locks are meaningless outside a transaction. The generated method body check
 ```go
 if options.LockMode != LockNone {
     if !database.InTransaction(ctx) {
-        return nil, fmt.Errorf("get %s: LockMode requires an active transaction (use Begin or WithTx)", c.table.Name)
+        return nil, fmt.Errorf("get product: LockMode requires an active transaction")
     }
     options.SkipCache = true // forced — reading from cache would skip the actual DB lock
 }
@@ -4058,7 +4125,9 @@ Tenancy filters narrow which rows get locked (correct — only rows in the consu
 
 `Create`/`Update`/`Upsert`/`Restore`/`SoftDelete*` chain an internal `Get`/`GetMany` for the entity-return path (Section 9.7). When the caller sets `LockMode` on a write method, the chained read does **not** inherit it — the write itself already acquired an implicit row lock that survives until commit, so re-locking via the chained read adds nothing. The internal call already uses `SkipHooks: true`; the generator extends that to also force `LockMode: LockNone` on the chained call.
 
-**Read-method internals propagate LockMode.** `Get` chains an internal `GetMany` (Section 9.8.2) and `Connection` chains an internal `GetMany` (Section 9.8.7). When the caller sets `LockMode` on `Get` or `Connection`, the inner `GetMany` MUST carry the same `LockMode` so the actual SELECT emits the lock clause. The inner runtime guard re-runs but is idempotent (same ctx, same tx, same forced `SkipCache`). The "do not inherit" rule above is scoped to write-method chained reads only.
+**Read-method internals propagate LockMode.** `Get` chains an internal `GetMany` (Section 9.8.2), and `Paginate` and `Connection` each chain an internal `GetMany` (Sections 9.8.11 and 9.8.12). When the caller sets `LockMode` on `Get`, `Paginate` or `Connection`, the inner `GetMany` MUST carry the same `LockMode` so the actual SELECT emits the lock clause. The inner runtime guard re-runs but is idempotent (same ctx, same tx, same forced `SkipCache`). The "do not inherit" rule above is scoped to write-method chained reads only.
+
+**Relationship loads do not carry LockMode.** The child and junction reads a `GetMany` issues to load relationships (Section 9.6, "Relationship propagation") run without a lock clause: `LockMode` applies to the primary read only. Carrying it would make a `LockForUpdateSkipLocked` parent read drop child rows another transaction holds, with no sign of it, and let `LockForUpdateNoWait` fail on a child the caller never asked to lock.
 
 #### Validation rules
 
@@ -4069,6 +4138,7 @@ The runtime guard added to read-method bodies enforces:
 | `LockMode != LockNone` outside a transaction | Returns sqlgen error before SQL roundtrip |
 | `LockMode != LockNone` on SQLite dialect | Returns sqlgen error before SQL roundtrip |
 | `LockNoWait` / `LockSkipLocked` on MySQL < 8.0 | Returns sqlgen error before SQL roundtrip |
+| `LockMode != LockNone` selecting an O2O relationship on MySQL < 8.0 or MariaDB | Returns sqlgen error before SQL roundtrip |
 | `LockMode != LockNone` with active tx on PG / MySQL 8.0+ | Forces `SkipCache = true`; emits lock clause; executes |
 
 #### Codegen surface
@@ -4081,7 +4151,7 @@ Total surface change is small:
 | Runtime `sql/select.go` | Add `LockMode` field to `SelectOptions` |
 | Per-dialect `BuildSelect` | Append lock-clause suffix based on `LockMode` |
 | Generated `CallOptions[FO]` | Add `LockMode LockMode` field |
-| Generated read methods (`Get`, `GetMany`, `Connection`) | Add precondition guard + `SkipCache` force + thread `LockMode` into `SelectOptions` |
+| Generated read methods (`Get`, `GetMany`, `Paginate`, `Connection`) | Add precondition guard + `SkipCache` force + thread `LockMode` into `SelectOptions` |
 | Generated chained-Get sites in write methods | Force `LockMode = LockNone` on the internal call (alongside existing `SkipHooks = true`) |
 
 Tests required: per-dialect SQL emission tests for each LockMode constant, runtime-guard tests for outside-transaction and SQLite-dialect rejection paths, integration test for `LockForUpdateSkipLocked` job-queue pattern using two concurrent transactions in a testcontainer.
@@ -4090,24 +4160,24 @@ Tests required: per-dialect SQL emission tests for each LockMode constant, runti
 
 ### 9.7 PK Resolution and Entity Return Path
 
-All write methods that return entities (`Create`, `Update`, `Upsert`) follow a unified pattern across all dialects: perform the write, resolve the PK, then call `Get(ctx, pk, opts...)` to return the full entity with relationship loading via `FieldOptions`. There is no special MySQL workaround — the only dialect-specific logic is how the PK is resolved after INSERT.
+All write methods that return entities (`Create`, `Update`, `Upsert`) follow a unified pattern across all dialects: perform the write, resolve the PK, then read the row back by that key to return the full entity with relationship loading via `FieldOptions`. The read is `Get(ctx, pk, opts...)`, or, on a table with a soft-delete column, `GetMany` by the key with the soft-delete comparator set and carrying no condition, so the row is returned whether or not it is soft-deleted ([9.8](#98-generated-method-patterns) principle 4). There is no special MySQL workaround — the only dialect-specific logic is how the PK is resolved after INSERT.
 
 **PK resolution by dialect and strategy:**
 
 | Dialect | PK Strategy | PK Resolution | Then |
 |---------|-------------|--------------|------|
-| PostgreSQL/SQLite | `db` (UUID + DEFAULT) | `INSERT ... RETURNING "id"` → scan PK | `Get(ctx, id, opts...)` |
-| PostgreSQL/SQLite | `db` (auto-increment) | `INSERT ... RETURNING "id"` → scan PK | `Get(ctx, id, opts...)` |
-| PostgreSQL/SQLite | `app` / `caller` | PK known before INSERT | `Get(ctx, id, opts...)` |
-| MySQL | `db` (AUTO_INCREMENT) | `Exec()` → `LastInsertId()` | `Get(ctx, id, opts...)` |
-| MySQL | `app` (UUID) | PK known before INSERT (app-generated) | `Get(ctx, id, opts...)` |
-| MySQL | `caller` | PK known before INSERT (caller-provided) | `Get(ctx, id, opts...)` |
-| Composite PK (all dialects) | `caller` | PK always known from input | `Get(ctx, pk, opts...)` |
+| PostgreSQL/SQLite | `db` (UUID + DEFAULT) | `INSERT ... RETURNING "id"` → scan PK | Read back by `id` |
+| PostgreSQL/SQLite | `db` (auto-increment) | `INSERT ... RETURNING "id"` → scan PK | Read back by `id` |
+| PostgreSQL/SQLite | `app` / `caller` | PK known before INSERT | Read back by `id` |
+| MySQL | `db` (AUTO_INCREMENT) | `Exec()` → `LastInsertId()` | Read back by `id` |
+| MySQL | `app` (UUID) | PK known before INSERT (app-generated) | Read back by `id` |
+| MySQL | `caller` | PK known before INSERT (caller-provided) | Read back by `id` |
+| Composite PK (all dialects) | `caller` | PK always known from input | Read back by `pk` |
 
-The generator emits only the variant matching the table's dialect and PK strategy. See [Section 9.8.4](#984-create) for full implementation examples including `insertAndResolveID`.
+"Read back" is the read by key above: `Get`, or `GetMany` by the key on a table with a soft-delete column. The generator emits only the variant matching the table's dialect and PK strategy. See [Section 9.8.4](#984-create) for full implementation examples including `insertAndResolveID`.
 
 **Key design points:**
-- `RETURNING` is only used for PK resolution (`RETURNING "id"`), never for full entity scanning. The follow-up `Get` handles relationship loading and FieldOptions.
+- `RETURNING` is only used for PK resolution (`RETURNING "id"`), never for full entity scanning. The follow-up read handles relationship loading and FieldOptions.
 - Composite PK tables never need `insertAndResolveID` — the PK is always known from the input.
 - `UpdateMany`, `SoftDeleteMany`, and batch operations collect IDs then use `GetMany` for the return path.
 
@@ -4118,18 +4188,18 @@ The generator emits only the variant matching the table's dialect and PK strateg
 | MySQL | The OK packet carries `insert_id = 0` for an `ON DUPLICATE KEY UPDATE` that modifies no row, so `LastInsertId()` returns 0 | The set list opens with `` `pk` = LAST_INSERT_ID(`pk`) ``, republishing the id into the OK packet without touching the row. It must lead the list so no later `VALUES(...)` assignment overwrites it |
 | PostgreSQL / SQLite | `DO NOTHING` (Section 9.5) returns no row, so `RETURNING` yields nothing to scan | The caller reads the result set rather than a single row, and on an empty set resolves the PK with a follow-up `SELECT` on the conflict columns. The lookup is unambiguous because an explicit `ON CONFLICT` target can only have fired on those columns |
 
-The follow-up `SELECT` must **not** apply the soft-delete filter: the unique index matched regardless of the soft-delete column, so a soft-deleted row is still the row whose PK it resolves. (The terminal `Get` then applies the read path's own soft-delete filter, exactly as it does on the `DO UPDATE SET` branch — so an upsert conflicting with a soft-deleted row still returns `ErrNotFound`. That is existing behavior, not a property of this fallback.) Because it is a second statement, a concurrent delete between the two returns `ErrNotFound`; callers needing the pair to be atomic run the upsert in a transaction.
+The follow-up `SELECT` must **not** apply the soft-delete filter: the unique index matched regardless of the soft-delete column, so a soft-deleted row is still the row whose PK it resolves. (The terminal read does not apply the read path's soft-delete filter either, on this branch or on the `DO UPDATE SET` branch: it returns the row the upsert wrote whether or not that row is soft-deleted, so an upsert conflicting with a soft-deleted row returns that row.) Because it is a second statement, a concurrent delete between the two returns `ErrNotFound`; callers needing the pair to be atomic run the upsert in a transaction.
 
 The follow-up `SELECT` requests more than one column when the table is tenanted, and `BuildSelect` **sorts** its column list where `RETURNING` does not. Scan targets on that path are therefore bound by column name, never by position: a tenant column that sorts before the PK (`account_id`, `company_id`) would otherwise bind to the wrong target, silently when the two share a Go type.
 
-**Batched, the same lookup is the only mechanism.** `UpsertMany` ([9.2](#92-write-operations)) cannot use either row of the table above: `LAST_INSERT_ID()` after a batch that mixed inserts with conflicts names the first *newly inserted* row rather than the batch's first, and `RETURNING` omits every `DO NOTHING` row while promising nothing about the order of the rest. A table whose key is known before the write takes it from the inputs **on a conflict target that covers every primary-key column**; on any other target, and on a table whose key is database-generated, it reads the sub-batch back by the conflict columns it targeted — the batched form of the lookup above, resolving every row rather than one, and applying neither the soft-delete filter nor a tenant predicate for the same reason. The extra condition is not a `db`-strategy quirk: a conflict on a non-key unique constraint leaves the existing row's key in place on every strategy, so an input-sourced key would name a row that does not exist ([9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)). Because it resolves keys rather than writing, it leaves [25.1](#251-query-count-guarantee)'s write bound unchanged, exactly as the trailing `Get` / `GetMany` does. See [9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution).
+**Batched, the same lookup is the only mechanism.** `UpsertMany` ([9.2](#92-write-operations)) cannot use either row of the table above: `LAST_INSERT_ID()` after a batch that mixed inserts with conflicts names the first *newly inserted* row rather than the batch's first, and `RETURNING` omits every `DO NOTHING` row, so its rows cannot be paired with the inputs by position. A table whose key is known before the write takes it from the inputs **on a conflict target that covers every primary-key column**; on any other target, and on a table whose key is database-generated, it reads the sub-batch back by the conflict columns it targeted — the batched form of the lookup above, resolving every row rather than one, and applying neither the soft-delete filter nor a tenant predicate for the same reason. The extra condition is not a `db`-strategy quirk: a conflict on a non-key unique constraint leaves the existing row's key in place on every strategy, so an input-sourced key would name a row that does not exist ([9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)). Because it resolves keys rather than writing, it leaves [25.1](#251-query-count-guarantee)'s write bound unchanged, exactly as the trailing `Get` / `GetMany` does. See [9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution).
 
 A `DO UPDATE SET pk = pk` self-assignment would also make `RETURNING` yield a row, but it converts a logical no-op into a physical row write — tuple rewrite, row lock, and `UPDATE` triggers firing on a row nothing changed — and is therefore not used.
 
 
 ### 9.8 Generated Method Patterns
 
-This section provides concrete Go implementation examples for each generated method. These are the **reference targets** that code generation templates produce. All examples use the reference schema below with PostgreSQL (pgx driver) unless noted otherwise. MySQL and SQLite variations are documented where behavior differs.
+This section provides concrete Go implementation examples for each generated method. These are the **reference targets** that code generation templates produce. All examples use the reference schema below with PostgreSQL (pgx driver) unless noted otherwise. MySQL and SQLite variations are documented where behavior differs. The samples show each write's trailing read without the soft-delete scope; on a table with a soft-delete column the read-back of `Create`, `Update`, `Upsert` and their batch, `Where` and nested forms sets the soft-delete comparator with no condition, as [9.7](#97-pk-resolution-and-entity-return-path) states.
 
 #### Design Principles
 
@@ -4137,14 +4207,14 @@ This section provides concrete Go implementation examples for each generated met
 
 Generation is schema-driven: every method the schema allows is generated, and the only gates are the schema facts listed in [4.6 Operations](#operations). `Get`, `GetMany`, and `Count` are foundational — other methods depend on them, and no schema fact on a table removes them:
 
-- **Write method return path**: `Create`, `Update`, and `Upsert` all call `Get` after performing the write to return the resulting entity. This is the same pattern across all dialects — no special MySQL workaround needed. It also enables relationship loading on write results via `FieldOptions`.
-- **Empty update path** (Section 9.5): `Update` calls `Get` when no fields are set, to return the current entity unchanged — unless the call carries a non-nil `FieldOptions` selecting nothing, which suppresses the `Get` on this path and on the normal one alike ([9.2](#92-write-operations), [9.6](#96-per-call-options)).
+- **Write method return path**: `Create`, `Update`, and `Upsert` all read the written row back by key after performing the write to return the resulting entity: through `Get`, or, on a table with a soft-delete column, through `GetMany` by the key with the soft-delete comparator set and carrying no condition, so the row is returned whether or not it is soft-deleted. This is the same pattern across all dialects — no special MySQL workaround needed. It also enables relationship loading on write results via `FieldOptions`.
+- **Empty update path** (Section 9.5): `Update` reads the row back by key the same way when no fields are set, to return the current entity unchanged — unless the call carries a non-nil `FieldOptions` selecting nothing, which suppresses the read on this path and on the normal one alike ([9.2](#92-write-operations), [9.6](#96-per-call-options)).
 - **Cross-entity relationship loading**: `GetMany` calls related entity clients' `GetMany` for O2M/M2M relationship loading.
 - **Pagination**: `Paginate` delegates to `Count` for total count and `GetMany` for page data, ensuring FieldOptions, relationship loading, and soft delete filtering are handled consistently.
 
 No other inter-method dependencies exist, so a schema fact that removes a method (a missing soft-delete column, incrementable column or conflict target) never breaks another one.
 
-**2. Shared Scan Function.** Each table has one generated scan function: `scan{Table}s(rows database.Rows, columns []string) ([]*{Table}, error)`. All methods that read entities — `Get`, `GetMany`, `Paginate`, `Connection` — use this same function. Write methods (`Create`, `Update`, `Upsert`) delegate to `Get` for their return value.
+**2. Shared Scan Function.** Each table has one generated scan function: `scan{Table}s(rows database.Rows, columns []string) ([]*{Table}, error)`. All methods that read entities — `Get`, `GetMany`, `Paginate`, `Connection` — use this same function. Write methods (`Create`, `Update`, `Upsert`) delegate to `Get`, or to `GetMany` by key on a table with a soft-delete column, for their return value.
 
 **3. Unified per-call options via `CallOptions[FO]`.** Every method accepts an optional trailing `...func(*CallOptions[FO])` parameter where `FO` is the table's FieldOptions type. This single extensibility point bundles behavioral overrides (`SkipCache`, `SkipEvents`, `SkipHooks`) and field selection (`FieldOptions`) into one mechanism.
 
@@ -4167,18 +4237,20 @@ type CallOptions[FO any] struct {
 | `&ProductFieldOptions{Name: true, Price: true}` | Select specific columns + relationships | Partial entity returned |
 | `&ProductFieldOptions{}` (all false) | Caller doesn't need the result | Skip entity fetch entirely, return `nil` |
 
-The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips any follow-up queries (ID collection, `Get`/`GetMany`) and returns `nil`. This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
+The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips its follow-up entity read (`Get`/`GetMany`) and returns `nil`. It still learns the keys it writes (a `Where` variant's ID collection, MySQL's key pre-read), because they drive cache invalidation and events ([9.8.8](#988-softdelete--restore)). This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
 
 **4. Soft delete scoping via comparator.** When a table has a soft delete column, the filter struct includes a regular comparator field for that column (e.g., `DeletedAt *comparator.NullableTime`). There is no `IncludeDeleted` or `IsSoftDeleted` — the comparator is the single mechanism for controlling soft delete filtering.
 
-When `exclude_deleted` is enabled (default when a soft delete column exists), each method checks whether the user set the soft delete comparator on the filter:
+When `exclude_deleted` is enabled (default when a soft delete column exists), each read method (`GetMany`, `Stream`, `Count`, `ExistsWhere`, and `Paginate` and `Connection` through `Count` and `GetMany`) checks whether the user set the soft delete comparator on the filter:
 - **User didn't set it** → method injects the default "is not deleted" condition (e.g., `deleted_at IS NULL` for timestamp, `is_deleted = false` for bool, `deleted = 0` for integer)
 - **User set it** → method uses the user's comparator, no default injected
 
 Exceptions:
-- **`SoftDelete*`** — always adds "is not deleted" condition (only soft-delete active rows)
-- **`Restore*`** — always adds "is deleted" condition (only restore deleted rows)
+- **`SoftDeleteWhere`** — always adds "is not deleted" condition (only soft-delete active rows). By-key `SoftDelete` and `SoftDeleteMany` address their keys directly
+- **`RestoreWhere`** — always adds "is deleted" condition (only restore deleted rows). By-key `Restore` and `RestoreMany` address their keys directly: clearing a live row's soft-delete column changes nothing
 - **`Get` / `Exists`** — PK methods with no filter; always inject the default when `exclude_deleted` is enabled
+- **`UpdateWhere` / `HardDeleteWhere`** — write methods; no default is injected, so they address every row the filter matches, soft-deleted rows included, as `HardDelete` and `HardDeleteMany` address their keys directly
+- **Write read-backs** — the read that returns a write method's entities injects no default: `Create`, `CreateMany`, `Update` (the empty-update path included), `UpdateMany`, `UpdateWhere` (with no fields set, too), `Upsert` and `UpsertMany` return every row they wrote, whether or not it is soft-deleted. `Increment` addresses its key directly: it writes a soft-deleted row and returns nil
 
 When `exclude_deleted` is disabled, no default condition is injected for any method. The user's comparator is respected if set.
 
@@ -4188,6 +4260,7 @@ When `exclude_deleted` is disabled, no default condition is injected for any met
 // PaginateInput — shared across all tables via generics
 type PaginateInput[F any] struct {
     Filter *F
+    Sort   []sql.Sort
     Limit  int
     Offset int
 }
@@ -4209,13 +4282,11 @@ type IncrementInput[C ~string] struct {
 
 // PaginateResult — returned by Paginate()
 type PaginateResult[T any] struct {
-    Items           []*T  // entities for the current page
-    TotalCount      int64 // total matching rows across all pages
-    TotalPages      int   // ceil(TotalCount / PageSize)
-    PageSize        int   // the limit used for this query
-    CurrentPage     int   // 1-indexed page number derived from offset/limit
-    HasNextPage     bool  // true if there are pages after this one
-    HasPreviousPage bool  // true if there are pages before this one (CurrentPage > 1)
+    Items      []*T  // entities for the current page
+    TotalCount int64 // total matching rows across all pages
+    Offset     int   // the offset used for this query
+    Limit      int   // the limit used for this query
+    HasMore    bool  // true when Limit > 0 and Offset+Limit < TotalCount
 }
 
 // resolveCallOptions — shared helper, applies option functions and returns the resolved struct.
@@ -4499,7 +4570,7 @@ CREATE TABLE product_tags (
 
 **Generated types:**
 
-> **Tag convention:** All generated structs with database-mapped fields carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"company_id"` for column `company_id`). This applies to all generated structs with named fields: entity structs, PK structs, input structs (`Create*Input`, `Update*Input`, `UpdateItem`), and any other struct whose fields correspond to database columns. Input structs carry `json` tags so consumers can use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
+> **Tag convention:** All generated structs scanned from database rows carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"company_id"` for column `company_id`). A relationship field has no column: it is tagged `db:"-"`, and its `json` tag is the snake_case form of its relationship name (`draft_children` → `json:"draft_children"`). This applies to entity structs, PK structs, and any other struct scanned from database rows. Input structs (`Create*Input`, `Update*Input`, `UpdateItem`) are never scanned from a row, so they carry only the `json` tag, which lets consumers use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
 
 ```go
 type Company struct {
@@ -4705,7 +4776,7 @@ func (c *productClient) Get(ctx context.Context, id uuid.UUID, opts ...func(*Cal
         return products[0], nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("get product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -4744,7 +4815,7 @@ func (c *orderItemClient) Get(ctx context.Context, pk OrderItemPK, opts ...func(
         return items[0], nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("get order_item: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -4840,7 +4911,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 
             rows, err := conn.Query(ctx, result, resultArgs...)
             if err != nil {
-                return nil, fmt.Errorf("get products: %w", err)
+                return nil, err
             }
             defer rows.Close()
 
@@ -4861,7 +4932,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 
             rows, err := conn.Query(ctx, query, args...)
             if err != nil {
-                return nil, fmt.Errorf("get products: %w", err)
+                return nil, err
             }
             defer rows.Close()
 
@@ -4883,7 +4954,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
         return products, nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("get many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5015,7 +5086,10 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
                 productIDs[i] = p.ID.String()
             }
 
-            // Build FK-based filter, merged with consumer filter
+            // Build FK-based filter, merged with consumer filter. This is the
+            // PostgreSQL + pgx shape (one = ANY($1) statement); every other
+            // driver runs this fetch once per chunk of parent keys (§25.1), the
+            // way the M2M block below does.
             filter := &ReviewFilter{
                 ProductID: &comparator.ID{In: productIDs},
             }
@@ -5062,75 +5136,101 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
                 productIDs[i] = p.ID.String()
             }
 
-            // Step 1: Query junction table to get (product_id → tag_id) mapping
-            //   SELECT "product_id", "tag_id" FROM "product_tags"
-            //   WHERE "product_id" IN ($1, $2, ...)
-            junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}, sql.SelectOptions{
-                Columns:    []string{"product_id", "tag_id"},
-                Conditions: []sql.Condition{sql.Where("product_id").In(toAnySlice(productIDs)...)},
-            })
-
-            junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
-            if err != nil {
-                return fmt.Errorf("load product tags junction: %w", err)
-            }
-            defer junctionRows.Close()
-
-            // Build mapping: product_id → []tag_id, and collect all tag IDs
-            productToTagIDs := make(map[string][]string)
-            var allTagIDs []string
-            for junctionRows.Next() {
-                var productID, tagID string
-                if err := junctionRows.Scan(&productID, &tagID); err != nil {
-                    return fmt.Errorf("scan product tags junction: %w", err)
-                }
-                productToTagIDs[productID] = append(productToTagIDs[productID], tagID)
-                allTagIDs = append(allTagIDs, tagID)
-            }
-            if err := junctionRows.Err(); err != nil {
-                return fmt.Errorf("iterate product tags junction: %w", err)
-            }
-
-            if len(allTagIDs) == 0 {
-                return nil
-            }
-
-            // Step 2: Fetch the actual tag entities
-            filter := &TagFilter{
-                ID: &comparator.ID{In: allTagIDs},
-            }
-            if fo.Tags.Filter != nil {
-                filter.And = append(filter.And, fo.Tags.Filter)
-            }
-
             sorts := fo.Tags.Sorts
             if len(sorts) == 0 {
                 sorts = c.tagsDefaultSort // static relationship sort from config
             }
 
-            tags, err := c.tagClient.GetMany(ctx, &GetTagsInput{
-                Filter: filter,
-                Sorts:  sorts,
-                Limit:  new(0), // no limit
-            }, func(co *CallOptions[TagFieldOptions]) {
-                co.FieldOptions = fo.Tags.FieldOptions
-            })
-            if err != nil {
-                return fmt.Errorf("load product tags: %w", err)
-            }
+            // The three steps run once per chunk of 32767 parent keys: half the
+            // dialect's bind-parameter limit (§25.1).
+            for start := 0; start < len(productIDs); start += 32767 {
+                chunk := productIDs[start:min(start+32767, len(productIDs))]
 
-            // Step 3: Map tags back to parent products via junction mapping,
-            // walking tags in fetch order so Sorts (or the static sort) order
-            // each product's slice
-            parentsByTarget := make(map[string][]int, len(tags))
-            for i := range products {
-                for _, tagID := range productToTagIDs[products[i].ID.String()] {
-                    parentsByTarget[tagID] = append(parentsByTarget[tagID], i)
+                // Step 1: Query junction table to get (product_id → tag_id) mapping,
+                // joined to tags so each tag key is the one tags stores (§13.2)
+                //   SELECT j."product_id" AS "j.product_id", t."id" AS "t.id"
+                //   FROM "product_tags" j LEFT JOIN "tags" t ON t."id" = j."tag_id"
+                //   WHERE j."product_id" IN ($1, $2, ...) AND t."id" IS NOT NULL
+                productToTagIDs := make(map[string][]string)
+                if err := func() error {
+                    junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}, []sql.JoinClause{{
+                        Table:   sql.Table{Schema: "public", Name: "tags"},
+                        Alias:   "t",
+                        On:      "t." + c.dialect.QuoteIdentifier("id") + " = j." + c.dialect.QuoteIdentifier("tag_id"),
+                        Columns: []string{"id"},
+                    }}, sql.SelectOptions{
+                        Alias:   "j",
+                        Columns: []string{"product_id"},
+                        Conditions: []sql.Condition{
+                            sql.Where("j." + c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...),
+                            sql.Where("t." + c.dialect.QuoteIdentifier("id")).IsNotNull(),
+                        },
+                    })
+                    junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+                    if err != nil {
+                        return fmt.Errorf("load product tags junction: %w", err)
+                    }
+                    defer junctionRows.Close()
+                    for junctionRows.Next() {
+                        var productID, tagID string
+                        if err := junctionRows.Scan(&productID, &tagID); err != nil {
+                            return fmt.Errorf("scan product tags junction: %w", err)
+                        }
+                        productToTagIDs[productID] = append(productToTagIDs[productID], tagID)
+                    }
+                    if err := junctionRows.Err(); err != nil {
+                        return fmt.Errorf("iterate product tags junction: %w", err)
+                    }
+                    return nil
+                }(); err != nil {
+                    return err
                 }
-            }
-            for _, t := range tags {
-                for _, i := range parentsByTarget[t.ID.String()] {
-                    products[i].Tags = append(products[i].Tags, t)
+                if len(productToTagIDs) == 0 {
+                    continue
+                }
+
+                // Step 2: Fetch the actual tag entities, matching the tag PK
+                // against this chunk's junction rows rather than a list of tag IDs:
+                //   SELECT ... FROM "tags" WHERE "id" IN
+                //     (SELECT j."tag_id" FROM "product_tags" j WHERE j."product_id" IN ($1, $2, ...))
+                junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+                    sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...),
+                })
+                filter := &TagFilter{}
+                if fo.Tags.Filter != nil {
+                    filter.And = append(filter.And, fo.Tags.Filter)
+                }
+                tags, err := c.tagClient.GetMany(ctx, &GetTagsInput{
+                    Filter: filter,
+                    Sorts:  sorts,
+                    Limit:  new(0), // no limit
+                    conditions: []sql.Condition{
+                        sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+                            SQL: "SELECT j." + c.dialect.QuoteIdentifier("tag_id") +
+                                " FROM " + c.dialect.FormatTable(sql.Table{Schema: "public", Name: "product_tags"}) + " j WHERE " + junctionWhere,
+                            Args: junctionWhereArgs,
+                        }),
+                    },
+                }, func(co *CallOptions[TagFieldOptions]) {
+                    co.FieldOptions = fo.Tags.FieldOptions
+                })
+                if err != nil {
+                    return fmt.Errorf("load product tags: %w", err)
+                }
+
+                // Step 3: Map tags back to this chunk's products via junction
+                // mapping, walking tags in fetch order so Sorts (or the static
+                // sort) order each product's slice
+                parentsByTarget := make(map[string][]int, len(tags))
+                for i := start; i < start+len(chunk); i++ {
+                    for _, tagID := range productToTagIDs[products[i].ID.String()] {
+                        parentsByTarget[tagID] = append(parentsByTarget[tagID], i)
+                    }
+                }
+                for _, t := range tags {
+                    for _, i := range parentsByTarget[t.ID.String()] {
+                        products[i].Tags = append(products[i].Tags, t)
+                    }
                 }
             }
             return nil
@@ -5149,12 +5249,12 @@ Each O2M/M2M relationship is a separate `g.Go` goroutine. All run concurrently a
 |--------|---------------|------------|
 | Queries | 1 — direct query on related table with FK IN clause | 2 — junction table query + target table query |
 | FK location | On the related table (`reviews.product_id`) | On the junction table (`product_tags.product_id`, `product_tags.tag_id`) |
-| Mapping | Direct — group by FK column on result | Indirect — junction provides the ID mapping, then tag entities are fetched and matched |
+| Mapping | Direct — group by the FK columns on result | Indirect — junction provides the ID mapping, then tag entities are fetched and matched |
 | Consumer Filter/Sorts | Applied to the related table query | Applied to the target table query (step 2), not the junction query |
 
 **Relationship loads bypass the default query limit.** `GetMany` normally applies `generation.query_limit` when `Limit` is `nil`. Relationship loaders set `Limit: new(0)` to explicitly disable the limit — all matching related entities must be returned for correct parent mapping. A default limit would silently truncate results, causing some parents to appear to have fewer children than they actually do.
 
-**FK-to-map-key conversion in relationship mapping.** The `byProductID` and `productToTagIDs` maps use `string` keys regardless of the FK's Go type. The generator selects the conversion method per FK type using the resolution chain from Section 13.3:
+**FK-to-map-key conversion in relationship mapping.** The `byProductID` and `productToTagIDs` maps use `string` keys regardless of the FK's Go type. A key with several columns maps on an `[N]string` array of those strings, one per member, which Go compares as a map key. The generator selects the conversion method per FK type using the resolution chain from Section 13.3:
 
 | FK Go Type | Map Key Expression | Example |
 |------------|-------------------|---------|
@@ -5168,7 +5268,7 @@ String keys provide a universal map key type that works across all FK types. The
 
 #### 9.8.4 Create
 
-All write methods that return entities (`Create`, `Update`, `Upsert`) follow the same return pattern: perform the write, resolve the PK, then call `Get` with `SkipHooks = true` for the follow-up fetch. The entire operation is wrapped in a mutation hook chain with the appropriate `Op` constant. This provides a unified approach across all dialects and enables relationship loading on write results.
+All write methods that return entities (`Create`, `Update`, `Upsert`) follow the same return pattern: perform the write, resolve the PK, then read the row back by that key ([9.7](#97-pk-resolution-and-entity-return-path)) with `SkipHooks = true`. The entire operation is wrapped in a mutation hook chain with the appropriate `Op` constant. This provides a unified approach across all dialects and enables relationship loading on write results.
 
 **Return pattern by PK strategy:**
 
@@ -5227,14 +5327,14 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
             })
             _, err := conn.Exec(ctx, query, queryArgs...)
             if err != nil {
-                return nil, fmt.Errorf("create product: %w", err)
+                return nil, err
             }
             return nil, nil
         }
 
         id, err := c.insertAndResolveID(ctx, conn, columns, args)
         if err != nil {
-            return nil, fmt.Errorf("create product: %w", err)
+            return nil, err
         }
         return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
             *o = options
@@ -5242,7 +5342,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5292,7 +5392,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
 
         id, err := c.insertAndResolveID(ctx, conn, columns, args)
         if err != nil {
-            return nil, fmt.Errorf("create product: %w", err)
+            return nil, err
         }
         return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
             *o = options
@@ -5300,7 +5400,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5328,7 +5428,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
 
         id, err := c.insertAndResolveID(ctx, conn, columns, args)
         if err != nil {
-            return nil, fmt.Errorf("create product: %w", err)
+            return nil, err
         }
         return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
             *o = options
@@ -5336,7 +5436,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5407,9 +5507,9 @@ A UUID PK that is **not** a foreign key is `omittable.Value[T]` in CreateInput, 
 
 A UUID PK that **is** a foreign key is `caller` and therefore required: nothing generates a fallback, because the value has to name an existing parent row ([§8.6](#86-primary-key-strategy)).
 
-- **UUID + DB default** (PostgreSQL/SQLite, strategy `db`): omittable — DB applies DEFAULT if omitted, retrieved via RETURNING "id".
-- **UUID + no DB default** (PostgreSQL/SQLite, strategy `app`): omittable — app generates UUID client-side if omitted.
-- **MySQL UUID** (strategy `app`): omittable — app generates UUID client-side if omitted.
+- **UUID + DB default** (PostgreSQL `uuid`, strategy `db`): omittable — DB applies DEFAULT if omitted, retrieved via RETURNING "id".
+- **UUID + no DB default** (PostgreSQL `uuid`, strategy `app`): omittable — app generates UUID client-side if omitted.
+- **UUID on MySQL or SQLite**: classified by its storage type, so `caller` unless `primary_key.strategy: app` is set ([§8.6](#86-primary-key-strategy)); with `app` it is omittable — app generates UUID client-side if omitted.
 - **Auto-increment / serial / identity** (strategy `db`): excluded — sequence-based, caller cannot provide.
 - **No generation mechanism** (strategy `caller`): required — caller must provide.
 - **PK is a FOREIGN KEY** (strategy `caller`, any dialect and type): required — the value must name an existing parent row, so nothing may mint it ([§8.6](#86-primary-key-strategy)).
@@ -5422,13 +5522,10 @@ A UUID PK that **is** a foreign key is `caller` and therefore required: nothing 
 | PostgreSQL | SERIAL / BIGSERIAL | Yes | `db` | Excluded — sequence-based |
 | PostgreSQL | GENERATED AS IDENTITY | Yes | `db` | Excluded — identity-based |
 | MySQL | INT AUTO_INCREMENT | Yes | `db` | Excluded — sequence-based |
-| MySQL | UUID | Yes or No | `app` | `omittable.Value[T]` — app generates if omitted |
 | MySQL | Any other, no default | — | `caller` | Required — no generation mechanism |
 | SQLite | INTEGER AUTOINCREMENT | Yes | `db` | Excluded — sequence-based |
-| SQLite | UUID | Yes | `db` | `omittable.Value[T]` — DB applies default if omitted |
-| SQLite | UUID | No | `app` | `omittable.Value[T]` — app generates if omitted |
 
-**Summary rule:** A UUID PK that is not a foreign key is omittable — the caller can always provide or defer to generation. Auto-increment / serial / identity PKs are excluded. Strategy `caller` PKs — including every foreign-key PK and every composite key — are required.
+**Summary rule:** A PostgreSQL `uuid` PK that is not a foreign key is omittable — the caller can always provide or defer to generation. Auto-increment / serial / identity PKs are excluded. Strategy `caller` PKs — including every foreign-key PK and every composite key — are required.
 
 #### 9.8.5 CreateMany
 
@@ -5501,7 +5598,7 @@ func (c *productClient) CreateMany(ctx context.Context, inputs []*CreateProductI
             // Resolve IDs for the batch (same per-row logic as Create)
             ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
             if err != nil {
-                return nil, fmt.Errorf("create products batch: %w", err)
+                return nil, err
             }
             allIDs = append(allIDs, ids...)
         }
@@ -5518,7 +5615,7 @@ func (c *productClient) CreateMany(ctx context.Context, inputs []*CreateProductI
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5543,7 +5640,7 @@ Previously completed sub-batches are **not rolled back** on failure. Wrap in a t
 
 **`multiInsertAndResolveIDs` — generated per table, dialect-aware (same generation-time branching as `insertAndResolveID`):**
 
-**PostgreSQL/SQLite variant (RETURNING supported):**
+**PostgreSQL/SQLite variant (RETURNING supported):** a plain multi-row `INSERT ... VALUES` returns its `RETURNING` rows in `VALUES` order on both databases, and the variant relies on it: the i-th key read is the i-th input's row, which keeps `AffectedPKs` index-aligned with the inputs ([28.4](#284-publisher-interface)).
 
 ```go
 func (c *productClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]uuid.UUID, error) {
@@ -5715,12 +5812,12 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 
         execResult, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("update product: %w", err)
+            return nil, err
         }
         if c.strictUpdates {
             count, err := execResult.RowsAffected()
             if err != nil {
-                return nil, fmt.Errorf("update product rows affected: %w", err)
+                return nil, fmt.Errorf("rows affected: %w", err)
             }
             if count == 0 {
                 return nil, ErrNotFound
@@ -5733,7 +5830,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
         return c.Get(ctx, id, internalOpts)
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5744,13 +5841,13 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 
 **Generated SQL (PostgreSQL, name and price set):** `UPDATE "public"."products" SET "name" = $1, "price" = $2 WHERE "id" = $3`
 
-All dialects use the same pattern: `Exec` the UPDATE, then `Get` to return the result with relationships. No RETURNING needed.
+All dialects use the same pattern: `Exec` the UPDATE, then read the row back by key ([9.7](#97-pk-resolution-and-entity-return-path)) to return the result with relationships. No RETURNING needed.
 
 **The skip-refetch escape is not optional on `Update`.** Both return paths — the empty-update short-circuit and the post-`UPDATE` fetch — are guarded by the same `FieldOptions != nil && !HasSelectedColumns()` test every sibling write method uses ([9.6](#96-per-call-options)). `Update` is the one method where the guard is load-bearing beyond saving a round-trip: [9.9](#99-nested-mutations)'s `UpdateWithRelated` composes it for the parent row *before* any child is written, and an unconditional re-fetch there would read a row nobody asked for and then discard it in favour of the terminal read.
 
 #### 9.8.6a UpdateMany
 
-Batch update — each item is a (PK, UpdateInput) pair. Each row has different SET values, so they cannot be combined into a single SQL statement. On pgx, `SendBatch` pipelines all statements in one round-trip. On stdlib, each UPDATE executes sequentially within an implicit transaction (Section 19.4). Wrapped in a mutation hook chain with `OpUpdateMany`. The internal `GetMany` call uses `SkipHooks = true` to prevent nested hook invocation.
+Batch update — each item is a (PK, UpdateInput) pair. Each row has different SET values, so they cannot be combined into a single SQL statement. On pgx, `SendBatch` pipelines each sub-batch's statements in one round-trip. When the querier has no `SendBatch` (a wrapping middleware, or a caller's transaction), pgx runs the sub-batch's statements one by one in a transaction, or in a savepoint inside the caller's transaction. On stdlib, each UPDATE executes sequentially within an implicit transaction. Every driver makes each sub-batch atomic: a failing item rolls back its sub-batch, and earlier sub-batches stay applied (Section 19.4). Wrapped in a mutation hook chain with `OpUpdateMany`. The internal `GetMany` call uses `SkipHooks = true` to prevent nested hook invocation.
 
 ```go
 // UpdateMany partially updates multiple products and returns the updated entities.
@@ -5810,7 +5907,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 
                 _, err := conn.Exec(ctx, query, args...)
                 if err != nil {
-                    return nil, fmt.Errorf("update product %s: %w", item.ID, err)
+                    return nil, fmt.Errorf("item %v: %w", item.ID, err)
                 }
                 allIDs = append(allIDs, item.ID)
             }
@@ -5832,7 +5929,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5851,10 +5948,15 @@ type UpdateProductItem struct {
 }
 ```
 
-**pgx optimization:** On pgx, the generated code wraps the per-row UPDATEs in a `SendBatch` call, pipelining all statements over a single network round-trip instead of executing sequentially. See Section 19.4.
+**pgx optimization:** On pgx, the generated code wraps each sub-batch's per-row UPDATEs in a `SendBatch` call, pipelining them over a single network round-trip instead of executing sequentially. `SendBatch` runs the batch in an implicit transaction. The generated code type-asserts the resolved querier for `SendBatch`; when it has none (a wrapping middleware, or a caller's transaction, since `*database.Tx` has no `SendBatch`), it runs the sub-batch's statements one by one inside `database.WithTransaction`, which opens a savepoint when the context already carries a transaction. Either way a failing item rolls back its sub-batch. See Section 19.4.
 
 ```go
-// UpdateMany — pgx variant using SendBatch for pipelined execution
+// UpdateMany partially updates multiple products and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of generation.batch_size.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductItem, opts ...func(*CallOptions[ProductFieldOptions])) ([]*Product, error) {
     options := resolveCallOptions(opts)
     result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -5870,6 +5972,9 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 
             // Build all UPDATE statements for this batch
             pgxBatch := &pgx.Batch{}
+            var batchQueries []string
+            var batchArgs [][]any
+            var queuedIDs []int64 // the item each queued UPDATE belongs to
             for _, item := range batch {
                 setClauses := make(map[string]any)
                 if v, ok := item.Input.Name.Get(); ok {
@@ -5906,20 +6011,39 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
                     Conditions: []sql.Condition{sql.Where("id").Eq(item.ID)},
                 })
                 pgxBatch.Queue(query, args...)
+                batchQueries = append(batchQueries, query)
+                batchArgs = append(batchArgs, args)
+                queuedIDs = append(queuedIDs, item.ID)
                 allIDs = append(allIDs, item.ID)
             }
 
-            // Send all UPDATEs in one network round-trip
+            // Send all UPDATEs in one network round-trip when the querier can
+            // send a batch; otherwise one by one in a transaction (a savepoint
+            // inside the caller's transaction)
             if pgxBatch.Len() > 0 {
-                br := conn.SendBatch(ctx, pgxBatch)
-                for range pgxBatch.Len() {
-                    if _, err := br.Exec(); err != nil {
-                        br.Close()
-                        return nil, fmt.Errorf("update products batch: %w", err)
+                if batcher, ok := conn.(interface {
+                    SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+                }); ok {
+                    br := batcher.SendBatch(ctx, pgxBatch)
+                    for i := range pgxBatch.Len() {
+                        if _, err := br.Exec(); err != nil {
+                            br.Close()
+                            return nil, fmt.Errorf("item %v: %w", queuedIDs[i], err)
+                        }
                     }
-                }
-                if err := br.Close(); err != nil {
-                    return nil, fmt.Errorf("close update batch: %w", err)
+                    if err := br.Close(); err != nil {
+                        return nil, fmt.Errorf("close batch: %w", err)
+                    }
+                } else if err := database.WithTransaction(ctx, c.querier, "update_many_product", func(ctx context.Context) error {
+                    conn := database.Conn(ctx, c.querier)
+                    for i, q := range batchQueries {
+                        if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+                            return fmt.Errorf("item %v: %w", queuedIDs[i], err)
+                        }
+                    }
+                    return nil
+                }); err != nil {
+                    return nil, err
                 }
             }
         }
@@ -5940,7 +6064,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6025,7 +6149,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
             })
             _, err := conn.Exec(ctx, query, args...)
             if err != nil {
-                return nil, fmt.Errorf("update products where: %w", err)
+                return nil, err
             }
             return nil, nil
         }
@@ -6039,7 +6163,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 
         rows, err := conn.Query(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("update products where: %w", err)
+            return nil, err
         }
         defer rows.Close()
 
@@ -6070,7 +6194,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update products where: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6118,7 +6242,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
         // drive cache invalidation and events (m.AffectedPKs).
         ids, err := c.collectAffectedIDs(ctx, conn, conds)
         if err != nil {
-            return nil, fmt.Errorf("update products where: %w", err)
+            return nil, err
         }
         if len(ids) == 0 {
             return nil, nil
@@ -6131,7 +6255,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
         })
         _, err = conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("update products where: %w", err)
+            return nil, err
         }
         m.AffectedPKs = toAnySlice(ids)
 
@@ -6151,7 +6275,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update products where: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6198,7 +6322,7 @@ func (c *productClient) Upsert(ctx context.Context, input *CreateProductInput, t
         // Resolve PK (same pattern as Create)
         id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
         if err != nil {
-            return nil, fmt.Errorf("upsert product: %w", err)
+            return nil, err
         }
 
         return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
@@ -6207,7 +6331,7 @@ func (c *productClient) Upsert(ctx context.Context, input *CreateProductInput, t
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("upsert product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6224,7 +6348,7 @@ func (c *productClient) Upsert(ctx context.Context, input *CreateProductInput, t
 | MySQL | `` INSERT INTO `products` (`name`, `price`, `sku`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `price` = VALUES(`price`) `` |
 | SQLite | Same as PostgreSQL (with `?` placeholders) |
 
-All dialects follow the same return pattern: resolve the PK from the upsert, then `Get` to return the full entity. PostgreSQL/SQLite use `RETURNING "id"` to get the PK. MySQL uses `LastInsertId()` for auto-increment or the known PK for UUID.
+All dialects follow the same return pattern: resolve the PK from the upsert, then read the row back by key ([9.7](#97-pk-resolution-and-entity-return-path)) to return the full entity. PostgreSQL/SQLite use `RETURNING "id"` to get the PK. MySQL uses `LastInsertId()` for auto-increment or the known PK for UUID.
 
 An input that supplies no column emits no conflict clause and is a plain insert of column defaults on every dialect, and so does an input that leaves any conflict-target column unwritten — see [Upsert Conflict Keys](#upsert-conflict-keys).
 
@@ -6255,7 +6379,7 @@ func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID, opts ...fu
 
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("soft delete product: %w", err)
+            return nil, err
         }
 
         // Empty FieldOptions — caller doesn't need the result (Section 9.6)
@@ -6284,7 +6408,7 @@ func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID, opts ...fu
         return results[0], nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("soft delete product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6310,7 +6434,7 @@ func (c *productClient) Restore(ctx context.Context, id uuid.UUID, opts ...func(
 
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("restore product: %w", err)
+            return nil, err
         }
 
         // Empty FieldOptions — caller doesn't need the result (Section 9.6)
@@ -6318,13 +6442,24 @@ func (c *productClient) Restore(ctx context.Context, id uuid.UUID, opts ...func(
             return nil, nil
         }
 
-        return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
+        // Fetch the restored entity; a key that matched no row is not an error
+        results, err := c.GetMany(ctx, &GetProductsInput{
+            Filter: &ProductFilter{ID: &comparator.ID{Eq: id.String()}},
+            Limit:  new(1),
+        }, func(o *CallOptions[ProductFieldOptions]) {
             *o = options
             o.SkipHooks = true
         })
+        if err != nil {
+            return nil, err
+        }
+        if len(results) == 0 {
+            return nil, nil
+        }
+        return results[0], nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("restore product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6341,7 +6476,7 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
     options := resolveCallOptions(opts)
     result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
         Op: hook.OpSoftDeleteMany, Table: TableProducts, Schema: "public",
-        PK: ids, CallOptions: options,
+        Input: ids, CallOptions: options,
     }, func(ctx context.Context, m *hook.MutationContext) (any, error) {
         conn := database.Conn(ctx, c.querier)
 
@@ -6353,7 +6488,7 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("soft delete products: %w", err)
+            return nil, err
         }
 
         // Empty FieldOptions — skip fetch (Section 9.6)
@@ -6373,7 +6508,7 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("soft delete many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6382,7 +6517,7 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 }
 ```
 
-`RestoreMany` follows the same pattern. All `Restore*` variants always scope to deleted rows (e.g., `deleted_at IS NOT NULL` for timestamp strategy) — the `DeletedAt` comparator on the filter is ignored, since restore inherently targets deleted rows.
+`RestoreMany` follows the same pattern, addressing its keys directly. `RestoreWhere` always scopes to deleted rows (e.g., `deleted_at IS NOT NULL` for timestamp strategy) — the `DeletedAt` comparator on its filter is ignored, since it targets deleted rows.
 
 **Where variants — PKs unknown, dialect-aware ID collection:**
 
@@ -6402,6 +6537,12 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
     }, func(ctx context.Context, m *hook.MutationContext) (any, error) {
         conn := database.Conn(ctx, c.querier)
 
+        // The DeletedAt comparator is ignored; the caller's filter is not modified.
+        if filter != nil && filter.DeletedAt != nil {
+            scoped := *filter
+            scoped.DeletedAt = nil
+            filter = &scoped
+        }
         conds := filter.ToConditions(c.dialect)
         if len(conds) == 0 {
             return nil, ErrEmptyFilter
@@ -6420,7 +6561,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
             })
             _, err := conn.Exec(ctx, query, args...)
             if err != nil {
-                return nil, fmt.Errorf("soft delete products where: %w", err)
+                return nil, err
             }
             return nil, nil
         }
@@ -6435,7 +6576,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
 
         rows, err := conn.Query(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("soft delete products where: %w", err)
+            return nil, err
         }
         defer rows.Close()
 
@@ -6467,7 +6608,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("soft delete products where: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6489,6 +6630,12 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
     }, func(ctx context.Context, m *hook.MutationContext) (any, error) {
         conn := database.Conn(ctx, c.querier)
 
+        // The DeletedAt comparator is ignored; the caller's filter is not modified.
+        if filter != nil && filter.DeletedAt != nil {
+            scoped := *filter
+            scoped.DeletedAt = nil
+            filter = &scoped
+        }
         conds := filter.ToConditions(c.dialect)
         if len(conds) == 0 {
             return nil, ErrEmptyFilter
@@ -6503,7 +6650,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
             var err error
             ids, err = c.collectAffectedIDs(ctx, conn, conds)
             if err != nil {
-                return nil, fmt.Errorf("soft delete products where: %w", err)
+                return nil, err
             }
             if len(ids) == 0 {
                 return nil, nil
@@ -6517,7 +6664,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
         })
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("soft delete products where: %w", err)
+            return nil, err
         }
 
         if skipFetch {
@@ -6536,7 +6683,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("soft delete products where: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6583,7 +6730,7 @@ func (c *productClient) collectAffectedIDs(ctx context.Context, conn database.Qu
 | Method | PostgreSQL/SQLite | MySQL |
 |--------|-------------------|-------|
 | `SoftDelete` / `Restore` (single PK) | 2: Exec + Get | 2: Exec + Get |
-| `SoftDeleteMany` / `RestoreMany` (batch PK) | 2: Exec + GetMany | 2: Exec + GetMany |
+| `SoftDeleteMany` / `RestoreMany` (batch PK) | `ceil(M / batch_size)` Exec + GetMany | `ceil(M / batch_size)` Exec + GetMany |
 | `SoftDeleteWhere` / `RestoreWhere` (filter) | 2: mutation RETURNING + GetMany | 3: SELECT IDs + mutation + GetMany |
 | `UpdateWhere` (filter) | 2: UPDATE RETURNING + GetMany | 3: SELECT IDs + UPDATE + GetMany |
 
@@ -6616,11 +6763,14 @@ func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID, opts ...fu
 
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("hard delete product: %w", err)
+            return nil, err
         }
         return nil, nil
     })
-    return err
+    if err != nil {
+        return fmt.Errorf("hard delete product: %w", err)
+    }
+    return nil
 }
 ```
 
@@ -6650,13 +6800,13 @@ func (c *productClient) Increment(ctx context.Context, id uuid.UUID, input Incre
 
         execResult, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("increment product %s: %w", input.Column, err)
+            return nil, err
         }
 
         if c.strictUpdates {
             count, err := execResult.RowsAffected()
             if err != nil {
-                return nil, fmt.Errorf("increment product rows affected: %w", err)
+                return nil, fmt.Errorf("rows affected: %w", err)
             }
             if count == 0 {
                 return nil, ErrNotFound
@@ -6664,7 +6814,10 @@ func (c *productClient) Increment(ctx context.Context, id uuid.UUID, input Incre
         }
         return nil, nil
     })
-    return err
+    if err != nil {
+        return fmt.Errorf("increment product: %w", err)
+    }
+    return nil
 }
 ```
 
@@ -6720,12 +6873,12 @@ func (c *productClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*
 
         var exists bool
         if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-            return false, fmt.Errorf("exists product: %w", err)
+            return false, err
         }
         return exists, nil
     })
     if err != nil {
-        return false, err
+        return false, fmt.Errorf("exists product: %w", err)
     }
     return result.(bool), nil
 }
@@ -6737,7 +6890,7 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
     options := resolveCallOptions(opts)
     result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
         Op: hook.OpCount, Table: TableProducts, Schema: "public",
-        CallOptions: options,
+        Input: filter, CallOptions: options,
     }, func(ctx context.Context, q *hook.QueryContext) (any, error) {
         conn := database.Conn(ctx, c.querier)
 
@@ -6755,12 +6908,12 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 
         var count int64
         if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-            return 0, fmt.Errorf("count products: %w", err)
+            return 0, err
         }
         return count, nil
     })
     if err != nil {
-        return 0, err
+        return 0, fmt.Errorf("count products: %w", err)
     }
     return result.(int64), nil
 }
@@ -6792,34 +6945,30 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
         // Total count (delegates to Count with SkipHooks)
         totalCount, err := c.Count(ctx, input.Filter, internalOpts)
         if err != nil {
-            return nil, fmt.Errorf("paginate products count: %w", err)
+            return nil, err
         }
 
         // Page data via GetMany with SkipHooks (handles FieldOptions and relationships)
         products, err := c.GetMany(ctx, &GetProductsInput{
             Filter: input.Filter,
+            Sorts:  input.Sort,
             Limit:  new(input.Limit),
             Offset: new(input.Offset),
         }, internalOpts)
         if err != nil {
-            return nil, fmt.Errorf("paginate products: %w", err)
+            return nil, err
         }
 
-        currentPage := (input.Offset / input.Limit) + 1
-        totalPages := int((totalCount + int64(input.Limit) - 1) / int64(input.Limit))
-
         return &PaginateResult[Product]{
-            Items:           products,
-            TotalCount:      totalCount,
-            TotalPages:      totalPages,
-            PageSize:        input.Limit,
-            CurrentPage:     currentPage,
-            HasNextPage:     currentPage < totalPages,
-            HasPreviousPage: currentPage > 1,
+            Items:      products,
+            TotalCount: totalCount,
+            Offset:     input.Offset,
+            Limit:      input.Limit,
+            HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
         }, nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("paginate products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6859,7 +7008,7 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
         // Total count (separate COUNT query with SkipHooks — no cursor conditions)
         totalCount, err := c.Count(ctx, input.Filter, internalOpts)
         if err != nil {
-            return nil, fmt.Errorf("connection products count: %w", err)
+            return nil, err
         }
 
         // Decode cursors and build keyset conditions
@@ -6898,7 +7047,7 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
             conditions: keysetConds,
         }, internalOpts)
         if err != nil {
-            return nil, fmt.Errorf("connection products: %w", err)
+            return nil, err
         }
 
         // Trim extra row and determine page boundaries
@@ -6928,17 +7077,16 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
         pageInfo := PageInfo{
             HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
             HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
-            TotalCount:      totalCount,
         }
         if len(edges) > 0 {
             pageInfo.StartCursor = &edges[0].Cursor
             pageInfo.EndCursor = &edges[len(edges)-1].Cursor
         }
 
-        return &Connection[Product]{Edges: edges, PageInfo: pageInfo}, nil
+        return &Connection[Product]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("connection products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -7043,7 +7191,7 @@ func cursorValueIsNull(v any) bool {
 
 **Generated SQL (forward, cursor_keys=["id"], after cursor provided):** `SELECT ... FROM "public"."products" WHERE "deleted_at" IS NULL AND "id" > $1 ORDER BY "id" ASC LIMIT 26`
 
-`Connection` delegates to `Count` and `GetMany` — the same pattern as `Paginate`. Keyset conditions (decoded cursors → `WHERE id > $cursor_value`) are passed via the unexported `conditions` field on `GetProductsInput`, which `GetMany` appends after filter and soft delete conditions. This ensures FieldOptions, O2O JOIN loading, O2M/M2M relationship loading, and soft delete filtering are handled consistently without duplication. `TotalCount` in `PageInfo` is always populated via the `Count` call.
+`Connection` delegates to `Count` and `GetMany` — the same pattern as `Paginate`. Keyset conditions (decoded cursors → `WHERE id > $cursor_value`) are passed via the unexported `conditions` field on `GetProductsInput`, which `GetMany` appends after filter and soft delete conditions. This ensures FieldOptions, O2O JOIN loading, O2M/M2M relationship loading, and soft delete filtering are handled consistently without duplication. `TotalCount` on the `Connection` is always populated via the `Count` call.
 
 #### 9.8.13 Composite Primary Key Patterns
 
@@ -7079,7 +7227,7 @@ CREATE TABLE order_items (
 
 **Generated types:**
 
-> **Tag convention:** All generated structs with database-mapped fields carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"order_id"` for column `order_id`). This applies to all generated structs with named fields: entity structs, PK structs, input structs (`Create*Input`, `Update*Input`, `UpdateItem`), and any other struct whose fields correspond to database columns. Input structs carry `json` tags so consumers can use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
+> **Tag convention:** All generated structs scanned from database rows carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"order_id"` for column `order_id`). This applies to entity structs, PK structs, and any other struct scanned from database rows. Input structs (`Create*Input`, `Update*Input`, `UpdateItem`) are never scanned from a row, so they carry only the `json` tag, which lets consumers use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
 
 ```go
 // OrderItemPK identifies a single order item by its composite primary key.
@@ -7138,7 +7286,7 @@ var orderItemAllColumns = []string{"deleted_at", "order_id", "product_id", "quan
 
 **Composite PK filter — `PKs` field for batch lookups:**
 
-Composite PK tables include a `PKs` field on the filter struct. `ToConditions` converts it via `BuildCompositePKBatchCondition`, producing tuple IN (PostgreSQL) or expanded OR (MySQL):
+Composite PK tables include a `PKs` field on the filter struct. `ToConditions` compiles it to an OR of per-key ANDs, `(a = $ AND b = $) OR (a = $ AND b = $)`, on every dialect:
 
 ```go
 type OrderItemFilter struct {
@@ -7155,11 +7303,14 @@ func (f *OrderItemFilter) ToConditions(d sql.Dialect) []sql.Condition {
 
     // Batch composite PK condition
     if len(f.PKs) > 0 {
-        pkValues := make([][]any, len(f.PKs))
-        for i, pk := range f.PKs {
-            pkValues[i] = []any{pk.OrderID, pk.ProductID}
+        var pkConds []sql.Condition
+        for _, pk := range f.PKs {
+            pkConds = append(pkConds, sql.And(
+                sql.Condition{Clause: d.QuoteIdentifier("order_id") + " = $", Value: pk.OrderID},
+                sql.Condition{Clause: d.QuoteIdentifier("product_id") + " = $", Value: pk.ProductID},
+            ))
         }
-        conds = append(conds, sql.BuildCompositePKBatchCondition(d, []string{"order_id", "product_id"}, pkValues))
+        conds = append(conds, sql.Or(pkConds...))
     }
 
     // Individual column comparators
@@ -7279,7 +7430,7 @@ func (c *orderItemClient) Create(ctx context.Context, input *CreateOrderItemInpu
         })
         _, err := conn.Exec(ctx, query, queryArgs...)
         if err != nil {
-            return nil, fmt.Errorf("create order item: %w", err)
+            return nil, err
         }
 
         // Empty FieldOptions — caller doesn't need the result
@@ -7294,7 +7445,7 @@ func (c *orderItemClient) Create(ctx context.Context, input *CreateOrderItemInpu
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create order_item: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -7343,7 +7494,7 @@ func (c *orderItemClient) CreateMany(ctx context.Context, inputs []*CreateOrderI
         })
         _, err := conn.Exec(ctx, query, queryArgs...)
         if err != nil {
-            return nil, fmt.Errorf("create order items batch: %w", err)
+            return nil, fmt.Errorf("create many order_items: %w", err)
         }
     }
 
@@ -7352,10 +7503,14 @@ func (c *orderItemClient) CreateMany(ctx context.Context, inputs []*CreateOrderI
     }
 
     // Re-fetch via composite PK batch condition
-    return c.GetMany(ctx, &GetOrderItemsInput{
+    items, err := c.GetMany(ctx, &GetOrderItemsInput{
         Filter: &OrderItemFilter{PKs: allPKs},
         Limit:  new(0),
     }, opts...)
+    if err != nil {
+        return nil, fmt.Errorf("create many order_items: %w", err)
+    }
+    return items, nil
 }
 ```
 
@@ -7415,12 +7570,12 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 
         execResult, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("update order item: %w", err)
+            return nil, err
         }
         if c.strictUpdates {
             count, err := execResult.RowsAffected()
             if err != nil {
-                return nil, fmt.Errorf("update order item rows affected: %w", err)
+                return nil, fmt.Errorf("rows affected: %w", err)
             }
             if count == 0 {
                 return nil, ErrNotFound
@@ -7433,7 +7588,7 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
         return c.Get(ctx, pk, internalOpts)
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update order_item: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -7463,7 +7618,7 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 
     _, err := conn.Exec(ctx, query, args...)
     if err != nil {
-        return fmt.Errorf("hard delete order items: %w", err)
+        return fmt.Errorf("hard delete many order_items: %w", err)
     }
     return nil
 }
@@ -7519,7 +7674,7 @@ query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 
 rows, err := conn.Query(ctx, query, args...)
 if err != nil {
-    return nil, fmt.Errorf("update order items where: %w", err)
+    return nil, err // the method's outer return adds "update order_items where: "
 }
 defer rows.Close()
 
@@ -7527,7 +7682,7 @@ var pks []OrderItemPK
 for rows.Next() {
     var pk OrderItemPK
     if err := rows.Scan(&pk.OrderID, &pk.ProductID); err != nil {
-        return nil, fmt.Errorf("scan updated order item pk: %w", err)
+        return nil, fmt.Errorf("scan updated order_item pk: %w", err)
     }
     pks = append(pks, pk)
 }
@@ -7602,6 +7757,16 @@ Shape alone does not decide which verbs an edge admits. **What an unlink can mea
 
 The verb set is computed per edge from the FK's nullability, never from the relationship type. FK nullability and FK ownership (which side physically holds the column) are both first-class properties of a relationship — see [13.1](#131-relationship-types).
 
+**A foreign key with several columns is rewritten only through its free members.** Each member of an O2M or has-one edge's key ([5.3](#53-relationship-detection)) is **pinned** or **free**. A member is pinned when it is:
+
+- the table's tenant column ([29](#29-tenancy)), which tenancy already writes and guards;
+- a member of the child's primary key, so writing it would change the row's identity; or
+- a member of another FOREIGN KEY constraint on the same table, so writing it would move another edge.
+
+Every other member is free. `workspace_id` in `tasks`, under `(workspace_id, cycle_id) → cycles(workspace_id, id)`, is pinned twice over: it is the tenant column, and `tasks.workspace_id → workspaces` holds it too. Each kind was measured to do harm when written: a tenant column moved a task to another workspace while its project stayed behind, a shared member raised the other key's FK error or silently moved the row, and a primary-key member re-keyed the row.
+
+Pinning governs the verbs that rewrite an existing row. `connect` verifies each pinned member and writes the free ones ([9.9.6](#996-execution-order)), `disconnect` and `clear` null the free ones, and `allow_reparent` never moves a pinned member. "The FK's nullability" above is the nullability of the free members. An edge with no free member has none of those verbs and keeps `create`, exactly as a NOT NULL edge does, and they are dropped as silently as a NOT NULL edge's are, since the schema states why ([9.9.4](#994-eligibility-rules)). A nested `create` sets every member from the parent's referenced columns, pinned ones and the tenant column included. An M2M edge has no pinned members: its verbs insert and delete junction rows and never rewrite one. A column both of its junction keys share is compared with the parent's on `connect` and `create` ([9.9.6](#996-execution-order)). A single-column foreign key is the one-member case. When its member is pinned, a primary-key member or the tenant column, the member is NOT NULL, so the edge is already `create`-only and its verb set is unchanged.
+
 #### 9.9.3 The eligibility matrix
 
 This table is the normative verb set. Everything else in this section is mechanical once it is fixed.
@@ -7610,12 +7775,14 @@ This table is the normative verb set. Everything else in this section is mechani
 |---|---|---|---|---|---|
 | **O2M / has-one, nullable FK** | on target, NULL | yes — `INSERT` with `fk = parent`; has-one: after the occupancy read (below) | yes — has-one: the occupancy read (below); then visibility read, then `UPDATE … SET fk = parent WHERE id IN (…) AND fk IS NULL` | yes — `UPDATE … SET fk = NULL WHERE id IN (…) AND fk = parent` | yes — `UPDATE … SET fk = NULL WHERE fk = parent`; no id list, no read |
 | **O2M / has-one, NOT NULL FK** | on target, NOT NULL | yes — `INSERT` with `fk = parent`; has-one: after the occupancy read (below) | **no** — nothing is ever unparented, so there is nothing to adopt | **no** — would violate the constraint | **no** — same constraint |
-| **M2M** | junction | yes — `INSERT` target, then junction row | yes — visibility read, then junction row | yes — `HardDeleteMany` on junction PKs, gated by **E11**; requires the junction's primary key to be exactly its two FKs, with the parent's and target's key types | yes — `HardDeleteWhere(local_fk = parent)`, same **E11** gate |
+| **M2M** | junction | yes — `INSERT` target, then junction row | yes — visibility read, then junction row | yes — `HardDeleteMany` on junction PKs, gated by **E11**; requires the junction's primary key to be exactly the union of both junction keys' columns, with the parent's and target's key types | yes — `HardDeleteWhere(local_fk = parent)`, same **E11** gate |
 | **belongs-to (FK on parent)** | on parent | **no** — deferred, shape 1 | **no** — redundant; this *is* the scalar FK field | **no** — redundant; set the FK to NULL through the ordinary update input | **no** — same |
+
+**On a key with several columns, `fk` in this table stands for the whole key.** `fk = parent` compares every member with the parent column it references, `SET fk = parent` and `SET fk = NULL` write the free members only, and `fk IS NULL` holds only when every free member is NULL. A key with some free members NULL is neither this parent's nor unparented: `connect` refuses it with `ErrAlreadyRelated` naming the row, as it does a row parented elsewhere, and `allow_reparent` adopts it. A nullable FK is one whose free members are all nullable. Under PostgreSQL `MATCH FULL` a key may not mix NULL and non-NULL members, so there `disconnect` and `clear` are eligible only when every member is free and nullable; PostgreSQL accepts an all-NULL `MATCH FULL` key. For the same reason a `MATCH FULL` key with a pinned member never has an unparented row, so `connect` there is generated only on an `allow_reparent: true` edge. MySQL and SQLite do not enforce `MATCH FULL`, so every key on them is treated as `MATCH SIMPLE`. A single-column key is unaffected: nulling its one member nulls the whole key.
 
 **A NOT NULL FK edge is `create`-only.** This is not a special case: `connect` adopts unparented rows and nothing on such an edge is ever unparented, and `disconnect` / `clear` null out a column the schema forbids to be NULL. The generator declining to emit those fields is the schema saying so at compile time.
 
-**A has-one `create` or `connect` first reads the edge for the child the parent already holds.** A has-one edge holds at most one child ([13.1](#131-relationship-types)), but the database refuses a second one only when the FK carries a UNIQUE constraint, and a config-declared edge need not have one. So on either FK nullability both verbs run one **occupancy read** first — `<Target>().GetMany(fk = parent [AND disc], Limit: new(0))`, after `clear` ([9.9.6](#996-execution-order)). A row other than the `connect` target is `ErrAlreadyRelated` naming that child ([9.9.8](#998-error-attribution)); a `connect` naming the child the edge already holds is the same no-op it is on O2M. The read goes through the target's own client, so it sees what the read path sees: a soft-deleted child, or one in another tenant, does not occupy the edge. On a UNIQUE FK the read changes only which error a second child gets — `ErrAlreadyRelated` where the database would have raised a unique violation.
+**A has-one `create` or `connect` first reads the edge for the child the parent already holds.** A has-one edge holds at most one child ([13.1](#131-relationship-types)), but the database refuses a second one only when the FK carries a UNIQUE constraint, and a config-declared edge need not have one. So on either FK nullability both verbs run one **occupancy read** first — `<Target>().GetMany(fk = parent [AND disc], Limit: new(0))`, after `clear` ([9.9.6](#996-execution-order)). A row other than the `connect` target is `ErrAlreadyRelated` naming that child ([9.9.8](#998-error-attribution)); a `connect` naming the child the edge already holds is the same no-op it is on O2M. The read goes through the target's own client, so it sees what the read path sees: a soft-deleted child, or one in another tenant, does not occupy the edge. On a UNIQUE FK the read changes only which error a second child gets — `ErrAlreadyRelated` where the database would have raised a unique violation. A has-one block that sets both `create` and `connect` is refused with `ErrNestedVerbConflict`, attributed to `connect`, before the occupancy read or any other statement on the edge runs.
 
 **The occupancy read is a check, not a guarantee.** It takes no lock. Two concurrent calls on a parent with no child can both pass it, and each writes one child. Only a UNIQUE constraint on the FK makes the edge race-proof: the second write becomes a unique violation ([22.2](#222-constraint-errors)). When the call also sets a parent column, the parent `UPDATE`'s row lock serializes two such calls, so the second call's read sees the first call's child and returns `ErrAlreadyRelated` (measured on PostgreSQL at READ COMMITTED). A nested-only update takes no parent lock, and nothing serializes it. This is accepted rather than closed with a lock: `SELECT … FOR UPDATE` on the parent would cost a statement on every call, and SQLite has no row lock to take.
 
@@ -7625,23 +7792,23 @@ This table is the normative verb set. Everything else in this section is mechani
 
 An edge is **nestable** when every rule below holds. The `ValidateNestedWriteEligibility` lint, which runs under `sqlgen validate` as well as `sqlgen generate`, **hard-errors** on an edge explicitly listed in `tables.<t>.nested_mutations.relationships` that fails a rule, and **silently omits** an auto-included edge that fails one. Both halves are load-bearing: an explicitly requested edge that silently generates nothing is worse than a build failure, and an auto-included edge that fails a rule must not break an unrelated build.
 
-**Some rules take one or two verbs rather than the whole edge**, and where they do the row says so — E8's clauses and E11. **Whether a lost verb is reported turns on something else**: whether the consumer could have seen it coming from their own config. A verb dropped by a config-visible fact — the `nested_mutations.verbs` mask, a NOT NULL foreign key, a soft-delete column on the junction — is silent, because the config already says why. A verb dropped by a *generator limitation* the config does not express is reported for an edge the config listed by name, on the same listed-versus-auto rule the edge-level errors follow. Three shapes are specified for that half: **E8**'s primary-key clause, a traversed FK whose binding the emitter cannot construct the statement's own expressions from, and a discriminator whose column carries no equality comparator to scope the write — or a has-one's occupancy read — with ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). The third is unreachable through any built-in binding and stays as defence. **E2** admits a discriminator only when its column's binding can take the declared value, which means a predeclared string, integer, floating-point or boolean type or a generated enum, and every such binding carries an equality comparator. So an edge whose column has none is refused as a whole under **E2** before any verb is considered; the clause catches a binding a later change admits, rather than letting it write unscoped. Neither kind is reported for an auto-included edge.
+**Some rules take one or two verbs rather than the whole edge**, and where they do the row says so — E8's clauses and E11. **Whether a lost verb is reported turns on something else**: whether the consumer could have seen it coming from their own config. A verb dropped by a config-visible fact — the `nested_mutations.verbs` mask, a NOT NULL foreign key, a key with no free member or a `MATCH FULL` key with a pinned member ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)), a soft-delete column on the junction — is silent, because the config already says why. A verb dropped by a *generator limitation* the config does not express is reported for an edge the config listed by name, on the same listed-versus-auto rule the edge-level errors follow. Three shapes are specified for that half: **E8**'s primary-key clause, a traversed FK whose binding the emitter cannot construct the statement's own expressions from, and a discriminator whose column carries no equality comparator to scope the write — or a has-one's occupancy read — with ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). The third is unreachable through any built-in binding and stays as defence. **E2** admits a discriminator only when its column's binding can take the declared value, which means a predeclared string, integer, floating-point or boolean type or a generated enum, and every such binding carries an equality comparator. So an edge whose column has none is refused as a whole under **E2** before any verb is considered; the clause catches a binding a later change admits, rather than letting it write unscoped. Neither kind is reported for an auto-included edge.
 
 | # | Rule |
 |---|---|
-| **E1** | The edge is shape 2, 3 or 4 — the parent's PK flows *down* — into a generated target with a single-column primary key, which the visibility read, the link step and the id-list verbs key on. On shapes 2 and 3 the traversed FK must also be a field of the target's create input whose binding the emitter can construct from the parent's key. A one-to-one edge whose FK sits on the parent (shape 1, belongs-to) fails this rule, as does an edge into a table outside the generated set. |
+| **E1** | The edge is shape 2, 3 or 4 — the parent's key flows *down* — into a generated target with a single-column primary key, which the visibility read, the link step and the id-list verbs key on. On shapes 2 and 3 every member of the traversed key must also be a field of the target's create input whose binding the emitter can construct from the parent column it references. A generated member is not one, and the database refuses to write it, so an edge with a generated member is not write-eligible, as an edge over a generated single-column FK is not. A one-to-one edge whose FK sits on the parent (shape 1, belongs-to) fails this rule, as does an edge into a table outside the generated set. A target with a composite primary key fails it too, as **E3** fails a composite-key parent. So does an edge whose key references a nullable column: a parent holding NULL there has no key to give a child, and the writers cannot copy the pointer into the key. On an M2M edge the rule covers both junction keys, because a target holding NULL has no key to give a link row. Reads over such an edge are unaffected. |
 | **E2** | `filter:` is empty. A `discriminator:` is permitted on shapes 2 and 3, and is the *only* way a polymorphic edge becomes write-eligible ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)). On an **M2M** edge it is not: [9.9.5](#995-generated-surface) makes the M2M `create` take the target's create input unchanged, which leaves the executor no elided column to set and no way to honour the rule that a nested `create` sets the discriminator column to the edge's declared value ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) rule 1) without overwriting a field the caller can still fill in. Such an edge is not write-eligible; its read surface is unaffected. On shapes 2 and 3 the discriminator column's Go binding must also be able to take the declared value. A nested `create` sets the column from it as an untyped Go constant ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) rule 1), and a constant is assignable only to a predeclared string, integer, floating-point or boolean type of its own kind, or to a generated enum. A column bound to anything else (`types.JSON`, `uuid.UUID`, `time.Time`, `net.IP`, a slice, a Null wrapper, a same-package type a `type_map` names), or declared with a value of the wrong kind for its type, makes the edge not write-eligible: the `create` it would keep does not compile. Some of those columns cannot be read through either, and [13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) **Validation** rejects them before any edge is resolved; this clause covers the rest, whose reads work, such as a `uuid` column on PostgreSQL or a `json` column on MySQL. |
-| **E3** | The parent has a single-column primary key. Lifting this is mechanical but unexercised — every FK in every example schema references a single-column PK — so it stays a v1 restriction. |
+| **E3** | The parent has a single-column primary key. A composite-key parent, like a composite-key target (**E1**), gets every read surface: its loaders, relationship filters and manifest entries. Nested writes on either need a GraphQL key input per composite-key table, since a composite `Get` takes one argument per key column, and a map key for a key struct holding an `Opaque` field (**E8**), so they stay a v1 restriction. |
 | **E4** | *Retired.* It required the target's `create` and `create_many` toggles. The client has no toggles ([4.6](#46-generationconfig)), so every generated target has both, and the number is kept so the other rules' cross-references hold. |
-| **E5** | For M2M: the junction is a generated table whose two FKs are fields of its create input, with bindings the emitter can construct from the parent's and the target's keys, and it has no column beyond those two FKs, **required or optional**. A required one is a column a nested link row cannot populate. An optional one fails silently instead. The [9.9.6](#996-execution-order) link step upserts on the junction's key, and `UpsertMany` puts every other insert column but a non-PK auto-increment one in its conflict clause's update half ([9.5](#95-edge-case-behaviors)). So re-linking a pair that is already linked resets the column to its default and reports success, on every dialect. Three kinds of column are exempt because a re-link cannot damage them. The update half leaves out the primary-key columns and the tenant column ([9.5](#95-edge-case-behaviors), [29.4.2](#2942-mutations)). The soft-delete column is reset, but its default is the not-deleted state, so the reset restores the link `create` and `connect` asked for; **E11** withholds only the unlink verbs from such a junction. Supporting payload columns — a link step that leaves them alone — is additive and deliberately not done in v1, on the same fail-closed reasoning as **E2**'s M2M half. A non-PK auto-increment column is not reset by a re-link either, but it is not exempt: it is such a payload column. |
+| **E5** | For M2M: the junction is a generated table whose two foreign keys' columns — the union of both junction keys, which may share columns — are fields of its create input, with bindings the emitter can construct from the parent's and the target's referenced columns, and it has no column beyond that union, **required or optional**. A required one is a column a nested link row cannot populate. An optional one fails silently instead. The [9.9.6](#996-execution-order) link step upserts on the union of both keys (**E13**), and `UpsertMany` puts every other insert column but a non-PK auto-increment one in its conflict clause's update half ([9.5](#95-edge-case-behaviors)). So re-linking a pair that is already linked resets the column to its default and reports success, on every dialect. Three kinds of column are exempt because a re-link cannot damage them. The update half leaves out the primary-key columns and the tenant column ([9.5](#95-edge-case-behaviors), [29.4.2](#2942-mutations)). The soft-delete column is reset, but its default is the not-deleted state, so the reset restores the link `create` and `connect` asked for; **E11** withholds only the unlink verbs from such a junction. Supporting payload columns — a link step that leaves them alone — is additive and deliberately not done in v1, on the same fail-closed reasoning as **E2**'s M2M half. A non-PK auto-increment column is not reset by a re-link either, but it is not exempt: it is such a payload column. |
 | **E6** | The target's create input is non-empty after the [§32](#32-column-access-control) access projection. A write surface into a table whose columns are all `hidden` / `read_only`, or whose only column is a generated key, takes no value from the caller. The rule has two halves, one per surface. On the Go surface it reads the unprojected create input, which `access` never narrows ([32.1](#321-overview)), so there it removes only an edge whose target has no create-input column at all. On the GraphQL surface it reads the projected input, and there it removes only the GraphQL member, silently, on the terms **E7** states. |
 | **E7** | *(GraphQL only)* the target is not `api.enabled: false`, and neither is any column the nested input would expose. The second clause holds by construction, because the nested input is derived from the projected one ([32.5](#325-interactions)). The target's `api.operations` mask ([26.5.1](#2651-exposed-resolver-surface)) also narrows the verbs that write the target itself. `create` needs the target's API `create`, plus `create_many` on shapes 3 and 4, where the nested write calls `CreateMany`. An O2M / has-one `connect`, `disconnect` or `clear` rewrites the target row's foreign key by filter, through the `UpdateWhere` that **E8** routes them through. On the API, that is what the target's mask key `update_where` gates: `update<Table>s(filter, input)`. So these verbs need the mask to keep `update_where`. The M2M link and unlink verbs write only the junction row, so the first clause alone gates them. Without the mask clause, a mask written to leave one hand-guarded door into a table would leave a second, generated door through every parent that nests into it. This is the write-side mirror of [26.5.3](#2653-filter--sort--pagination-translation)'s read side-channel rule. Every clause is a config-visible fact, so it drops silently, including for an edge the config lists by name. None of them touches the Go surface: `api` gates the API, never the client, so failing generation would reject a Go surface that is correct. |
-| **E8** | `connect`, `disconnect` and `clear` on an O2M / has-one edge require a **nullable** FK; all three route through the target's `UpdateWhere`. `connect` and `disconnect` additionally require a target whose primary key can key a Go map and carry an `IN` comparator: the visibility read buckets its rows on that key, the adoption filters on it, and the two-verb check of [9.9.6](#996-execution-order) buckets the ids each verb names. The `comparator.Opaque` family ([11.2](#112-comparator-types)) is exactly the set that cannot — `[]byte`, `net.IP` and `net.HardwareAddr` are slices and `net.IPNet` holds two — so an O2M / has-one edge into such a table keeps `create` and `clear`, which name no ids, and loses the other two. On an **M2M** edge the [9.9.6](#996-execution-order) link step dedupes `created ∪ connected` on the same key, so such an edge is not write-eligible at all, and the refusal is reported the same way. That half is a generator limitation rather than a schema fact, so it is **reported** for an edge the config lists by name instead of being dropped silently the way a verb the `nested_mutations.verbs` mask turned off is. On a **has-one** edge, `create` and `connect` also require the two terms the occupancy read ([9.9.3](#993-the-eligibility-matrix)) filters on: the traversed FK's `= parent` term and, on a polymorphic edge, the discriminator's equality term. An edge that cannot render them loses `create`, rather than writing a child it cannot check for. It has already lost the other verbs to the same terms, so the edge carries nothing. This clause is a generator limitation too, and is reported the same way. |
+| **E8** | `connect`, `disconnect` and `clear` on an O2M / has-one edge require a **nullable** FK, one whose free members are all nullable, and at least one free member ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)); under PostgreSQL `MATCH FULL`, `disconnect` and `clear` also require every member to be free, and `connect` requires every member to be free unless the edge sets `allow_reparent: true` ([9.9.3](#993-the-eligibility-matrix)). All three route through the target's `UpdateWhere`. `connect` and `disconnect` additionally require a target whose primary key can key a Go map and carry an `IN` comparator: the visibility read buckets its rows on that key, the adoption filters on it, and the two-verb check of [9.9.6](#996-execution-order) buckets the ids each verb names. The `comparator.Opaque` family ([11.2](#112-comparator-types)) is exactly the set that cannot — `[]byte`, `net.IP` and `net.HardwareAddr` are slices and `net.IPNet` holds two — so an O2M / has-one edge into such a table keeps `create` and `clear`, which name no ids, and loses the other two. A time key buckets by its instant, so a key named in any zone names the row holding that instant. On an **M2M** edge the [9.9.6](#996-execution-order) link step dedupes `created ∪ connected` on the same key, so such an edge is not write-eligible at all, and the refusal is reported the same way. That half is a generator limitation rather than a schema fact, so it is **reported** for an edge the config lists by name instead of being dropped silently the way a verb the `nested_mutations.verbs` mask turned off is. On a **has-one** edge, `create` and `connect` also require the two terms the occupancy read ([9.9.3](#993-the-eligibility-matrix)) filters on: the traversed FK's `= parent` term and, on a polymorphic edge, the discriminator's equality term. An edge that cannot render them loses `create`, rather than writing a child it cannot check for. It has already lost the other verbs to the same terms, so the edge carries nothing. This clause is a generator limitation too, and is reported the same way. |
 | **E9** | *Retired.* It required `upsert_many` and `hard_delete` on the junction table. The client has no toggles ([4.6](#46-generationconfig)): `HardDeleteMany` and `HardDeleteWhere` are generated on every table, and `UpsertMany` on every junction **E13** admits, so the [9.9.6](#996-execution-order) link step and both unlink verbs always have their method. |
 | **E10** | `UpsertWithRelated` requires the existence of a generated `<Table>ConflictTarget` constant to pass it. A table whose uniqueness is app-enforced through `primary_key.columns` emits no `<Table>ConflictPK` ([9.5](#95-edge-case-behaviors)), and, with no unique target left either, the nested upsert surface is omitted. |
-| **E11** | M2M `disconnect` and `clear` require the junction to have **no soft-delete column**. With one, neither mechanism is correct: a hard delete destroys a row the schema marked soft-deletable, and a soft delete leaves the link visible, because the M2M loader's junction query is a bare `SELECT` carrying only the parent-id `IN` condition, with no soft-delete predicate ([13.2](#132-loading-strategy)). Refusing the verb is the fail-closed direction. `create` and `connect` on such an edge are unaffected. |
+| **E11** | M2M `disconnect` and `clear` require the junction to have **no soft-delete column**. With one, neither mechanism is correct: a hard delete destroys a row the schema marked soft-deletable, and a soft delete leaves the link visible, because the M2M loader's junction query conditions the junction on the parent-id `IN` alone, with no soft-delete predicate ([13.2](#132-loading-strategy)). Refusing the verb is the fail-closed direction. `create` and `connect` on such an edge are unaffected. |
 | **E12** | On a **self-referential** edge, a `connect` or `disconnect` naming the parent's own primary key is refused with `ErrNestedVerbConflict` in that edge's validate step, before any statement on the edge runs; the parent write and any earlier edge have already run and roll back with the transaction or savepoint. No other guard catches it — an unparented self is an adoptable orphan under `connect`'s own rule — and left unguarded it writes a row that is its own parent, which every recursive read walks forever. A longer cycle (connecting a row to its own ancestor) is **not** detected; see [26.12](#2612-known-limitations). |
-| **E13** | An M2M edge requires the junction to emit a PK-covering `<Junction>ConflictTarget` constant, which the [9.9.6](#996-execution-order) link step passes to `UpsertMany`. This is **E10**'s rule one level down: a table whose uniqueness is app-enforced through `primary_key.columns` emits no `<Table>ConflictPK` ([9.5](#95-edge-case-behaviors)), and a junction in that shape has nothing the link step can name. Such a junction also has its `UpsertMany` omitted with the constant ([4.6 Operations](#operations)). |
+| **E13** | An M2M edge requires a `<Junction>ConflictTarget` constant whose columns are exactly the union of both junction keys, which the [9.9.6](#996-execution-order) link step passes to `UpsertMany`: a PRIMARY KEY or a non-partial UNIQUE constraint equal to that union, in any column order. A link row writes the union, so no other target serves. A target with a column beyond it does not identify the pair, and a surrogate primary key is the common case: the link row never supplies that column, so `UpsertMany` refuses the call ([9.5](#upsert-conflict-keys)) or, on an application-generated key, inserts a fresh row for every link. A target narrower than the union fires on a row sharing part of the pair, and its update half rewrites that row into the new link and reports success. This is **E10**'s rule one level down: a table whose uniqueness is app-enforced through `primary_key.columns` emits no `<Table>ConflictPK` ([9.5](#95-edge-case-behaviors)), and a junction in that shape with no such UNIQUE constraint has nothing the link step can name. A junction with no conflict target at all also has its `UpsertMany` omitted with the constant ([4.6 Operations](#operations)). |
 
 **A parent with zero eligible edges gets no nested surface at all** — no Go method, no wrapper input type, no GraphQL mutation. A wrapper carrying only the flat input would be the base operation with extra steps. The rule is per parent on the Go surface, which keeps the uniform method set: a parent whose edges carry only update-side verbs (`disconnect`, `clear`) still gets `CreateWithRelated`, with empty create-side blocks. The GraphQL surface applies it per family as well, after **E7**'s narrowing: `create<T>WithRelated` is dropped when no surviving edge carries `create` or `connect`, and the update and upsert mutations when no edge survives at all.
 
@@ -7656,7 +7823,7 @@ Six type families per eligible parent. Every name is registered with the codegen
 | `Upsert<Parent>WithRelatedInput` | `Create<Parent>Input` + the **same** `<Parent><Edge>UpdateNested` blocks |
 | `<Parent><Edge>CreateNested` | the per-edge verb block: `create` and `connect` only |
 | `<Parent><Edge>UpdateNested` | the per-edge verb block: `create`, `connect`, `disconnect`, `clear` |
-| `<Parent><Edge>CreateInput` | the child's create input **minus** the traversed FK and **minus** the edge's discriminator column — shapes 2 and 3 only |
+| `<Parent><Edge>CreateInput` | the child's create input **minus** every column of the traversed key and **minus** the edge's discriminator column — shapes 2 and 3 only |
 
 On an **M2M** edge the `create` verb takes the target's ordinary `Create<Target>Input` unchanged: there is no traversed FK on the target to elide, because the link lives in the junction row the executor writes afterwards.
 
@@ -7666,11 +7833,11 @@ On an **M2M** edge the `create` verb takes the target's ordinary `Create<Target>
 
 **The create-side block is a narrower type, not the same type with rules.** `disconnect` and `clear` are meaningless on a row that does not exist yet, so they are not expressible on `CreateWithRelated` rather than accepted and ignored.
 
-**`UpsertWithRelated` reuses the update-side block verbatim**, and needs no insert-vs-update branch detection. Each verb means the same thing on either branch, and only the state the parent brings to it differs. On a freshly inserted parent, `create` and `connect` behave exactly as they do on the create side, and `disconnect` / `clear` match zero rows and are no-ops. On the conflict branch they behave exactly as they do on `UpdateWithRelated`. One block is therefore correct on both branches, and the generator emits **one executor per edge** shared by all three families, so the three cannot drift.
+**`UpsertWithRelated` reuses the update-side block verbatim**, and needs no insert-vs-update branch detection. Each verb means the same thing on either branch, and only the state the parent brings to it differs. On a freshly inserted parent, `create` and `connect` behave exactly as they do on the create side, and `disconnect` / `clear` match zero rows and are no-ops, unless the key's tenant column differs from the resolved tenant, which they refuse on either branch ([9.9.6](#996-execution-order)). On the conflict branch they behave exactly as they do on `UpdateWithRelated`. One block is therefore correct on both branches, and the generator emits **one executor per edge** shared by all three families, so the three cannot drift.
 
 **That does not make a repeated upsert a no-op.** `connect`, `disconnect` and `clear` are idempotent set operations. `create` is not: it inserts on every call. Repeating an `UpsertWithRelated` that carries `create` takes the conflict branch and inserts again: another O2M child, another M2M target and its link. On a has-one that already holds a child it is refused, with `ErrAlreadyRelated` from the occupancy read ([9.9.3](#993-the-eligibility-matrix)).
 
-**The traversed FK is elided from the nested child input.** `<Parent><Edge>CreateInput` is the child's create input with the FK column removed, because that column is always set from the parent's primary key. Leaving it would force the caller to supply a value that is then overwritten — and on GraphQL a non-null FK field would force the client to invent an id.
+**The traversed FK is elided from the nested child input.** `<Parent><Edge>CreateInput` is the child's create input with the key's columns removed, because a nested `create` always sets them from the parent's referenced columns. Leaving them would force the caller to supply values that are then overwritten — and on GraphQL a non-null FK field would force the client to invent an id. A tenant column in the key is elided too and set from the parent, as a single-column FK on the tenant column is.
 
 **Every nested name carries the `<Parent><Edge>` prefix, and none of them joins the `Create<T>Input` family.** This is the one place where the obvious spelling is wrong. `Create<Parent><SingularEdge>Input` — the name this table carried until 27.7 — reconstructs the *target's own* create input exactly whenever the child table is named `<parent>_<edge>`, which is the conventional name for a dependent table: `users.Profile` over `user_profiles` and `binary_keys.Events` over `binary_key_events` both resolve to `CreateUserProfileInput` / `CreateBinaryKeyEventInput`, the names those two tables already declare. The two types are not interchangeable — the nested one has the FK removed — so the collision is a redeclaration, and it is systematic rather than incidental. Moving the family marker to a suffix puts the nested names in a namespace no table's derived name occupies. The collision is still *checked* ([8.5](#85-naming-rules)), because no identifier scheme is collision-free; what changed is that the check no longer fires on the common case.
 
@@ -7678,9 +7845,11 @@ On an **M2M** edge the `create` verb takes the target's ordinary `Create<Target>
 
 **A nil `FieldOptions` returns the parent with its relationship members unpopulated**, on the edges the call just wrote as well as every other. This follows from the execution order below — the terminal read is gated on the caller having *selected* a relationship, and a nil selection selects none — and it matches the flat path, where a nil `FieldOptions` selects all columns and no relationships ([9.6](#96-per-call-options)). It is stated explicitly because "nil means everything" is the right mental model for *columns* and the wrong one here, and the surprise lands on the caller who just created those rows.
 
+The terminal read reads the parent back by key the way the flat write does ([9.7](#97-pk-resolution-and-entity-return-path)), so a parent the write left soft-deleted is returned whether or not a relationship is selected.
+
 #### 9.9.6 Execution order
 
-The parent is always written first — v1 nests only where the parent's PK flows down — so there is no topological sort and no cycle.
+The parent is always written first — v1 nests only where the parent's key flows down — so there is no topological sort and no cycle.
 
 ```
 BEGIN, or SAVEPOINT when ctx already holds a transaction (18.3)
@@ -7706,10 +7875,14 @@ BEGIN, or SAVEPOINT when ctx already holds a transaction (18.3)
 
        create    →  O2M:     <Target>().CreateMany(children with fk = parent [, disc])
                     has-one: <Target>().Create(child with fk = parent [, disc])
-                    M2M: CreateMany the targets, PK-only FieldOptions
+                    M2M: CreateMany the targets, selecting what the link needs
+                         a column both junction keys share differs from the
+                         parent's → ErrAlreadyRelated, no id
 
        connect   →  <Target>().GetMany(id IN … [AND disc], Limit: new(0))  — the visibility read
                     any requested id absent            → ErrNotFound naming it
+                    M2M: a column both junction keys share differs from the
+                         parent's → ErrAlreadyRelated naming it
                     O2M: partition the visible rows by their current FK
                          fk = parent  → no-op, the requested end state holds
                          fk = other   → ErrAlreadyRelated naming it
@@ -7720,6 +7893,7 @@ BEGIN, or SAVEPOINT when ctx already holds a transaction (18.3)
                                           → ErrAlreadyRelated
 
        link      →  M2M only: <Junction>().UpsertMany(dedup(created ∪ connected))
+                    on the conflict target equal to the union of both keys (E13)
 
        disconnect → SKIPPED ENTIRELY when clear ran on this edge
                     O2M: <Target>().UpdateWhere(id IN … AND fk = parent [AND disc], SET fk = NULL)
@@ -7743,7 +7917,7 @@ A verb whose scope cannot be rendered is refused rather than emitted unscoped, o
 
 **On a has-one edge, replacing the child is `clear` plus `create` or `connect`.** `clear` runs before the occupancy read, so the read finds the edge empty and the new child is written. `{disconnect: <current>, create: …}` and `{disconnect: <current>, connect: <other>}` do **not** replace: `disconnect` runs last, so the occupancy read still finds the current child and the call returns `ErrAlreadyRelated`. A has-one on a NOT NULL FK has no `clear` (**E8**), so its child cannot be replaced through the nested block at all. Delete it through the target's own client, then `create`.
 
-**`connect` performs a visibility read; `disconnect` does not.** The asymmetry is structural, not stylistic. A `disconnect` is keyed on the parent's own primary key — the junction pair embeds it, the O2M filter carries `fk = parent` — so it is incapable of touching another parent's rows, and a miss is a no-op. A `connect` is keyed on a **caller-supplied target id** with no such anchor: without the read it is an existence oracle across tenants and access boundaries, and on O2M the `UPDATE`'s row count alone cannot separate *no such row* from *already parented*. See [29.4](#294-generated-behavior) for the tenancy half of this rule.
+**`connect` performs a visibility read; `disconnect` does not.** The asymmetry is structural, not stylistic. A `disconnect` is keyed on the parent's referenced key — the junction pair embeds it, the O2M filter carries `fk = parent` — so it is incapable of touching another parent's rows, and a miss is a no-op. A tenant mismatch on the key is not a miss (below). A `connect` is keyed on a **caller-supplied target id** with no such anchor: without the read it is an existence oracle across tenants and access boundaries, and on O2M the `UPDATE`'s row count alone cannot separate *no such row* from *already parented*. See [29.4](#294-generated-behavior) for the tenancy half of this rule.
 
 **`Limit: new(0)` on the visibility read is normative.** A `*Limit` of `0` means *emit no `LIMIT` clause* and *skip the client's default `query_limit`* ([4.6](#46-generationconfig)); a nil `Limit` would let `query_limit` truncate the read, so a `connect` naming more targets than the client's page size would find the tail of its own list absent and report real, visible rows as `NOT_FOUND`. The failure scales with the caller's input size.
 
@@ -7753,13 +7927,23 @@ A verb whose scope cannot be rendered is refused rather than emitted unscoped, o
 
 **`allow_reparent: true` removes the `fk IS NULL` term, and that changes what a shortfall means.** The guard is what makes the default adoption atomic against a concurrent `connect`; an edge that opts into adopting a parented row is opting out of the guard, so the statement carries the id list alone. Two consequences follow and neither is derivable from the flag's name. The middle outcome disappears — a visible target parented elsewhere is adopted rather than `ErrAlreadyRelated`, leaving `connect` two-way: not visible → `ErrNotFound`, already ours → no-op, anything else → adopted. And the shortfall changes sentinel: with no `fk IS NULL` term, a row the visibility read returned that the verify read does not count has stopped being visible in between — deleted, or soft-deleted — so it reports `ErrNotFound`, not `ErrAlreadyRelated`. Reporting a conflict there would name a relationship that does not exist, which is the failure the three-way split exists to prevent, reappearing on the opt-in path. The same-parent interleaving above is the one exception to "stopped being visible", and it fails the same conservative way.
 
+**A junction's two keys may share a column, and the link row holds their union.** A column in both keys takes the parent's value, and the target's own value of it must equal the parent's: `connect` reads it in the visibility read, and `create` off the rows `CreateMany` returns. A target that differs is refused with `ErrAlreadyRelated` before the link step, and `allow_reparent` has no bearing: the target is bound to a different key through a column the link row does not take from it. A `connect` target is named and attributed to `connect`. A created target is attributed to `create` with no id, and rolls back with the transaction. Those comparisons hold the target to the parent, not to the resolver. So a link row can still carry a tenant column that differs from the resolved tenant when that column is in one key only, or when the other key takes it from a target column that is not the target's tenant column. The link step then fails with `ErrAlreadyRelated`, attributed to `link`. A reference column beyond the target's primary key is read off the target by `create` and `connect`. `disconnect` reads no target, so such a key cannot name its row: the edge keeps its other verbs and the loss is reported for a listed edge ([9.9.4](#994-eligibility-rules)).
+
+**The link step targets the union of both junction keys.** **E13** requires a conflict target with exactly those columns: a primary key equal to the union or, on a junction keyed by a surrogate, the UNIQUE constraint equal to it. A re-link fires that constraint and keeps the existing row, surrogate included. A UNIQUE target does not cover a surrogate key, so `UpsertMany` reads the written rows back by the pair ([9.5](#upsert-conflict-keys)), one more statement per sub-batch ([9.9.7](#997-query-count)). Such a junction has no `disconnect` ([9.9.3](#993-the-eligibility-matrix)).
+
+**A `connect` through a key with several columns checks its pinned members before the adoption write.** The visibility read returns each target with its pinned members ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)). Each must already equal the parent column it references. A target whose pinned member does not is refused with `ErrAlreadyRelated` naming it, before the adoption `UPDATE` runs: the row is bound to a different key through a member this edge cannot write. The adoption `UPDATE` then sets the free members only, and its guard and the verify read compare the whole key. `allow_reparent` removes the `fk IS NULL` term and never the pinned check, so a reparent moves the free members and nothing else. Under tenancy the visibility read already hides a target in another tenant as `ErrNotFound`. The check refuses one under `SkipTenancy`, and a target whose member shared with another foreign key points elsewhere. A nested `create` sets every member from the parent, the tenant column included. When tenancy also sets the tenant column, the two values must agree, and a mismatch is `ErrAlreadyRelated`, attributed to `create`. This holds on a key of one column too. Such a mismatch needs a shared parent, since a tenanted parent is read under the same tenant, and it is `CONFLICT` rather than the flat path's `tenancy.ErrMismatch`: the failure is that the row would be bound to two keys.
+
+**A `disconnect` or `clear` through a key that takes the tenant column from a parent column is refused when that column differs from the resolved tenant.** The key says the parent's value and the tenant filter says the resolver's, so no row can match both: the statement would report success and leave the edge as it was. Only an M2M `disconnect` raises anything, from the junction key's tenant check, and an M2M `clear` and both O2M verbs match zero rows. So the executor compares the two values before the statement, with no read and no statement of its own. A mismatch is `ErrAlreadyRelated`, attributed to the verb, and it is reported whether or not the call names a row on the edge, so it says nothing about which rows exist. The refusal needs a shared parent, as `create`'s does. `SkipTenancy` skips the comparison along with the filter, an explicit tenant is compared like a resolved one, and a resolved zero value under `tenancy.required: false` applies no filter and so has nothing to compare. A key that takes the column from the parent's own tenant column has no comparison, because the parent write has checked it. With the two values in agreement, a `disconnect` naming a row not under this parent is a miss and stays a no-op.
+
+**The split compares keys as Go sees them, which the database's own equality can outrun.** Whether a target is already this parent's, and whether a pinned member agrees, is decided by comparing the target's stored key with the parent's byte for byte, because Go cannot apply a collation. Where the database calls two spellings equal the Go side is the stricter: a case-insensitive collation (MySQL's default `utf8mb4_0900_ai_ci`, SQLite `NOCASE`, PostgreSQL `citext`) accepts a child whose key differs from the parent's only in case, and a `connect` naming that child is `ErrAlreadyRelated` naming it, on a key of one column or several, whether it holds the key or would be adopted. `allow_reparent` does not lift this for a pinned member. The same holds for a column two junction keys share: an M2M `connect` naming a target whose value of it differs from the parent's only in case is `ErrAlreadyRelated` naming it, though the junction's foreign keys would accept the link row. A nested M2M `create` whose created target differs that way is `ErrAlreadyRelated`, attributed to `create`, and the created row rolls back. A one-to-many `connect` naming a target's primary key in another spelling than the stored one is `ErrNotFound`: the visibility read finds the row, and the id named matches none it returned. `disconnect` and `clear` compare the key in the database and still reach the row, though the comparison of a parent-held tenant column with the resolved tenant, above, is in Go too. The refusal is loud and writes nothing; the remedy is to store one spelling. A key of integers, UUIDs or case-sensitively compared text is unaffected.
+
 **Naming one target under two verbs on one edge is a validation error**, returned before any statement *on that edge* runs (the parent write and earlier edges have already run, and roll back with the transaction or savepoint): the order would decide the outcome and there is no defensible default. Concretely this is `connect` ∩ `disconnect`, and `create` ∩ `disconnect` where a `create` entry carries an explicit primary key. The check is skipped for `disconnect` when `clear` is set on the same edge, since `disconnect` is then ignored and cannot contradict anything. **A has-one block that sets both `create` and `connect` is refused the same way**, with `ErrNestedVerbConflict` attributed to `connect`: the edge holds one child and the block asks for two. On `CreateWithRelated` this check is the only guard, because the parent has no child yet for the occupancy read to find.
 
 **The unlink assignment sets the FK to NULL; it does not omit it.** On a nullable FK bound to a pointer type, "set this column to NULL" and "leave this column out of the `SET` list" are both expressible in the same position and only the first unlinks anything. The second matches its rows, reports success and changes nothing — the one failure shape a rows-affected check cannot catch, because the rows do match.
 
 **Intermediate writes take the skip-refetch escape.** Every inner call that does not need its result back passes a non-nil, nothing-selected `FieldOptions` ([9.6](#96-per-call-options)), so it skips the read that would hand its rows back. This is why the escape on single-row `Update` ([9.8.6](#986-update)) is a requirement rather than an optimization.
 
-**The terminal re-read and the adoption's verify read run with hooks skipped, and they are the only inner calls that do.** Every other call in the sequence inherits the caller's `SkipHooks` and fires its own chain ([9.9.9](#999-observability)). Neither of these two is a read the caller asked for. The terminal re-read is the method assembling its own return value, and the verify read is the adoption checking its own write, so surfacing either as a query-hook event would report a read that is an implementation detail of the write. It follows that neither is ever served from or written to the cache — `SkipHooks` implies `SkipCache` ([9.6](#96-per-call-options)). For the terminal read that is the same end state [9.9.9](#999-observability)'s "a relationship-loaded parent is never cached" reaches through [27.6](#276-cache-invariant). For the verify read it is a requirement: a cached answer would not reflect the `UPDATE` that just ran. Tenancy is unaffected, since it runs in the SQL builders rather than as a hook ([9.6](#96-per-call-options)), so the verify read is tenant-scoped exactly as the visibility read is.
+**The terminal re-read and the adoption's verify read run with hooks skipped, and they are the only inner calls that do.** Every other call in the sequence inherits the caller's `SkipHooks` and fires its own chain ([9.9.9](#999-observability)). The skip covers the terminal re-read's own read of the parent, not the relationships it loads: those run with the caller's toggles, as every write read-back's do ([9.6](#96-per-call-options)). Neither of these two is a read the caller asked for. The terminal re-read is the method assembling its own return value, and the verify read is the adoption checking its own write, so surfacing either as a query-hook event would report a read that is an implementation detail of the write. It follows that neither is ever served from or written to the cache — `SkipHooks` implies `SkipCache` ([9.6](#96-per-call-options)). For the terminal read that is the same end state [9.9.9](#999-observability)'s "a relationship-loaded parent is never cached" reaches through [27.6](#276-cache-invariant). For the verify read it is a requirement: a cached answer would not reflect the `UPDATE` that just ran. Tenancy is unaffected, since it runs in the SQL builders rather than as a hook ([9.6](#96-per-call-options)), so the verify read is tenant-scoped exactly as the visibility read is.
 
 **On MySQL the link step's keys are derived, and the transaction is what makes them exact.** MySQL has no `RETURNING`, so the M2M `create`'s `CreateMany` derives its targets' keys from `LAST_INSERT_ID()` and the session's `auto_increment_increment` ([9.8.5](#985-createmany)). The step is a session variable. The nested transaction is one session, so the step is read where the `INSERT` ran. A key derived with the wrong step links the parent to a row this call did not write and reports success. The link step is where a wrong key becomes a persisted row, which is why it is pinned by name, under a step of 2, in the MySQL example.
 
@@ -7777,13 +7961,14 @@ Every read earns its place:
 
 | Read | When | Why it is unavoidable |
 |---|---|---|
-| parent PK resolution | always | children key on the parent's PK, and `Create` / `Upsert` surface a generated PK only through the return value |
+| parent PK resolution | always | children key on the parent's referenced columns, and `Create` / `Upsert` surface a generated PK only through the return value |
 | M2M target PKs | per edge with a non-empty `create` | junction rows need the generated target PKs |
 | `connect` visibility | per edge with a non-empty `connect`, O2M and M2M alike | the FK constraint proves a row exists, not that the caller may see it; on O2M it is also the only thing separating *absent* from *already parented* |
 | has-one occupancy read | per has-one edge with `create` or `connect` set, every dialect | a has-one holds one child, and only a UNIQUE FK makes the database refuse a second one; this read is what finds the child the parent already holds ([9.9.3](#993-the-eligibility-matrix)). It is a plain `SELECT`, so MySQL spends no extra statement on it |
 | O2M / has-one `connect` verify read | per chunk the adoption `UPDATE` runs on, every dialect | the [9.9.6](#996-execution-order) shortfall check counts it — the chunk's ids now under this parent, which is the only count that separates an adopted row from one a concurrent `connect` took first |
 | MySQL `*Where` pre-SELECT | MySQL only: per chunk of the O2M / has-one `connect` adoption and `disconnect`, and once per `clear` | MySQL has no `RETURNING`, so this read is what names the rows the write changes, for cache invalidation and events. The adoption's shortfall check does not count it ([9.8.6b](#986b-updatewhere)) |
 | MySQL key step | MySQL only: per target `CreateMany` statement of two or more rows | MySQL has no `RETURNING`, so a batch's keys are derived from `LAST_INSERT_ID()`, spaced by `auto_increment_increment`, a session variable only the `INSERT`'s own session can report ([9.8.5](#985-createmany)). Inside the nested transaction it is one statement on that session, never a `BEGIN` |
+| junction key read-back | per link-step sub-batch on a junction whose conflict target does not cover its primary key, every dialect | no dialect reports the keys of a batched upsert, and a surrogate key is not in the link row, so `UpsertMany` names the rows it wrote by reading them back by the pair ([9.5](#upsert-conflict-keys)) |
 | terminal re-read | only when the caller selected a relationship | step 1 stripped them |
 
 #### 9.9.8 Error attribution
@@ -7807,6 +7992,7 @@ Two failures have no existing sentinel and get one, both carried by the structur
 | `connect` target not visible — O2M and M2M alike | `ErrNotFound` naming the id | `NOT_FOUND` — **never** `BAD_REFERENCE` |
 | `connect` target already parented to **another** row (O2M) | `ErrAlreadyRelated` naming the id | `CONFLICT` — unreachable on an `allow_reparent: true` edge, which adopts it instead ([9.9.6](#996-execution-order)) |
 | `connect` target already parented to **this** parent (O2M) | none — no-op | n/a |
+| `connect` target whose pinned key member, or on an M2M edge a column both junction keys share, differs from the parent's value; a nested `create` whose tenancy-set tenant column, or on an M2M edge a column both junction keys share, differs from the parent's; an M2M link row whose key-set tenant column differs from the resolved tenant; or a `disconnect` or `clear` whose key takes a tenant column that differs from the resolved tenant ([9.9.6](#996-execution-order)) | `ErrAlreadyRelated` naming the id (none on `create`, `link`, `disconnect` or `clear`) | `CONFLICT` — on every edge, `allow_reparent: true` included: the flag moves free members only |
 | has-one `create` or `connect` when the parent already holds a **different** child | `ErrAlreadyRelated` naming the child the edge holds, attributed to `connect` when the block sets it and to `create` otherwise | `CONFLICT` — on every has-one edge, `allow_reparent: true` included: the flag lets a target change parents, not a parent hold two children |
 | two verbs naming one target on one edge, a has-one block setting both `create` and `connect`, or a self-reference on a self-referential edge | `ErrNestedVerbConflict` | `INVALID_INPUT` |
 
@@ -7827,6 +8013,7 @@ Both are inherited, with one rule that is genuinely new:
 
 - **A `connect` is tenant-checked by reading the target through its own client**, which applies the target's tenant filter. The FK constraint proves the row exists; only the read proves the caller may see it. A target in another tenant is `ErrNotFound`, identical to a target that does not exist. See [29.4](#294-generated-behavior).
 - **`SkipTenancy` propagates to every nested child**, and under it the tenant column is not auto-set — the caller must populate it on each nested child input, exactly as on the flat path. See [29.10](#2910-relationship-propagation).
+- **A tenant column in the traversed key is pinned** ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)). No verb rewrites it through the edge. A nested `create` sets it from the parent, like every other member, so it is absent from the nested child input even under `SkipTenancy`. A `connect` target, or a tenancy-set value on `create`, that differs from the parent's is `ErrAlreadyRelated`, and so is a `disconnect` or `clear` on a parent whose value differs from the resolved tenant ([9.9.6](#996-execution-order)).
 - **The [§32](#32-column-access-control) access projection governs nested inputs.** A column the projection drops from a child's create input is absent from the nested child input too, and an entity hidden from the API gets no nested member on the API surface. See [32.5](#325-interactions).
 
 ---
@@ -7993,7 +8180,7 @@ Each table gets a `{Table}Filter` struct with:
 - One `*{Target}Filter` field per **list** relationship (O2M / M2M) — filter the parent by its children, compiled to a correlated `EXISTS` (see [Relationship filters](#relationship-filters) below)
 - `And []*{Table}Filter` — each member's own fields are AND'd, and the members are AND'd together
 - `Or []*{Table}Filter` — each member's own fields are AND'd, and the members are **OR'd** together, i.e. `Or: [A, B]` compiles to `(A OR B)`. A filter object's own fields are always conjunctive; only `Or`-list membership is disjunctive
-- For composite PK tables: `PKs []{Table}PK` — batch composite PK match via tuple IN or expanded OR
+- For composite PK tables: `PKs []{Table}PK` — batch composite PK match, an OR of per-key ANDs on every dialect
 
 Each filter struct has a generated `ToConditions(dialect)` method that converts the filter to SQL conditions **without reflection**. The generator produces explicit nil-checks per comparator field:
 
@@ -8070,11 +8257,11 @@ func (f *ProductFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
 
 This follows the same reflection-free pattern as scan targets (Section 19.1) and update builders (Section 10.3) — the generator knows all fields at generation time and produces explicit per-field code. The `And`/`Or` recursion calls the same generated method on nested filter instances.
 
-**Soft delete scoping** is handled by the generated methods, not the filter. When `exclude_deleted` is enabled (default when a soft delete column exists), each method checks whether the caller set the soft delete comparator on the filter — if not, the method injects a default "is not deleted" condition (e.g., `deleted_at IS NULL`). If the caller sets the comparator, no default is injected. This keeps `ToConditions` purely a condition converter with no implicit behavior. See [Section 9.8](#98-generated-method-patterns) for implementation details.
+**Soft delete scoping** is handled by the generated methods, not the filter. When `exclude_deleted` is enabled (default when a soft delete column exists), each read method checks whether the caller set the soft delete comparator on the filter — if not, the method injects a default "is not deleted" condition (e.g., `deleted_at IS NULL`). If the caller sets the comparator, no default is injected. This keeps `ToConditions` purely a condition converter with no implicit behavior. See [Section 9.8](#98-generated-method-patterns) for implementation details.
 
 #### Relationship filters
 
-A filter can constrain a row by its **related** rows. Each **list** relationship on the table — O2M and M2M — contributes one `*{Target}Filter` field, and a non-nil value compiles to a correlated `EXISTS` subquery. The subquery is built from the join metadata the relationship already carries: the FK column on the target for O2M, the junction table plus both its FKs for M2M.
+A filter can constrain a row by its **related** rows. Each **list** relationship on the table — O2M and M2M — contributes one `*{Target}Filter` field, and a non-nil value compiles to a correlated `EXISTS` subquery. The subquery is built from the join metadata the relationship already carries: the key's FK columns on the target for O2M, the junction table plus both its keys for M2M. It correlates on every pair of the key, so a composite foreign key compiles to one equality per pair.
 
 A **to-one** relationship (O2O / belongs-to) contributes **no** filter member. Its FK column is directly filterable on the parent, and the inverse list direction on the target expresses the same predicate, so an `EXISTS` compilation for to-one relationships would add a third spelling of a predicate the filter already carries twice.
 
@@ -8101,12 +8288,23 @@ SELECT ... FROM "tasks" WHERE "status" = $1 AND EXISTS (
 )
 ```
 
+Through the composite tenant key `tasks(workspace_id, cycle_id) → cycles(workspace_id, id)`, a filter on `cycles` correlates on both pairs:
+
+```sql
+-- filter: { tasks: { status: {eq: 'done'} } }
+SELECT ... FROM "cycles" WHERE EXISTS (
+  SELECT 1 FROM "tasks" tgt0
+  WHERE tgt0."workspace_id" = "cycles"."workspace_id" AND tgt0."cycle_id" = "cycles"."id"
+    AND tgt0."status" = $1
+)
+```
+
 The subquery's **structure** is identical on all three dialects — only identifier quoting and placeholder style differ (`$N` on PostgreSQL, `?` on MySQL and SQLite), as for any other generated condition.
 
 Three invariants:
 
 1. **The target's own scoping applies inside the subquery.** Its soft-delete predicate ([§17.3](#173-generated-behavior)) and, when the target is tenanted, its tenant predicate ([§29.4.1](#2941-reads)) are injected into the `EXISTS`. A relationship filter is a read of the target, so it must not become a path around either rule — without the tenant injection it would be a cross-tenant existence probe.
-2. **The parent-side correlation reference carries no qualifier at generation time.** The plain read path emits `FROM "tasks"` (unqualified) while the O2O-join path emits `FROM "tasks" t` and alias-prefixes every filter condition, so the correlation must render as `"tasks"."id"` in the first case and `t."id"` in the second. The generator therefore emits the structured `Exists` condition ([§11.5](#correlated-exists-and-qualifier-resolution)), which carries only the correlation **column**; the builder resolves the qualifier against the enclosing statement, and `PrefixConditions` passes the condition through untouched because it is not a leaf clause.
+2. **The parent-side correlation reference carries no qualifier at generation time.** The plain read path emits `FROM "tasks"` (unqualified) while the O2O-join path emits `FROM "tasks" t` and alias-prefixes every filter condition, so the correlation must render as `"tasks"."id"` in the first case and `t."id"` in the second. The generator therefore emits the structured `Exists` condition ([§11.5](#correlated-exists-and-qualifier-resolution)), which carries only the correlation **columns**, one per pair; the builder resolves the qualifier against the enclosing statement, and `PrefixConditions` passes the condition through untouched because it is not a leaf clause.
 3. **One hop per level.** Depth comes from nesting a relationship filter inside a relationship filter; there are no aggregate predicates (`count > 3`) — those need a `GROUP BY` / `HAVING` shape and their own operator vocabulary.
 
 An unset (nil) relationship member contributes no SQL, preserving the "nil filter ⇒ no WHERE clause" contract.
@@ -8126,7 +8324,7 @@ Two things travel in the option set, and both must reach an arbitrarily nested m
 - **The resolved tenant**, via the exported `WithFilterTenant(tenant T)`. Generated read and filter-accepting mutation methods pass it automatically from the same resolution the outer `WHERE` uses; converting a filter without it produces subqueries scoped as if `CallOptions.SkipTenancy` were set, which is exactly what `SkipTenancy` itself needs.
 - **The subquery nesting depth**, which names the target alias (`tgt0`, `tgt1`, …). A self-referential relationship filter nested inside itself ([§13.5](#135-self-referential-relationships)) would otherwise alias both levels the same, and the inner alias would shadow the outer one — the correlation would silently compare the related row to itself.
 
-**Emission is limited to shapes `Exists` can express.** It carries exactly one correlation column, so a parent without a single-column primary key contributes no relationship filter members, and an M2M whose target has no single-column primary key contributes none for that edge. A relationship whose Go field name is already taken by a column comparator is likewise skipped — the column wins, as it does on the model struct.
+**Every list relationship gets a member, whatever its key.** `Exists` carries one correlation column per pair, so a parent with a composite primary key, an edge whose key references a UNIQUE constraint, and an M2M whose target has a composite primary key each contribute members like any other. A relationship whose Go field name is already taken by a column comparator is skipped — the column wins, as it does on the model struct.
 
 **MySQL error 1093.** MySQL rejects an `EXISTS` naming the table an `UPDATE` or `DELETE` is mutating. A relationship filter whose target *is* the mutated table — a self-referential edge — is therefore a read-path predicate on MySQL, not one to pass to `UpdateWhere` / `SoftDeleteWhere` / `HardDeleteWhere` / `Increment`. PostgreSQL and SQLite accept it.
 
@@ -8142,7 +8340,7 @@ Two things travel in the option set, and both must reach an arbitrarily nested m
 | `NullableString` | nullable strings | All of String + `Null` |
 | `Number[T]` | any numeric `T` | `Eq`, `Neq`, `In`, `Nin`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `NBetween`, `Custom` |
 | `NullableNumber[T]` | nullable numeric | All of Number + `Null` |
-| `Bool` | boolean columns | `Eq`, `Neq`, `Custom` |
+| `Bool` | boolean columns | `Eq`, `Neq`, `In`, `Custom` |
 | `NullableBool` | nullable booleans | All of Bool + `Null` |
 | `Time` | `time.Time` | `Eq`, `Neq`, `In`, `Nin`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `NBetween`, `Custom` |
 | `NullableTime` | nullable time | All of Time + `Null` |
@@ -8150,6 +8348,10 @@ Two things travel in the option set, and both must reach an arbitrarily nested m
 | `NullableEnum[T]` | nullable enum | All of Enum + `Null` |
 | `Opaque[T]` | any `T` — no constraint | `Eq`, `Neq`, `In`, `Nin`, `Gt`, `Gte`, `Lt`, `Lte`, `Custom` |
 | `NullableOpaque[T]` | nullable opaque | All of Opaque + `Null` |
+
+**A universal operator named like a `ConditionBuilder` method produces that method's clause** ([11.5](#115-condition-composition)): `Eq`, `Neq`, `Gt`, `Gte`, `Lt`, `Lte`, `Like`, `NLike` and `Between` render as the builder table gives them, and `In` / `Nin` as its expanded rows, or, for every family but `Enum`, as the array form on PostgreSQL+pgx ([11.3](#113-comparator-interface)).
+
+**`Enum[T]`'s `In` and `Nin` always expand**, to `IN ($1, $2, ...)` / `NOT IN ($1, $2, ...)`, PostgreSQL+pgx included, where every other family takes the array form ([11.3](#113-comparator-interface)). A generated enum is a named string type, and pgx has no encode plan for a slice of one against the enum column's array type: `= ANY($1)` fails the query (`cannot find encode plan`), while each scalar bound alone converts as a string. An enum column's values are its declared members, so the expanded list stays bounded by the type.
 
 **`Opaque[T]` — the family for columns whose Go type is neither text nor a Go
 numeric.** `bytea` / `blob`, `inet`, `cidr` and `macaddr` resolve to `[]byte`,
@@ -8209,7 +8411,7 @@ Two limits follow from the cast and are accepted rather than worked around:
 
 #### PostgreSQL-Only Comparators
 
-These comparators are only generated when `input.dialect` is `postgres`. Using them with other dialects is a configuration error caught at generation time.
+These comparators are only generated when `input.dialect` is `postgres`. Comparator selection follows the column type ([Comparator Selection by Column Type](#comparator-selection-by-column-type)), so the generator never selects them for a MySQL or SQLite column, and no configuration can ask it to.
 
 | Comparator | Operators | SQL Operators |
 |------------|-----------|---------------|
@@ -8239,9 +8441,13 @@ The code generator selects the comparator based on the resolved Go type and dial
 | Enum types | `Enum[T]` | |
 | `types.JSON` (from `json`) | `JSON` | PostgreSQL and MySQL. **Non-filterable on SQLite** — `comparator.JSON.Parse` has no `sqlite` arm, so the filter field is omitted on both surfaces rather than accepted and ignored |
 | `types.JSON` (from `jsonb`) | `JSONB` | PostgreSQL only; falls back to `JSON` on MySQL, and is non-filterable on SQLite for the reason the `json` row gives |
-| Array types (e.g., `[]string`, `UserRoleSlice`) | `Slice[T]` | PostgreSQL only; enum arrays use named slice types. **Exception:** `json[]` / `jsonb[]` resolve to `[]types.JSON`, whose element type is not `comparable`, so `Slice[T]` cannot be instantiated — those columns are **non-filterable** on the model side and on the GraphQL side alike (see [§26.4](#comparator-input-projection)) |
+| Array types (e.g., `[]string`, `UserRoleSlice`) | `Slice[T]` | PostgreSQL only; enum arrays use named slice types. `T` is the element SQL type's Go type, so a column retyped by `column_map`, `type_map` or `overrides.types` keeps the same `Slice[T]` ([7.1](#71-type-resolution-chain)). **Exception:** `json[]` / `jsonb[]` resolve to `[]types.JSON`, whose element type is not `comparable`, so `Slice[T]` cannot be instantiated — those columns are **non-filterable** on the model side and on the GraphQL side alike (see [§26.4](#comparator-input-projection)) |
 
 Nullable variants are selected automatically when the column is nullable.
+
+**A time key takes `Time`, not `ID`.** The `ID` row is for text keys. A primary or foreign key bound to `time.Time` or `types.DateTime` filters through `Time` / `NullableTime`, and the generated client binds the value rather than a rendering of it: PostgreSQL rejects `time.Time.String()`, SQLite compares the text the SQL builder writes, and MySQL compares wall time in the driver's `loc`, so no single text form reads back on all three.
+
+**A boolean key takes `Bool`, not `ID`.** A primary or foreign key bound to `bool` filters through `Bool` / `NullableBool`, composite members included, and the generated client binds the value: MySQL and SQLite store a boolean as an integer, so the text `true` matches no row there. `Bool.In` exists for these keys, since the client filters a list of them when it loads or writes rows by key.
 
 **`uuid` columns select `ID` / `NullableID`, keyed on the SQL type.** Every UUID
 binding filters as an identifier — the default `uuid.UUID` / `*uuid.UUID`, the
@@ -8292,13 +8498,13 @@ Each `sql.Condition` contains a `Clause` (SQL fragment with `$` placeholder), a 
 The distinction is load-bearing rather than cosmetic: `comparator.JSON`'s MySQL arms emit `JSON_CONTAINS(col, $)`, which leads with a function name, so blind prepending yields `u.JSON_CONTAINS(col, ?)` — MySQL resolves that as a stored routine in schema `u` and fails at request time. Dropping qualification instead is not an alternative: an unqualified column is ambiguous whenever a joined table carries the same name.
 
 The `dialect` parameter is used by:
-- `In`/`Nin` operators — produce `= ANY($1)` / `!= ALL($1)` on PostgreSQL+pgx, expanded `IN ($1, $2, ...)` / `NOT IN ($1, $2, ...)` on others
+- `In`/`Nin` operators — produce `= ANY($1)` / `!= ALL($1)` on PostgreSQL+pgx, expanded `IN ($1, $2, ...)` / `NOT IN ($1, $2, ...)` on others. `Enum[T]` expands on every dialect ([11.2](#112-comparator-types))
 - `JSON`/`JSONB` comparators — produce dialect-specific JSON operators
-- Universal comparators use the dialect for placeholder style but produce standard SQL otherwise
+- Universal comparators use it only for `In`/`Nin`; their other operators produce the same clause on every dialect, with `$` tokens the builder renders as the dialect's placeholders ([11.5](#115-condition-composition))
 
 ### 11.4 Custom Conditions
 
-All comparators support a `Custom` field: raw `sql.Condition` for arbitrary SQL injection when built-in operators are insufficient.
+All comparators support a `Custom []sql.Condition` field: raw conditions for arbitrary SQL when built-in operators are insufficient.
 
 ### 11.5 Condition Composition
 
@@ -8310,7 +8516,7 @@ The `sql` package provides both raw condition types and a fluent `ConditionBuild
 - `Or(conditions...)` — joins conditions with OR
 - `Subquery{SQL, Args}` — nested SELECT as a condition value. Its `SQL` marks the args with bare `$` tokens, one per arg in order, or with `$1`…`$k`, where `$N` is the subquery's own `Args[N-1]` and may repeat or appear out of order; one form per subquery, not both. The builder numbers either form into the enclosing statement's positional sequence in `Conditions` order, like every other condition, so the caller never writes an enclosing-statement position or `?`. PostgreSQL renders `$N` at its absolute position, so a repeated `$N` reuses one parameter; MySQL and SQLite emit one `?` per token, with the args in token order. A `$` inside a string literal, a quoted identifier, a comment or a PostgreSQL dollar-quoted string is the SQL's own text and is not a token. Quotes match the SQL-standard way, a doubled quote escaping itself. On MySQL a backslash also escapes the character after it inside a `'…'` or `"…"` string literal, as MySQL's default `sql_mode` reads it. PostgreSQL and SQLite read a backslash there literally, and a PostgreSQL `E'…'` escape is not recognised, so write `''` on them. SQL outside both forms is the caller's responsibility: the builder neither checks nor repairs it, and passes it to the database. Most such shapes fail there, but some run without an error: on SQLite, fewer bare `$` tokens than args (the surplus args shift onto the placeholders that follow); on MySQL and SQLite, an arg no `$N` references (left out); on PostgreSQL, a `$N` past `len(Args)`, which is copied as written and so binds the enclosing statement's Nth parameter whenever that parameter exists and its type fits
 - `Range{Start, End}` — BETWEEN clause
-- `Exists(correlationColumn, Subquery)` — correlated `EXISTS` predicate; the parent-side qualifier is resolved by the builder, not by the caller (see [Correlated EXISTS and qualifier resolution](#correlated-exists-and-qualifier-resolution) below)
+- `Exists(correlation columns, Subquery)` — correlated `EXISTS` predicate over one or more correlation columns; the parent-side qualifier is resolved by the builder, not by the caller (see [Correlated EXISTS and qualifier resolution](#correlated-exists-and-qualifier-resolution) below)
 - `Raw(clause, args...)` — an opaque SQL fragment as a condition, parenthesised when rendered. Its clause marks the args with the same two token forms as a `Subquery`'s `SQL`, read by the same rules: bare `$` tokens one per arg in order, or `$1`…`$k` numbered against the clause's own args, with the same quote-aware token scan and the same pass-through of SQL outside both forms. A hand-built `Condition` with a scalar or `[]any` value is read the same way, except a `[]any` clause ending ` IN $` or ` NOT IN $`, which expands to a list
 
 #### ConditionBuilder
@@ -8392,15 +8598,22 @@ A correlated subquery must reference a column of the **enclosing** statement's t
 | `BuildSelect` | `FROM "tasks"` — no alias | `"tasks"."id"` |
 | `BuildSelectJoin` | `FROM "tasks" t` — aliased, and every condition is alias-prefixed | `t."id"` |
 
-A condition carrying a pre-baked qualifier is therefore correct on exactly one of the two paths and invalid SQL on the other, on every dialect. The `Exists` condition resolves this by **carrying the correlation column and never the qualifier**:
+A condition carrying a pre-baked qualifier is therefore correct on exactly one of the two paths and invalid SQL on the other, on every dialect. The `Exists` condition resolves this by **carrying the correlation columns and never the qualifier**. It takes one correlation column, or a list with one column per pair of the relationship's key, and the subquery references one correlation token per column: `sql.CorrelationTokenAt(i)` for the column at index `i`, where `sql.CorrelationTokenAt(0)` is `sql.CorrelationToken`.
 
 ```go
-sql.Exists("id", sql.Subquery{SQL: "SELECT 1 FROM ...", Args: []any{...}})
+// One pair
+sql.Exists("id", sql.Subquery{SQL: "SELECT 1 FROM ... WHERE tgt.\"post_id\" = " + sql.CorrelationToken, Args: []any{...}})
+
+// Two pairs
+sql.Exists([]string{"workspace_id", "id"}, sql.Subquery{
+    SQL: "SELECT 1 FROM ... WHERE tgt.\"workspace_id\" = " + sql.CorrelationTokenAt(0) +
+        " AND tgt.\"cycle_id\" = " + sql.CorrelationTokenAt(1),
+})
 ```
 
 **Rules.**
 
-1. **The builder supplies the qualifier.** At render time the enclosing statement resolves it once — `SelectOptions.Alias` when the statement aliases its table, `Dialect.FormatTable(table)` otherwise — and renders `<qualifier>.<QuoteIdentifier(CorrelationColumn)>` inside the subquery's correlation predicate. The same `Exists` value is therefore correct on both read paths without the generator knowing which one will run.
+1. **The builder supplies the qualifier.** At render time the enclosing statement resolves it once — `SelectOptions.Alias` when the statement aliases its table, `Dialect.FormatTable(table)` otherwise — and replaces each correlation token with `<qualifier>.<QuoteIdentifier(column)>` for its correlation column. The same `Exists` value is therefore correct on both read paths without the generator knowing which one will run.
 2. **`PrefixConditions` never rewrites it.** Alias prefixing (`prefixCondition`) prepends `alias + "."` to the leading token of a **leaf string clause**; an `Exists` is a structured condition value, like `And` / `Or` / `Subquery` / `Range`, so it is not a leaf clause and is passed through untouched — including when nested inside `And` / `Or`, which prefixing descends recursively. This is exemption **by construction**, not an opt-out flag the caller can forget to set.
 3. **Placeholder numbering is unchanged.** The subquery's args participate in the enclosing statement's positional numbering in `Conditions` slice order, exactly as any other multi-arg condition — the contract `BuildSelectJoin` documents and the child-tenant filter already relies on. JOIN `On` strings still contribute nothing.
 4. **Dialect differences are quoting and placeholders only.** The emitted structure is identical across PostgreSQL, MySQL, and SQLite; `$N` vs `?` and the identifier quoting style are the only deltas.
@@ -8413,11 +8626,11 @@ This is what [§11.1](#111-generated-filter-struct)'s relationship filters compi
 
 ### 12.1 FieldOptions Struct
 
-Generated per table. One `bool` field per column, plus one `*{Related}FieldOptions` per relationship.
+Generated per table. One `bool` field per column, plus one `*{Related}FieldOptions` per relationship. Each field carries a `json` tag, its column's or its relationship's; the `{Related}RelationshipOptions` fields are tagged `field_options`, `filter` and `sorts`.
 
 **Behavior:**
 - If `FieldOptions` is `nil` in the query input: SELECT all columns, skip relationships
-- If `FieldOptions` is non-nil: SELECT only columns with `true` fields
+- If `FieldOptions` is non-nil: SELECT only columns with `true` fields. One that selects no column but selects a relationship SELECTs every column
 - If a relationship `FieldOptions` is non-nil: load that relationship
 
 **Example:**
@@ -8514,7 +8727,7 @@ ORDER BY "created_at" DESC
 
 ### 12.2 Column Map
 
-Each `FieldOptions` has a generated `ColumnMap()` method that returns a `map[string]string` of Go field name → SQL column name, used by `sql.BuildColumnsFromFieldOptions()`.
+Each `FieldOptions` has a generated `ColumnMap()` method that returns a `map[string]string` of Go field name → SQL column name, covering every column whatever the selection. Its `Columns()` method returns the SQL column names of the selected columns, sorted alphabetically. The generated reads build their column list from `Columns()`, not from this map.
 
 ---
 
@@ -8524,21 +8737,25 @@ Each `FieldOptions` has a generated `ColumnMap()` method that returns a `map[str
 
 | Type | Cardinality | Detection | FK lives on | Generated Field Type |
 |------|-------------|-----------|-------------|---------------------|
-| O2O **belongs-to** | One-to-One | FK that is unique — an inline `UNIQUE`, a single-column `UNIQUE` constraint, or the table's **sole PRIMARY KEY column** | **this** table | `*{Related}` |
+| O2O **belongs-to** | One-to-One | FK that is unique — a PRIMARY KEY or non-partial `UNIQUE` on this table whose columns are a subset of the FK's columns. For a single-column FK: an inline `UNIQUE`, a single-column `UNIQUE` constraint, or the table's **sole PRIMARY KEY column** | **this** table | `*{Related}` |
 | O2O **has-one** | One-to-One | same, viewed from the referenced side — config-declared only | the **related** table | `*{Related}` |
 | O2M | One-to-Many | FK without uniqueness | the **related** table | `[]*{Related}` |
-| M2M | Many-to-Many | Junction table with 2 FKs in composite PK/UNIQUE | junction table | `[]*{Related}` |
+| M2M | Many-to-Many | Junction table: two FKs, once every FK inside the others is set aside, whose union a PK or UNIQUE contains ([5.3](#53-relationship-detection)) | junction table | `[]*{Related}` |
 
 **Belongs-to and has-one are both `o2o`, and the `type:` field cannot tell them apart.** They differ in which table physically holds the FK column, and that fact — carried on the relationship context as **`FKOnTarget`** — is derived **once**, during relationship building, from whether the FK column is declared on the target table. It is not the same question as the `side:` field ([4.8](#48-tableconfig-per-table)): `side` is a *declared* property that defaults to `parent` and drives the manifest's `o2o` / `m2o` split, while a config-declared edge may leave `side` at its default and still put the FK on the target. Read and write paths consume the one derived value; neither re-derives it.
 
+**An edge joins the columns its foreign key references, not the target's primary key.** Its key is every (FK column → referenced column) pair of the FOREIGN KEY constraint ([5.3](#53-relationship-detection)), and the referenced columns may be the target's primary key (resolved or declared) or one of its non-partial UNIQUE constraints. The O2O join, the loaders and the relationship filter all match on that key. A manual relationship ([13.4](#134-manual-relationship-configuration)) always joins the referenced table's primary key.
+
 **FK nullability is a first-class property of an edge.** It changes nothing on the read path, and it decides the entire write-side verb set: an O2M edge on a nullable FK admits `connect`, `disconnect` and `clear`, and the same edge shape on a NOT NULL FK admits none of them. Two edges of the same `type:` on the same parent can therefore differ. See [9.9](#99-nested-mutations).
 
-**A single-column PRIMARY KEY counts as unique** for this purpose — it is implicitly unique on every
-dialect, so a 1:1 extension table (`user_credentials(user_id UUID PRIMARY KEY REFERENCES users(id))`)
-holds at most one row per parent and its edge is O2O, not O2M. A member of a **composite** key carries
-no such guarantee on its own, so a junction's FK columns keep falling through to the O2M arm and are
-picked up by M2M detection instead. Partial `UNIQUE` constraints (those with a `WHERE` predicate) are
-ignored throughout: uniqueness that holds only for matching rows cannot promote an edge.
+**A PRIMARY KEY counts as unique** for this purpose. It is unique on every dialect, so a 1:1
+extension table (`user_credentials(user_id UUID PRIMARY KEY REFERENCES users(id))`) holds at most one
+row per parent and its edge is O2O, not O2M. A composite key gives that guarantee only to a foreign
+key that holds all of its columns: `cycle_settings(workspace_id, cycle_id)`, unique on both, with
+`(workspace_id, cycle_id) → cycles(workspace_id, id)`, is O2O. A foreign key holding only part of a
+composite key is O2M, which is why a junction's foreign keys fall through to the O2M arm until M2M
+detection takes them. Partial `UNIQUE` constraints (those with a `WHERE` predicate) are ignored
+throughout: uniqueness that holds only for matching rows cannot promote an edge.
 
 Auto-detection emits the O2O edge on the **FK-holding** side only. The inverse edge — the parent's
 view of its extension row — is declared in config (§7 `relationships`), the same way `profiles` is
@@ -8573,6 +8790,8 @@ FROM "public"."products" p
 LEFT JOIN "public"."companies" c ON c."id" = p."company_id"
 WHERE p."price" > $1
 ```
+
+The `ON` clause ANDs one equality per pair of the edge's key, so the composite key `tasks(workspace_id, cycle_id) → cycles(workspace_id, id)` joins `ON c."workspace_id" = t."workspace_id" AND c."id" = t."cycle_id"`.
 
 Multiple O2O relationships produce multiple LEFT JOINs in one query. O2O chains (product → company → country) are flattened into a single multi-JOIN query:
 
@@ -8618,18 +8837,18 @@ One-to-many and many-to-many relationships are loaded in **separate queries** us
 
 1. Parent entities are fetched first (with any O2O relationships inlined via JOIN)
 2. For each O2M relationship in the FieldOptions:
-   - Collect FK values from parent entities
-   - Build a filter with `IN` clause on the related table's PK/FK
+   - Collect from the parent entities the values of the columns the edge's key references — the parent's primary key, or the UNIQUE columns the foreign key names. A parent whose referenced columns hold a NULL is skipped, since no row references it
+   - Build a condition on the related table's FK columns: `IN` for a one-column key, tuple `IN` (`("workspace_id", "cycle_id") IN ((…), …)`) for several. It is appended to the related table's query conditions, never in place of them. A child with a NULL FK member matches no parent and is never returned
    - **Apply the relationship's static `filter:` from config (if non-empty) as an `AND` condition — used for polymorphic discriminators (§13.7)**
    - Merge the consumer's `Filter` from the relationship FieldOptions (if provided) with AND
    - Apply `Sorts` from the relationship FieldOptions (if provided), or fall back to the static relationship sort from config
-   - Execute the query on the related table
-   - Map results back to parent entities
-3. For each M2M relationship in the FieldOptions (two queries — see §25.1):
-   - Query the junction table with `IN` on the parent FK to resolve the parent→target id mapping
-   - Query the target table via the target client's `GetMany` with `IN` on the collected target ids (so soft-delete defaults, sort handling, and recursive relationship loading apply uniformly)
+   - Execute the query on the related table, once per chunk of parent keys ([25.1](#251-query-count-guarantee)); on PostgreSQL with `output.driver: pgx` the `IN` binds every key as one array parameter and runs once
+   - Map results back to parent entities. A child whose key matches no parent's byte for byte is an error ([13.3](#133-fk-type-conversion))
+3. For each M2M relationship in the FieldOptions (two queries per chunk of parent keys — see §25.1), for each chunk:
+   - Query the junction table with `IN` on the local key's columns (tuple `IN` for several), joined to the target table on the reference key's columns, to resolve the parent→target key mapping: `SELECT j.local_key, t.target_key FROM junction j LEFT JOIN target t ON t.target_key = j.ref_key WHERE j.local_key IN (...) AND t.target_key IS NOT NULL`. The target key is read off the target rather than the junction, so the mapping holds it as the target stores it, which is how the target query below returns it. Read off the junction, a reference the database calls equal to the target's key in another spelling (a case-insensitive collation, `CHAR` padding) would map no target ([13.3](#133-fk-type-conversion)). The join reads the key columns only and applies none of the target's soft-delete default, tenant filter, static `filter:` or consumer `Filter`: which targets load is the target query's to decide, and a junction row the join finds no target for maps nothing. It is one statement, as the junction-only read was, issued directly on the connection like it, outside the query-hook chain ([27.7](#277-cache-behavior-by-operation))
+   - Query the target table via the target client's `GetMany`, matching the target's referenced columns against the junction rows of the chunk's parents — `target_key IN (SELECT j.ref_key FROM junction j WHERE j.local_key IN (...))`, each `key` a column or a tuple of them — rather than against a list of collected target ids, so the statement binds the chunk's parent keys however many targets they share, and soft-delete defaults, sort handling, and recursive relationship loading apply uniformly. The consumer's `Filter` from the relationship FieldOptions (if provided) is merged with AND
    - **The relationship's static `filter:` from config (if non-empty) is applied as an `AND` condition on the target query — used for polymorphic discriminators (§13.7)**
-   - Map target entities back to parent entities via the junction mapping, walking targets in the target query's order so `Sorts` (or the static sort) order each parent's slice
+   - Map target entities back to the chunk's parent entities via the junction mapping, keyed on every column of each key, walking targets in the target query's order so `Sorts` (or the static sort) order each parent's slice. Every parent's targets come from one target query, so the order holds at any parent or target count. A junction row whose local key matches no parent's key byte for byte is an error ([13.3](#133-fk-type-conversion)); a loaded target the mapping does not hold is skipped, since a link written between the two queries reaches the target query alone
 4. All O2M/M2M relationship loads run in parallel via `errgroup`, inside a transaction and out. Outside one, each load draws its own pooled connection and the fan-out is real. Inside one, they share the transaction's single connection and the `Tx`'s connection reservation serializes them ([18.5](#185-concurrent-safety)) — the statement count is identical either way, only the concurrency differs, and the loader needs no transaction-aware bound of its own.
 
 #### Combined Example
@@ -8639,12 +8858,12 @@ GetMany(products, FieldOptions{Company: O2O, Reviews: O2M, Tags: M2M})
     │
     ├── 1 query: SELECT p.*, c.* FROM products p LEFT JOIN companies c ON ...  ← Parent + O2O
     ├── 1 query: SELECT * FROM reviews WHERE product_id = ANY(...)             ← O2M (parallel)
-    ├── 1 query: SELECT product_id, tag_id FROM product_tags WHERE product_id IN (...)   ← M2M junction (parallel)
-    └── 1 query: SELECT * FROM tags WHERE id = ANY(...)                        ← M2M entities
+    ├── 1 query: SELECT j.product_id, t.id FROM product_tags j LEFT JOIN tags t ON t.id = j.tag_id WHERE j.product_id IN (...) AND t.id IS NOT NULL   ← M2M junction (parallel)
+    └── 1 query: SELECT * FROM tags WHERE id IN (SELECT j.tag_id FROM product_tags j WHERE j.product_id IN (...))   ← M2M entities
     = 4 queries total (1 parent+O2O + 1 O2M + 2 for the M2M edge)
 ```
 
-The M2M edge is two queries — junction + entities — per §25.1. Compare to the no-JOIN approach which would be 5 queries (1 parent + 1 O2O + 1 O2M + 2 for M2M); the O2O savings compound with multiple O2O relationships and O2O chains.
+The M2M edge is two queries — junction + entities — per §25.1, for a parent set that fits one chunk of keys. Compare to the no-JOIN approach which would be 5 queries (1 parent + 1 O2O + 1 O2M + 2 for M2M); the O2O savings compound with multiple O2O relationships and O2O chains.
 
 #### Filtering Scope
 
@@ -8693,11 +8912,19 @@ Relationship loading requires converting FK values to comparator-compatible type
 4. **Bare type** — no guard. Uses the type's `.String()` method when present (`*.UUID`, `time.Time`, `time.Duration`, `types.DateTime`, `net.IP`, `net.IPNet`, `net.HardwareAddr`); pass-through for `string`; `fmt.Sprint()` otherwise.
 
 
-The guard + unwrap path applies only when the FK column is read off a *child* entity. Parent-side / target-side PK reads never hit a Null wrapper because primary keys are never nullable.
+The guard + unwrap path applies to every FK column read off a *child* entity, one per member of a composite key. A child with a NULL member matches no parent. Parent-side / target-side reads are of the columns the key references. A primary key is never nullable, and a referenced UNIQUE column that holds a NULL is skipped before the query, since nothing references it.
+
+An FK column need not share the Go type of the column it references: PostgreSQL accepts a foreign key of another integer width, and SQLite one of another storage class, such as TEXT or REAL into INTEGER. When its comparator is of another family or type argument (§11.2), it cannot take the referenced keys, so the loader binds them as key tuples instead, on every dialect. A time key next to a key of another family, which only SQLite accepts, is a generation error ([4.13](#413-config-validation-rules)): the one-column loader does not compile for it, and the key-tuple loader matches no row, since neither side spells the time as the other stores it. Two enums differ only by name, so the loader converts each key to the FK's enum instead. A key that an integer FK column cannot hold, such as one past its width or a fractional one, is skipped before the query on every key shape: a driver refuses to bind it, and no row can reference it.
+
+**The buckets compare keys as Go sees them, which the database's own equality can outrun.** A loader's query matches child rows, and an M2M loader's junction rows, to the parent keys in the database, under the column's collation; the bucket lookup that maps them back compares the stringified keys byte for byte, because Go cannot apply a collation. Where the database calls two spellings equal the lookup is the stricter: under a case-insensitive collation (MySQL's default `utf8mb4_0900_ai_ci`, SQLite `NOCASE`, PostgreSQL `citext`) or `CHAR` padding, a child whose key differs from its parent's only in case or trailing spaces is one the query returned and no parent's bucket holds. Such a load is an error, not a silent drop: an O2M load whose children hold a key no parent holds byte for byte fails the read with `load <table> <target>: <n> of <m> child keys match no parent key byte for byte, though the database matched them: …; store one spelling`, and an M2M load whose junction rows hold a local key no parent holds fails it with the same text naming the junction, on a key of one column or several. The whole read fails, as `UpsertMany`'s read-back does when it cannot match a written row to a read one ([Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)); it is plain error text, with no sentinel of its own. The M2M target side needs no such check: the junction read takes the target key from the target itself ([13.2](#132-loading-strategy)), so a junction reference in another spelling still loads its target. A target the target query returns and no junction row maps is skipped rather than refused, since a link written between the junction read and the target query reaches the second statement alone. `disconnect` and `clear` compare in the database ([9.9.6](#996-execution-order)). The remedy is to store one spelling. A key of integers, UUIDs or case-sensitively compared text is unaffected.
 
 ### 13.4 Manual Relationship Configuration
 
 When automatic detection is insufficient (e.g., polymorphic FKs, non-standard naming, missing FK constraints), relationships can be explicitly defined in config. See [TableRelationship in 4.8](#48-tableconfig-per-table).
+
+**A manual relationship joins the referenced table's primary key, through one or more columns.** `fk`, `junction_local_fk` and `junction_reference_fk` take a string or a list. A list maps by position onto the primary key of the table its columns reference, in the order its `PRIMARY KEY (...)` clause lists them, or the `primary_key.columns` order when that key is overridden, never the order the columns are declared in. So `fk: [workspace_id, setting_key]` into a table keyed `(workspace_id, key)` pairs `workspace_id → workspace_id` and `setting_key → key`. Its length must equal that key's column count, or validation fails ([4.13](#413-config-validation-rules)). A string is a one-item list, so a single-column `fk` means what it always has. There is no key naming the referenced columns: an edge to a non-PK UNIQUE key comes only from detection ([5.3](#53-relationship-detection)). A key into a view maps onto its `@pk` columns, and a belongs-to or `m2m` edge into a view without `@pk` is an error ([4.13](#413-config-validation-rules)). A manual edge has no FOREIGN KEY constraint behind it, so its manifest `constraint` is omitted ([30.4.2](#3042-entity-shape)).
+
+**Detection can leave an edge to be declared.** A foreign key whose referenced columns are not a key ([5.3](#53-relationship-detection) rule 1), a foreign key set aside on a junction (rule 4), and two edges whose names still collide after disambiguation (rule 6) all point here. For a collision, list the detected name in `exclude_relationships` and declare the edge under a name of your choosing.
 
 Auto-detected relationships can be disabled per-table via `exclude_relationships` (by relationship name). If a manual relationship has the same name as an auto-detected one, the manual definition replaces it.
 
@@ -8907,10 +9134,12 @@ The mirror mistake — a MySQL-style double-quoted *value* on PostgreSQL or SQLi
 
 **SQLite's double-quoted-string fallback applies to every generated statement.** sqlgen quotes SQLite identifiers with double quotes, and SQLite reads a double-quoted name it cannot resolve as a string literal in an expression position: a SELECT list or WHERE predicate that names a column the table or view lacks returns the column's own name as text, or compares against that constant, instead of failing with `no such column` (INSERT and UPDATE column lists still fail). The generator never emits a column its schema lacks, so this arises only when the schema sqlgen read has drifted from the database; the symptom is then wrong data or a scan error rather than an error naming the column.
 
-**Dedup key.** The relationship dedup key extends from §4.8's `(target_table, fk_column)` shape — and m2m's `(target_table, junction_table, junction_local_fk, junction_reference_fk)` shape — to include **both** discriminator forms:
+**Dedup key.** The relationship dedup key extends from §4.8's `(target_table, fk_columns)` shape — and m2m's `(target_table, junction_table, junction_local_fk, junction_reference_fk)` shape — to include **both** discriminator forms:
 
-- o2o / o2m: `(target_table, fk_column, filter, discriminator)`
+- o2o / o2m: `(target_table, fk_columns, filter, discriminator)`
 - m2m: `(target_table, junction_table, junction_local_fk, junction_reference_fk, filter, discriminator)`
+
+`fk_columns` and the two junction components are column lists, compared in order, so a one-column `fk` and a list holding only that column are the same key.
 
 The `filter` portion is the raw filter string as written in the config — byte-equal comparison, no whitespace normalization or canonicalization. The `discriminator` portion is its `column` and `value` in that order, compared the same way. The two are mutually exclusive ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge)), so exactly one is non-empty on any sub-categorized edge and the other contributes nothing.
 
@@ -8942,7 +9171,7 @@ The reverse direction — given a child entity, materialize its parent — is **
 |-----------|---------|
 | Two relationships on the same parent share the full dedup key (incl. byte-equal `filter:`) | Hard validation error — duplicate relationship. |
 | Two relationships on the same parent share the dedup-key prefix `(target, fk)` (or m2m equivalent) but have distinct `filter:` **or** distinct `discriminator:` values | Allowed — produces sub-categorized fields. Each relationship's `name:` field must be set so the Go field names on `<Table>FieldOptions` are distinct (already a §4.8 requirement). |
-| `filter:` is non-empty on an `m2m` relationship | Allowed — applies as an `AND` condition on the target-table query (after the junction resolves target IDs). |
+| `filter:` is non-empty on an `m2m` relationship | Allowed — applies as an `AND` condition on the target-table query (alongside the match against the junction rows). |
 | `filter:` contains a double-quoted token and the dialect is MySQL | Hard validation error — MySQL reads it as a string literal, not an identifier, so the predicate silently matches no rows (§13.7.1). A double quote inside a string literal or a backtick-quoted identifier is accepted. |
 
 Codegen-time validation of `filter:` contents (column existence, enum literal validity) is **not** performed — see §13.7.4.
@@ -8968,7 +9197,7 @@ Wherever codegen parses the filter (§4.8: every o2m and m2m relationship, and e
 
 **Input:** Filter, Sort, Limit (int), Offset (int)
 
-**Generated method:** `Paginate(ctx, PaginateInput[F])`
+**Generated method:** `Paginate(ctx, PaginateInput[F], ...func(*CallOptions[FO]))`
 
 Uses `sql.BuildSelect` with LIMIT and OFFSET clauses, applying any provided sorts before the limit/offset.
 
@@ -8987,11 +9216,11 @@ type PaginateResult[T any] struct {
     TotalCount int64 `json:"total_count"` // total matching rows across all pages
     Offset     int   `json:"offset"`      // the offset used for this query
     Limit      int   `json:"limit"`       // the limit used for this query
-    HasMore    bool  `json:"has_more"`    // true when Offset+Limit < TotalCount
+    HasMore    bool  `json:"has_more"`    // true when Limit > 0 and Offset+Limit < TotalCount
 }
 ```
 
-`HasMore` is the offset-pagination analogue to Relay's `hasNextPage` — it lets clients determine whether another page exists without recomputing `offset + limit < totalCount`. The result intentionally omits derived fields (`TotalPages`, `PageSize`, `CurrentPage`); consumers compose them from `TotalCount / Limit / Offset` when needed, and avoiding the derived shape keeps the GraphQL `<T>ListResult` envelope (§26.4) field-for-field aligned with `PaginateResult[T]` so gqlgen can bind them directly via the wrapper's `models:` merge — through a per-table alias `type <T>ListResult = PaginateResult[<T>]` (Go 1.24+) — see §26.5.6.
+`HasMore` is the offset-pagination analogue to Relay's `hasNextPage` — it lets clients determine whether another page exists without recomputing `offset + limit < totalCount`. A `Limit` of 0 means no limit: the page holds every matching row past `Offset`, so `HasMore` is false. The result intentionally omits derived fields (`TotalPages`, `PageSize`, `CurrentPage`); consumers compose them from `TotalCount / Limit / Offset` when needed, and avoiding the derived shape keeps the GraphQL `<T>ListResult` envelope (§26.4) field-for-field aligned with `PaginateResult[T]` so gqlgen can bind them directly via the wrapper's `models:` merge — through a per-table alias `type <T>ListResult = PaginateResult[<T>]` (Go 1.24+) — see §26.5.6.
 
 ### 14.2 Cursor-Based (Relay Pagination)
 
@@ -8999,7 +9228,7 @@ The cursor-based pagination implementation follows the [Relay Connection Specifi
 
 **Input:** Filter, First/Last (*int), After/Before (*string cursor)
 
-**Generated method:** `Connection(ctx, *Filter, *ConnectionInput)`
+**Generated method:** `Connection(ctx, ConnectionInput[F], ...func(*CallOptions[FO]))`
 
 **`ConnectionInput` does not accept a `Sorts` field.** The sort order is always determined by `cursor_keys` — this is required for cursor stability. Cursors encode a position based on the cursor key columns; applying a different sort would invalidate the cursor's meaning. Consumers who need custom sort orders should use `Paginate()` (offset-based) instead.
 
@@ -9111,7 +9340,7 @@ type Sort struct {
 
 ### 15.2 Generated Sorter Helpers
 
-For each table, a **sorter struct** is generated with one method per column. Each method accepts a `sql.SortDirection` and returns a `sql.Sort`, providing type-safe column names and direction values with full IDE autocomplete support.
+For each table, a **sorter struct** is generated with one method per column. Views and materialized views get no sorter; their `GetMany` takes `sql.Sort` values built directly. Each method accepts a `sql.SortDirection` and returns a `sql.Sort`, providing type-safe column names and direction values with full IDE autocomplete support. Sorter structs are emitted in struct-name order, and each struct's methods in SQL column-name order.
 
 ```go
 // ProductSorter provides type-safe sort helpers for the Product entity.
@@ -9197,7 +9426,7 @@ LEFT JOIN reviews r ON r.product_id = p.id
 GROUP BY p.id, p.name, p.discount;
 ```
 
-**View name** is extracted from the `CREATE VIEW` statement (e.g., `CREATE VIEW product_summary AS` → view name `product_summary`). On PostgreSQL schema-qualified names are supported: `CREATE VIEW reporting.product_summary AS` → schema `reporting`, name `product_summary`, and an unqualified name resolves to `input.schema` ([5.5](#55-schema-qualification--table-naming)). On MySQL and SQLite a view, like a table, has no schema: a qualifier is dropped and the name is bare, so `CREATE VIEW app.product_summary` names the view `product_summary` and overlays the database's view of that name ([16.2](#162-introspected-views-db-sourced-views)). `CREATE OR REPLACE VIEW` is also accepted.
+**View name** is extracted from the `CREATE VIEW` statement (e.g., `CREATE VIEW product_summary AS` → view name `product_summary`). On PostgreSQL schema-qualified names are supported: `CREATE VIEW reporting.product_summary AS` → schema `reporting`, name `product_summary`, and an unqualified name resolves to `input.schema` ([5.5](#55-schema-qualification--table-naming)). On MySQL and SQLite a view, like a table, has no schema: a qualifier is dropped and the name is bare, so `CREATE VIEW app.product_summary` names the view `product_summary` and overlays the database's view of that name ([16.2](#162-introspected-views-db-sourced-views)). `CREATE OR REPLACE VIEW` is also accepted on PostgreSQL and MySQL; SQLite has no such form, so there it is a parse error.
 
 **Column names** are extracted from the SELECT clause. Each selected expression must resolve to a column name via one of:
 - Explicit alias: `AVG(r.rating) AS avg_rating` → column `avg_rating`
@@ -9313,6 +9542,9 @@ MySQL returns `DECIMAL` for `SUM` over any exact-value integer, signed or unsign
 | Client with DI | Yes | Yes | Yes |
 | Filter struct | Yes | Yes | Yes |
 | FieldOptions | Yes | Yes | Yes |
+| `Get<T>sInput` | Yes | Yes | Yes |
+| Scan function (`scan<T>s`) | Yes | Yes | Yes |
+| `(*<T>Filter) ToConditions` | Yes | Yes | Yes |
 | Get (single) | Yes | Yes (if `@pk` annotated) | Yes (if unique index or `@pk`) |
 | GetMany | Yes | Yes | Yes |
 | Count | Yes | Yes | Yes |
@@ -9417,7 +9649,7 @@ When a soft delete column is detected:
 
 - **SoftDelete/SoftDeleteMany/SoftDeleteWhere** methods are generated
 - **Restore/RestoreMany/RestoreWhere** methods are generated
-- **GetMany** automatically adds a default "is not deleted" condition (e.g., `WHERE deleted_at IS NULL` or `WHERE is_deleted = FALSE`) unless the caller sets the soft delete comparator on the filter
+- **Read methods** add a default "is not deleted" condition (e.g., `WHERE deleted_at IS NULL` or `WHERE is_deleted = FALSE`) unless the caller sets the soft delete comparator on the filter ([9.8](#98-generated-method-patterns) item 4); `Get` and `Exists`, which take a key rather than a filter, always add it
 - **Filter** includes the soft delete column as a regular comparator field (e.g., `DeletedAt *comparator.NullableTime`). Setting it overrides the method's default soft delete scoping.
 - **Restore** clears the soft delete column, returning the row to the "not deleted" state. `RestoreWhere` internally scopes to soft-deleted rows so it can find rows to restore.
 
@@ -9553,13 +9785,15 @@ When `TxOptions` is zero-value (all empty strings), the database's default isola
 | `ReadCommitted` | Yes (default) | Yes | No |
 | `ReadUncommitted` | Yes | Yes | No |
 | `ReadOnly` | Yes | Yes (`START TRANSACTION READ ONLY`) | No |
-| `Deferrable` | Yes | No (ignored) | No (ignored) |
+| `Deferrable` | Yes (pgx only; ignored through `stdlib`) | No (ignored) | No (ignored) |
 
 SQLite only supports `SERIALIZABLE` isolation. Setting any other level on SQLite is silently ignored (SQLite transactions are always serializable).
 
+`DeferrableMode` reaches PostgreSQL only through the `pgx` driver. `database/sql`'s transaction options have no deferrable field, so the `stdlib` adapter ignores `DeferrableMode` on every dialect, PostgreSQL through `lib/pq` included.
+
 **Transaction timeout:**
 
-When `Timeout` is set, `WithTransaction`/`NewTransaction` wraps the transaction context with `context.WithTimeout`. If the timeout expires, the context is cancelled and any in-flight database operations return a context deadline error. The transaction is then rolled back by `WithTransaction`'s error handling.
+When `Timeout` is set, `WithTransaction`/`NewTransaction` wraps the transaction context with `context.WithTimeout`. If the timeout expires, the context is cancelled and any in-flight database operations return a context deadline error. The transaction is then rolled back by `WithTransaction`'s error handling, which returns that deadline error; the `Tx` reports closed and `database.Conn` falls back to the original querier ([18.4](#184-txisclosed-and-safe-fallback)). If `fn` returns `nil` after the deadline, the `COMMIT` usually fails on the expired context, and `WithTransaction` then rolls back and returns that error, so the `Tx` is closed either way. On `database/sql` a `COMMIT` issued in the instant after the deadline can still succeed, because the transaction context `database/sql` derives is cancelled a moment after the timeout's own.
 
 When `Timeout` is zero (the default), no timeout is applied. This is intentional — some transactions involve legitimate long-running work, and an aggressive default timeout would cause unexpected failures. Consumers opt in per transaction based on their knowledge of expected duration:
 
@@ -9587,7 +9821,7 @@ The timeout covers the entire transaction lifecycle (BEGIN through COMMIT/ROLLBA
 | `Rollback(ctx)` | At root: ROLLBACK. At savepoint: ROLLBACK TO SAVEPOINT (discards callbacks at this depth). |
 | `WithTransaction(ctx, querier, name, fn, ...TxOptions)` | Automatic begin/commit/rollback wrapper. Nesting is transparent — inner calls create savepoints (options ignored for savepoints). |
 
-`TxOptions` is variadic — omitting it uses database defaults. At most one `TxOptions` value is accepted; passing more than one is a runtime panic.
+`TxOptions` is variadic — omitting it uses database defaults. At most one `TxOptions` value is accepted; passing more than one returns an error from `NewTransaction`, `WithTransaction` and the adapters' `Begin`, before any statement is sent.
 
 **Nesting is transparent.** The consumer writes the same code regardless of depth. `NewTransaction` / `WithTransaction` detect whether a transaction already exists in the context and automatically use a savepoint instead of a new transaction. **Transaction options only apply to the outermost `BEGIN`** — savepoints inherit the parent transaction's isolation and access mode.
 
@@ -9623,6 +9857,14 @@ The consumer never calls `Savepoint()`, `RollbackTo()`, or `Release()` directly.
 ### 18.4 Tx.IsClosed and Safe Fallback
 
 The `Tx` type exposes an `IsClosed() bool` method that returns `true` after the transaction has been committed or rolled back. "After" is exact: a root `COMMIT` or `ROLLBACK` that has been issued and not yet answered still reports `false`, and one the driver rejects leaves the transaction open and keeps reporting `false`. See [18.5](#185-concurrent-safety), "What `IsClosed` reports while a root teardown is in flight", for what depends on that and for what makes a root teardown at-most-once instead.
+
+A teardown that finds the transaction **already ended by the driver** is not a rejection. `database/sql` marks its transaction done before it calls the driver, and rolls it back on its own when the context it was begun with ends; pgx closes its transaction, and drops the connection, whenever a `ROLLBACK` fails.
+
+- A `Rollback` of a transaction the driver had already ended (`sql.ErrTxDone`, `pgx.ErrTxClosed`), or one that failed after its context ended, returns `nil`: the transaction is rolled back.
+- A `ROLLBACK` that failed for any other reason — a connection still busy with a leaked result set, a broken socket — has still ended the transaction. The adapter wraps `database.ErrTxDone` into the error; the `Tx` reports closed and the error is returned.
+- A `COMMIT` that finds the transaction already ended is reported the same way, wrapping the context's error on `database/sql` when that is what ended it. The `Tx` reports closed and its `OnCommit` callbacks never fire.
+
+A root `COMMIT` that fails for any other reason leaves the transaction open and the caller's to roll back. `WithTransaction` is that caller: when its root `COMMIT` fails it rolls back, and returns the `COMMIT`'s error with the `Tx` closed. A savepoint's `RELEASE` that fails is left to the enclosing scope.
 
 `database.Conn(ctx, querier)` checks `IsClosed()` before returning a transaction from the context. If the transaction is closed, it falls back to the original querier instead. This prevents errors from attempting to use a committed or rolled-back transaction (e.g., when a deferred operation runs after the transaction has already completed).
 
@@ -9850,7 +10092,7 @@ err := database.WithTransaction(ctx, db, "checkout", func(txCtx context.Context)
 
 - **The caller waits** for all callbacks to complete before `WithTransaction` returns.
 - **Callback failures propagate** as the return error from `WithTransaction`. The first callback failure stops execution of remaining callbacks and returns the error.
-- **Context cancellation applies.** Callbacks receive the caller's context — if it is cancelled, remaining callbacks are skipped.
+- **Context cancellation applies.** Callbacks receive the caller's context — if it is cancelled, remaining callbacks are skipped and `WithTransaction` returns the context's error. The commit has already succeeded, so the error reports dropped side effects, not a rolled-back transaction.
 - Provides **fail-fast behavior** for consumers who need to know immediately if side effects failed.
 
 **Critical caveat for sync mode:** The DB commit has already succeeded before callbacks run. A callback failure (e.g., event publish fails) does **not** roll back the committed transaction — that is impossible. The caller receives an error, but the data is already durable. This means sync mode gives the caller **visibility** into callback failures, not transactional guarantees across DB + side effects. The caller must handle the inconsistency (e.g., retry the side effect, log for reconciliation).
@@ -9890,7 +10132,7 @@ Deferred callbacks fire in **registration order** (the order mutations occurred 
 If a deferred callback fails (e.g., event publisher is unreachable):
 
 1. **Retry once** — the callback is retried immediately
-2. **Log on second failure** — if the retry also fails, the failure is logged with full context (table, PK, operation, error)
+2. **Log on second failure** — if the retry also fails, the callback's error is logged. `OnCommit` takes an opaque function, so the table, PK and operation are whatever the hook that registered it put in that error
 3. **Continue** — remaining callbacks still fire (one failure doesn't block the others)
 4. **Trip the circuit breaker** — if failures exceed the threshold, the cache is disabled (see below)
 
@@ -9960,11 +10202,11 @@ When `NewTransaction` / `WithTransaction` is called and a transaction already ex
 
 | Dialect | Savepoint SQL | Go Driver |
 |---------|--------------|-----------|
-| PostgreSQL | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | pgx: native via `tx.Begin(ctx)` |
-| MySQL | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | stdlib: issued as raw SQL internally |
-| SQLite | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TRANSACTION TO SAVEPOINT` | stdlib: issued as raw SQL internally |
+| PostgreSQL | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | pgx or stdlib: issued as raw SQL by the `Tx` |
+| MySQL | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | stdlib: issued as raw SQL by the `Tx` |
+| SQLite | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | stdlib: issued as raw SQL by the `Tx` |
 
-All three dialects support savepoints. pgx handles them natively; for stdlib drivers (MySQL, SQLite), the `Tx` wrapper issues the appropriate SQL internally. The Go `database/sql` stdlib has no savepoint API (Go issue #7898, open since 2014) — sqlgen provides this functionality across all drivers.
+All three dialects support savepoints, and the `Tx` issues the same three statements on every driver; SQLite accepts `ROLLBACK TO SAVEPOINT` as a spelling of `ROLLBACK TRANSACTION TO SAVEPOINT`. The Go `database/sql` stdlib has no savepoint API (Go issue #7898, open since 2014) — sqlgen provides this functionality across all drivers.
 
 ##### Internal: Depth-Indexed Callback Stack
 
@@ -10286,10 +10528,10 @@ Each driver lives in its own sub-package so that importing one driver does not p
 
 ### 19.3 Import Isolation
 
-The core `database/` package never imports `pgx`, `database/sql`, or any driver. Driver packages import the core package for interfaces and the external driver library:
+The core `database/` package imports only the standard library and never `pgx` or any driver. It may import `database/sql`, which is part of the standard library. Driver packages import the core package for interfaces and the external driver library:
 
 ```
-database/          ← interfaces only, zero external deps
+database/          ← interfaces and shared utilities, standard library only
 database/pgx/      ← imports database/ + jackc/pgx/v5
 database/stdlib/   ← imports database/ + database/sql (std lib)
 database/mock/     ← imports database/ only
@@ -10299,7 +10541,7 @@ Generated code imports exactly one driver package based on config:
 - `output.driver: "pgx"` → generated code imports `database/pgx/`
 - `output.driver: "stdlib"` → generated code imports `database/stdlib/`
 
-This ensures projects using stdlib never pull in `pgx` (and vice versa).
+This ensures projects using stdlib never pull in `pgx`. The reverse does not hold for `database/sql`: it is part of the standard library, and pgx itself imports it.
 
 ### 19.4 Batch Behavior by Driver
 
@@ -10313,13 +10555,13 @@ Batch operations (`CreateMany`, `UpdateMany`, `HardDeleteMany`, `SoftDeleteMany`
 | `HardDeleteMany` | `DELETE FROM ... WHERE id IN (...)` | Single statement | Single statement |
 | `SoftDeleteMany` | `UPDATE ... SET deleted_at = CURRENT_TIMESTAMP WHERE id IN (...)` | Single statement | Single statement |
 | `RestoreMany` | `UPDATE ... SET deleted_at = NULL WHERE id IN (...)` | Single statement | Single statement |
-| `UpdateMany` | N individual `UPDATE ... SET ... WHERE id = $` | Pipelined via `SendBatch` (1 round-trip) | Sequential in a transaction (N round-trips) |
+| `UpdateMany` | N individual `UPDATE ... SET ... WHERE id = $` | Pipelined via `SendBatch` (1 round-trip); sequential in a transaction when the querier has no `SendBatch` | Sequential in a transaction (N round-trips) |
 
 For `CreateMany`, `HardDeleteMany`, `SoftDeleteMany`, and `RestoreMany`, both drivers produce identical SQL and have the same performance characteristics — one round-trip per batch.
 
 **`UpdateMany` on stdlib:**
 
-Since each row in an `UpdateMany` call has different update values, the statements cannot be combined into a single SQL statement. On pgx, `SendBatch` pipelines all N statements over one network round-trip. On stdlib, no such pipelining exists.
+Since each row in an `UpdateMany` call has different update values, the statements cannot be combined into a single SQL statement. On pgx, `SendBatch` pipelines a sub-batch's N statements over one network round-trip when the querier implements it. On stdlib, no such pipelining exists.
 
 The stdlib fallback executes each UPDATE **sequentially within an implicit transaction**:
 
@@ -10340,7 +10582,13 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateItem) erro
 
 If the caller already has an active transaction in the context, this becomes a savepoint (section 18.3) — no nested transaction is created.
 
-**Performance implication:** `UpdateMany` on stdlib is N round-trips per batch instead of 1. For high-throughput update workloads, pgx is strongly recommended. The stdlib driver is best suited for MySQL and SQLite use cases where pgx is not an option, or for PostgreSQL deployments where pgx's CGO-free alternative (`lib/pq` via stdlib) is preferred for operational simplicity.
+**`UpdateMany` on pgx without `SendBatch`:**
+
+pgx pipelines a sub-batch only when the resolved querier implements `SendBatch`. A wrapping middleware may not, and a caller's transaction never does: `*database.Tx` has no `SendBatch`. When the querier has no `SendBatch`, pgx runs the sub-batch's statements one by one in a transaction, or in a savepoint inside the caller's transaction, exactly as stdlib does.
+
+**Every driver makes each sub-batch atomic.** A failing item rolls back the items of its sub-batch written before it: through `SendBatch`'s implicit transaction, or through the per-sub-batch transaction or savepoint. Sub-batches already committed stay applied, and the call returns the error. Inside a caller's transaction the failed sub-batch rolls back to its savepoint, so the caller's transaction can continue.
+
+**Performance implication:** `UpdateMany` on stdlib, and on pgx without `SendBatch` (inside any transaction among them), is N round-trips per batch instead of 1. For high-throughput update workloads, pgx is strongly recommended. The stdlib driver is best suited for MySQL and SQLite use cases where pgx is not an option, or for PostgreSQL deployments where pgx's CGO-free alternative (`lib/pq` via stdlib) is preferred for operational simplicity.
 
 **Batch size still applies.** Regardless of driver, all batch operations split their input into sub-batches of `generation.batch_size` (default: 200). Each sub-batch is processed independently. This prevents parameter count limits from being exceeded and bounds memory usage.
 
@@ -10578,7 +10826,7 @@ products, err := client.Products().GetMany(ctx, &<pkg>.GetProductsInput{
     Filter: &<pkg>.ProductFilter{
         Price: &comparator.Numeric[float64]{Gte: 100.00},
     },
-    Limit: intPtr(10),
+    Limit: new(10),
 })
 
 user, err := client.Users().Create(ctx, &<pkg>.CreateUserInput{
@@ -10586,7 +10834,7 @@ user, err := client.Users().Create(ctx, &<pkg>.CreateUserInput{
     Email: "alice@example.com",
 })
 
-err = client.Reviews().SoftDelete(ctx, reviewID)
+_, err = client.Reviews().SoftDelete(ctx, reviewID)
 
 // Transactions — all entity clients share the transaction automatically
 err = database.WithTransaction(ctx, db, "checkout", func(txCtx context.Context) error {
@@ -10705,6 +10953,8 @@ type MutationContext struct {
     Input       any        // *CreateInput, *UpdateInput, filter, etc.
     CallOptions any        // resolved CallOptions[FO]; hooks can type-assert for table-specific access
     AffectedPKs []any      // post-mutation: all affected PKs, set by terminal (see Section 28)
+    AffectedTenants []any  // post-mutation: each affected row's tenant, index-aligned with AffectedPKs (see 29.5)
+    Tenant      any        // tenant resolved at the method boundary; nil when not tenanted or tenancy is skipped (see 29.5)
 }
 
 // QueryHook wraps a QueryHandler to produce a new QueryHandler.
@@ -10715,11 +10965,13 @@ type QueryHandler func(ctx context.Context, q *QueryContext) (any, error)
 
 // QueryContext provides metadata and access to the query being performed.
 type QueryContext struct {
-    Op     QueryOp   // Get, GetMany, Exists, Count, Paginate, Connection
-    Table  TableName // table name constant (e.g., TableProducts)
-    Schema string    // schema name (e.g., "public", "" for MySQL/SQLite)
-    PK     any       // primary key value (for Get/Exists; nil for GetMany/Count)
-    Input  any       // *GetInput, *Filter, etc.
+    Op          QueryOp   // Get, GetMany, Exists, Count, Paginate, Connection, Stream, Refresh
+    Table       TableName // table name constant (e.g., TableProducts)
+    Schema      string    // schema name (e.g., "public", "" for MySQL/SQLite)
+    PK          any       // primary key value (for Get/Exists; nil for GetMany/Count)
+    Input       any       // *GetInput, *Filter, etc.
+    CallOptions any       // resolved CallOptions[FO]; hooks can type-assert for table-specific access
+    Tenant      any       // tenant resolved at the method boundary; nil when not tenanted or tenancy is skipped (see 29.5)
 }
 ```
 
@@ -10757,8 +11009,12 @@ const (
     OpCount      QueryOp = "count"
     OpPaginate   QueryOp = "paginate"
     OpConnection QueryOp = "connection"
+    OpStream     QueryOp = "stream"
+    OpRefresh    QueryOp = "refresh"
 )
 ```
+
+`OpStream` is the op `Stream` runs the query chain under ([9.4a](#94a-streaming-operations)). `OpRefresh` is the op of a materialized view's `Refresh` and `RefreshConcurrently` ([16.5](#165-materialized-views-postgresql)): a refresh flows through the query chain like a read, with no `Input` and no rows returned.
 
 **`OpUpsertMany` maps to the existing `event.Upsert` action**, not to a new wire value, so every subscriber already filtering on `event.Upsert` keeps working unchanged ([28.3](#283-event-structure)). It is a genuine new write path — it reaches the database directly — so it needs its own op, and every consumer switch keyed on `MutationOp` must name it explicitly: cache invalidation ([27.7](#277-cache-behavior-by-operation)), the op-to-action mapping, and the [32.3](#323-per-surface-behavior) event-redaction switch. None of those fails to compile when an arm is missing, so each needs its own behavioral check.
 
@@ -10816,7 +11072,17 @@ func ForQuery[Input any, Result any](
 ) QueryHook
 ```
 
-The generic helpers accept `TableName` (not a raw string), so the table reference is always a generated constant. Internally they match the table name and assert the input/result types. If the table doesn't match, the hook passes through to `next` without executing — so entity-specific hooks are safe to register globally.
+The generic helpers accept `TableName` (not a raw string), so the table reference is always a generated constant. Internally they match the table name and assert the input/result types. If the table doesn't match, the hook passes through to `next` without executing, so an entity hook never touches another table's operations.
+
+On a matching table the helper fires for **every** operation on that table, and its types must hold for each one:
+
+- When `Input` is not the declared type — another operation's input, or nil for an operation that carries none (`Get`, `Exists`, a delete by key) — the hook returns an error without calling `fn` or `next`, e.g. `hook: type assertion failed for update public.products: expected *<pkg>.CreateProductInput, got *<pkg>.UpdateProductInput` (the types print package-qualified).
+- When `next` succeeds with a non-nil result that is not the declared `Result`, the typed `next` returns an error, e.g. `hook: result type assertion failed for get_many public.products: expected *<pkg>.Product, got []*<pkg>.Product`. The operation has already run when this error is returned.
+- When `next` succeeds with a nil result, the typed `next` returns the zero `Result` and no error.
+
+`OpExists` is one op for two input shapes — `Exists` carries the key in `PK` and no `Input`, `ExistsWhere` carries the filter — so no typed helper serves both; like `Get`, a hook on `Exists` is an untyped `QueryHook`.
+
+A mismatch is an error rather than a silent pass-through, so a hook declared with the wrong types fails loudly instead of never running. Scope an entity hook to the operations whose types it declares with `OnMutation` / `OnQuery` ([21.4](#214-conditional-execution-helpers)).
 
 ### 21.3 Registration
 
@@ -10836,19 +11102,16 @@ client := <pkg>.New(db,
 )
 ```
 
-**Execution order:** Global hooks always run before entity-specific hooks, regardless of registration order. Within each group, hooks execute in registration order (outermost first).
+**Execution order:** Hooks execute in registration order: the first registered is the outermost. The chain does not tell global hooks from entity-specific ones — a hook built with `ForMutation` / `ForQuery` is an ordinary `MutationHook` / `QueryHook` — so an entity hook registered before a global hook runs outside it.
 
 ```
-Global hooks (outermost → innermost, registration order)
-    │
-    ▼
-Entity-specific hooks (outermost → innermost, registration order)
+Registered hooks (outermost → innermost, registration order)
     │
     ▼
 Actual DB operation
 ```
 
-If global hooks `f`, `g` and entity hook `h` are registered, execution is `f(g(h(operation)))`. Code before `next()` runs in order (f→g→h); code after `next()` runs in reverse (h→g→f). This ensures cross-cutting concerns (tracing, auth) always wrap entity-specific logic (validation, enrichment).
+If global hooks `f`, `g` and entity hook `h` are registered in that order, execution is `f(g(h(operation)))`. Code before `next()` runs in order (f→g→h); code after `next()` runs in reverse (h→g→f). Register cross-cutting hooks (tracing, auth) first so they wrap entity-specific logic (validation, enrichment).
 
 ### 21.4 Conditional Execution Helpers
 
@@ -10871,6 +11134,8 @@ hook.OnMutation(
 // Block operations entirely
 hook.RejectMutation(OpHardDelete)                    // returns error if HardDelete is attempted
 ```
+
+`RejectMutation` rejects a listed op on every table without calling `next`, with an error naming the op and the table, e.g. `hook: operation hard_delete is not allowed on public.products`. Other ops pass through.
 
 ### 21.5 Hook Lifecycle
 
@@ -10931,7 +11196,7 @@ func recoveryHook(next hook.MutationHandler) hook.MutationHandler {
 }
 ```
 
-The default recovery hook converts the panic into an error, e.g. `sqlgen: panic in create public.users: boom`. `Table` already carries the schema whenever the table has one ([5.5](#55-schema-qualification--table-naming) "Schema in Generated Code"), so the message names it once; a context whose `Table` lacks the schema (hand-built, say) gets `Schema` prefixed. The operation returns an error to the caller instead of crashing the server. Consumers who need logging or reporting should use `WithPanicHandler`.
+The default recovery hook converts the panic into an error, e.g. `sqlgen: panic in create public.users: boom`. The method then returns it under its prefix ([22.3](#223-error-wrapping-convention)), e.g. `create user: sqlgen: panic in create public.users: boom`. `Table` already carries the schema whenever the table has one ([5.5](#55-schema-qualification--table-naming) "Schema in Generated Code"), so the message names it once; a context whose `Table` lacks the schema (hand-built, say) gets `Schema` prefixed. The operation returns an error to the caller instead of crashing the server. Consumers who need logging or reporting should use `WithPanicHandler`.
 
 **Custom recovery handler:**
 
@@ -10956,10 +11221,7 @@ client := <pkg>.New(db,
 Panic recovery (always outermost)
     │
     ▼
-Global hooks
-    │
-    ▼
-Entity-specific hooks
+Registered hooks (registration order)
     │
     ▼
 Actual DB operation
@@ -11055,7 +11317,7 @@ client := <pkg>.New(db,
 
 ### 21.8 Entity-Level Hooks (type-safe — specific tables)
 
-Entity-level hooks use the generic helpers `hook.ForMutation[Input, Result]` and `hook.ForQuery[Input, Result]`. They are scoped to a specific table and provide type-safe access to the input and result — no `any`, no type assertions.
+Entity-level hooks use the generic helpers `hook.ForMutation[Input, Result]` and `hook.ForQuery[Input, Result]`. They are scoped to a specific table and provide type-safe access to the input and result — no `any`, no type assertions. A helper fires for every operation on its table and returns an error when an operation's input or result is not the declared type ([21.2](#212-hook-types) "Generic Type-Safe Helpers"), so each example below is scoped with `OnMutation` / `OnQuery` to the operations whose types it declares.
 
 | Use Case | Hook Type | Why Entity-Level? |
 |----------|-----------|-------------------|
@@ -11067,7 +11329,7 @@ Entity-level hooks use the generic helpers `hook.ForMutation[Input, Result]` and
 #### Product Creation Validation
 
 ```go
-productValidateHook := hook.ForMutation[*<pkg>.CreateProductInput, *<pkg>.Product](
+productValidateHook := hook.OnMutation(hook.ForMutation[*<pkg>.CreateProductInput, *<pkg>.Product](
     <pkg>.TableProducts,
     func(ctx context.Context, m *hook.MutationContext, input *<pkg>.CreateProductInput, next func(context.Context) (*<pkg>.Product, error)) (*<pkg>.Product, error) {
         // input is *CreateProductInput — no type assertion needed
@@ -11077,13 +11339,13 @@ productValidateHook := hook.ForMutation[*<pkg>.CreateProductInput, *<pkg>.Produc
         input.Name = strings.TrimSpace(input.Name)
         return next(ctx)
     },
-)
+), hook.OpCreate)
 ```
 
 #### Product Query Enrichment
 
 ```go
-productQueryHook := hook.ForQuery[*<pkg>.GetProductsInput, []*<pkg>.Product](
+productQueryHook := hook.OnQuery(hook.ForQuery[*<pkg>.GetProductsInput, []*<pkg>.Product](
     <pkg>.TableProducts,
     func(ctx context.Context, q *hook.QueryContext, input *<pkg>.GetProductsInput, next func(context.Context) ([]*<pkg>.Product, error)) ([]*<pkg>.Product, error) {
         // Enforce maximum page size for products
@@ -11093,28 +11355,29 @@ productQueryHook := hook.ForQuery[*<pkg>.GetProductsInput, []*<pkg>.Product](
         }
         return next(ctx)
     },
-)
+), hook.OpGetMany)
 ```
 
 #### Entity-Level Caching
 
 ```go
-productCacheHook := hook.ForQuery[*<pkg>.GetProductsInput, *<pkg>.Product](
+productCacheHook := hook.OnQuery(hook.ForQuery[*<pkg>.GetProductsInput, []*<pkg>.Product](
     <pkg>.TableProducts,
-    func(ctx context.Context, q *hook.QueryContext, input *<pkg>.GetProductsInput, next func(context.Context) (*<pkg>.Product, error)) (*<pkg>.Product, error) {
-        if q.Op == hook.OpGet && q.PK != nil {
-            if cached, ok := cache.Get[<pkg>.Product](ctx, q.PK); ok {
-                return cached, nil // short-circuit
-            }
+    func(ctx context.Context, q *hook.QueryContext, input *<pkg>.GetProductsInput, next func(context.Context) ([]*<pkg>.Product, error)) ([]*<pkg>.Product, error) {
+        key := productsCacheKey(input)
+        if cached, ok := cache.Get[[]*<pkg>.Product](ctx, key); ok {
+            return cached, nil // short-circuit
         }
         result, err := next(ctx)
-        if err == nil && q.Op == hook.OpGet {
-            cache.Set(ctx, q.PK, result, 15*time.Minute)
+        if err == nil {
+            cache.Set(ctx, key, result, 15*time.Minute)
         }
         return result, err
     },
-)
+), hook.OpGetMany)
 ```
+
+`Get` carries its key in `PK` and no `Input`, so a typed helper cannot serve it; a hook on `Get` is an untyped `QueryHook` that reads `q.PK`.
 
 ### 21.9 Registration Summary
 
@@ -11133,7 +11396,7 @@ client := <pkg>.New(db,
 )
 ```
 
-Global hooks always execute before entity-level hooks, regardless of registration order. Entity-level hooks (created via `ForMutation`/`ForQuery`) automatically pass through when the table doesn't match, so they are safe to register alongside global hooks. This ordering ensures cross-cutting concerns (tracing, auth) always wrap entity-specific logic (validation, query enrichment).
+Hooks execute in registration order ([21.3](#213-registration)), so the global hooks are registered first: that is what makes cross-cutting concerns (tracing, auth) wrap entity-specific logic (validation, query enrichment). Entity-level hooks pass through on other tables, and each is scoped with `OnMutation` / `OnQuery` to the operations whose types it declares ([21.8](#218-entity-level-hooks-type-safe--specific-tables)), so they are safe to register alongside global hooks.
 
 ### 21.10 Rejected Alternative: Per-Operation Hook Methods
 
@@ -11229,13 +11492,20 @@ var (
     ErrDeadlock = errors.New("sqlgen: deadlock detected")
 
     // ErrConnectionFailed is returned when a database operation fails due to
-    // a connection-level error (connection refused, reset, timeout, pool
-    // exhaustion). Wraps the underlying driver error for inspection.
+    // a connection-level error (connection refused or reset, a driver's
+    // connect timeout, the server out of connections). Wraps the underlying
+    // driver error for inspection. An exhausted pool waits on the caller's
+    // context, so it surfaces as that context's error. See Section 22.2.
     ErrConnectionFailed = errors.New("sqlgen: connection failed")
 
     // ErrConstraintViolation is the base error for all constraint failures.
     // Use errors.As() to extract the specific ConstraintError.
     ErrConstraintViolation = errors.New("sqlgen: constraint violation")
+
+    // ErrTxDone is returned when a COMMIT or ROLLBACK finds the transaction
+    // ended by the driver, as when its context expires or its connection
+    // fails. The transaction did not commit. See Section 18.4.
+    ErrTxDone = errors.New("sqlgen: transaction already ended by the driver")
 
     // ErrRefreshConcurrentlyInTx is returned when RefreshConcurrently on a
     // materialized-view client is called while an ambient transaction is
@@ -11263,7 +11533,7 @@ The sentinels are declared once in the runtime `database` package. The generated
 
 ### 22.2 Constraint Errors
 
-Database constraint violations are parsed from driver-specific error codes and wrapped into a structured `ConstraintError`. The driver adapters apply the same mapping to `COMMIT` as to every statement. Some errors only `COMMIT` can report: a PostgreSQL `DEFERRABLE` constraint, a SQLite deferred foreign key, a Galera certification failure (MySQL 1213). Those reach the caller as the same `ConstraintError` or `ErrDeadlock` they would have been at statement time:
+Database constraint violations are parsed from driver-specific error codes and wrapped into a structured `ConstraintError`, those read from the results of the pgx adapter's `SendBatch` included. The driver adapters apply the same mapping to `COMMIT` as to every statement. Some errors only `COMMIT` can report: a PostgreSQL `DEFERRABLE` constraint, a SQLite deferred foreign key, a Galera certification failure (MySQL 1213). Those reach the caller as the same `ConstraintError` or `ErrDeadlock` they would have been at statement time:
 
 ```go
 type ConstraintError struct {
@@ -11314,9 +11584,11 @@ func (e *NestedMutationError) Unwrap() error // unwraps to Err
 | Unique violation | `23505` | `1062` | `SQLITE_CONSTRAINT_UNIQUE` (2067) |
 | FK violation | `23503` | `1451` / `1452` | `SQLITE_CONSTRAINT_FOREIGNKEY` (787) |
 | Check violation | `23514` | `3819` | `SQLITE_CONSTRAINT_CHECK` (275) |
-| Not null violation | `23502` | `1048` | `SQLITE_CONSTRAINT_NOTNULL` (1299) |
+| Not null violation | `23502` | `1048` / `1364` | `SQLITE_CONSTRAINT_NOTNULL` (1299) |
 | Deadlock | `40P01` | `1213` | N/A (SQLite uses file-level locking) |
-| Connection failed | `08*` class (connection exception) | `2002` (server gone), `2006` (connection lost), `1040` (too many connections) | `SQLITE_BUSY` (5), `SQLITE_CANTOPEN` (14) |
+| Connection failed | `08*` class (connection exception), `53300` (too many connections) | `1040` (too many connections) | `SQLITE_BUSY` (5), `SQLITE_CANTOPEN` (14) |
+
+A failure to reach the database or to keep the connection is also `ErrConnectionFailed`, on every driver and at `Begin` as at every statement: a refused or failed connect, a connect timeout the driver enforces, a broken socket, or a connection the driver has given up on (`database/sql`'s `driver.ErrBadConn`, the MySQL driver's `ErrInvalidConn`). These carry no SQLSTATE or MySQL error number of their own; MySQL's `2002` and `2006` are client-library codes the Go driver reports this way. The driver's error stays wrapped. A server that rejects the connection is mapped by its code, so only a rejection for capacity (`53300`, `1040`) is a connection failure; a rejected password or an unknown database is not. The caller's own deadline or cancellation is not a connection failure either: once the call's context has ended, no transport failure is mapped and the driver's error is returned as it came. The adapters decide that on the call's context, since a driver's connect timeout looks the same as a deadline.
 
 **Usage:**
 
@@ -11349,6 +11621,34 @@ fmt.Errorf("get many products: %w", err)
 ```
 
 This allows consumers to identify which operation and entity failed without inspecting stack traces.
+
+**Prefix by method.** Every error an entity or view client method returns starts with that method's prefix exactly once, sentinels included: a missing key is `get product: sqlgen: resource not found`, and a nil input is `create product: sqlgen: nil input`. `{table}` is the table or view name as written in SQL (`order_items`), and `{singular}` is that name singularized (`order_item`), for the methods that address one row. What follows the prefix is the cause, which may itself start with the prefix of a client method the method calls internally: `Get` reads through `GetMany`, so a failing `Get` reads `get product: get many products: …`.
+
+| Method | Prefix |
+|---|---|
+| `Get` | `get {singular}` |
+| `GetMany` | `get many {table}` |
+| `Count` | `count {table}` |
+| `Exists` | `exists {singular}` |
+| `ExistsWhere` | `exists {table} where` |
+| `Stream` (each yielded error) | `stream {table}` |
+| `Paginate` | `paginate {table}` |
+| `Connection` | `connection {table}` |
+| `Create` | `create {singular}` |
+| `CreateMany` | `create many {table}` |
+| `Update` | `update {singular}` |
+| `UpdateMany` | `update many {table}` |
+| `UpdateWhere` | `update {table} where` |
+| `Upsert` | `upsert {singular}` |
+| `UpsertMany` | `upsert many {table}` |
+| `Increment` | `increment {singular}` |
+| `SoftDelete`, `Restore`, `HardDelete` | `soft delete {singular}`, `restore {singular}`, `hard delete {singular}` |
+| `SoftDeleteMany`, `RestoreMany`, `HardDeleteMany` | `soft delete many {table}`, `restore many {table}`, `hard delete many {table}` |
+| `SoftDeleteWhere`, `RestoreWhere`, `HardDeleteWhere` | `soft delete {table} where`, `restore {table} where`, `hard delete {table} where` |
+| `CreateWithRelated`, `UpdateWithRelated`, `UpsertWithRelated` | `create {singular} with related`, `update {singular} with related`, `upsert {singular} with related` |
+| `Refresh`, `RefreshConcurrently` (materialized views) | `refresh {table}`, `refresh concurrently {table}` |
+
+The prefix is the same on every dialect and driver, whichever statement or transaction step failed: beginning a method's own transaction, executing a statement, or reading its result set.
 
 **Nested mutations extend the pattern by edge and verb**, not by row:
 
@@ -11525,10 +11825,11 @@ if errors.As(err, &mysqlErr) {
 }
 ```
 
-MySQL error numbers: `1062` (duplicate key), `1451`/`1452` (FK), `1048` (not null), `3819` (check). **MySQL does not expose constraint name, table, or column as structured fields** — only `Number`, `SQLState`, and `Message`. The constraint name must be parsed from the message string. Format varies by error:
+MySQL error numbers: `1062` (duplicate key), `1451`/`1452` (FK), `1048`/`1364` (not null), `3819` (check). **MySQL does not expose constraint name, table, or column as structured fields** — only `Number`, `SQLState`, and `Message`. The constraint name must be parsed from the message string. Format varies by error:
 - `1062`: `"Duplicate entry 'VALUE' for key 'TABLE.CONSTRAINT'"` — constraint name after `for key`
 - `1451`/`1452`: `"Cannot add or update a child row: a foreign key constraint fails (SCHEMA.TABLE, CONSTRAINT ...)"` — constraint in parentheses
 - `1048`: `"Column 'COLUMN' cannot be null"` — column name in quotes
+- `1364`: `"Field 'COLUMN' doesn't have a default value"` — column name in quotes. MySQL raises it in strict mode when an INSERT leaves out a `NOT NULL` column that has no `DEFAULT`, where PostgreSQL and SQLite report the same insert as a not-null violation
 
 **modernc.org/sqlite** (`*sqlite.Error`) — code only:
 
@@ -11579,7 +11880,7 @@ The CLI is minimal and extendable:
 | `sqlgen lint` | Static analysis of consumer Go code. Validates hook registrations, type compatibility, and common mistakes. See [23.7](#237-sqlgen-lint). |
 | `sqlgen diff` | Preview what files would be created, modified, or deleted compared to existing generated files. Does not write anything. |
 | `sqlgen completion` | Generate shell completion scripts. Supports `bash`, `zsh`, `fish`, and `powershell`. |
-| `sqlgen manifest validate <path>` | Validate a generated `manifest_gen.json` against its JSON Schema (`$schema` URL). CI-friendly exit codes: 0 success, 1 schema failure, 2 I/O failure. Only available when the consumer has manifest emission enabled. See [30.8](#308-cli-tooling). |
+| `sqlgen manifest validate <path>` | Validate a generated `manifest_gen.json` against its JSON Schema (`$schema` URL). CI-friendly exit codes: 0 success, 1 schema failure, 2 I/O failure. It validates a manifest that manifest emission wrote; the command itself is always available and reads no `sqlgen.yml`. See [30.8](#308-cli-tooling). |
 | `sqlgen manifest diff <old> <new>` | Structured schema-evolution diff between two manifests. Walks entities / columns / methods / sentinels / features and prints additions, removals, changes. Supports `--json` for machine-readable output. Exit code 0 if no diff, 1 if any diff. See [30.8](#308-cli-tooling). |
 | `sqlgen mcp serve` | Serve the generated manifest to AI agents over MCP: 11 read-only tools + 4 resources + 3 prompts, stdio by default (agent clients spawn the server per session), optional loopback-only Streamable HTTP via `--http <port>`, manifest watch-reload on by default. Registration is normally the generated `.mcp.json` (§31.2), not a manual step. See [31](#31-mcp-server). |
 
@@ -11588,7 +11889,7 @@ The CLI is minimal and extendable:
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--config` | `-c` | `sqlgen.yml` or `sqlgen.yaml` | Path to config file. |
-| `--verbose` | `-v` | `false` | Verbose output: show parsed tables, generated files, timing. |
+| `--verbose` | `-v` | `false` | Verbose output: show the parsed table, view and enum counts, the generated files, and timing. |
 | `--quiet` | `-q` | `false` | Suppress all output except errors. |
 | `--no-graphql` | | `false` | (`sqlgen generate` only) Skip the chained `sqlgen graphql gen` invocation when `api.graphql.enabled: true`. Equivalent to `SQLGEN_NO_GRAPHQL=1`. Use when running gqlgen in a separate CI step or migrating incrementally. |
 | `--version` | | | Print version and exit. |
@@ -11653,6 +11954,8 @@ $ sqlgen diff
 4 files would change (1 created, 2 modified, 1 deleted)
 ```
 
+A category with no files is left out of the summary line, and the count reads `N files` whatever `N` is (`1 files would change (1 modified)`).
+
 Exit code `0` when there are no changes, `1` when changes are detected. Useful in CI to verify generated code is up to date.
 
 Coverage is every file `generate` writes, not just `output.dir`: when `api.graphql.enabled: true`
@@ -11703,7 +12006,7 @@ Every fact the rules test is read off a built table context rather than re-deriv
 # Lint the output package (default: output.dir from config)
 sqlgen lint
 
-# Lint additional paths where hooks are registered
+# Lint other directories where hooks are registered (replaces the default output.dir)
 sqlgen lint --paths ./internal/hooks,./cmd/server
 
 # CI-friendly: exit code 1 on errors, 0 on warnings/info only
@@ -11714,11 +12017,11 @@ sqlgen lint --fail-on error
 
 ```
 $ sqlgen lint --paths ./internal/hooks
-  error  internal/hooks/products.go:15  ForMutation[*CreateProductInput, *Product](TableUsers, ...)
+  error  internal/hooks/products.go:15  ForMutation[*CreateProductInput, *User](TableUsers, ...)
          type mismatch: CreateProductInput belongs to TableProducts, not TableUsers
 
-  warn   internal/hooks/audit.go:42    ForMutation filtered on OpSoftDelete for table "audit_logs"
-         table "audit_logs" has no soft delete column — hook will never fire
+  warn   internal/hooks/audit.go:42  ForMutation[*CreateAuditLogInput, *AuditLog](TableAuditLogs, ...)
+         table "audit_logs" has no soft delete column — hook will never fire for OpSoftDelete
 
 2 issues (1 error, 1 warning)
 ```
@@ -11727,8 +12030,10 @@ $ sqlgen lint --paths ./internal/hooks
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--paths` | `output.dir` | Comma-separated list of directories to scan for hook registrations. |
+| `--paths` | `output.dir` | Comma-separated list of directories to scan for hook registrations. Replaces the default rather than adding to it; list `output.dir` too to scan both. |
 | `--fail-on` | `error` | Minimum severity to trigger a non-zero exit code: `error`, `warning`, or `info`. |
+
+A mismatch is reported per type argument: a call whose two type arguments both belong to another table gives two findings, each naming its type. Each finding prints its severity (`error`, `warn` or `info`), its `file:line`, and the hook call rebuilt from the source (the function, its type arguments as written, pointers and slices included, without package qualifiers, and the table constant), then the explanation on the next line; a warning's explanation ends by naming the operation the hook filters on. The last line counts the findings, as `N issues (…)` whatever `N` is.
 
 Exit code `0` when no issues at or above `--fail-on` severity, `1` otherwise.
 
@@ -11751,12 +12056,14 @@ Two feature areas carry their own governed exceptions to the `_gen.go`-only rule
 | `0` | Success |
 | `1` | Generation error (template failure, file write error) |
 | `2` | Config error (invalid YAML, validation failure) |
-| `3` | Schema error (parse failure, ambiguous table names, constraint violations), under every `input.source` |
+| `3` | Schema error (parse failure, a table defined twice, constraint violations), under every `input.source`. An ambiguous bare config key is a config error instead ([5.5](#55-schema-qualification--table-naming)) |
 | `4` | Connection error: connecting to the database, or a catalog query during introspection, failed. Nothing else exits `4` |
+
+A usage error (an unknown command, an unknown or malformed flag, an invalid flag value such as `lint --fail-on bogus`, or a wrong or invalid argument such as `completion nushell`) exits `2`, like a config error. Every failing command prints its error to stderr, whatever the code, so no command exits non-zero silently. `diff` and `manifest diff` exiting `1` because they found changes is a result, not a failure: the listing on stdout reports it and nothing goes to stderr. The `manifest validate` and `manifest diff` codes in [23.1](#231-commands) are their own.
 
 ### 23.10 Watch Mode
 
-sqlgen provides no watch mode. There is no `--watch` flag and no file-monitoring behavior on any command; `sqlgen generate` is a one-shot invocation, wired into `go generate` or a build step by the consumer.
+sqlgen provides no watch mode for code generation. No command regenerates code when a file changes, and `generate`, `validate`, `diff` and `lint` have no `--watch` flag; `sqlgen generate` is a one-shot invocation, wired into `go generate` or a build step by the consumer. The one file-watching behavior is `sqlgen mcp serve`, which reloads the generated manifest on change (`--watch`, on by default; [31](#31-mcp-server)).
 
 ---
 
@@ -11839,7 +12146,15 @@ There are no hard performance targets. This section documents the known tradeoff
 
 ### 25.1 Query Count Guarantee
 
-The number of database queries for any operation is **deterministic and known at call time**. O2O relationships are loaded via LEFT JOIN in the parent query (zero additional queries). O2M relationships produce one batched query each. M2M relationships produce **two** batched queries each — one against the junction table to resolve the parent→target id mapping, then one against the target table for the actual entities. The total is:
+The number of database queries for any operation is **deterministic and known at call time**. O2O relationships are loaded via LEFT JOIN in the parent query (zero additional queries). O2M relationships produce one batched query per chunk of parent keys. M2M relationships produce **two** batched queries per chunk — one against the junction table, joined to the target for the target's stored key, to resolve the parent→target id mapping, then one against the target table for the actual entities.
+
+**Chunking.** Each loader step binds the parent keys in chunks of `floor(L / 2 / N)` keys, where `N` is the number of key columns and `L` is the dialect's bind-parameter limit: 32766 on SQLite (`MAX_VARIABLE_NUMBER`), 65535 on MySQL and PostgreSQL. For a single-column key the chunk is 16383 on SQLite and 32767 on MySQL and PostgreSQL. A key of several columns on PostgreSQL is also capped at 4000 keys per statement: a tuple `IN` nests one level per row, and at the default `max_stack_depth` of 2MB PostgreSQL refuses a list of 7000 to 8000 rows (`stack depth limit exceeded`, 54001), so its two-column chunk is 4000, not 16383. The other half of the budget is left for the relationship's filter, tenancy, soft-delete and static `filter:` parameters, so no parent count makes a load exceed the limit. With `P` parents, `C = ceil(P / chunk)` (0 when there are no parents), and the total is:
+
+```
+total = 1 + Σ_O2M s + 2 · C · count(M2M relationships loaded)
+```
+
+where `s = 1` on PostgreSQL with `output.driver: pgx` for a one-column key that references a NOT NULL column, and `s = C` on every other dialect and driver, PostgreSQL with `stdlib` included. On pgx a one-column O2M FK filter binds every parent key as one array parameter (`= ANY($1)`, Appendix A), so one statement covers any parent count. A key with several columns expands one parameter per key column on every driver, so `s = C` for it on pgx too. So does a one-column key that references a nullable column: its loader skips a parent holding NULL, then expands the remaining keys, so `s = C` for it on pgx as well. On every driver the junction step takes `C` statements and the target fetch at most `C` (none for a chunk whose junction read returns no rows; the formula counts the upper bound): the junction step expands one parameter per key, and the target fetch matches the target key against the chunk's junction rows (`target_key IN (SELECT j.ref_key FROM junction j WHERE j.local_key IN (chunk))`), so it binds the chunk's parent keys however many targets they share. Each parent's children and targets come from one statement, so the relationship's `Sorts` order every parent's slice at any size. When every parent set fits one chunk (`0 < P ≤ chunk`, `C = 1`), the total reduces to:
 
 ```
 total = 1 + count(O2M relationships loaded) + 2 * count(M2M relationships loaded)
@@ -11852,9 +12167,9 @@ GetMany(products, FieldOptions{Company: O2O, Reviews: O2M, Tags: M2M})
     │
     ├── 1 query: SELECT p.*, c.* FROM products p LEFT JOIN companies c ON ...  ← Parent + O2O
     ├── 1 query: SELECT * FROM reviews WHERE product_id = ANY(...)             ← O2M
-    ├── 1 query: SELECT product_id, tag_id FROM product_tags WHERE product_id IN (...)   ← M2M junction
-    └── 1 query: SELECT * FROM tags WHERE id = ANY(...)                        ← M2M entities
-    = 4 queries total
+    ├── 1 query: SELECT j.product_id, t.id FROM product_tags j LEFT JOIN tags t ON t.id = j.tag_id WHERE j.product_id IN (...) AND t.id IS NOT NULL   ← M2M junction
+    └── 1 query: SELECT * FROM tags WHERE id IN (SELECT j.tag_id FROM product_tags j WHERE j.product_id IN (...))   ← M2M entities
+    = 4 queries total (one chunk of parents)
 ```
 
 A deeper O2O chain adds JOINs, not queries:
@@ -11870,9 +12185,9 @@ GetMany(products, FieldOptions{Company: {Country: {Region: {}}}})
     = 1 query total (3 O2O relationships, 0 additional queries)
 ```
 
-**Why two queries for M2M.** The junction-then-entities split lets per-table generated `GetMany` (with its complete FieldOptions, soft-delete defaults, sort handling, and recursive relationship loading) own target-entity loading uniformly across every relationship kind — a single JOIN that bypassed the target client would duplicate that logic per M2M edge and lose the nested-loading invariant. The cost is one extra round-trip per M2M relationship versus a single JOIN; the benefit is one composable loader chain.
+**Why two queries for M2M.** The junction-then-entities split lets per-table generated `GetMany` (with its complete FieldOptions, soft-delete defaults, sort handling, and recursive relationship loading) own target-entity loading uniformly across every relationship kind — a single JOIN that bypassed the target client would duplicate that logic per M2M edge and lose the nested-loading invariant. The cost is one extra round-trip per M2M relationship versus a single JOIN; the benefit is one composable loader chain. The junction read's own join to the target ([13.2](#132-loading-strategy)) is not that JOIN: it reads the target's key columns only, so the mapping holds the key as the target stores it, and every target entity, with its filters, soft-delete default, tenancy, hooks and nested loads, still comes from the target's `GetMany`.
 
-There are no hidden queries. No N+1 problem — O2O uses JOINs, O2M uses a batched `IN` clause, M2M uses two batched `IN` clauses (junction + entities). The consumer controls depth and breadth via `FieldOptions` nesting.
+There are no hidden queries. No N+1 problem — O2O uses JOINs, O2M uses a batched `IN` clause per chunk of parent keys, M2M uses two per chunk (junction, then entities matched through the junction). The count follows the number of parents, never the number of children or targets. The consumer controls depth and breadth via `FieldOptions` nesting.
 
 **The count is driven by what is selected, not by how it is spelled.** On the GraphQL surface the formula is applied to the entity read the request reaches, and a selection that names no column still reaches one when it asks for the row ([26.5.2](#2652-field-selection-translation--the-central-mechanism), "Row identity"). So:
 
@@ -11918,7 +12233,7 @@ sqlgen is **reflection-free at runtime**. No `reflect` package calls appear in t
 
 ### 25.3 Batch Operations
 
-Batch operations (`CreateMany`, `UpdateMany`, etc.) are bounded by `generation.batch_size` (default: 200). Each sub-batch is one write statement (except `UpdateMany` on stdlib — see section 19.4). The total write count for a batch of M items is `ceil(M / batch_size)`. On MySQL, each `CreateMany` sub-batch of two or more rows on a database-generated key is followed by one key-step read ([9.8.5](#985-createmany)), outside the write count as [25.1](#251-query-count-guarantee) states.
+Batch operations (`CreateMany`, `UpdateMany`, etc.) are bounded by `generation.batch_size` (default: 200). Each sub-batch is one write statement (except `UpdateMany`, which sends one UPDATE per item — see section 19.4). The total write count for a batch of M items is `ceil(M / batch_size)`. On MySQL, each `CreateMany` sub-batch of two or more rows on a database-generated key is followed by one key-step read ([9.8.5](#985-createmany)), outside the write count as [25.1](#251-query-count-guarantee) states.
 
 ### 25.4 No Implicit Caching
 
@@ -12019,7 +12334,7 @@ The `field_casing` option controls the naming convention used for fields and arg
 
 | Value | Behavior | Example |
 |-------|----------|---------|
-| `camel_case` (default) | Standard GraphQL convention; emitted GraphQL field names are camelCase | `createdAt`, `productId`, `companyName` |
+| `camel_case` (default) | Standard GraphQL convention; emitted GraphQL field names are camelCase, with [§8.5](#85-naming-rules)'s acronym casing | `createdAt`, `productID`, `companyName` |
 | `snake_case` | Preserves SQL column naming | `created_at`, `product_id`, `company_name` |
 
 The config key uses snake_case for uniformity with other sqlgen config; the *emitted* GraphQL field names are camelCase or snake_case per the chosen value.
@@ -12032,7 +12347,7 @@ The config key uses snake_case for uniformity with other sqlgen config; the *emi
 | Field names | Controlled by `field_casing` | `createdAt` or `created_at` |
 | Query/Mutation names | Always camelCase | `product`, `products`, `createProduct` |
 | Enum values | Always SCREAMING_SNAKE_CASE; digit-leading column names take §8.5's `col_` guard | `ASC`, `DESC`, `CREATED_AT`, `COL_2010_REVENUE` |
-| Argument names | Controlled by `field_casing` | `productId` or `product_id` |
+| Argument names | Controlled by `field_casing` | `productID` or `product_id` |
 
 The `camel_case` default follows the [GraphQL specification's naming recommendations](https://spec.graphql.org/October2021/#sec-Names) and is expected by most GraphQL clients (Apollo, Relay, urql). Use `snake_case` only when consumers expect raw column names or when migrating from an existing snake_case GraphQL API.
 
@@ -12052,10 +12367,8 @@ The SQL schema maps directly to a GraphQL schema:
 | Enum type | GraphQL enum | Values always `SCREAMING_SNAKE_CASE` |
 | PostgreSQL enum array — Go `<Enum>Slice` | `[<Enum>!]!` | Elements bind to the bare enum; the named slice carries `MarshalGQL` / `UnmarshalGQL` so gqlgen binds the column's own Go type without a resolver stub |
 | MySQL `SET` column — Go `<Table><Column>Set` | `[<Table><Column>SetValue!]!` | Same projection as an enum array: the GraphQL enum is named after the **value** type and each element binds to it, while the named slice is the column's Go type. Nullable SETs are reference types, so only the outer list loses its `!`. Filtering stays `StringComparator` ([§11.2](#112-comparator-types)) — the column is stored as comma-separated text. |
-| Composite type | Object type | |
 | Domain type | Underlying scalar | (e.g., `email_address` → `String`) |
-| O2O / M2O relationship — NOT NULL FK | `Type!` | Single object reference |
-| O2O / M2O relationship — nullable FK | `Type` | Single object reference |
+| O2O / M2O relationship | `Type` | Single object reference, nullable whatever the FK's nullability: the loaded relationship can be absent even over a NOT NULL FK (a relationship the walker did not select is nil, [§26.5.2](#2652-field-selection-translation--the-central-mechanism)), and a `Type!` field resolving nil fails the whole response |
 | O2M relationship | `[Type!]!` | Flat list, no per-relationship pagination args; the bulk-IN loader populates the full set |
 | M2M relationship | `[Type!]!` | Same as O2M |
 | `id` (PK) — Go `uuid.UUID` | `UUID!` | sqlgen-generated external marshalers (see §26.4.1) |
@@ -12087,7 +12400,7 @@ The SQL schema maps directly to a GraphQL schema:
 | Offset pagination (root) | `<Type>ListResult { items, totalCount, offset, limit, hasMore }` envelope | Distinct from `[T!]!` so relationships and root-list shapes don't collide; `totalCount` removes the need for a separate count resolver; `hasMore` mirrors the runtime `PaginateResult[T].HasMore` (§14.1) so clients paginate without recomputing `offset + limit < totalCount` |
 | `api.operations` mask (e.g. `read_only`) / `api.enabled: false` | Excludes Mutations or whole type | Global or per-table |
 
-**A relationship field exists only when its target is on the API.** The four relationship rows above apply to an edge whose target is itself exposed. The target may be a table or, through a declared relationship, a view. When the target is hidden (`api.enabled: false` on the table or view, [§26.10](#2610-per-table-api-configuration); or, for a table, every column dropped by [§32.2](#322-roles)), the parent's object type omits the field. It also omits the walker case ([§26.5.2](#2652-field-selection-translation--the-central-mechanism)), the filter member ([§26.5.3](#2653-filter--sort--pagination-translation)) and the nested member ([§9.9.4](#994-eligibility-rules) **E7**). Kept, the field would name a type the schema never declares, and gqlgen would reject the whole document. It drops silently, like E7, because there is no config error to report: `exclude_relationships` is the only way to remove an edge, and it removes the edge from the Go client too. The Go client keeps the edge: `api` gates the API, never the client.
+**A relationship field exists only when its target is on the API.** The three relationship rows above apply to an edge whose target is itself exposed. The target may be a table or, through a declared relationship, a view. When the target is hidden (`api.enabled: false` on the table or view, [§26.10](#2610-per-table-api-configuration); or, for a table, every column dropped by [§32.2](#322-roles)), the parent's object type omits the field. It also omits the walker case ([§26.5.2](#2652-field-selection-translation--the-central-mechanism)), the filter member ([§26.5.3](#2653-filter--sort--pagination-translation)) and the nested member ([§9.9.4](#994-eligibility-rules) **E7**). Kept, the field would name a type the schema never declares, and gqlgen would reject the whole document. It drops silently, like E7, because there is no config error to report: `exclude_relationships` is the only way to remove an edge, and it removes the edge from the Go client too. The Go client keeps the edge: `api` gates the API, never the client. A table with no API-readable column is hidden on its own surface too: it gets no object type, envelope, input or root field, exactly as under `api.enabled: false`.
 
 Field naming follows `api.graphql.field_casing` — accepted values `camel_case` (default) or `snake_case`. Type names always PascalCase, Query/Mutation root names always camelCase, Enum values always SCREAMING_SNAKE_CASE (a value derived from a digit-leading column name carries [§8.5](#85-naming-rules)'s `col_` guard — `2010_revenue` → `COL_2010_REVENUE`).
 
@@ -12249,8 +12562,8 @@ input UpdateProductInput {
   stock_inc: Int
   stock_dec: Int
   price:     Decimal
-  price_inc: Decimal
-  price_dec: Decimal
+  price_inc: Int
+  price_dec: Int
 }
 
 input ProductSort {
@@ -12296,7 +12609,7 @@ input CreateUserCredentialInput {
   userID:     UUID!
   provider:   String!
   externalID: String!
-  createdAt:  Time!
+  createdAt:  Time     # NOT NULL DEFAULT CURRENT_TIMESTAMP: omittable in Go, so optional
 }
 ```
 
@@ -12347,7 +12660,7 @@ The `Custom` field every comparator carries ([§11.4](#114-custom-conditions)) i
 | `String` / `NullableString` | `StringComparator` | `String` | `eq neq gt gte lt lte contains startsWith endsWith like nlike in nin` |
 | `ID` / `NullableID` | `IDComparator` | `ID` | `eq neq gt gte lt lte in nin` |
 | `Number[T]` / `NullableNumber[T]` | `NumericComparator` | `Float` | `eq neq gt gte lt lte in nin between nbetween` |
-| `Bool` / `NullableBool` | `BooleanComparator` | `Boolean` | `eq neq` |
+| `Bool` / `NullableBool` | `BooleanComparator` | `Boolean` | `eq neq in` |
 | `Time` / `NullableTime` | `TimeComparator` | `Time` | `eq neq gt gte lt lte in nin between nbetween` |
 | `String` / `NullableString` on a **decimal** column | `DecimalComparator` | `Decimal` | `eq neq gt gte lt lte in nin` |
 | `Enum[T]` / `NullableEnum[T]` | `<EnumName>Comparator` (`<EnumName>EnumComparator` on collision — see below) | the bound GraphQL enum | `eq neq in nin` |
@@ -12560,11 +12873,11 @@ models:
 
 ### 26.5 GraphQL Resolver Generation
 
-Generated resolvers are **concrete implementations** of the gqlgen-generated resolver interfaces. They translate inputs → unified-client call → outputs, with no business logic. The generated resolvers translate GraphQL field selections into the core client's `FieldOptions`, so relationship loading uses the client's batched `GetMany` strategy (1 + count(O2M selected) + 2 \* count(M2M selected) queries per request, regardless of result-set size — see [Section 25.1](#251-query-count-guarantee)).
+Generated resolvers are **concrete implementations** of the gqlgen-generated resolver interfaces. They translate inputs → unified-client call → outputs, with no business logic. The generated resolvers translate GraphQL field selections into the core client's `FieldOptions`, so relationship loading uses the client's batched `GetMany` strategy (1 + count(O2M selected) + 2 \* count(M2M selected) queries per request while each parent set fits one chunk of keys, and one more per chunked step for each extra chunk past that — see [Section 25.1](#251-query-count-guarantee)).
 
 #### 26.5.1 Exposed Resolver Surface
 
-Not every method on the unified client becomes a root resolver. The exposed surface is curated to match the conventions established by Hasura, PostGraphile, and Prisma's GraphQL plugins, which keeps the schema small and predictable. Per-row computed mutations (`Increment`, `Decrement`) are folded into update inputs as **input operators**, not separate root fields — see §26.5.4.
+Not every method on the unified client becomes a root resolver. The exposed surface is curated to match the conventions established by Hasura, PostGraphile, and Prisma's GraphQL plugins, which keeps the schema small and predictable. Per-row computed mutations (`Increment`, for increments and decrements alike) are folded into update inputs as **input operators**, not separate root fields — see §26.5.4.
 
 **Views.** The table below is the **per-table** surface. A view's surface is the read-only subset — object type, envelopes, filter / sort inputs, and the `<view>` / `<views>` / `<view>List` queries, never a mutation — enumerated in full under [§26.4 Views on the GraphQL surface](#views-on-the-graphql-surface). The `Excluded` table below applies to views unchanged.
 
@@ -12577,7 +12890,7 @@ Not every method on the unified client becomes a root resolver. The exposed surf
 | `<table>List(filter, sort, limit, offset): <Type>ListResult!` query (offset) | `api.operations` includes `paginate` | `Paginate` (sort threads through `translate<T>Sort` into `PaginateInput.Sort`, see §26.5.3) |
 | `create<Table>(input)` mutation | `api.operations` includes `create` | `Create` |
 | `create<Table>s(inputs)` mutation | `api.operations` includes `create_many` | `CreateMany` |
-| `update<Table>(id, input)` mutation | `api.operations` includes `update` | `Update` (with `_inc` / `_dec` input operators dispatching to `Increment` / `Decrement` server-side) |
+| `update<Table>(id, input)` mutation | `api.operations` includes `update` | `Update` (with `_inc` / `_dec` input operators dispatching to `Increment` server-side, a `_dec` as a negative delta) |
 | `update<Table>s(filter, input)` mutation | `api.operations` includes `update_where` | `UpdateWhere` |
 | `upsert<Table>(input)` mutation | `api.operations` includes `upsert` AND the table emits `<Table>ConflictPK` ([9.5](#upsert-conflict-keys)) | `Upsert` |
 | `create<Table>WithRelated(input)` mutation | `nested_mutations` enables the `create` family for the table, the table has an eligible relationship, and `api.operations` includes `create_with_related` and `create` (below) | `CreateWithRelated` |
@@ -12593,11 +12906,11 @@ Not every method on the unified client becomes a root resolver. The exposed surf
 | Excluded method | Why | How to express in GraphQL instead |
 |-----------------|-----|-----------------------------------|
 | `Exists` | redundant with single-by-PK | `<table>(id)` returns null when missing |
-| `Count` | folded into `<Type>Connection.totalCount` and `<Type>ListResult.totalCount` | `<table>List(filter, limit: 0).totalCount` for "count only, no rows" |
+| `Count` | folded into `<Type>Connection.totalCount` and `<Type>ListResult.totalCount` | `<table>List(filter) { totalCount }` for "count only, no rows" — the count-only envelope ([§26.5.2](#2652-field-selection-translation--the-central-mechanism)) costs one `COUNT` |
 | `GetMany(ids)` | derivable | `<table>s(filter: { id: { in: [...] } })` |
 | `UpdateMany(items)` | a batch of per-row updates, each with its own key and input, has no idiomatic GraphQL shape | `update<Table>` per row, or `update<Table>s(filter, input)` where one input applies to every row |
 | `Find(filter)` | derivable | `<table>s(filter, first: 1)` then take edge |
-| `Increment` / `Decrement` | per-row computed mutations idiomatically belong inside update inputs | `update<Table>(id, input: { stock_inc: 5 })` — see §26.5.4 |
+| `Increment` (and decrementing through it) | per-row computed mutations idiomatically belong inside update inputs | `update<Table>(id, input: { stock_inc: 5 })` — see §26.5.4 |
 | `UpsertMany` | no batch-upsert mutation is generated; the batch form exists for server-side composition, and the M2M `connect` verb that needs it reaches it through [9.9](#99-nested-mutations) rather than through a root field | `upsert<Table>` per row, or `create<Table>s` where the rows are known to be new |
 | Tx primitives, savepoints | transaction lifecycle is server-internal | not exposed; the consumer composes mutations in a single request and wraps them in a transaction with gqlgen middleware |
 | `Restore` (when soft delete is disabled) | meaningless | not generated |
@@ -12672,13 +12985,13 @@ The three `…WithRelated` mutations ([9.9](#99-nested-mutations)) are additive:
 
 **A `…WithRelated` mutation requires its flat mutation on the API.** `api.operations` masks `create_with_related`, `update_with_related` and `upsert_with_related` the way it masks every other operation. On the masked set, each one implies the base it composes. So masking `create` off the API also removes `create<Table>WithRelated`. Without that, a mask written to leave one hand-guarded door into a table would leave a second, generated door through the nested mutation. For the same reason, a family whose flat input is suppressed (the table has no API-writable column) is not emitted. The requirement is on the masked operations, not on the emitted flat mutation, and there is one case where the two differ: on a table that emits no `<Table>ConflictPK`, `upsert<Table>WithRelated` still needs `upsert` on the mask but survives without `upsert<Table>`, taking a required `conflictTarget` (above). Naming a nested mutation beside its masked-off base, as in `create_with_related: true` beside `create: false` in one mask, is a config error ([4.13](#413-config-validation-rules)) rather than a silent drop.
 
-**`update<Table>WithRelated` applies its `_inc` / `_dec` operators in its own transaction.** The flat member is `Update<Table>Input`, so it carries the operator pair [26.5.4](#2654-mutation-translation) adds, and `UpdateWithRelated` takes no increments. When any operator is set, the resolver runs three steps inside one transaction: `UpdateWithRelated` as a savepoint, then the `Increment` calls, then the read-back. The nested mutation therefore stays the single atomic write [9.9](#99-nested-mutations) promises. It does not commit its nested rows and then fail on an increment. The pairing rules of 26.5.4 apply unchanged: setting and incrementing one column, or incrementing and decrementing it, is `INVALID_INPUT`. This differs deliberately from `update<Table>`, whose sequence 26.5.4 does not wrap.
+**`update<Table>WithRelated` applies its `_inc` / `_dec` operators in its own transaction.** The flat member is `Update<Table>Input`, so it carries the operator pair [26.5.4](#2654-mutation-translation) adds, and `UpdateWithRelated` takes no increments. When any operator is set, the resolver runs three steps inside one transaction: `UpdateWithRelated` as a savepoint, then the `Increment` calls, then the read-back. The nested mutation therefore stays the single atomic write [9.9](#99-nested-mutations) promises. It does not commit its nested rows and then fail on an increment. The pairing rules of 26.5.4 apply unchanged: a column set together with its `_inc` or `_dec`, or incremented and decremented at once, is `INVALID_INPUT`. This differs deliberately from `update<Table>`, whose sequence 26.5.4 does not wrap.
 
 **Nested error attribution reaches the client.** A failure inside a nested block carries `extensions.path: ["<Edge>"]` naming the relationship that failed, read off `*NestedMutationError.Edge` ([22.2](#222-constraint-errors)) rather than parsed out of the message. See [26.5.5](#2655-error-mapping) for the code mapping.
 
 **A hidden entity gets no nested member.** An edge whose target is `api.enabled: false`, or whose nested input would expose an `api`-hidden column, is absent from the nested input type on the GraphQL surface — the write-side mirror of the read side-channel rule ([9.9](#99-nested-mutations), rule **E7**). The same holds one level down, for a target that stays exposed but masks what a verb writes through. `create` needs the target's API `create`. An O2M / has-one `connect` / `disconnect` / `clear` needs the target's mask to keep `update_where`, the key that gates the target's own filter-scoped update. A verb the target's mask removes is absent from both blocks, and an edge left with no verb gets no member. The Go surface is unaffected: `api` gates the API, never the client.
 
-**Mutation-result nullability rules:** `create<Table>` / `update<Table>` / `upsert<Table>` / `create<Table>s` / `update<Table>s` return non-nullable (`Product!` / `[Product!]!`) — failures surface as GraphQL errors, never null results. Delete-class mutations (`softDelete<Table>`, `restore<Table>`) return nullable `Product` so the client can distinguish "not found" (null) from "internal error" (GraphQL error). Hard delete returns `Boolean!` (true on delete, false on missing).
+**Mutation-result nullability rules:** `create<Table>` / `update<Table>` / `upsert<Table>` / `create<Table>s` / `update<Table>s` return non-nullable (`Product!` / `[Product!]!`) — failures surface as GraphQL errors, never null results. Delete-class mutations (`softDelete<Table>`, `restore<Table>`) return nullable `Product` so the client can distinguish "not found" (null) from "internal error" (GraphQL error). Hard delete returns `Boolean!`: `true` once the delete ran without error, whether or not the row existed, since the client's `HardDelete` is idempotent ([§9](#9-generated-client-operations)).
 
 #### 26.5.2 Field Selection Translation — The Central Mechanism
 
@@ -12727,7 +13040,7 @@ Union is the whole of the correct answer here rather than a lossy merge, and bot
 
 The coalesce unions at the `[]graphql.CollectedField` level — collecting each alias's own selections and appending the results — rather than by concatenating the underlying `ast.SelectionSet`s. That is a correctness requirement, not a style choice: gqlgen keys its per-request `CollectFields` cache on the *address and length* of the selection set it is passed, and a slice synthesized by the walker is not retained by that cache, so a later allocation of the same length could land on the recycled address and take a stale hit. Every cache key must stay on memory gqlgen itself holds.
 
-**Walker-completeness lint (codegen-time).** Every **API-readable** column, and every relationship into an API-exposed entity (table or view), MUST have a corresponding case in the generated walker. Every access-restricted column ([§32.3](#323-per-surface-behavior)), and every relationship into a hidden entity ([§26.4](#264-graphql-schema-generation)), MUST NOT. Codegen fails if either direction is violated over the exposed set. This catches the walker's only failure mode (a missing case ⇒ silently nil in the response) at generate time. Combined with a per-table generated unit test that builds a deeply-nested GraphQL query touching every relationship and asserts the produced `FieldOptions` tree, the recursive walker is the regression guard for the §25.1 query-count contract.
+**Walker-completeness lint (codegen-time).** Every **API-readable** column, and every relationship into an API-exposed entity (table or view), MUST have a corresponding case in the generated walker. Every access-restricted column ([§32.3](#323-per-surface-behavior)), and every relationship into a hidden entity ([§26.4](#264-graphql-schema-generation)), MUST NOT. Codegen fails if either direction is violated over the exposed set. This catches the walker's only failure mode (a missing case ⇒ silently nil in the response) at generate time. Combined with sqlgen's own tests — the generator's walker tests, which pin a recursing case for every relationship, and the GraphQL example's nested queries, which pin the response and the §25.1 query count — the recursive walker is the regression guard for that contract. sqlgen emits no test files into the consumer's packages.
 
 **Selected ⇒ available, unselected ⇒ nil.** If a relationship is selected at runtime but the walker did not produce a corresponding `FieldOptions` entry (impossible if the lint above passes), the field resolver returns nil — it does **not** lazy-load. This fails fast.
 
@@ -12827,9 +13140,9 @@ func translateCreateProductInput(in CreateProductInput) *<pkg>.CreateProductInpu
 
 The omittable distinction is important: GraphQL "null" and "omitted" are distinguishable in input types, and `omittable.Value[T]` preserves that. PRD §17 (omittable) is the source of truth.
 
-**Increment / Decrement as input operators.** `Increment` and `Decrement` are not exposed as separate root mutations (see §26.5.1 for rationale). Instead, the generated `UpdateProductInput` carries paired `_inc` / `_dec` fields for every numeric column the schema defines.
+**Increment / Decrement as input operators.** `Increment` is not exposed as a separate root mutation, for increments or decrements (see §26.5.1 for rationale). Instead, the generated `UpdateProductInput` carries paired `_inc` / `_dec` fields for every numeric column the schema defines.
 
-The operator pair is part of the increment surface, not a separate feature: it dispatches to the client's generated `Increment` method and the `<Table>IncrementColumn` enum, which exist only when the table has an incrementable column ([4.6 Operations](#operations)); column-level eligibility is the same test, see [8.2](#82-generated-artifacts-per-table). `increment` has no `api.operations` key: the operators sit on `Update<Table>Input`, which is emitted whenever the mask leaves an update mutation (`update` or `update_where`). Following the Hasura / Prisma convention, the client sets at most one of `<field>`, `<field>_inc`, `<field>_dec` per column per request.
+The operator pair is part of the increment surface, not a separate feature: it dispatches to the client's generated `Increment` method and the `<Table>IncrementColumn` enum, which exist only when the table has an incrementable column ([4.6 Operations](#operations)); column-level eligibility is the same test, see [8.2](#82-generated-artifacts-per-table). `increment` has no `api.operations` key: the operators sit on `Update<Table>Input`, which is emitted whenever the mask leaves an update mutation (`update` or `update_where`). Every operator is typed `Int`, whatever the column's own GraphQL type (`price_inc: Int` on a `Decimal` column): the client's `Increment` takes an integer amount, so a delta is always a whole number. Following the Hasura / Prisma convention, the client sets at most one of `<field>`, `<field>_inc`, `<field>_dec` per column per request.
 
 ```graphql
 input UpdateProductInput {
@@ -12839,8 +13152,8 @@ input UpdateProductInput {
   stock_inc: Int
   stock_dec: Int
   price:     Decimal
-  price_inc: Decimal
-  price_dec: Decimal
+  price_inc: Int
+  price_dec: Int
 }
 ```
 
@@ -12852,7 +13165,7 @@ func translateUpdateProductInput(ctx context.Context, in UpdateProductInput) upd
     if in.Name      != nil { plan.set.Name  = omittable.Set(*in.Name) }
     if in.Stock     != nil { plan.set.Stock = omittable.Set(*in.Stock) }
     if in.StockInc  != nil { plan.inc = append(plan.inc, columnDelta{Col: "stock", Delta: *in.StockInc}) }
-    if in.StockDec  != nil { plan.dec = append(plan.dec, columnDelta{Col: "stock", Delta: *in.StockDec}) }
+    if in.StockDec  != nil { plan.inc = append(plan.inc, columnDelta{Col: "stock", Delta: -*in.StockDec}) }
     // ...
     return plan
 }
@@ -12861,12 +13174,10 @@ func translateUpdateProductInput(ctx context.Context, in UpdateProductInput) upd
 The mutation resolver runs the plan in this order, all on the same client instance so any `Tx` wrapping middleware sees one logical update:
 
 1. `Update(id, plan.set)` — only if any `_set` fields are present.
-2. For each `inc` entry: `Increment(id, col, delta)`.
-3. For each `dec` entry: `Decrement(id, col, delta)`.
+2. For each operator, column by column: `Increment(id, col, delta)`, a `_dec` being a negative delta. A column takes at most one of `<field>`, `<field>_inc` and `<field>_dec` per request (below), so the order across columns is not observable.
 
 **Validation rules:**
-- Codegen rejects an input that mixes `_set` and `_inc` for the same column: an absolute assignment and a relative delta on one column have no defined composition order.
-- At runtime, the resolver returns a `gqlerror` with `extensions.code = INVALID_INPUT` if both `_set` and `_inc` arrive for the same column. `_inc` and `_dec` for the same column in one call is also rejected.
+- The resolver returns a `gqlerror` with `extensions.code = INVALID_INPUT` if both `_set` and `_inc`, or both `_set` and `_dec`, arrive for the same column — an absolute assignment and a relative delta on one column have no defined composition order. `_inc` and `_dec` for the same column in one call is also rejected.
 
 **Bulk inputs.** `createProducts` takes `[CreateProductInput!]!` (a list of the regular create input). `updateProducts` takes a single `UpdateProductInput` plus a `ProductFilterInput` — same input shape as the one-row update, applied to every row matching the filter. Bulk variants share the same `_inc` / `_dec` translation.
 
@@ -12886,7 +13197,7 @@ func (r *queryResolver) Product(ctx context.Context, id string) (*<pkg>.Product,
 sqlgen seeds those bodies on the first run and rewrites any `panic("not implemented")` stub gqlgen emits for a newly-managed field on subsequent runs ([§26.5.6](#2656-module-boundary--wrapper-subcommand)). The delegation target carries the whole implementation:
 
 ```go
-// graph/sqlgenresolver/queries_gen.go — sqlgen-owned
+// graph/sqlgenresolver/resolvers_gen.go — sqlgen-owned
 func (r *Q) Product(ctx context.Context, id string) (*<pkg>.Product, error) {
     fo := productFieldOptionsFromContext(ctx)
     return r.client.Products.Get(ctx, id, func(o *<pkg>.CallOptions[<pkg>.ProductFieldOptions]) {
@@ -12927,9 +13238,10 @@ func (r *M) CreateProduct(ctx context.Context, input CreateProductInput) (*<pkg>
 }
 
 func (r *M) DeleteProduct(ctx context.Context, id string) (bool, error) {
-    err := r.client.Products.HardDelete(ctx, id)
-    if errors.Is(err, sqlgen.ErrNotFound) { return false, nil }
-    return err == nil, err
+    if err := r.client.Products.HardDelete(ctx, id); err != nil {
+        return false, mapErrorToGQL(err)
+    }
+    return true, nil
 }
 ```
 
@@ -12943,7 +13255,7 @@ func (r *productResolver) Company(ctx context.Context, p *<pkg>.Product) (*<pkg>
 
 #### 26.5.5 Error Mapping
 
-A single `mapErrorToGQL(err error) error` helper in `graph/errors_gen.go` wraps every resolver return. Field paths are filled by gqlgen automatically.
+A single `mapErrorToGQL(err error) error` helper in `graph/sqlgenresolver/errors_gen.go` wraps every resolver return. Field paths are filled by gqlgen automatically.
 
 | Runtime Error | GraphQL Error | `extensions.code` |
 |---------------|---------------|-------------------|
@@ -12994,7 +13306,7 @@ Two escape hatches exist for consumers who split the phases — a CI pipeline th
 
 1. Consumer runs `sqlgen graphql gen` directly, or runs `sqlgen generate` with `api.graphql.enabled: true`; the latter chains into this flow inline.
 2. Wrapper reads `gqlgen_config` (consumer-owned `gqlgen.yml`) into a YAML AST, including `resolver.layout`, which decides the destination shape for step 4.
-3. Wrapper merges sqlgen-owned entries: `models:` for managed tables (including the per-table `<T>Connection` / `<T>Edge` / `<T>ListResult` envelope bindings + the shared `PageInfo` binding — see "Envelope binding" below), `schema:` glob for `graph/*.graphqls`, a binding for every scalar the generated schema actually declares (whether it came from a column's Go type or from an `api.graphql.scalars` entry a column resolves to — a declared scalar no column uses is left to the consumer's own `gqlgen.yml`), and a `fieldName` entry for every Go identifier sqlgen's generated code references on a gqlgen-generated type (see "Go field naming" below). Consumer-authored keys win on collision — per field for `fields:` entries — with the one documented exception listed under "sqlgen-owned keys".
+3. Wrapper merges sqlgen-owned entries: `models:` for managed tables (including the per-table `<T>Connection` / `<T>Edge` / `<T>ListResult` envelope bindings + the shared `PageInfo` binding — see "Envelope binding" below), `schema:` glob for `graph/*.graphqls`, a binding for every scalar the generated schema actually declares (whether it came from a column's Go type or from an `api.graphql.scalars` entry a column resolves to — a declared scalar no column uses is left to the consumer's own `gqlgen.yml`), and a `fieldName` entry for every Go identifier sqlgen's generated code references on a gqlgen-generated type (see "Go field naming" below). Consumer-authored keys win on collision — per field for `fields:` entries — with the documented exceptions listed under "sqlgen-owned keys".
 4. **Seed step.** Wrapper writes the delegating resolver files, **only where they are absent**: one `graph/<schema>.resolvers.go` per managed `*_gen.graphqls` under `resolver.layout: follow-schema`, or the single `graph/resolver.go` under `single-file`. Existing files are left untouched — they are gqlgen-owned after the first run.
 5. Wrapper writes the merged config to a temp file and runs the gqlgen binary against it via `os/exec`.
 6. **Panic-stub rewrite.** Wrapper replaces each `panic("not implemented")` stub gqlgen emitted for a sqlgen-managed field with the delegation into `sqlgenresolver/`. This is what keeps a newly-added table or column reaching a working resolver without the consumer editing a file gqlgen owns. Stubs for fields sqlgen does not manage are left alone. A managed field that is still a stub afterwards — gqlgen named its resolver differently from sqlgen — fails generation (see "Root resolver names are checked, not stated" below).
@@ -13022,13 +13334,14 @@ A `fields:` entry does **not** bind the type — gqlgen treats a type as consume
 
 **Bound types are the one exception.** A bound type — the row struct, the connection envelope — normally needs no entry: gqlgen resolves its fields by comparing the name it derives from the GraphQL field against the consumer's struct, case-insensitively and ignoring underscores (`codegen/field.go`'s `findBindTarget`, `equalFieldName`), and that name is the one sqlgen generated. The premise holds only while the Go field is derived from the column. A `column_map.<column>.name` override ([§8.5](#85-naming-rules) "Field Name Resolution") breaks the match — GraphQL `ipAddr` looks for `IpAddr` and never finds `ClientIP` — so the **row type receives a `fieldName` entry for each renamed column, and for no other field**. gqlgen honours the override for bound types too: it directs the bind search rather than replacing a generated name.
 
-**Precedence.** `model:` bindings follow the consumer-wins rule: if the consumer declared the type at all, sqlgen leaves the binding alone. `fields:` entries merge **per field**, so sqlgen can name the fields of a type the consumer configured for an unrelated reason (a directive, a forced resolver) without discarding their work; an explicit `fieldName` in the consumer's file is never overwritten.
+**Precedence.** `model:` bindings follow the consumer-wins rule: if the consumer declared the type at all, sqlgen leaves the binding alone. `fields:` entries merge **per field**, so sqlgen can name the fields of a type the consumer configured for an unrelated reason (a directive, a forced resolver) without discarding their work; an explicit `fieldName` in the consumer's file is never overwritten (the `omittable` key below is the one per-field exception).
 
-**sqlgen-owned keys (exception to consumer-wins).** One key is **overwritten** in the merged temp config even when the consumer declares it:
+**sqlgen-owned keys (exception to consumer-wins).** Two keys are **overwritten** in the merged temp config even when the consumer declares it:
 
 | Key | Condition | Why consumer-wins is wrong here |
 |-----|-----------|--------------------------------|
 | `skip_validation` | `resolver.layout: single-file` | gqlgen's post-generate `go build` runs against a Resolver struct it has just wiped, before sqlgen's post-subprocess merge can restore the `Client` / `Q` / `M` fields |
+| `models.Update<T>Input.fields.<field>.omittable` | the field is over a nullable column | the generated update translator reads the field as `graphql.Omittable[T]` to tell an explicit `null` from an omitted field ([§26.5.4](#2654-mutation-translation)), so a consumer's `omittable: false` would leave it uncompilable |
 
 The override exists only in the temp config; the on-disk `gqlgen.yml` is never modified.
 
@@ -13065,17 +13378,21 @@ This binding is only sound because the runtime `Connection[T] / Edge[T] / Pagina
 |------|-----------|:--------------------:|:---------------------:|
 | `graph/*_gen.graphqls` | sqlgen | Yes — one this run did not write fails generation rather than being deleted ([§23.8](#238-stale-file-cleanup)) | No (`*_gen.*` files are managed) |
 | `graph/*.graphqls` (custom) | — | — | Yes — sqlgen merges adjacent custom schema |
-| `graph/sqlgenresolver/queries_gen.go` | sqlgen | Yes | No — the `*Q` query implementations (§26.5.4) |
-| `graph/sqlgenresolver/mutations_gen.go` | sqlgen | Yes | No — the `*M` mutation implementations (§26.5.4) |
+| `graph/sqlgenresolver/resolvers_gen.go` | sqlgen | Yes | No — the `*Q` query and `*M` mutation implementations (§26.5.4) |
 | `graph/sqlgenresolver/field_options_gen.go` | sqlgen | Yes | No — per-entity selection walker (§26.5.2) |
 | `graph/sqlgenresolver/connection_walker_gen.go` | sqlgen | Yes | No — shared `unwrapConnectionAndWalk` (§26.5.2) |
 | `graph/<schema>.resolvers.go` (follow-schema) or `graph/resolver.go` (single-file) | sqlgen seeds, gqlgen owns | Seeded only if absent; managed-field stubs rewritten each run | Yes — consumer-authored resolvers for unmanaged fields are preserved |
-| `graph/filter_translate_gen.go` | sqlgen | Yes | No |
-| `graph/middleware_gen.go` | sqlgen | Yes | No |
+| `graph/filter_translate_gen.go` | sqlgen | Yes | No — per-entity filter translators (§26.5.3) |
+| `graph/comparator_translate_gen.go` | sqlgen | Yes | No — shared comparator translators (§26.5.3) |
+| `graph/sort_translate_gen.go` | sqlgen | Yes | No — per-entity sort translators (§26.5.3) |
+| `graph/input_translate_gen.go` | sqlgen | Yes | No — create / update input translators (§26.5.4) |
+| `graph/sqlgenresolver/middleware_gen.go` | sqlgen | Yes | No — HTTP header call options (§26.11) |
 | `graph/scalars_gen.go` | sqlgen | Yes | No — external `MarshalX`/`UnmarshalX` for category-4 scalars (see §26.4.1) |
-| `graph/errors_gen.go` | sqlgen | Yes | No — `mapErrorToGQL` (see §26.5.5) |
+| `graph/sqlgenresolver/errors_gen.go` | sqlgen | Yes | No — `mapErrorToGQL` (see §26.5.5) |
+| `graph/sqlgenresolver/limits_gen.go` | sqlgen | Yes | No — `MaxQueryDepth` / `MaxQueryComplexity` and `ApplyQueryLimits` (see §26.6) |
 | `graph/generated_gen.go` | gqlgen (via wrapper) | After each wrapper run | No (gqlgen-managed) |
-| `gqlgen.yml` | consumer | No (one-shot scaffold via `sqlgen graphql init` if missing) | Yes — fully consumer-owned; sqlgen never reads or writes the on-disk file outside the one-shot init |
+| `graph/model/models_gen.go` | gqlgen (via wrapper) | After each wrapper run | No (gqlgen-managed) — the input types gqlgen generates (`<T>Filter`, `Create<T>Input`, comparators) |
+| `gqlgen.yml` | consumer | No (one-shot scaffold via `sqlgen graphql init` if missing) | Yes — fully consumer-owned; the wrapper reads it on every run to merge sqlgen's entries into a temp config (step 2), and never writes the on-disk file outside the one-shot init |
 | `graph/server.go` | sqlgen (one-shot) | **Only if missing** | Yes — entry-point bootstrapping |
 
 #### 26.5.7 Why No Dataloader for Generated Code
@@ -13090,9 +13407,9 @@ A dataloader batches per-item fetches across sibling resolvers in the same tick.
 | `createProduct(input) { reviews { count } }` | `Create` chains `Get` internally with FieldOptions | No |
 | Custom resolver doing per-item DB call | Consumer-written code outside sqlgen | **Yes (consumer's choice)** |
 
-**Documented contract:** "sqlgen-generated resolvers issue `1 + count(O2M selected) + 2 * count(M2M selected)` queries per request, regardless of result set size." Same as §25.1.
+**Documented contract:** "sqlgen-generated resolvers issue `1 + count(O2M selected) + 2 * count(M2M selected)` queries per request while each relationship's parent set fits one chunk of keys; a larger parent set adds one query per extra chunk to each chunked step." Same as §25.1, which gives the chunk sizes and the full formula. The count never depends on the number of children.
 
-If the recursive walker has a bug and a relationship goes un-prefetched, the child resolver returns nil — it does **not** lazy-load. This fails fast and is caught by the per-table walker test (§26.5.2).
+If the recursive walker has a bug and a relationship goes un-prefetched, the child resolver returns nil — it does **not** lazy-load. This fails fast and is caught by sqlgen's walker tests and the example's nested-query tests (§26.5.2).
 
 #### 26.5.8 GraphQL Output Directories
 
@@ -13142,7 +13459,8 @@ GraphQL queries can be deeply nested, which could overload the database:
 **Protections:**
 - `api.graphql.max_depth` — rejects queries exceeding the configured nesting depth (default: 5)
 - `gqlgen` complexity calculation — each relationship field adds to query complexity; queries exceeding the limit are rejected before execution
-- These are generated as `gqlgen` server configuration, not custom middleware
+- These are generated as `gqlgen` server configuration, not custom middleware: the regenerated `graph/sqlgenresolver/limits_gen.go` carries the two configured values and `ApplyQueryLimits(*handler.Server)`, which installs gqlgen's `FixedComplexityLimit` and a depth extension. The one-shot `graph/server.go` ([§26.5.6](#2656-module-boundary--wrapper-subcommand)) calls it, so a later edit to either value reaches an existing server on the next run.
+- **Depth** counts relationship fields only: the root field is depth 0 and each relationship field on the path adds one, while connection and list wrappers (`edges`, `node`, `pageInfo`, `items`) and scalar fields add nothing — the example above is depth 3. A query deeper than `max_depth` is rejected before execution.
 
 ### 26.7 GraphQL Authorization
 
@@ -13280,7 +13598,7 @@ The API layer translates HTTP headers into `CallOptions` (Section 9.6) before pa
 
 **Generated middleware (GraphQL):**
 
-For the GraphQL API the generator emits two pieces in `graph/middleware_gen.go`:
+For the GraphQL API the generator emits two pieces in `graph/sqlgenresolver/middleware_gen.go`:
 
 1. `WithCallOptionsMiddleware(next http.Handler) http.Handler` — wraps the gqlgen handler at server-bootstrap time. It reads the supported headers off the inbound request and stashes a per-request `httpCallOptions{SkipCache, SkipEvents, SkipHooks bool}` flag struct under an unexported `callOptionsKey` context key.
 2. `callOptionsFromHTTP[FO any](ctx context.Context) []func(*CallOptions[FO])` — read side called by every generated resolver. It pulls the flag struct back out of the context and projects each truthy flag into a typed setter for the per-table `CallOptions[<Table>FieldOptions]` the resolver passes to the client.
@@ -13462,7 +13780,7 @@ The generated Go service implementation follows the same pattern as GraphQL reso
 
 ## 27. Caching
 
-Caching is injected via the hook mechanism (section 21) and configured via `sqlgen.yml`. No caching code is generated until `cache.enabled: true` is set. The cache layer depends on the event system (section 28) for the `FromEventSubscriber` adapter.
+Caching is injected via the hook mechanism (section 21) and configured via `sqlgen.yml`. No caching code is generated until caching resolves on for some table: global `cache.enabled: true`, or a per-table `enabled: true` (27.2). The cache layer depends on the event system (section 28) for the `FromEventSubscriber` adapter.
 
 ### 27.1 Overview
 
@@ -13517,7 +13835,6 @@ tables:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: "./views/product_summary.sql"
     cache:
       enabled: true
       ttl: "15m"
@@ -13593,7 +13910,7 @@ type Stats struct {
 }
 ```
 
-Graceful shutdown uses stdlib `io.Closer`. Backends that hold owned resources (Redis clients, background goroutines) implement it; thin wrappers over caller-owned clients do not. The generated `Cache` facade probes with `if c, ok := backend.(io.Closer); ok { c.Close() }`.
+Graceful shutdown uses stdlib `io.Closer`. Backends that hold owned resources (background goroutines) implement it, and `Close` releases them. The Redis backend implements it too, but closes the Redis client only when it was built with `WithOwnedClient()`; by default the client stays the caller's, and `Close` leaves it open. The generated `Cache` facade probes with `if c, ok := backend.(io.Closer); ok { c.Close() }`.
 
 **Shipped backends:**
 
@@ -13625,8 +13942,9 @@ func WithSerializer(s cache.Serializer) CacheOption
 func WithCircuitBreaker(b *cache.Breaker) CacheOption
 func WithOnError(fn cache.OnErrorFunc) CacheOption
 
-// WithCache wires a *Cache instance into the generated client. Shorthand for:
-//   WithQueryHook(c.QueryHook()), WithMutationHook(c.MutationHook())
+// WithCache wires a *Cache instance into the generated client. Its query and
+// mutation hooks run outermost, ahead of the event hooks and every hook
+// registered with WithQueryHook / WithMutationHook, whatever the option order.
 func WithCache(c *Cache) Option
 ```
 
@@ -13686,9 +14004,9 @@ Non-tenanted tables keep the grammar shown above (no `tenant:` segment). The ten
 
 **Schema fingerprint segment.** The `fingerprint:v{fingerprint}` segment scopes every cached entry to the exact struct-shape that produced it. Fingerprints are computed at codegen time from a sha256 over:
 
-- Sorted column names, Go types, and struct tags
+- Column names in declaration order, with each column's Go type and `db` struct tag. Reordering columns changes the fingerprint, because a positional encoding (msgpack's array-encoded structs) depends on field order
 - PK column order (DDL `PRIMARY KEY (...)`)
-- Serializer identity (`json` / `msgpack` / `custom:<type name>`)
+- Serializer identity (`json` / `msgpack` / `custom`). A custom serializer's type is not known at codegen time, so swapping one custom serializer for another keeps the fingerprint; bump `cache.version` when doing so
 - The optional `cache.version` kill switch
 
 Any migration that regenerates the Go struct produces a new fingerprint → new key namespace; old entries orphan and are cleaned up by backend LRU / TTL. No operator action is required during rolling deploys — old pods write old-fingerprint keys, new pods write new-fingerprint keys, both namespaces coexist without serving wrong-shape data.
@@ -13698,6 +14016,8 @@ Any migration that regenerates the Go struct produces a new fingerprint → new 
 **`cache.version` manual kill switch.** Operators can bump `cache.version` in YAML (default `0`) to force-invalidate every cached table and view on next `sqlgen generate` — regenerates every fingerprint. Use cases: emergency response to a data-correctness bug, forcing a cache flush after a non-struct-affecting semantic change (custom serializer changes, etc.).
 
 **PK types are values, not pointers.** Every PK passed to the cache key helpers must be a value type (scalar like `uuid.UUID`, `int64`, `string`; or a composite-PK struct value). Pointer types stringify to the underlying memory address via `%v` and produce a different cache key on every call. The generated per-table `keyFor{Table}(pk T)` helpers are typed with concrete value `T`, so generated code can't hit the mistake; user-direct callers (`cache.SetAs`, custom `InvalidationSource`, admin tools) must dereference at the boundary.
+
+**A time key is its UTC instant.** The key helpers write a time PK value, or a time component of a composite PK (`time.Time`, or a value type embedding one such as `types.DateTime`), as that instant in UTC, without a monotonic reading. One instant therefore builds one key whatever zone the caller names it in, so a `Get` keyed in UTC and an `Update` or `Delete` keyed in `time.Local` or any other zone address the same cache entry and the write evicts it. The tenant segment is not normalized: it stays the `%v` form the 29.5 stamp matches byte for byte.
 
 ### 27.6 Cache Invariant
 
@@ -13733,7 +14053,7 @@ Because the cache always contains full entities and mutations always invalidate,
 | `Get(pk)` — **any relationship flag set on `FieldOptions`** | **Cache bypass.** Direct DB JOIN for o2o / separate `GetMany` for o2m+m2m. No cache read, no cache write. See 27.6 for rationale. |
 | `GetMany(input)` | **No cache.** Multi-row queries with filters are not cached (too many permutations). |
 | `Create` / `CreateMany` | **Set:** After successful insert, populate cache with the new entity(s) (full entity returned by DB). |
-| `Update` / `Upsert` / `Increment` / `SoftDelete` / `HardDelete` / `Restore` | **Invalidate:** `Invalidate(key)` single-entity invalidation via `backend.InvalidateMany`. |
+| `Update` / `Upsert` / `Increment` / `SoftDelete` / `HardDelete` / `Restore` | **Invalidate:** `Invalidate(key)` single-entity invalidation via `backend.InvalidateMany`. A write that affected no row ([9.5](#95-edge-case-behaviors)) invalidates nothing, view patterns included. |
 | `UpsertMany` | **Invalidate many:** `InvalidateMany(keys(AffectedPKs))`, as the `*Many` row below. It is a direct write path with its own `hook.OpUpsertMany` ([21.2](#212-hook-types)), so it needs its own arm — the invalidation switch has no permissive default that would cover it. |
 | `CreateWithRelated` / `UpdateWithRelated` / `UpsertWithRelated` | **Nothing of their own.** They have no `MutationOp` and dispatch no invalidation; every inner call invalidates under its own op, on its own table. See [9.9.9](#999-observability). |
 | `UpdateMany` / `SoftDeleteMany` / `HardDeleteMany` / `RestoreMany` | **Invalidate many:** `InvalidateMany(keys(AffectedPKs))`. |
@@ -13929,7 +14249,7 @@ func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []
 func (c *Cache) InvalidateTable(ctx context.Context, table hook.TableName) error
 ```
 
-These methods are the same ones called internally by the mutation hook and the `InvalidationSource` handler. All invalidation paths converge on shared internal helpers — key construction, metrics emission, circuit-breaker accounting, and the final `Backend.InvalidateMany` / `Backend.InvalidatePattern` call.
+On a non-tenanted table these methods are the same ones called internally by the mutation hook and the `InvalidationSource` handler. On a tenanted table, `Invalidate` and `InvalidateMany` cannot rebuild the tenant segment of a key from a bare PK, so both return `cache: InvalidateMany("<table>"): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern`, tenant-in-PK tables included. The precise tenanted paths are the mutation hook and a tenant-stamped `InvalidationSignal` (29.5); `InvalidateTable` works on every table. All invalidation paths converge on shared internal helpers — key construction, metrics emission, circuit-breaker accounting, and the final `Backend.InvalidateMany` / `Backend.InvalidatePattern` call.
 
 #### FromEventSubscriber Adapter
 
@@ -13941,8 +14261,9 @@ The `cache` package provides a built-in adapter that bridges `event.Subscriber` 
 // and all mutation actions with an empty SubscribeOptions{}.
 //
 // The zero-option form — FromEventSubscriber(sub) — is the user-facing
-// constructor. Options are used by the generated *Cache facade to wire
-// observability (metrics) at construction time.
+// constructor. The caller builds the adapter, so the caller wires its
+// options; the generated *Cache facade only receives the finished
+// InvalidationSource.
 func FromEventSubscriber(sub event.Subscriber, opts ...EventAdapterOption) InvalidationSource
 
 // EventAdapterOption configures the InvalidationSource returned by
@@ -13951,8 +14272,10 @@ type EventAdapterOption func(*eventAdapter)
 
 // WithEventMetrics wires a MetricsRecorder so handler-returned errors are
 // recorded via MetricsRecorder.Error(schema, table, "invalidate", err)
-// before propagating to the underlying event.Handler. The generated facade
-// always supplies this; user-direct callers may omit it.
+// before propagating to the underlying event.Handler. It is opt-in: without
+// it the adapter records nothing itself, and a failing backend call is still
+// recorded by the facade's own error policy ("invalidate_many" /
+// "invalidate_pattern").
 func WithEventMetrics(m MetricsRecorder) EventAdapterOption
 ```
 
@@ -13970,7 +14293,7 @@ Post-commit ordering is deterministic: `database.Tx.OnCommit` preserves FIFO ord
 
 `FromEventSubscriber` and custom `InvalidationSource` inputs are **already post-commit** (events only fire after commit), so invalidation from those layers is fired immediately — no nested `OnCommit` needed.
 
-`CallbackMode` defaults to `CallbackAsync`; the async path executes callbacks on `context.Background()` — cache invalidation MUST NOT read request-scoped metadata from the callback's ctx. Closure-captured key + table is all the backend call needs. Both sync and async paths retry a failed callback once before giving up; cache invalidation is idempotent by contract (27.3) so the retry is safe.
+`CallbackMode` defaults to `CallbackAsync`; the async path executes callbacks on `context.Background()` — cache invalidation MUST NOT read request-scoped metadata from the callback's ctx. Closure-captured key + table is all the backend call needs. Both sync and async paths retry a failed callback once before giving up; cache invalidation is idempotent by contract (27.3) so the retry is safe. On neither path does a cache callback's error reach `Commit` or `WithTx`: the write has committed, and the error policy below has already recorded the failure.
 
 #### Circuit Breaker
 
@@ -13989,6 +14312,8 @@ Success in `Closed` resets the consecutive-failure counter. Transitions emit `Me
 
 When the breaker is open, the DB operation still executes normally — the cache is non-authoritative. TTL remains the safety net.
 
+Every call the breaker admits as a `HalfOpen` probe reports its outcome, so the probe slot is always released. The read-through's in-flight cache re-check (27.7) reports none, so it runs only while the breaker is `Closed` and never takes a probe; outside `Closed`, a straggler may repeat the database read.
+
 #### Cache Error Policy
 
 The cache MUST NOT break user-facing calls. A failing `Get` surfaces as a cache miss; a failing `Set` / `Invalidate*` is dropped from the caller's error path. Every cache backend error routes through a three-pronged policy:
@@ -13997,7 +14322,7 @@ The cache MUST NOT break user-facing calls. A failing `Get` surfaces as a cache 
 2. **Textual log fallback.** `OnErrorFunc` callback; default `DefaultOnCacheError` logs to stderr (swappable via `WithOnError`).
 3. **Breaker feedback.** Every error calls `breaker.RecordFailure()`.
 
-All three fire in order so a misconfigured logger cannot mask a cache outage. Marshal / unmarshal errors route through the same policy; unmarshal errors additionally treat the call as a cache miss (fall through to DB) — the entry is not auto-deleted, since TTL + the fingerprint segment (27.5) already handle stale-payload scenarios.
+All three fire in order so a misconfigured logger cannot mask a cache outage. A key the mutation hook cannot build from an affected PK (an element of the wrong type) involves no backend call: the hook reports it through the first two prongs under op `invalidate_many`, with no breaker feedback, and the write proceeds. Marshal / unmarshal errors route through the same policy; unmarshal errors additionally treat the call as a cache miss (fall through to DB) — the entry is not auto-deleted, since TTL + the fingerprint segment (27.5) already handle stale-payload scenarios.
 
 #### Why TTL + Source-Driven Are Both Required
 
@@ -14032,7 +14357,7 @@ type Serializer interface {
 **Validation timing.**
 
 - At YAML parse time: `cache.serializer` must be one of `json`, `msgpack`, `custom`, or unset. Unset defaults to `json`.
-- At `NewCache` construction time: `cache.serializer == "custom"` with no `WithSerializer(...)` fails with an error naming the config line. `json` and `msgpack` never error at construction — both are generator-resolved.
+- At `NewCache` construction time: `cache.serializer == "custom"` with no `WithSerializer(...)` fails with an error naming the `cache.serializer` key. `json` and `msgpack` never error at construction — both are generator-resolved.
 
 The serializer choice feeds the schema fingerprint (27.5), so switching from `json` to `msgpack` (or vice versa) produces a new key namespace — cached bytes are never read under the wrong decoder.
 
@@ -14048,7 +14373,6 @@ Config specifies which tables invalidate which views:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: "./views/product_summary.sql"
     cache:
       enabled: true
       ttl: "15m"
@@ -14119,7 +14443,7 @@ type MetricsRecorder interface {
 | `Miss` | Cache read returns nil (no entry or expired) | Miss rate, cold start detection |
 | `Set` | Entity written to cache (after DB read or create) | Write volume |
 | `Invalidate` | Cache entry invalidated (mutation, pattern delete, direct call) | Invalidation rate |
-| `Error` | Cache backend returns an error (read, write, or invalidate) | Backend health — `op ∈ {"get","set","invalidate","invalidate_many","invalidate_pattern"}` |
+| `Error` | Cache backend returns an error (read, write, or invalidate) | Backend health — `op ∈ {"get","set","invalidate_many","invalidate_pattern","invalidate_tenant_fallback"}` from the generated facade (a direct `Invalidate` reports `invalidate_many`, and `invalidate_tenant_fallback` is 29.5's capture-gap signal), and `"invalidate"` from the `FromEventSubscriber` adapter when `WithEventMetrics` is wired |
 | `HydrationStart` | Background hydration goroutine launched | Hydration volume |
 | `HydrationComplete` | Background hydration finished (success or failure) | Hydration failure rate |
 | `CircuitBreakerStateChange` | Circuit breaker transitions between Closed/Open/HalfOpen | Outage detection (not schema-labeled — breaker is `*Cache`-scoped) |
@@ -14192,7 +14516,7 @@ The OTel package emits the following instruments:
 | `sqlgen.cache.invalidations` | Counter | `schema`, `table` | — | Cache invalidations |
 | `sqlgen.cache.errors` | Counter | `schema`, `table`, `op` | — | Cache backend errors |
 | `sqlgen.cache.hydrations` | Counter | `schema`, `table`, `status` (`success`/`error`) | — | Background hydrations |
-| `sqlgen.cache.circuit_breaker` | Gauge | `state` (`closed`/`open`/`half_open`) | — | Current circuit breaker state |
+| `sqlgen.cache.circuit_breaker` | Gauge | `state` (`closed`/`open`/`half_open`) | — | Current circuit breaker state: each transition records 0 under the state left and 1 under the state entered, so with transitions delivered in order exactly one state reads 1 |
 | `sqlgen.cache.get.duration` | Histogram | `schema`, `table` | seconds | Backend `Get` latency |
 | `sqlgen.cache.set.duration` | Histogram | `schema`, `table` | seconds | Backend `Set` latency |
 | `sqlgen.cache.invalidate.duration` | Histogram | `schema`, `table` | seconds | Backend `Invalidate*` latency |
@@ -14317,7 +14641,7 @@ client := <pkg>.New(db,
 | `Create` | `Create` | 1 event per created entity |
 | `CreateMany` | `Create` | 1 event per entity in the batch |
 | `Update` | `Update` | 1 event per updated entity |
-| `UpdateMany` | `Update` | 1 event per entity in the batch |
+| `UpdateMany` | `Update` | 1 event per item that wrote a row |
 | `UpdateWhere` | `Update` | 1 event per affected row |
 | `Upsert` | `Upsert` | 1 event per upserted entity |
 | `SoftDelete` | `Delete` | 1 event per deleted entity |
@@ -14333,9 +14657,9 @@ client := <pkg>.New(db,
 
 **Batch operations** produce multiple events. The generated terminal sets `MutationContext.AffectedPKs` (a `[]any`) with all affected PKs after the mutation completes. The event hook iterates `AffectedPKs` to build one event per entity, then calls `Publisher.PublishBatch`. Transports that support native batching (Redis pipelines, Kafka batch produce) can optimize internally; simple implementations iterate and call `Publish` per event.
 
-Each fanned-out event carries the **per-entity** input (not the full batch slice). For `CreateMany` the per-entity input is the i-th `*Create<Struct>Input`; for `UpdateMany` it is the i-th `Update<Struct>Item`; for `HardDeleteMany` / `SoftDeleteMany` / `RestoreMany` the per-entity input is `nil` because the PK already travels via `Event.PK` and a redundant `[]int64` payload would cost wire bandwidth without adding information. `*Where` ops carry the operation's payload (the `*Filter` for delete/restore-class `*Where`, the `*UpdateInput` for `UpdateWhere`) shared across every fanned-out event — there is no per-row input shape since the same predicate produced all N rows. This shape keeps wire cost O(N) on serialization (vs. O(N²) when every event closes over the full caller slice) and lets subscribers run one type-switch across single-op and batch shapes uniformly.
+Each fanned-out event carries the **per-entity** input (not the full batch slice). For `CreateMany` the per-entity input is the i-th `*Create<Struct>Input`; for `UpdateMany` it is the i-th written `Update<Struct>Item` (the slice is narrowed to the items whose key matched a row, index-aligned with `AffectedPKs`); for `HardDeleteMany` / `SoftDeleteMany` / `RestoreMany` the per-entity input is `nil` because the PK already travels via `Event.PK` and a redundant `[]int64` payload would cost wire bandwidth without adding information. `*Where` ops carry the operation's payload (the `*Filter` for delete/restore-class `*Where`, the `*UpdateInput` for `UpdateWhere`) shared across every fanned-out event — there is no per-row input shape since the same predicate produced all N rows. This shape keeps wire cost O(N) on serialization (vs. O(N²) when every event closes over the full caller slice) and lets subscribers run one type-switch across single-op and batch shapes uniformly.
 
-**PK resolution:** The terminal always populates `MutationContext.AffectedPKs`, even for fire-and-forget operations (empty `FieldOptions`). For Create with `db`-generated PKs, the terminal resolves the ID via `RETURNING` or `LastInsertId` when events are enabled — the caller still receives `nil`, but the PK is captured for event publishing.
+**PK resolution:** The terminal populates `MutationContext.AffectedPKs` with every row the write affected, even for fire-and-forget operations (empty `FieldOptions`); a write that affected no row leaves it empty ([9.5](#95-edge-case-behaviors)). For Create with `db`-generated PKs, the terminal resolves the ID via `RETURNING` or `LastInsertId` when events are enabled — the caller still receives `nil`, but the PK is captured for event publishing.
 
 **`CallOptions.SkipEvents` interaction:** When the caller passes `SkipEvents: true` via per-call options (Section 9.6), the event hook suppresses publishing for that mutation. No events are collected, deferred, or published — regardless of whether the mutation occurs inside or outside a transaction. This is useful for bulk data imports, internal system operations, or migrations where event noise is undesirable.
 
@@ -14365,7 +14689,7 @@ type Subscription interface {
 
 **Consumer group:** When `Group` is set, events are distributed across subscribers in the group (each event processed by exactly one subscriber). When empty, events are broadcast to all subscribers. This maps to Redis Pub/Sub (broadcast) vs Redis Streams consumer groups (distributed), or NATS queue groups.
 
-**Handler error semantics:** A `Handler` that returns a non-nil error signals "redeliver me." The signal is honored by transports that support redelivery (durable/at-least-once backends — e.g. NATS JetStream, Redis Streams, Kafka): the message is negatively acknowledged and retried per the transport's policy, routing to a dead-letter destination after the configured maximum delivery attempts. Transports that cannot redeliver (at-most-once backends — the in-memory bus, core NATS) instead route the error to their configured error handler (where one is offered) rather than retrying; the event is not redelivered. Handlers should therefore be idempotent under at-least-once transports, and error returns are always observable — never silently discarded.
+**Handler error semantics:** A `Handler` that returns a non-nil error signals "redeliver me." The signal is honored by transports that support redelivery (durable/at-least-once backends — e.g. NATS JetStream, Redis Streams, Kafka): the message is negatively acknowledged and retried per the transport's policy, routing to a dead-letter destination after the configured maximum delivery attempts. Transports that cannot redeliver (at-most-once backends — the in-memory bus, core NATS) instead route the error to their configured error handler (where one is offered) rather than retrying; the event is not redelivered. A provided transport with no error handler configured logs the error through the standard library logger instead, and the handler, or the log, receives the Handler's own error unchanged. Handlers should therefore be idempotent under at-least-once transports, and error returns are always observable — never silently discarded.
 
 ### 28.6 Event Input
 
@@ -14384,7 +14708,7 @@ type Event struct {
 | `Create` | `*Create<Struct>Input` |
 | `CreateMany` | `*Create<Struct>Input` (i-th element of `[]*Create<Struct>Input`) |
 | `Update` | `*Update<Struct>Input` |
-| `UpdateMany` | `Update<Struct>Item` (i-th element of `[]Update<Struct>Item`) |
+| `UpdateMany` | `Update<Struct>Item` (i-th written item: the slice is narrowed to the items whose key matched a row, index-aligned with `AffectedPKs`) |
 | `Upsert` | `*Create<Struct>Input` |
 | `UpsertMany` | `*Create<Struct>Input` (i-th element of the **deduped** `[]*Create<Struct>Input`, not the caller's slice — see [28.9](#289-generated-event-hook-architecture)) |
 | `Increment` | `IncrementInput[<Struct>IncrementColumn]` (by value) |
@@ -14484,7 +14808,7 @@ defer sub.Unsubscribe()
 
 - Separate Go module (`github.com/teandresmith/sqlgen/event/natsbus`) — depends on `github.com/nats-io/nats.go`
 - Implements both `Publisher` and `Subscriber`
-- Subject pattern: `{prefix}.{schema}.{table}` (configurable prefix, default `sqlgen.events`)
+- Subject pattern: `{prefix}.{schema}.{table}` (configurable prefix, default `sqlgen.events`); an event with no schema (SQLite, MySQL) publishes to `{prefix}.{table}`. A subscription filtered to one table receives both forms, each event once, core and JetStream alike
 - Consumer groups map to NATS queue groups
 
 The bus has two modes. **Core mode is the default and is unchanged**: `natsbus.New(conn)`
@@ -14544,16 +14868,21 @@ compatible. Any change to the subject scheme or body encoding bumps `Sqlgen-Enve
 - `natsbus.Connect(url, ...ConnectOption)` — a blessed constructor that dials with
   production-sane defaults (infinite reconnect, a reconnect buffer so publishes during a blip are
   not lost, drain-on-close, disconnect/reconnect callbacks), returning a bus ready to pair with
-  `WithJetStream`. `New(conn)` remains for callers who own their `*nats.Conn`.
+  `WithJetStream`; its `Close` drains and closes the connection it dialed. `New(conn)` remains for
+  callers who own their `*nats.Conn`: its `Close` unsubscribes the bus's handlers and leaves the
+  connection open.
 - `natsbus.WithSubscribeErrorHandler(func(ctx, event.Event, error))` — invoked when a `Handler`
-  returns an error on an at-most-once (core) subscription, so failures are observable instead of
-  discarded. `WithRetry(n, backoff)` adds bounded in-process retry before the error handler on
-  core mode.
-- `natsbus.WithActionSubjects()` — publishes to `{prefix}.{schema}.{table}.{action}` so a
+  returns an error on an at-most-once (core) subscription, in place of the default log
+  ([section 28.5](#285-subscriber-interface)). The same handler, or the log, receives the bus's own
+  failures on the subscribe path, core and JetStream: a message whose body cannot be decoded
+  (with the zero `Event`), and a failed ack, nak, terminate, delivery-metadata read, dead-letter
+  publish or consumer. These leave the message's handling unchanged: an undecodable JetStream
+  message is still terminated, and a failed dead-letter publish still naks.
+  `WithRetry(n, backoff)` adds bounded in-process retry before the error handler on core mode.
+- `natsbus.WithActionSubjects()` — publishes to `{prefix}.{schema}.{table}.{action}` (or
+  `{prefix}.{table}.{action}` for an event with no schema) so a
   consumer can let the broker filter by action (e.g. subscribe to `...tasks.create`). This
   changes the subject scheme, so it is opt-in and bumps the envelope version.
-- `natsbus.WithCodec(codec)` — replaces the default JSON encoding for the event body (e.g.
-  protobuf, msgpack) where a non-JSON wire format is required.
 
 ### 28.8 Configuration
 
@@ -14579,6 +14908,8 @@ tables:
       enabled: false                # don't publish events for audit log writes (avoid recursion)
 ```
 
+A per-table `events.enabled` only opts a table out. A table publishes events when global `events.enabled` is `true` and the table does not set `enabled: false`; `tables.<name>.events.enabled: true` while global `events.enabled` is off is a validation error (§4.13).
+
 **Runtime config (`event.Config`):**
 
 Provided at client construction via `WithEventPublisher`:
@@ -14602,7 +14933,7 @@ client := New(db,
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `OnError` | `func(ctx, []Event, error)` | `log.Printf` to stderr | Called when `PublishBatch` fails. Mutation always succeeds — publish failure is never propagated to the caller. |
+| `OnError` | `func(ctx, []Event, error)` | `log.Printf` to stderr | Called when `PublishBatch` returns an error or panics; a panic arrives as an error wrapping the panicked value (an `error` value stays reachable through `errors.Is`). Mutation always succeeds — publish failure is never propagated to the caller. |
 | `MetadataFunc` | `func(ctx) map[string]string` | `nil` (no metadata added) | Called once per mutation-hook entry to derive context metadata (e.g. `actor`, `request_id`, `traceparent`) merged into every resulting `Event.Metadata`. See below. |
 
 **`MetadataFunc` timing and merge.** `MetadataFunc` is invoked **once at mutation-hook entry**,
@@ -14646,7 +14977,17 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 **Per-entity hook pattern:**
 
 ```go
-func newProductEventHook(publisher event.Publisher, config event.Config) hook.MutationHook {
+// buildEventHooks resolves event.Config once and hands the result to every per-entity hook.
+func buildEventHooks(publisher event.Publisher, cfg event.Config) []hook.MutationHook {
+    onError := cfg.ResolveOnError() // OnError, or its default
+    metaFunc := cfg.MetadataFunc
+    return []hook.MutationHook{
+        hook.ForTable(newProductEventHook(publisher, onError, metaFunc), TableProducts),
+        // ... one per event-enabled table ...
+    }
+}
+
+func newProductEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
     return func(next hook.MutationHandler) hook.MutationHandler {
         return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
             // Execute the mutation (and all inner hooks)
@@ -14658,7 +14999,18 @@ func newProductEventHook(publisher event.Publisher, config event.Config) hook.Mu
             // Check SkipEvents via CallOptions
             // ...
 
-            // Build events from mc.AffectedPKs (always populated by terminal)
+            // No affected row — publish nothing
+            if len(mc.AffectedPKs) == 0 {
+                return result, nil
+            }
+
+            // Consumer metadata, resolved once at hook entry while ctx is live (28.3)
+            var baseMeta map[string]string
+            if metaFunc != nil {
+                baseMeta = metaFunc(ctx)
+            }
+
+            // Build events from mc.AffectedPKs
             events := make([]event.Event, len(mc.AffectedPKs))
             for i, pk := range mc.AffectedPKs {
                 events[i] = event.Event{
@@ -14667,16 +15019,17 @@ func newProductEventHook(publisher event.Publisher, config event.Config) hook.Mu
                     Schema:    mc.Schema,
                     Action:    mapOpToAction(mc.Op),
                     PK:        pk,
-                    Input:     mc.Input,
+                    Input:     mc.Input, // per-entity input (28.6)
                     Timestamp: time.Now(),
+                    // Shallow-cloned per event; the tenant stamp (29.6) is applied last
+                    Metadata:  mergeEventMetadata(baseMeta, nil),
                 }
             }
 
-            // Transaction-aware publishing
+            // Transaction-aware publishing. publishEvents calls PublishBatch and passes a
+            // returned error, or a recovered panic, to onError (28.8).
             publish := func(ctx context.Context) error {
-                if err := publisher.PublishBatch(ctx, events); err != nil {
-                    config.OnError(ctx, events, err)
-                }
+                publishEvents(ctx, publisher, onError, events)
                 return nil
             }
 
@@ -14691,6 +15044,8 @@ func newProductEventHook(publisher event.Publisher, config event.Config) hook.Mu
     }
 }
 ```
+
+A mutation with no affected row publishes nothing: the hook returns before it builds events, so `PublishBatch` is never called with an empty batch.
 
 **Resulting hook chain:**
 
@@ -14816,7 +15171,7 @@ tables:
 
 | Field | Type | Description |
 |---|---|---|
-| `enabled` | `*bool` | Per-table opt-in/out. Overrides global. A table with `enabled: false` has no tenant filter regardless of whether the column exists. |
+| `enabled` | `*bool` | Per-table opt-out. A table with `enabled: false` has no tenant filter regardless of whether the column exists. `enabled: true` forces the table tenanted under the global switch (detection rule 5); while global `tenancy.enabled` is off it is a validation error ([4.13](#413-config-validation-rules)), since no tenancy codegen runs. |
 | `column` | `*string` | Per-table column name override. Useful for legacy schemas that predate a standardized column name. |
 | `required` | `*bool` | Per-table override of the fail-closed rule. |
 | `type` | `*TypeOverride` | Per-table type override. Rarely needed. |
@@ -14835,6 +15190,8 @@ When `tenancy.enabled: true`, the generator runs a detection pass during schema 
 4. If the entity has `tenancy.enabled: false` (`tables.<name>` / `views.<name>`) → force **shared**, even if the column exists (explicit opt-out wins).
 5. If the entity has `tenancy.enabled: true` but the column does not exist → **hard codegen error** naming the entity and the expected column name.
 
+**At least one entity must come out tenanted.** With global `tenancy.enabled: true` and no tenanted table or view — no entity carries the column, or every one that does opts out — the package has no tenant type for its one `TenantResolver[T]` ([29.3.1](#2931-tenantresolver)) to take, since `tenancy.type` types the tenant column and there is none. That is a **hard codegen error** naming `tenancy.column`. It is also the shape a misspelled `tenancy.column` takes, which would otherwise scope nothing. Turn `tenancy.enabled` off for a schema with no tenant column.
+
 Detection-based inclusion mirrors soft delete (section 17). A schema with 50 tables doesn't need 50 config entries; only the opt-outs and oddities do.
 
 **Views are not exempt.** A view that carries the tenant column is tenanted under the same five rules — the read path is scoped exactly as a table's is. Applying detection to tables only would leave every tenant-shaped view reading across tenants while the tables beside it were scoped, which is the failure mode tenancy exists to prevent. Views are read-only, so rules 1–5 are the whole story for them; there is no mutation half. See [29.2.5](#2925-view-tenancy).
@@ -14848,7 +15205,7 @@ The tenant column's Go type is resolved in this order (first wins):
 3. **The column's own type resolution** ([7.1](#71-type-resolution-chain)) — `column_map.<col>.type`, then `type_map`, then the type-override map, then the built-in integration. The common path: if `workspace_id` is declared `uuid` in PostgreSQL and `overrides.types.uuid` already points to `uuid.UUID`, no tenancy-specific type config is needed. Resolving the tenant column here rather than separately is what keeps its spelling on the row struct and its spelling in the tenancy context from diverging.
 4. **Schema fallback** — whatever default the parser resolves to (e.g., `int64` for `bigint`, `string` for `text`).
 
-**Steps 1-2 resolve the tenant column itself, not a second type only the tenancy surface sees.** The override reaches the column's own resolution, so the row struct, `CreateInput`, the filter, the PK struct and the `TenancyContext` all spell the tenant one way. This is the same guarantee step 3 states from the other direction, and it is what makes the two spellings agree *by construction* rather than by a validation that compares them afterwards. It also means the import an override carries belongs to a column, and is therefore visible to the one-UUID-library-per-package rule ([7.4](#74-built-in-type-integrations), [4.13](#413-config-validation-rules)) — a rule that reads column bindings cannot see a surface no column owns.
+**Steps 1-2 resolve the tenant column itself, not a second type only the tenancy surface sees.** The override reaches the column's own resolution, so the row struct, `CreateInput`, the filter, the PK struct and the `TenancyContext` all spell the tenant one way. The tenant column's filter comparator follows the resolved tenant Go type, not the SQL type: a `uuid.UUID` tenant filters through `comparator.ID` whatever column type stores it. This is the same guarantee step 3 states from the other direction, and it is what makes the two spellings agree *by construction* rather than by a validation that compares them afterwards. It also means the import an override carries belongs to a column, and is therefore visible to the one-UUID-library-per-package rule ([7.4](#74-built-in-type-integrations), [4.13](#413-config-validation-rules)) — a rule that reads column bindings cannot see a surface no column owns.
 
 **`tenancy.type` is a full `TypeOverride`** ([4.7](#47-overrideconfig)), and every key it accepts applies to the tenant column: `type`, `import`, `zero_value` and the `nullable` variant. It resolves through the same code path an `overrides.types` entry does, so "same shape" is a statement about behavior and not only about YAML. One key is reachable only on some surfaces, which follows from the surfaces rather than from the override:
 
@@ -14973,6 +15330,7 @@ When a table is detected as tenanted:
 
 - `Get(ctx, pk)` — `SELECT ... FROM t WHERE pk = $1 AND workspace_id = $2`
 - `GetMany(ctx, input)` — appends `AND workspace_id = $N` to the user-composed WHERE
+- `Count(ctx, filter)` — appends the same predicate
 - Field-options-driven column projection (section 12) is unaffected — tenancy adds a filter, doesn't change what's selected.
 - Relationships (section 13) — the generated child-load also gets the tenant filter when the child table is tenanted (29.10).
 - **Views** — a tenanted view's `Get` / `GetMany` / `Count` / `Paginate` / `Connection` take the same predicate on the same rules ([29.2.5](#2925-view-tenancy)). `Refresh` / `RefreshConcurrently` do not.
@@ -14987,7 +15345,7 @@ When a table is detected as tenanted:
 Per-op specifics:
 
 - `Create(ctx, input)` / `CreateMany(ctx, inputs)` — the tenant column in the generated `INSERT` is sourced from the resolver. If the caller sets the tenant field in the input, the presence is tolerated when the value matches; a mismatch returns `ErrMismatch`. This tolerates defensive / round-tripped inputs without creating a silent cross-tenant write path.
-- `Update(ctx, pk, input)` / `UpdateMany` / `Upsert` — `WHERE pk = $N AND workspace_id = $M` is appended automatically with the resolver's tenant; the SET clause **excludes** the tenant column (a row's tenant is not a mutable attribute under normal operation). For `Upsert`, this exclusion applies to **both** the `INSERT` column list (tenant is auto-set from the resolver) and the conflict-clause UPDATE-set projection — `ON CONFLICT ... DO UPDATE SET` / `ON DUPLICATE KEY UPDATE` omits the tenant column even though the INSERT side writes it — so a conflicting row never has its tenant overwritten via upsert. Caller-set tenant on the input is tolerated when it matches; mismatches return `ErrMismatch`. For tables where the tenant column is part of the composite PK, the tenant is already carried on the `XXXPK` struct and `UpdateInput` / `UpsertInput` exclude the column entirely (see §29.7).
+- `Update(ctx, pk, input)` / `UpdateMany` / `Upsert` — `WHERE pk = $N AND workspace_id = $M` is appended automatically with the resolver's tenant; the SET clause **excludes** the tenant column (a row's tenant is not a mutable attribute under normal operation). For `Upsert`, this exclusion applies to **both** the `INSERT` column list (tenant is auto-set from the resolver) and the conflict-clause UPDATE-set projection — `ON CONFLICT ... DO UPDATE SET` / `ON DUPLICATE KEY UPDATE` omits the tenant column even though the INSERT side writes it — so a conflicting row never has its tenant overwritten via upsert. Caller-set tenant on the input is tolerated when it matches; mismatches return `ErrMismatch`. For tables where the tenant column is part of the composite PK, the tenant is already carried on the `XXXPK` struct and `UpdateInput` excludes the column entirely (see §29.7).
 - `Increment` — same `WHERE` augmentation. The tenant column is not exposed on any increment surface: it is absent from the Go client's `<T>IncrementColumn` enum and from the GraphQL `_inc` / `_dec` operator pair ([§26.5.4](#2654-mutation-translation)).
 - `SoftDelete*` / `HardDelete*` / `Restore*` — same `WHERE` augmentation. Composes with soft-delete's own auto-filter (both clauses AND'd — section 29.8). These ops don't expose a tenant field on their input shape.
 - `*Where` (batch predicates) — tenant filter is appended to the user-composed predicate.
@@ -15026,7 +15384,7 @@ When the tenant column is the *only* writable non-PK column, the update input wo
 Nested mutations ([9.9](#99-nested-mutations)) inherit every rule above, because every write routes through the target's own generated client. Three consequences are worth stating, and the first is the one place nested writes add a security rule rather than inheriting one:
 
 - **A `connect` is tenant-checked by reading the target through its own client.** The FK constraint proves a row *exists*; it does not prove the caller may see it. The visibility read applies the target's own tenant filter, so a target in another tenant is `ErrNotFound` — indistinguishable from a target that does not exist, which is the fail-closed direction and the same answer [29.10](#2910-relationship-propagation) gives on the read side. Without the read, a `connect` naming a foreign-tenant id would either succeed (writing a cross-tenant link) or fail with an opaque FK violation that confirms the row exists; both are cross-tenant information.
-- **A `disconnect` needs no such read**, and this is structural rather than an omission: it is keyed on the parent's own primary key — the junction pair embeds it, the O2M filter carries `fk = parent` — so it cannot reach another tenant's rows, and a miss is a no-op.
+- **A `disconnect` needs no such read**, and this is structural rather than an omission: it is keyed on the parent's referenced key — the junction pair embeds it, the O2M filter carries `fk = parent` — so it cannot reach another tenant's rows, and a miss is a no-op. A key holding a tenant value other than the resolved one is refused rather than missed ([9.9.6](#996-execution-order)).
 - **`SkipTenancy` propagates to every nested child.** Under it the tenant column is not auto-set on any nested child insert, and the caller must populate it on each nested child input — identical to the flat path ([29.4.4](#2944-calloptionsskiptenancy-and-calloptionstenant)). It is called out here because the nested call site is the one place the child inputs sit several layers below the `SkipTenancy` the caller typed.
 
 The visibility read is a **validation of caller input at call time, not a durable invariant**: it takes no row lock, so a target that is visible when the read runs can be soft-deleted before the transaction commits. That state is reachable anyway — by a delete committed one millisecond after commit — so a lock would buy a narrower window on a condition it cannot maintain, in exchange for holding shared locks on every connected target for the rest of the transaction. What the read does guarantee is the part that matters: a foreign-tenant or invisible id fails, and it fails as `NOT_FOUND` rather than as an opaque constraint error.
@@ -15096,7 +15454,7 @@ func BuildTenantTablePattern(prefix, schema, table string, tenant any) string
 
 **Always emit the tenant segment for tenanted tables.** Even when PKs are globally unique (UUIDs), the library can't reliably detect at codegen whether the application's uniqueness guarantees are external. Defaulting to "tenant segment always present" makes the cache correctness-by-construction against schema shapes the generator cannot introspect. Redundant key bytes for UUID-PK schemas (~40 extra bytes per entry) is negligible against the per-key value payload.
 
-**Invalidation on mutation is row-derived.** The tenant segment of each evicted key is reconstructed from the mutated row itself — never from the resolver — so invalidation is correct even when no tenant was resolved (`SkipTenancy`, or `required: false` with a zero resolver). Every mutation shape captures the affected rows' tenant column structurally: PostgreSQL/SQLite widen the statement's `RETURNING` projection; MySQL widens its existing pre-`SELECT`s and adds one batched pre-read for `*Many`; creates carry the inserted value. For tables whose tenant column is part of the primary key the tenant is read from each affected PK value and no extra capture runs. The captured tenants travel index-aligned with `MutationContext.AffectedPKs` in `MutationContext.AffectedTenants` and are never read off a possibly-partial returned entity. Because reads only ever cache a row under its own tenant-column value, the row-derived key is byte-identical to the key the readers used.
+**Invalidation on mutation is row-derived.** The tenant segment of each evicted key is reconstructed from the mutated row itself — never from the resolver — so invalidation is correct even when no tenant was resolved (`SkipTenancy`, or `required: false` with a zero resolver). Every mutation shape captures the affected rows' tenant column structurally: PostgreSQL/SQLite widen the statement's `RETURNING` projection; MySQL widens its existing pre-`SELECT`s and adds one pre-read per sub-batch for `*Many`; creates carry the inserted value. For tables whose tenant column is part of the primary key the tenant is read from each affected PK value and no extra capture runs. The captured tenants travel index-aligned with `MutationContext.AffectedPKs` in `MutationContext.AffectedTenants` and are never read off a possibly-partial returned entity. Because reads only ever cache a row under its own tenant-column value, the row-derived key is byte-identical to the key the readers used.
 
 If a captured tenant is unexpectedly missing (an unwired future mutation shape — this should never occur in normal operation), invalidation degrades to the cross-tenant `BuildTablePattern` clear, emits the cache error signal (`MetricsRecorder.Error` / `OnErrorFunc`, op `invalidate_tenant_fallback`), and returns no error: safe but loud, and a committed write is never failed by cache bookkeeping (27.9). A captured element that is nil because the mutation never materialized that row (an idempotent delete of an absent key, a no-op batch item) is simply skipped — nothing cached changed.
 
@@ -15104,7 +15462,7 @@ If a captured tenant is unexpectedly missing (an unwired future mutation shape �
 
 Every event emitted for a tenanted table carries the tenant in `Event.Metadata["tenant"]` (the `map[string]string` already in the event envelope — section 28.3). Subscribers can filter by tenant metadata; Layer 2 `InvalidationSource` implementations that bridge Kafka CDC (section 27.9) can use the tenant metadata for downstream routing.
 
-The stamp is **per event and row-derived**: each fanned-out event carries the tenant of its own affected row, read from the same structural capture the cache invalidation uses (29.5) — the PK value when the tenant column is part of the primary key, the `AffectedTenants` element otherwise — never from the resolver and never from a possibly-partial returned entity. `SkipTenancy` and `required:false`-zero mutations therefore still publish tenant-stamped events, and a batch spanning several tenants stamps each event with its own row's tenant. A row the mutation never materialized publishes its event with the `"tenant"` key absent (soft degrade — never `"<nil>"`, never `""`).
+The stamp is **per event and row-derived**: each fanned-out event carries the tenant of its own affected row, read from the same structural capture the cache invalidation uses (29.5) — the PK value when the tenant column is part of the primary key, the `AffectedTenants` element otherwise — never from the resolver and never from a possibly-partial returned entity. `SkipTenancy` and `required:false`-zero mutations therefore still publish tenant-stamped events, and a batch spanning several tenants stamps each event with its own row's tenant. A listed key that matched no row publishes no event, outside the superset case of [9.5](#95-edge-case-behaviors). A row whose tenant the mutation never captured publishes its event with the `"tenant"` key absent (soft degrade — never `"<nil>"`, never `""`).
 
 The stamp is formatted with `%v`, byte-identical to the tenant segment of the 29.5 cache-key grammar, so the event-driven invalidation receive side (28.11) rebuilds exact keys from the string without re-parsing the concrete tenant type. Stamps are read synchronously before any `OnCommit` registration — the resolver is still invoked at most **once per mutation hook entry**, and no async callback re-reads request ctx (same concern as section 27.9).
 
@@ -15128,7 +15486,7 @@ client.OrderItems().Get(ctx, OrderItemPK{
 
 **Rationale for verify-match over omit-from-signature.** The `XXXPK` struct matching the DDL PK column set (rather than hiding tenant-in-PK columns) preserves round-trip patterns (read a PK → hand it back to a later `Get`), keeps cache-key construction and serialization uniform across tenanted and non-tenanted composite PKs, and makes `SkipTenancy`-driven cross-tenant operations straightforward (the caller supplies the PK value directly). The compile-time "can't-construct-wrong-tenant" guarantee of an omit-from-signature shape was never airtight — deserialization, struct copies, and the resolver itself remain runtime — so consistency with the §29.4.2 mutation-input rule wins.
 
-The tenant column is still excluded from `UpdateInput` / `UpsertInput` when it lives in the PK (a row's tenant is not a mutable attribute under normal operation); the PK side carries the tenant value.
+The tenant column is still excluded from `UpdateInput` when it lives in the PK (a row's tenant is not a mutable attribute under normal operation), as it is from the update set of `Upsert`'s conflict clause on every tenanted table ([29.4.2](#2942-mutations)); the PK side carries the tenant value.
 
 ### 29.8 Soft Delete Composition
 
@@ -15139,9 +15497,9 @@ SELECT ... FROM products
 WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
 ```
 
-The order of filter application is deterministic at codegen — tenant first, then soft-delete, then user-supplied predicates — but for the SQL engine the AND order is irrelevant.
+Each generated method ANDs its conditions in an order fixed at codegen, so a method emits the same SQL on every call. The order is not part of the contract (the example above is illustrative), and for the SQL engine the AND order is irrelevant.
 
-`SkipTenancy` and `IncludeDeleted` compose **orthogonally**. `SkipTenancy: true` + `IncludeDeleted: true` gives admin tooling "all rows including soft-deleted across all tenants." There is no special casing or combined-flag guard — each flag toggles one filter independently. Projects that want to restrict who can call either escape hatch implement the guard at their own boundary (typically a thin middleware that checks an auth-role ctx marker before passing `CallOptions` down).
+`SkipTenancy` and the soft-delete comparator compose **orthogonally**. `SkipTenancy: true` with the soft-delete column's comparator set on the filter (e.g. `DeletedAt: &comparator.NullableTime{}`, which suppresses the default "is not deleted" condition, [9.8](#98-generated-method-patterns)) gives admin tooling "all rows including soft-deleted across all tenants." There is no special casing or combined-flag guard — each toggles one filter independently. Projects that want to restrict who can call either escape hatch implement the guard at their own boundary (typically a thin middleware that checks an auth-role ctx marker before passing `CallOptions` and filters down).
 
 ### 29.9 Hooks Orthogonality
 
@@ -15160,8 +15518,8 @@ Each table's tenancy is evaluated independently. A tenant filter is applied to w
 
 | Shape | How the child loads | Tenancy behavior |
 |---|---|---|
-| **o2o** | Inline JOIN in the parent `Get` / `GetMany` SQL | JOIN generator adds `AND {childAlias}.{tenantCol} = $N` **only when the child table is tenanted**. Tenant column name is resolved from the child's per-table config. When the child is NOT tenanted, no child-side filter is added — the parent's WHERE tenant filter + the ON condition over the parent PK is the scoping path. |
-| **o2m** | Chained `client.Children.GetMany(ctx, input)` | Free — the child's standalone `GetMany` already auto-filters by its own tenant column (when the child is tenanted). Non-tenanted child = no child filter; transitive scoping via the parent-PK `IN (...)` predicate over FKs is the guarantee. |
+| **o2o** | Inline JOIN in the parent `Get` / `GetMany` SQL | JOIN generator adds `AND {childAlias}.{tenantCol} = $N` **only when the child table is tenanted**. Tenant column name is resolved from the child's per-table config. When the child is NOT tenanted, no child-side filter is added — the parent's WHERE tenant filter + the ON condition over the edge's key is the scoping path. |
+| **o2m** | Chained `client.Children.GetMany(ctx, input)` | Free — the child's standalone `GetMany` already auto-filters by its own tenant column (when the child is tenanted). Non-tenanted child = no child filter; transitive scoping via the parent-key `IN (...)` predicate over the FK columns is the guarantee. |
 | **m2m** | Chained junction-read + child `GetMany` | Free for the same reason as o2m. Junction tables are usually non-tenanted by design; the child itself auto-filters if tenanted, transitively if not. |
 
 **Key properties:**
@@ -15170,6 +15528,7 @@ Each table's tenancy is evaluated independently. A tenant filter is applied to w
 - **Belt-and-suspenders when both sides are tenanted.** The JOIN generator emits `parent.tenant = $N AND child.tenant = $N` in o2o. If both sides share the same resolver value (always true under `T comparable` + uniform tenant type), this catches corrupted rows where a child's tenant drifts from its parent's due to bad data or a broken migration.
 - **Per-table tenant column name suffices.** The child's own `tables.<child>.tenancy.column` (or the global default) determines the column used on the child side. No per-relationship override is provided: a tenant column that differs per JOIN side would mean the two tables disagree on what a tenant is, which the single `TenantResolver[T]` cannot represent.
 - **`SkipTenancy: true` propagates.** A parent `Get` / `GetMany` called with `SkipTenancy: true` drops the auto-filter on both parent and child sides — the admin/reporting caller owns full row scoping. `CallOptions` already propagate through the relationship loading pipeline (section 9.6).
+- **A composite tenant foreign key is guarded by the database.** `tasks(workspace_id, cycle_id) → cycles(workspace_id, id)` is an ordinary edge ([5.3](#53-relationship-detection)): it loads `Cycle.Tasks` through both pairs, and its relationship filter and O2O join correlate on both. The child's own tenant filter applies as for any O2M, and the tuple condition repeats `workspace_id`, which the key guarantees anyway. An edge whose key holds the tenant column on both sides cannot cross a tenant, so the generator can tell from the key alone that the database enforces tenant isolation on it. In nested mutations the tenant member is pinned ([9.9.2](#992-the-verb-set-is-decided-per-edge-by-fk-nullability)): no verb writes it through the edge.
 - **The write side takes the same fail-closed rule.** This section covers relationship *loading*; a nested mutation ([9.9](#99-nested-mutations)) writes across the same edges, and its `connect` verb resolves target visibility by reading the target through that target's own client — so the child-side tenant filter above applies to the write path unchanged, and a target in another tenant is `ErrNotFound`. Nested children inherit the ctx-cached tenant (section 29.6), and `SkipTenancy` propagates into them exactly as it does into a relationship load. See [29.4.2a](#2942a-nested-mutations).
 
 ### 29.11 Constraints
@@ -15180,7 +15539,7 @@ The following are explicit non-goals, and each keeps the tenancy surface small e
 - **Mixed tenant types across tenanted entities.** Every tenanted entity in a given generate run — table **or** view ([29.2.4](#2924-type-resolution), [29.2.5](#2925-view-tenancy)) — must resolve to the same Go type for its tenant column, because the package exposes exactly one `TenantResolver[T]`. If types diverge (e.g. `uuid.UUID` on one, `int64` on another), the generator hard-errors and the user opts one out via `tables.<name>.tenancy.enabled: false` / `views.<name>.tenancy.enabled: false` or consolidates via migration.
 - **Cross-tenant transactions.** Switching tenants mid-transaction is not supported; use separate transactions. "Not supported" here is the weak sense — sqlgen does not help you do it, and does **not** prevent it: there is no mid-transaction switch detection, and a caller who derives a child ctx carrying a different tenant between two writes inside one transaction gets rows in two tenants, silently. Consistency across a transaction comes from handing every operation in it the same ctx, which is what the ordinary shape does.
 
-  **The resolver is invoked per operation, not once at transaction open** ([29.6](#296-event-metadata)). That is deliberate rather than an omission: the resolver's whole job is to read ctx ([29.3.1](#2931-tenantresolver)), so a value cached at `Begin` would ignore a ctx the caller legitimately changed between two operations they chose to group. The ctx cache that does exist is scoped to one *logical* operation — a chain (`Create` → terminal `Get` → `GetMany`), or a nested mutation and the inner writes it fans out to — and never to a caller-opened transaction. `tx_resolver_test.go` in the tenancy example pins both directions: N mutations inside one `WithTx` invoke the resolver exactly N times, and one chained `Create` invokes it exactly once.
+  **The resolver is invoked per operation, not once at transaction open** ([29.6](#296-event-metadata)). That is deliberate rather than an omission: the resolver's whole job is to read ctx ([29.3.1](#2931-tenantresolver)), so a value cached at `Begin` would ignore a ctx the caller legitimately changed between two operations they chose to group. The ctx cache that does exist is scoped to one *logical* operation — a chain (`Create` → its terminal read → `GetMany`), or a nested mutation and the inner writes it fans out to — and never to a caller-opened transaction. `tx_resolver_test.go` in the tenancy example pins both directions: N mutations inside one `WithTx` invoke the resolver exactly N times, and one chained `Create` invokes it exactly once.
 - **Dynamic column name per request.** The tenant column is static per table at codegen. Projects needing per-request column choice are outside this design — use per-DB tenancy or a custom SQL layer.
 - **Fine-grained authorization.** Out of scope. Compose with a policy layer (Cerbos, OPA, custom middleware) at the app boundary.
 - **Type-aware lint rule for forgotten-tenant handlers.** There is no tenancy-specific lint rule. `ErrMissing` at the first tenanted call is a strictly better signal than speculative static analysis: it fires on the real code path, with the table and the resolver named.
@@ -15288,7 +15647,6 @@ generation:
     json_per_entity_dir: entities       # default (relative to markdown_dir)
     markdown_dir: manifest              # default (relative to output.dir)
     include_examples: true              # default: true (canonical example per entity)
-    include_internal: false             # default: false (skip exclude_columns, system views)
     breadcrumbs:                        # each default true when manifest.enabled
       claude_md:   true                 # emit <output.dir>/CLAUDE.md
       agents_md:   true                 # emit <output.dir>/AGENTS.md
@@ -15310,10 +15668,9 @@ generation:
 | `json_per_entity_dir` | `string` | `entities` | Subdirectory under `markdown_dir` for per-entity JSON files in `per_entity` layout. Cannot equal `markdown_dir`, start with `_`, be absolute, or escape via `..`. |
 | `markdown_dir` | `string` | `manifest` | Subdirectory under `output.dir` for the markdown directory. Cannot be `.`, equal an existing PRD §8.3 artifact subdir, start with `_`, be absolute, or escape via `..`. |
 | `include_examples` | `bool` | `true` | When false, per-entity `examples` arrays are stripped. Conventions examples in `_conventions.md` are always retained. |
-| `include_internal` | `bool` | `false` | When true, columns listed in `exclude_columns` and system views are included. Off by default to keep the manifest a "consumer-facing surface" view. |
-| `breadcrumbs.claude_md` | `bool` | `true` | Emit `<output.dir>/CLAUDE.md` pointing at the manifest. |
+| `breadcrumbs.claude_md` | `bool` | `true` | Emit `<output.dir>/CLAUDE.md` pointing at the manifest: `<markdown_dir>/_index.md`, or `<markdown_dir>/<json_filename>` when `formats` has no `markdown`. |
 | `breadcrumbs.agents_md` | `bool` | `true` | Emit `<output.dir>/AGENTS.md` (identical content). |
-| `breadcrumbs.package_doc` | `bool` | `true` | Inject a one-line manifest pointer into `models_gen.go`'s package doc comment. |
+| `breadcrumbs.package_doc` | `bool` | `true` | Inject a one-line manifest pointer into `models_gen.go`'s package doc comment (into the client file, `output.client.file`, when there is no `models_gen.go`: under `file_per_table`, or with no tables): `// Package <name> is generated by sqlgen. AI agents: read <markdown_dir>/_index.md before consuming this package.`, naming `<markdown_dir>/<json_filename>` instead when `formats` has no `markdown`. |
 | `embed_in_client` | `bool` | `true` | Generate the three `Client.Manifest()` / `ManifestEntity()` / `ManifestVersion()` methods + the embed-file. |
 | `mcp` | block | emission on when enabled | Project-local MCP registration (`.mcp.json`) emission — `emit_project_config`, `project_configs`, `server_key`, `command_template`. Global-only (no per-table analogue). Normative spec + defaults in §31.2. |
 
@@ -15370,8 +15727,8 @@ When `manifest.enabled: true`, the following files are emitted under `<output.di
     ├── manifest_gen.json           # top-level JSON (full inline in single layout, index in per_entity)
     ├── _index.md                   # entity scan table (cross-references _conventions.md)
     ├── _conventions.md             # error sentinels, pagination, comparators, soft-delete, CallOptions, Comparator + Omittable surface walkthrough
-    ├── users.md                    # one markdown file per entity, named after the SQL table verbatim
-    ├── posts.md
+    ├── user.md                     # one markdown file per entity, named by its file_prefix (see File naming)
+    ├── post.md
     ├── ...
     └── entities/                   # only present in per_entity layout
         ├── users.json              # full per-entity JSON
@@ -15412,7 +15769,7 @@ The single ownership rule: **sqlgen only overwrites or stale-deletes a breadcrum
 
 The marker is authored **only** by sqlgen when it writes the complete file; it is never part of the pasteable pointer block, so a consumer who pastes the block into their own `CLAUDE.md` does not thereby hand the file to sqlgen. The marker deliberately does not say "DO NOT EDIT" — ownership here is soft and adoptable, unlike the hard `// Code generated by sqlgen. DO NOT EDIT.` claim on `*_gen.go` files. This rule applies identically to the layered-mode `graph/CLAUDE.md` / `graph/AGENTS.md` breadcrumbs. The `models_gen.go` package-doc pointer (`breadcrumbs.package_doc`) is unaffected — it lives inside a fully sqlgen-owned `DO NOT EDIT` file.
 
-**Stale-file cleanup** (PRD §23.8). All manifest artifacts participate in stale-file cleanup. Removing a table from the schema removes its per-entity markdown / JSON file on next generation. Setting `manifest.enabled: false` after a prior `true` removes the entire manifest directory and the breadcrumb files **that carry the provenance marker** (see *Breadcrumb ownership* above — user-owned or user-adopted breadcrumbs are never deleted).
+**Stale-file cleanup** (PRD §23.8). All manifest artifacts participate in stale-file cleanup. Removing a table from the schema removes its per-entity markdown / JSON file on next generation. While the manifest stays enabled, dropping a format from `formats` removes that format's artifacts on the next generation (`markdown`: every `.md` file in the owned `markdown_dir`, `_index.md`, `_conventions.md` and the per-entity files among them; `json`: the `json_filename` artifact and the per-entity `*.json` files), under the *Directory ownership* rule below, and disabling GraphQL removes the graph breadcrumbs that carry the provenance marker from the configured graph dir. Setting `manifest.enabled: false` after a prior `true` removes the entire manifest directory and the breadcrumb files **that carry the provenance marker** (see *Breadcrumb ownership* above — user-owned or user-adopted breadcrumbs are never deleted).
 
 **Directory ownership.** "After a prior `true`" is a **precondition, not a description of timing** — the generator MUST establish it before removing `<output.dir>/<markdown_dir>/`, and MUST leave the directory untouched when it cannot. The disabled branch runs on *every* generation (the manifest is off by default, §30.2), `output.dir` defaults to `.` (§4.2), and `markdown_dir` defaults to `manifest` — so the resolved path routinely lands on a directory the consumer owns and sqlgen has never written. Ownership is established from the emitted content, requiring no marker file and no state carried between runs: the directory is sqlgen's when it contains either
 
@@ -15423,9 +15780,9 @@ The marker is authored **only** by sqlgen when it writes the complete file; it i
 
 This rule governs the directory removal only. The per-entity pruning inside an *enabled* manifest directory is driven by the current entity set, and the per-entity JSON directory is dropped after a `per_entity` → `single` flip by removing the `*.json` files sqlgen emits there and then the directory itself only if nothing else remains.
 
-**Determinism** (PRD §5.7). Manifest emission is deterministic byte-for-byte given an unchanged schema + config. The only non-deterministic field is `generated_at`, which the generator accepts a `--manifest-timestamp` flag to fix for golden tests. All collections are sorted lexicographically by stable key. JSON is written via `json.MarshalIndent` with HTML-escaping disabled.
+**Determinism** (PRD §5.7). Manifest emission is deterministic byte-for-byte given an unchanged schema + config. The only non-deterministic field is `generated_at`, which the generator accepts a `--manifest-timestamp` flag to fix for golden tests. `entities[]`, `enums[]`, `extras[]` and, per entity, `indexes[]`, `relationships[]`, `sort.fields` and the column members of `filter.fields` are sorted lexicographically by stable key. `methods.query[]` / `methods.mutation[]` follow the order the generated `<Entity>Client` interface declares, and every other list keeps its source order: `columns[]` the table's declaration order, `filter.fields` puts `And` / `Or` after its sorted column members, and `error_sentinels[]`, `params`, `errors[]`, `pk.columns`, index columns, enum values, extra fields and example lines as the generator emits them. JSON is written via `json.MarshalIndent` with HTML-escaping disabled.
 
-**GraphQL breadcrumbs** (PRD §26.5.8). When GraphQL is enabled, the generated `graph/` package receives breadcrumb files (`graph/CLAUDE.md`, `graph/AGENTS.md`) rather than its own `manifest/` directory — only the models package gets a `manifest/`. The breadcrumbs point at three sources: the models manifest (via a relative path computed from the resolved graph dir, so it adapts whether graph is nested under models or a top-level sibling), the `*_gen.graphqls` files in the same directory (self-describing GraphQL schema), and PRD §26 (project-invariant resolver / walker / middleware semantics).
+**GraphQL breadcrumbs** (PRD §26.5.8). When GraphQL is enabled, the generated `graph/` package receives breadcrumb files (`graph/CLAUDE.md`, `graph/AGENTS.md`) rather than its own `manifest/` directory — only the models package gets a `manifest/`. The breadcrumbs point at three sources: the models manifest (its `_index.md`, or its `json_filename` artifact when `formats` has no `markdown`, via a relative path computed from the resolved graph dir, so it adapts whether graph is nested under models or a top-level sibling), the `*_gen.graphqls` files in the same directory (self-describing GraphQL schema), and the doc comments on the generated resolver, walker and middleware Go files in that directory.
 
 ### 30.4 JSON Schema
 
@@ -15436,7 +15793,7 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/<owner>/sqlgen/v<version>/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-05-15T14:22:11Z",
   "generator": { "name": "sqlgen", "version": "0.42.0" },
   "dialect": "postgres",
@@ -15455,7 +15812,7 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
 ```json
 {
   "$schema": "...",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "...",
   "generator": { ... },
   "dialect": "postgres",
@@ -15464,13 +15821,15 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
   "generation_config": { ... },
   "layout": "per_entity",
   "entities": [
-    { "name": "User", "table": "users", "kind": "table", "file": "entities/users.json" },
-    { "name": "Post", "table": "posts", "kind": "table", "file": "entities/posts.json" }
+    { "name": "User", "table": "users", "kind": "table", "file": "entities/user.json" },
+    { "name": "Post", "table": "posts", "kind": "table", "file": "entities/post.json" }
   ],
   "enums":  [ ... ],
   "extras": [ ... ]
 }
 ```
+
+An index entry also carries `schema` when its entity has one (every PostgreSQL entity), so the index alone names each entity the way `ManifestEntity` looks it up ([30.6](#306-runtime-embedded-manifest)): two schemas' tables of one name stay apart.
 
 `enums[]` and `extras[]` are **always inline** in both layouts (typically 10–50 elements; not load-bearing for split economics).
 
@@ -15480,7 +15839,7 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
 |---|---|---|
 | `$schema` | string | URL of the JSON Schema for this `schema_version`. GitHub raw URL of the latest tagged release; immutable per-version. |
 | `schema_version` | semver | Independent of sqlgen's overall version. See §30.5. |
-| `generated_at` | RFC3339 | Only non-deterministic field. |
+| `generated_at` | RFC3339 | Only non-deterministic field. `--manifest-timestamp` pins it; a value that is not RFC3339 is a usage error (exit 2) naming the flag. |
 | `generator` | object | `{name, version}` of the emitter. |
 | `dialect` | string | `"postgres"`, `"mysql"`, or `"sqlite"`. |
 | `package` | string | Go package name of the output. |
@@ -15510,6 +15869,7 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
       { "name": "ErrInvalidCursor",       "graphql_code": "",                "package": "models" },
       { "name": "ErrDeadlock",            "graphql_code": "",                "package": "models" },
       { "name": "ErrConnectionFailed",    "graphql_code": "",                "package": "models" },
+      { "name": "ErrTxDone",              "graphql_code": "",                "package": "models" },
       { "name": "ErrConstraintViolation", "graphql_code": "",                "package": "models" },
       { "name": "ErrAlreadyRelated",      "graphql_code": "CONFLICT",        "package": "models" },
       { "name": "ErrNestedVerbConflict",  "graphql_code": "INVALID_INPUT",   "package": "models" },
@@ -15597,7 +15957,7 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
 }
 ```
 
-**View entries** use `kind: "view"`, `pk.kind: "none"` (when no declared PK), `relationships: []`, and a `source` field carrying the view's definition: the annotation file's text under `files`, or the definition the database stores under `database` ([6.1](#61-source-modes)). A **materialized view** ([16.5](#165-materialized-views-postgresql)) additionally carries `materialized: true` (omitted otherwise) and advertises `Refresh` / `RefreshConcurrently` under `methods.mutation[]` with their canonical `sql_bodies` (`REFRESH MATERIALIZED VIEW [CONCURRENTLY] ...`); `RefreshConcurrently` lists `database.ErrRefreshConcurrentlyInTx` in `errors` — qualified, because [§22.1](#221-generated-error-types)'s re-export list has eight entries and this is not one of them, so the bare spelling would name a symbol the generated package does not declare.
+**View entries** use `kind: "view"`, `pk.kind: "none"` (when no declared PK), `relationships: []`, and a `source` field carrying the view's definition: the annotation file's text under `files`, or the definition the database stores under `database` ([6.1](#61-source-modes)). A **materialized view** ([16.5](#165-materialized-views-postgresql)) additionally carries `materialized: true` (omitted otherwise) and advertises `Refresh` / `RefreshConcurrently` under `methods.mutation[]` with their canonical `sql_bodies` (`REFRESH MATERIALIZED VIEW [CONCURRENTLY] ...`); `RefreshConcurrently` lists `database.ErrRefreshConcurrentlyInTx` in `errors` — qualified, because [§22.1](#221-generated-error-types)'s re-export list has ten entries and this is not one of them, so the bare spelling would name a symbol the generated package does not declare.
 
 **A tenanted view populates `features.tenancy`.** Tenancy detection covers every generated entity, views included ([29.2.5](#2925-view-tenancy)), so a view carrying the effective tenant column has its reads scoped exactly as a table's are and the manifest must say so. Reporting `features.tenancy: null` on a scoped view is not a harmless omission: it tells every manifest consumer — the MCP server ([31](#31-mcp-server)), an agent, a drift check — that the view's rows are globally visible when they are not. Two fields differ from the table shape, both because a view has no write path:
 
@@ -15610,17 +15970,41 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
 
 **`files[]` follows `output.layout`.** It names the generated Go file(s) carrying the entity's own body, and the spelling is layout-dependent: `["models_gen.go"]` for a table and `["views_gen.go"]` for a view under the default `single_file`, `["<file_prefix>_gen.go"]` for either under `file_per_table` ([§4.5](#45-outputconfig)). The builder reads `gen`'s file-naming function — the same one the emission path calls — rather than recomputing the stem, so the two cannot disagree. Publishing one layout's spelling unconditionally would send every consumer on the other layout, `sqlgen_get_entity` over MCP ([§31](#31-mcp-server)) included, to a path that does not resolve. The field is the entity's *body* file, not an index of every file mentioning it: package-wide artifacts that carry per-entity members under either layout — `sorter_gen.go`, `cache_gen.go`, `event_hooks_gen.go`, the GraphQL `*_gen.graphqls` — are found through `conventions` and `features`, not here.
 
+**Optional members are omitted when empty.** The sample above shows every member; the emitted JSON leaves out a member that has no value rather than writing `null`, `""` or `[]`: `schema`, a column's `default`, `default_kind`, `auto` and `check`, `features.audit_columns`, and the other optional members marked as such (`access` / `redacted`, `materialized`). A consumer reads an absent member as its zero value. `comment` is always written (`""` when there is none, [30.7](#307-extended-schema-metadata)), and so are the four `features` blocks (`null` when the feature is off).
+
+**`examples`** holds canonical Go lines built from the entity's generated methods, fields and types: `read` a `Get` call (when `Get` is generated) and a `GetMany` call filtering on a real column, `write` a `Create` call and an `Update` call (when generated). A view carries `read` lines only. `include_examples: false` omits the block.
+
 **Composite-PK entities** use `pk.kind: "composite"` with `pk.struct` naming the generated `<Entity>PK` struct.
+
+**A relationship's `fk` and `junction` record its whole key.** An `o2o` / `o2m` / `m2o` edge carries `fk`; an `m2m` edge carries `junction` and no `fk`:
+
+```json
+"fk": {
+  "table": "tasks",
+  "columns": ["workspace_id", "cycle_id"],
+  "references": ["workspace_id", "id"],
+  "constraint": "tasks_cycle_same_ws"
+},
+"junction": {
+  "table": "task_labels",
+  "local_fk":  { "columns": ["workspace_id", "task_id"],  "references": ["workspace_id", "id"], "constraint": "task_labels_task_fk" },
+  "target_fk": { "columns": ["workspace_id", "label_id"], "references": ["workspace_id", "id"], "constraint": "task_labels_label_fk" }
+}
+```
+
+- **`fk.table`** names the table that holds the FK columns: the target's table when the columns are on the target (an `o2m` edge, or a has-one `o2o`), and the entity's own table when the entity holds them (a belongs-to edge). `junction.table` names the M2M junction. Both carry the bare table name, with an optional `schema` beside it when sqlgen resolved one, split the way an entity splits `table` and `schema`.
+- **`columns` and `references`** are the key's pairs in the foreign key's declared order: `columns[i]` references `references[i]`. A single-column edge has one-item lists. `references` names the referenced columns, which may be the target's primary key or one of its UNIQUE constraints ([5.3](#53-relationship-detection)); for a manual relationship it is the referenced primary key, a view's `@pk` included ([13.4](#134-manual-relationship-configuration)). `junction.local_fk` is the junction's key into this entity, and `junction.target_fk` its key into the target. `columns` and `references` are always present, and `schema/v1.json` requires them on every `fk` and junction key.
+- **`constraint`** names the FOREIGN KEY constraint the edge was detected from, so the manifest shows where each edge came from. An unnamed SQLite foreign key is named `table(columns) → target(columns)`, as its detection warning names it. A manual relationship has no constraint behind it, and `constraint` is omitted.
 
 **`methods[]` is the generated Go surface, not a description of it.** An entity's `methods.query[] + methods.mutation[]` is exactly the method set on its generated `<Entity>Client` interface — the [§9.1](#91-read-operations)–[§9.4a](#94a-streaming-operations) tables — gated by the schema facts of [4.6 Operations](#operations): `SoftDelete*` / `Restore*` on a detected soft-delete column, `Increment` on at least one increment-eligible column, `Upsert` / `UpsertMany` on a conflict target, and the `…WithRelated` methods on `nested_mutations`; the rest are unconditional. Views carry `Get` (with a `@pk` annotation), `GetMany`, `Count`, `Paginate`, `Connection` (with resolvable cursor keys), plus `Refresh` / `RefreshConcurrently` on a matview ([16.5](#165-materialized-views-postgresql)).
 
 The list is read from the templates, never back-formed from a documentation example. That is the same rule [§30.4.1](#3041-conventions-block) states for `error_sentinels[]`, applied to the block that contains `errors[]`, and it binds in both directions: a plausible-sounding method the templates do not emit (`FindByID`, `FindBy<Col>` per UNIQUE index, `List`, `Walk`, `Delete`, `Upsert<Target>` per conflict target) must not appear, and a real one must not be omitted — `Increment`, `ExistsWhere`, `Paginate`, `Connection`, `CreateMany`, `UpdateMany`, `UpdateWhere`, `Restore`, and the six `*Many` / `*Where` delete and restore forms carry the conditions above. Param and return types are read the same way.
 
-**Signature convention.** `params` omits the leading `ctx context.Context` and the trailing variadic `opts ...func(*CallOptions[…])` that every generated method carries; `returns` names the non-error result and is the empty string when the method returns only `error`; the error side lives in `errors[]`. `errors[]` lists the sentinels the generated body can actually reach — `Get` carries `ErrNotFound` ([§9.8.2](#982-get)), the idempotent by-PK deletes and `Restore` carry none ([§9.5](#95-edge-case-behaviors)), `Update` and `Increment` carry it only under `strict_updates`, the `*Where` methods carry `ErrEmptyFilter`, and `Connection` carries `ErrInvalidCursor`. `UpdateMany` does **not** carry `ErrNotFound` under any setting: it issues `Update`'s statement per item but never inspects the affected-row count, so a primary key that does not exist is silently skipped.
+**Signature convention.** `params` omits the leading `ctx context.Context` and the trailing variadic `opts ...func(*CallOptions[…])` that every generated method carries; `returns` names the non-error result and is the empty string when the method returns only `error`; the error side lives in `errors[]`. `errors[]` lists the sentinels the generated body can actually reach — `Get` carries `ErrNotFound` ([§9.8.2](#982-get)), the idempotent by-PK deletes and `Restore` carry none ([§9.5](#95-edge-case-behaviors)), `Update` and `Increment` carry it only under `strict_updates`, the mutating `*Where` methods (`UpdateWhere` and the delete and restore forms) carry `ErrEmptyFilter`, and `Connection` carries `ErrInvalidCursor`. `UpdateMany` does **not** carry `ErrNotFound` under any setting: it issues `Update`'s statement per item, and an item whose primary key matches no row is skipped and records no affected key ([9.5](#95-edge-case-behaviors)).
 
 **Per-method `sql_bodies` (added 2026-05-15).** Each method under `methods.query[]` and `methods.mutation[]` carries an optional `sql_bodies: {<dialect>: <canonical SQL>}` map describing the statement *that method* issues. Single-key map for single-dialect packages; placeholders are dialect-rendered (`$1` for postgres, `?` for mysql/sqlite). Captured deterministically from the SQL-build pipeline that emits the `_gen.go` query bodies. Consumed by MCP §31 `sqlgen_show_sql`. See `docs/design/MANIFEST.md` §5.3 for the full shape.
 
-A method that issues no statement of its own carries **no `sql_bodies` key at all** rather than a plausible-looking invention: `Paginate` and `Connection` compose `Count` and `GetMany`, and MCP reports `-32005 METHOD_SQL_UNAVAILABLE` for them.
+A method that issues no statement of its own carries **no `sql_bodies` key at all** rather than a plausible-looking invention: `Paginate` and `Connection` compose `Count` and `GetMany`, and `CreateWithRelated` / `UpdateWithRelated` / `UpsertWithRelated` compose the entity's and its targets' own methods ([9.9](#99-nested-mutations)), and MCP reports `-32005 METHOD_SQL_UNAVAILABLE` for them.
 
 Clauses the generated code assembles from caller input at call time are rendered as **placeholder tokens**. An expansion would name columns and placeholder positions the statement does not carry, and the real column set is already published in the entity's `columns[]` block. The token set:
 
@@ -15677,7 +16061,7 @@ Added 2026-05-15 to back MCP §31 `sqlgen://config` resource (see `docs/design/M
 - Adding optional fields → minor bump (consumers tolerate).
 - Bug fixes / clarifications → patch.
 - Every breaking version preserves its JSON Schema at `cmd/sqlgen/manifest/schema/v<N>.json`. Generation emits the latest; consumers pin via the `$schema` URL.
-- `schema_version` ships at `0.x` until the shape is frozen; while it is `0.x`, breaking changes are permitted under a minor bump and consumers are expected to regenerate rather than pin.
+- `schema_version` ships at `0.x` until the shape is frozen; while it is `0.x`, breaking changes are permitted under a minor bump and consumers are expected to regenerate rather than pin. `0.2.0` changed every relationship's `fk` and `junction` to the key-list shape in [30.4.2](#3042-entity-shape) and added `constraint`.
 - The `1.0.0` freeze is the point at which the shape stops moving. It requires the `schema/v1.json` conventions tightening — the always-emitted `call_options` / `soft_delete` / `comparator` / `omittable` sub-blocks take their final shape and `conventions.required` is tightened — and from that release on, the rules above bind.
 
 ### 30.6 Runtime-Embedded Manifest
@@ -15689,13 +16073,18 @@ import sqlgenmanifest "github.com/teandresmith/sqlgen/manifest"
 
 // Manifest returns the parsed manifest document. Pre-parsed at package
 // init; safe for concurrent reads. Entities[] is always the lightweight
-// index (Name + Table + Kind + optional File); use ManifestEntity for
-// full entity records — the lookup is layout-agnostic.
+// index (Name + Table + Kind, plus Schema when the entity has one and
+// File in per_entity); use ManifestEntity for full entity records — the
+// lookup is layout-agnostic.
 func (c *Client) Manifest() *sqlgenmanifest.Document
 
-// ManifestEntity returns the full record for a given table name.
-// Works identically across `single` and `per_entity` disk layouts.
-// Returns (nil, manifest.ErrEntityNotFound) for unknown tables.
+// ManifestEntity returns the full record for a given table. A table with
+// a schema is named `schema.table`, or by its bare name when no other
+// schema has a table of that name; a table without a schema is named by
+// its name. Works identically across `single` and `per_entity` disk
+// layouts. Returns (nil, manifest.ErrEntityNotFound) for unknown tables,
+// and nil with an error wrapping manifest.ErrEntityNotFound, naming each
+// `schema.table` it could mean, for a bare name several schemas share.
 func (c *Client) ManifestEntity(table string) (*sqlgenmanifest.Entity, error)
 
 // ManifestVersion returns the schema_version field, pre-extracted at
@@ -15703,7 +16092,7 @@ func (c *Client) ManifestEntity(table string) (*sqlgenmanifest.Entity, error)
 func (c *Client) ManifestVersion() string
 ```
 
-**Type package:** `github.com/teandresmith/sqlgen/manifest` is a new top-level runtime package (peer to `database/`, `cache/`, `comparator/`, `omittable/`). Stdlib-only — runtime dependency invariant per PRD §3 holds. Exports `Document`, `EntityIndex`, `Entity`, `Column`, `Relationship`, `Method`, `Filter`, `Sort`, `Features`, `PK`, `Conventions`, `Generator`, `Enum`, `Extra`, plus typed aliases `Layout`, `Dialect`, `EntityKind`, `RelationshipKind`. ~25 named types total. Same types serve both as the JSON unmarshal target and the public Client API surface.
+**Type package:** `github.com/teandresmith/sqlgen/manifest` is a new top-level runtime package (peer to `database/`, `cache/`, `comparator/`, `omittable/`). Stdlib-only — runtime dependency invariant per PRD §3 holds. Exports `Document`, `EntityIndex`, `Entity`, `Column`, `Relationship`, `Method`, `Filter`, `Sort`, `Features`, `PK`, `Conventions`, `Generator`, `Enum`, `Extra`, plus typed aliases `Layout`, `Dialect`, `EntityKind`, `RelationshipKind`, and the sub-structs of the [30.4](#304-json-schema) shape they hold (`Index`, `FK`, `Junction`, `MethodParam`, the feature and convention structs, …). Same types serve both as the JSON unmarshal target and the public Client API surface; `Document` carries every [30.4](#304-json-schema) top-level field, `$schema` included.
 
 **Sentinel errors** exported from the `manifest` package:
 
@@ -15714,11 +16103,11 @@ var (
 )
 ```
 
-**Embed mechanics.** The generator emits `manifest_embed_gen.go` in the output package containing `//go:embed manifest/manifest_gen.json` (always) and `//go:embed all:manifest/entities` (populated only in `per_entity` layout). A package `init()` calls the runtime helper `manifest.LoadInto(...)` which parses the top-level into `*Document`, walks the embedded entity FS (if present), populates a `map[string]*Entity` for `ManifestEntity` lookups, and extracts `schema_version` for `ManifestVersion`.
+**Embed mechanics.** The generator emits `manifest_embed_gen.go` in the output package containing `//go:embed manifest/manifest_gen.json` (always) and `//go:embed all:manifest/entities` (only in `per_entity` layout, and omitted for a `per_entity` package with no entities, since a `//go:embed` pattern must match a file). A package `init()` calls the runtime helper `manifest.LoadInto(...)` which parses the top-level into `*Document`, walks the embedded entity FS (if present), populates a `map[string]*Entity` keyed by `schema.table` (the bare table for an entity without a schema), and extracts `schema_version` for `ManifestVersion`. The generated `ManifestEntity` reads the map through the runtime helper `manifest.FindEntity`.
 
-**Layout-agnostic `ManifestEntity`.** The disk-layout choice does not leak into the Go API. `client.ManifestEntity("users")` returns the full record whether the JSON was emitted single or per-entity.
+**Layout-agnostic `ManifestEntity`.** The disk-layout choice does not leak into the Go API. `client.ManifestEntity("users")` (or `"public.users"` in a package where another schema also has a `users` table) returns the full record whether the JSON was emitted single or per-entity.
 
-**Marshaling back to bytes.** Consumers needing JSON for an HTTP endpoint do `json.Marshal(client.Manifest())`. The output is content-equivalent to the on-disk file; byte-identical is not guaranteed (key order may differ). There is no `ManifestRaw() []byte` helper.
+**Marshaling back to bytes.** Consumers needing JSON for an HTTP endpoint do `json.Marshal(client.Manifest())`. The output is content-equivalent to the on-disk top-level file, `$schema` included, except that in the `single` layout, whose file carries each entity's full record inline, `entities[]` comes back in the index form (`name`, `table`, `schema` when set, `kind`); full records come from `ManifestEntity`. Byte-identical is not guaranteed (key order may differ). There is no `ManifestRaw() []byte` helper.
 
 **Binary-size cost.** Raw embedded JSON ~30KB for 100 entities; parsed struct overhead in memory ~200–500KB. Negligible for typical Go services. `embed_in_client: false` opts out for binary-size-sensitive consumers (embedded systems, lambda cold starts).
 
@@ -15735,8 +16124,8 @@ The manifest carries metadata that goes beyond what's expressible in Go types al
 | `default_kind` | per-column | One of `literal` (constant value), `function` (e.g., `gen_random_uuid()`, `CURRENT_TIMESTAMP`), `expression` (anything else). Lets consumers distinguish a value the caller must supply from one the database supplies. |
 | `access` + `redacted` | per-column | `access` is the resolved role (`public` / `read_only` / `write_only` / `hidden` / `internal`); `redacted` is `true` for `write_only` / `internal`. Additive optional fields (default `public` / `false`) — omitted rendering is `public`. Tell MCP / AI tooling which columns are server-only and must not be advertised for exposure. `sql_bodies` stay accurate (real server SQL); the `redacted` marker is what suppresses value-surfacing, not SQL rewriting. See [Section 32](#32-column-access-control). |
 | `features.events.{enabled, types[], payload_shape}` | top-level | Populated only when `events.enabled: true` for the entity. |
-| `features.cache.{key_pattern, invalidates_on[]}` | top-level | Populated only when cache is configured. `key_pattern` uses `{column}` template syntax; `invalidates_on[]` lists method names per PRD §27. |
-| `methods[].sql_bodies` | per-method (query / mutation) | Per-dialect map `{<dialect>: <canonical SQL>}` captured from the SQL-build pipeline, describing the statement that method issues. Single-key map for single-dialect packages. Placeholders dialect-rendered (`$1`/`?`); clauses assembled from caller input at call time use the token set of [§30.4.2](#3042-entity-shape). Omitted entirely for `Paginate` / `Connection`, which issue no statement of their own. Added 2026-05-15 for MCP §31 `sqlgen_show_sql`. |
+| `features.cache.{key_pattern, invalidates_on[]}` | top-level | Populated only when cache is configured. `key_pattern` uses `{column}` template syntax; `invalidates_on[]` lists the entity's generated methods that [27.7](#277-cache-behavior-by-operation) says invalidate (`Update`, `Upsert`, `Increment`, `SoftDelete`, `HardDelete`, `Restore` and their `*Many` / `*Where` forms), in the entity's method order; `Create` / `CreateMany` set the cache rather than invalidate it and are not listed. |
+| `methods[].sql_bodies` | per-method (query / mutation) | Per-dialect map `{<dialect>: <canonical SQL>}` captured from the SQL-build pipeline, describing the statement that method issues. Single-key map for single-dialect packages. Placeholders dialect-rendered (`$1`/`?`); clauses assembled from caller input at call time use the token set of [§30.4.2](#3042-entity-shape). Omitted entirely for `Paginate` / `Connection` and the `…WithRelated` methods, which issue no statement of their own. Added 2026-05-15 for MCP §31 `sqlgen_show_sql`. |
 | `generation_config` | top-level | Resolved (post-precedence, secret-stripped) feature-toggle snapshot — boolean + small-scalar surface only. See §30.4.3. Added 2026-05-15 for MCP §31 `sqlgen://config` resource. |
 
 **GraphQL schema description wiring.** As a side-effect of capturing `Table.Comment` / `Column.Comment` for the manifest, the GraphQL templates (`cmd/sqlgen/gen/templates/api/schema.graphqls.tmpl`) are updated to emit the captured comments in `"""description"""` blocks instead of template-rendered placeholders. The manifest and the `.graphqls` files agree on entity and column descriptions after this lands.
@@ -15774,7 +16163,7 @@ The server is a **read-only consumer** of `manifest_gen.json` — it never parse
 
 | Flag | Default | Description |
 |---|---|---|
-| `--manifest <path>` | walk up from CWD for `manifest_gen.json` | Manifest to serve. Startup fails with `-32001 MANIFEST_NOT_FOUND` if discovery misses. |
+| `--manifest <path>` | walk up from CWD for `manifest_gen.json` | Manifest to serve. Startup fails with `-32001 MANIFEST_NOT_FOUND` if discovery misses (see §31.4 for how a startup failure is reported). |
 | `--stdio` | `true` | JSON-RPC 2.0 over stdin/stdout (agent clients spawn the server per session; stdout carries only JSON-RPC — all logging goes to stderr). |
 | `--http <port>` | off | Additionally serve Streamable HTTP at `http://127.0.0.1:<port>/mcp` — **loopback-bound only** (any non-loopback bind is refused at flag-parse), **stateless** (no session; no server-pushed notifications). Can coexist with stdio. |
 | `--watch` / `--no-watch` | watch on | Reload the manifest on fsnotify change (mutually exclusive flags). |
@@ -15801,10 +16190,10 @@ Validation (§4.13 parallel): `emit_project_config: true` with `manifest.enabled
 Emission runs as the **last manifest-stage step** of `sqlgen generate` (after breadcrumbs, §30.3), once per `project_configs` target; a per-target failure is reported without aborting the remaining targets, and the run exits non-zero if any target failed. Each target gets the same merge contract:
 
 - The entry carries three `x-sqlgen-*` sentinel markers: `x-sqlgen-managed: true` (ownership), `x-sqlgen-manifest: <path>` (the merge match key, compared as absolute paths), `x-sqlgen-generator-version` (informational). Standard MCP clients ignore unknown `x-*` fields.
-- Matching entry → updated in place (key and position preserved). No match → new entry under `server_key`; if that key is held by a consumer-authored entry (no managed marker), sqlgen warns and registers under the next free key (`sqlgen-2`, `-3`, …).
+- Matching entry → updated in place (key preserved). No match → new entry under `server_key`; if that key is held by a consumer-authored entry (no managed marker), sqlgen warns and registers under the next free key (`sqlgen-2`, `-3`, …).
 - **Stale-entry cleanup:** a managed entry whose `x-sqlgen-manifest` file **no longer exists on disk** is removed (the `output.dir`-moved case). File existence is the disambiguator that lets multi-package monorepo siblings coexist in one `.mcp.json` — a sibling's manifest is on disk, so its entry survives. Consequence: a sibling whose manifest is gitignored or not yet generated is treated as stale and swept; regenerate the sibling to restore its entry.
 - Other tools' entries and consumer-authored entries are never touched, including their exact numeric value forms. A removal run that matches nothing leaves the file byte-untouched.
-- Output is canonical (2-space indent, alphabetically sorted keys at every level; first run normalizes formatting, subsequent runs are byte-stable) and written atomically (tmp → fsync → rename). Invalid JSON in an existing target fails loudly with line/col — never overwritten.
+- Output is canonical (2-space indent, alphabetically sorted keys at every level; first run normalizes formatting, subsequent runs are byte-stable) and written atomically (tmp → fsync → rename). Invalid JSON in an existing target fails loudly with line/col — never overwritten. That covers a truncated document (the position just past its last byte), an empty file (`1:1`), and content after the JSON document (the position of its first byte).
 - `emit_project_config: false` (or disabling the manifest) removes sqlgen's managed entries on the next generation; the file is deleted when `mcpServers` empties and no other top-level fields remain.
 - `command_template`, when set, is rendered via `text/template` with `{{ manifest_path }}` and split with shell-style tokenization (quotes group tokens; no shell is ever invoked) to become the entry's `command` + `args`.
 
@@ -15821,8 +16210,8 @@ All tool names are prefixed `sqlgen_*`, resource URIs use the `sqlgen://` scheme
 | `sqlgen_list_entities` | `{kind?: "table" \| "view"}` | `[{name, table, pk_kind, features_summary}]` | "What's available in this package?" |
 | `sqlgen_get_entity` | `{name: string, compact?: bool}` | Full entity JSON (columns, methods, relationships, filter, sort, example) | "Tell me about `User`" |
 | `sqlgen_find_method` | `{query: string, fuzzy?: bool}` | `[{entity, method, signature}]` | "Which entity has `UpdateWhere`?" |
-| `sqlgen_find_referencing` | `{table: string}` | `[{entity, relationship_name, kind, fk_column}]` | "What references `users`?" |
-| `sqlgen_describe_relationship` | `{entity: string, relationship: string, compact?: bool}` | Join shape: FK col, junction (m2m), filter clause (sub-categorized), target entity | "How does `Post.Tags` resolve?" |
+| `sqlgen_find_referencing` | `{table: string}` | `[{entity, relationship_name, kind, fk_columns}]` | "What references `users`?" |
+| `sqlgen_describe_relationship` | `{entity: string, relationship: string, compact?: bool}` | Join shape: FK columns and the columns they reference, junction (m2m), filter clause (sub-categorized), target entity | "How does `Post.Tags` resolve?" |
 | `sqlgen_get_conventions` | `{}` | Conventions block (error sentinels, pagination, comparators, `CallOptions`) | "How do I handle a not-found?" |
 | `sqlgen_get_example` | `{entity: string, op?: "read" \| "write", compact?: bool}` | Canonical Go snippet | "Show me how to call this" |
 | `sqlgen_find_join_path` | `{from: string, to: string, max_hops?: int}` | `[{hops: int, path: [{entity, relationship}]}]` (≤5 paths, shortest first) | "How do I join `User` to `Comment`?" |
@@ -15833,7 +16222,7 @@ All tool names are prefixed `sqlgen_*`, resource URIs use the `sqlgen://` scheme
 Surface notes (normative):
 
 - **`compact: bool`** on `sqlgen_get_entity` / `sqlgen_describe_relationship` drops example snippets, long-form descriptions, and non-lookup per-column metadata (`check`, `default_kind`, full `indexes[]`) while always retaining required identity (names, types, PK kind, FK columns, method signatures, join shape, filter sub-categories). On **`sqlgen_get_example`** the flag is accepted for surface parity but is a **documented no-op** — example snippets are that tool's required identity, so there is nothing droppable.
-- **`sqlgen_find_referencing`** returns every FK edge pointing at the given table, emitted from whichever entity **declared** the relationship (both sides of an m2m/FK pair emit; results are deduplicated by the full tuple and sorted). `relationship_name` is the declaring side's edge name and `kind` is that edge's kind — it names how the *declaring* entity sees the edge, not how the referenced table would.
+- **`sqlgen_find_referencing`** returns every FK edge pointing at the given table, emitted from whichever entity **declared** the relationship (both sides of an m2m/FK pair emit; results are deduplicated by the full tuple and sorted). `fk_columns` is the edge's FK column list in the foreign key's declared order — a one-item list for a single-column key — and the dedup and the sort compare it as a whole, so a two-column key and a one-column key into the same table are two results. `relationship_name` is the declaring side's edge name and `kind` is that edge's kind — it names how the *declaring* entity sees the edge, not how the referenced table would.
 - **`sqlgen_find_join_path`** searches the relationship graph cycle-free (no entity twice on one path); `max_hops` defaults to 4, clamped to `[1, 6]`; up to 5 shortest paths, increasing-hop order, ties broken lexicographically by serialized path; empty list when no path exists within `max_hops`.
 - **`sqlgen_show_sql`** reads `entity.methods[].sql_bodies` (§30.7) for the active dialect (`dialect` overrides). `-32005 METHOD_SQL_UNAVAILABLE` when the manifest predates the addendum **or** carries no body for the resolved dialect; `-32006 METHOD_NOT_FOUND` for an unknown method.
 - **`sqlgen_health`** is a pure diagnostic (no manifest data leaks); `ok: false` means a failed reload left the prior good manifest serving. **`sqlgen_validate_manifest`** with no `path` validates the loaded manifest in memory; with `path` it validates that file without swapping the served manifest. Error shape matches the §30.8 CLI tool.
@@ -15845,7 +16234,7 @@ Surface notes (normative):
 | `sqlgen://manifest` | Full `manifest_gen.json` | `application/json` |
 | `sqlgen://entity/<name>` | Per-entity JSON | `application/json` |
 | `sqlgen://conventions` | Conventions block | `application/json` |
-| `sqlgen://config` | Resolved generation-config block (features on/off, dialect, package, etc.) | `application/json` |
+| `sqlgen://config` | The manifest's resolved `generation_config` block (§30.4.3): feature toggles only | `application/json` |
 
 `sqlgen://manifest` always serves the full document; above a 256 KB threshold the read result carries a size warning (in the MCP `_meta` channel) advising targeted tool calls instead. `sqlgen://config` surfaces the manifest's top-level `generation_config` (§30.4); a manifest predating that addendum yields `{}` plus a warning. `sqlgen://entity/<name>` is served via an RFC 6570 resource template (listed under `resources/templates/list`; the three fixed URIs under `resources/list`).
 
@@ -15876,14 +16265,15 @@ MCP is a JSON-RPC 2.0 surface. The server implements the MCP server side via the
 | `-32005` | `METHOD_SQL_UNAVAILABLE` — `show_sql` but the manifest predates `methods[].sql_bodies`, or no body for the resolved dialect |
 | `-32006` | `METHOD_NOT_FOUND` — `show_sql` on a method name not defined for the named entity |
 
-Standard JSON-RPC errors (`-32700`/`-32600`/`-32601`/`-32602`/`-32603`) apply as-is.
+Standard JSON-RPC errors (`-32700`/`-32600`/`-32601`/`-32602`/`-32603`) apply as-is. **Known limitation:** the transport layer is the Go SDK's, and its replies to malformed traffic are its own. On stdio, a line that is not JSON or a request missing `"jsonrpc"` ends the session with no `-32700` / `-32600` reply, and an unknown method is answered with code `0` rather than `-32601`.
 
 **Typo-tolerant suggestions.** `-32003`/`-32004`/`-32006` carry a `suggestions: [string, ...]` array: Levenshtein distance ≤ 2 against the appropriate candidate set, case-insensitive, top 3, sorted by distance then lexicographically, empty when nothing is within threshold.
 
 **Error channels (normative).** The codes above surface through two channels, matching how MCP clients actually consume them:
 
 - **Per-tool business errors** (`-32003`…`-32006`, `-32603` from a tool body) are **MCP `IsError` tool results**, not protocol-level JSON-RPC errors: the text content is a human/LLM-readable message with suggestions inlined, and the structured content is a flattened `{code, message, suggestions}` envelope (`suggestions` at the top level, not nested under `data`). This keeps the code and suggestions visible to the LLM for self-correction — a protocol-level error from a tool handler is collapsed to an opaque transport error by real client libraries — and the session stays usable.
-- **Protocol-level errors** are used where no tool-result channel exists: startup/load failures (`-32001`/`-32002`) and resource reads (`sqlgen://entity/<unknown>` → JSON-RPC error `-32003` with `data.suggestions`, suggestions also inlined into the message for clients that collapse coded errors).
+- **Startup failures** (`-32001`/`-32002`) happen before any transport opens, so no JSON-RPC reply exists: `sqlgen mcp serve` exits 1 and its stderr line names the code and its name (`Error: -32001 MANIFEST_NOT_FOUND: <message>`).
+- **Protocol-level errors** are used where no tool-result channel exists: resource reads (`sqlgen://entity/<unknown>` → JSON-RPC error `-32003` with `data.suggestions`, suggestions also inlined into the message for clients that collapse coded errors).
 
 ### 31.5 Versioning Policy
 
@@ -15933,9 +16323,9 @@ The per-table field-options walker, filter translator, and sort translator each 
 
 **REST (§26.8).** Output is emitted through a generated projection (not a raw entity marshal — the Go entity's `json` tags are never altered, so cache serialization stays faithful); create/update request DTOs drop non-writable fields; filter/sort DTOs drop non-filterable/sortable fields.
 
-**Events (§28.6 / §28.9).** For a table with ≥1 `write_only` / `internal` column, the generated event hook publishes a **redacted clone** of `Event.Input`: same concrete type (subscribers' type-switch is unchanged), redacted fields cleared (omittable input fields set to unset; required fields zeroed). Emitted via per-table `redact<T>CreateInput` / `redact<T>UpdateInput` helpers — plus, when the table has a redacted **incrementable** column and `Increment` is enabled, a `redact<T>IncrementInput` helper that blanks the delta (`Amount`) while preserving the column selector — invoked only for such tables; tables with no redacted column are byte-unchanged and pay nothing. `Event.PK` is never redacted (PKs cannot be sensitive — §32.4). Redaction here is safe because the event input is a fire-and-forget notification snapshot, not state the server re-consumes.
+**Events (§28.6 / §28.9).** For a table with ≥1 `write_only` / `internal` column, the generated event hook publishes a **redacted clone** of `Event.Input`: same concrete type (subscribers' type-switch is unchanged), redacted fields cleared (omittable input fields set to unset; required fields zeroed). Emitted via per-table `redact<T>CreateInput` / `redact<T>UpdateInput` helpers — plus, when the table has a redacted **incrementable** column and `Increment` is enabled, a `redact<T>IncrementInput` helper that blanks the delta (`Amount`) while preserving the column selector — invoked only for such tables; tables with no redacted column are byte-unchanged and pay nothing. A helper and its switch arm are emitted only when the input type it redacts is generated: the create helper with `Create`, `CreateMany`, `Upsert` or `UpsertMany`, the update helper with `Update`, `UpdateMany` or `UpdateWhere`. `Event.PK` is never redacted (PKs cannot be sensitive — §32.4). Redaction here is safe because the event input is a fire-and-forget notification snapshot, not state the server re-consumes.
 
-The **`*Where` delete / restore ops publish a filter**, not an input struct (§28.6), and by the §32.1 load-bearing principle the Go `<T>Filter` carries every column — including `write_only` / `internal` ones, which have no *API* filter surface but stay filterable server-side. A per-table `redact<T>Filter` helper therefore clears those comparators on the published clone. Unlike the input helpers it **cannot be a shallow copy**: a filter is a graph, so the helper also rebuilds `And` / `Or` with every member redacted — a nested member is otherwise a one-line bypass of the top-level clearing — and replaces each relationship member with the *target's* redacted clone. That makes the helper's emission set the **transitive closure** of "has a redacted filterable column" over the relationship-filter graph (§11.1): a table with no redacted column of its own still needs a helper when its filter can reach one that has. The closure is computed over every table, not only event-enabled ones, since a relationship target's own events may be disabled. The caller's filter is never mutated — each level returns a new value, exactly as the input helpers do.
+The **`*Where` delete / restore ops publish a filter**, not an input struct (§28.6), and by the §32.1 load-bearing principle the Go `<T>Filter` carries every column — including `write_only` / `internal` ones, which have no *API* filter surface but stay filterable server-side. A per-table `redact<T>Filter` helper therefore clears those comparators on the published clone. Unlike the input helpers it **cannot be a shallow copy**: a filter is a graph, so the helper also rebuilds `And` / `Or` with every member redacted — a nested member is otherwise a one-line bypass of the top-level clearing — and replaces each relationship member with the *target's* redacted clone. That makes the helper's emission set the **transitive closure** of "has a redacted filterable column" over the relationship-filter graph (§11.1): a table with no redacted column of its own still needs a helper when its filter can reach one that has. The closure is computed over every table, not only event-enabled ones, since a relationship target's own events may be disabled. A helper is emitted only when something calls it: for a closure member whose own event hook redacts a `*Where` delete or restore op, and for every closure member that one reaches through relationship members. The caller's filter is never mutated — each level returns a new value, exactly as the input helpers do.
 
 **Any table that redacts something** — through either input helper, the increment helper, or filter-closure membership — enumerates every operation in its redaction switch, and its `default` arm **fails closed**: an operation with no arm publishes no payload rather than an un-redacted one, so a later-added op cannot reintroduce the leak by omission. An op whose payload is real but carries nothing to redact on that table (`Increment` when no incrementable column is redacted, say) keeps an explicit pass-through arm, so failing closed never contradicts the §28.6 shape table. On a table that redacts nothing, `default` stays a pass-through — which is what keeps those hooks byte-unchanged and preserves the §28.6 same-pointer guarantee.
 
@@ -16020,14 +16410,17 @@ type Dialect interface {
 
     // Capability flags — used by builders and comparators to select SQL strategies
     SupportsArrayParams() bool                    // pgx: true (native array IN), others: false
-    SupportsTupleIN() bool                        // PostgreSQL/SQLite: true, MySQL: false
     BackslashEscapes() bool                       // MySQL: true (a backslash escapes inside '…' / "…" literals, §11.5), others: false
 
     // Single-row INSERT that supplies no column (9.4c)
     DefaultValuesClause() string                  // PostgreSQL/SQLite: DEFAULT VALUES, MySQL: () VALUES ()
 
-    // Row-level lock fragment (9.6a); "" for LockNone and on SQLite
-    LockClause(mode LockMode) string
+    // Row-level lock fragment (9.6a); "" for LockNone and on SQLite.
+    // A non-empty of restricts it to that table alias: FOR UPDATE OF p.
+    LockClause(mode LockMode, of string) string
+
+    // "No limit" before an OFFSET with no LIMIT; MySQL and SQLite reject a bare OFFSET
+    NoLimitClause() string                        // PostgreSQL: "", MySQL: LIMIT 18446744073709551615, SQLite: LIMIT -1
 }
 ```
 
@@ -16040,6 +16433,8 @@ type Dialect interface {
 | MySQL | `stdlib` | `` `col` IN (?, ?, ...) `` | `` `col` NOT IN (?, ?, ...) `` | Expanded |
 | SQLite | `stdlib` | `"col" IN (?, ?, ...)` | `"col" NOT IN (?, ?, ...)` | Expanded |
 
+`comparator.Enum` is the exception: its `In` / `Nin` take the expanded rows on PostgreSQL+pgx too ([11.2](#112-comparator-types)).
+
 The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 - Single placeholder regardless of list size (no parameter count limit concerns)
 - pgx handles Go slice → PostgreSQL array conversion natively
@@ -16049,11 +16444,11 @@ The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 
 | Function | SQL Statement | Dialect Variations |
 |----------|--------------|-------------------|
-| `BuildSelect` | `SELECT ... FROM {table} WHERE ... ORDER BY ... LIMIT ... OFFSET` | Placeholder style, identifier quoting, schema formatting |
-| `BuildSelectJoin` | `SELECT {alias}.{col} AS "{alias}.{col}", ... FROM {table} {alias} LEFT JOIN {related} {alias} ON ... WHERE ...` | O2O relationship loading via LEFT JOIN. Produces aliased columns with `"."` separator for prefix-based scanning. Supports chained O2O JOINs, soft delete conditions on joined tables, and polymorphic filters in JOIN conditions. |
+| `BuildSelect` | `SELECT ... FROM {table} WHERE ... ORDER BY ... LIMIT ... OFFSET` | Placeholder style, identifier quoting, schema formatting. An `OFFSET` with no `LIMIT` is preceded by `NoLimitClause()` |
+| `BuildSelectJoin` | `SELECT {alias}.{col} AS "{alias}.{col}", ... FROM {table} {alias} LEFT JOIN {related} {alias} ON ... WHERE ...` | O2O relationship loading via LEFT JOIN. Produces aliased columns with `"."` separator for prefix-based scanning. Supports chained O2O JOINs, soft delete conditions on joined tables, and polymorphic filters in JOIN conditions. A lock clause names the primary alias (`FOR UPDATE OF {alias}`), so only the primary rows are locked (9.6a). |
 | `BuildInsert` | `INSERT INTO {table} ... VALUES ...` + optional `RETURNING` | MySQL: no RETURNING; upsert syntax varies. With no column supplied it emits `INSERT INTO {table} DEFAULT VALUES` (PostgreSQL/SQLite) or `INSERT INTO {table} () VALUES ()` (MySQL) via `DefaultValuesClause()`, and no conflict clause — SQLite accepts none after `DEFAULT VALUES` ([Upsert Conflict Keys](#upsert-conflict-keys)) |
 | `BuildMultiInsert` | `INSERT INTO {table} ... VALUES (...), (...), ...` | Same as BuildInsert |
-| `BuildUpdate` | `UPDATE {table} SET ... WHERE ...` + optional `RETURNING` | MySQL: no RETURNING. Handles `omittable.Value[T]` natively. |
+| `BuildUpdate` | `UPDATE {table} SET ... WHERE ...` + optional `RETURNING` | MySQL: no RETURNING. Writes every column in the SET map; the caller passes only the fields to change (generated code checks each `omittable.Value[T]`'s `IsSet()`, [10.3](#103-usage-in-generated-code)). |
 | `BuildCount` | `SELECT COUNT(*) FROM {table} WHERE ...` | Placeholder style |
 | `BuildExists` | `SELECT EXISTS(SELECT 1 FROM {table} WHERE ...)` | Placeholder style |
 | `BuildIncrement` | `UPDATE {table} SET col = col + $ WHERE ...` | Placeholder style |
@@ -16085,13 +16480,17 @@ The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 | ALTER TABLE RENAME COLUMN | Yes | Yes | Yes |
 | ALTER TABLE RENAME TABLE | Yes | Yes | Yes |
 | ALTER COLUMN SET/DROP NOT NULL | Yes | Via MODIFY COLUMN | No |
-| ALTER COLUMN SET/DROP DEFAULT | Yes | Via MODIFY COLUMN | No |
+| ALTER COLUMN SET/DROP DEFAULT | Yes | Yes, or via MODIFY COLUMN | No |
 | ADD COLUMN IF NOT EXISTS | Yes | No | No |
 | DROP COLUMN IF EXISTS | Yes | No | No |
 | ALTER TABLE IF EXISTS | Yes | No | No |
 | Comments | `COMMENT ON` statements | Inline `COMMENT 'text'` | Not supported |
 | Introspection | `pg_catalog` + `information_schema` | `information_schema` | `PRAGMA` statements |
 | LEFT JOIN + column alias | `AS "alias"` | `` AS `alias` `` | `AS "alias"` |
+| Row-lock clauses (`LockMode`, [9.6a](#96a-lock-modes)) | Yes | Yes (`NOWAIT` / `SKIP LOCKED` 8.0+) | No — a non-`LockNone` mode is a runtime error |
+| `OFFSET` with no `LIMIT` | `OFFSET n` | `LIMIT 18446744073709551615 OFFSET n` | `LIMIT -1 OFFSET n` |
+| FOREIGN KEY `MATCH FULL` enforced ([9.9.4](#994-eligibility-rules)) | Yes | Parsed, ignored: read as `MATCH SIMPLE` | Ignored: read as `MATCH SIMPLE` |
+| Bind-parameter limit ([25.1](#251-query-count-guarantee)) | 65535 | 65535 | 32766 |
 
 ## Appendix C: Project Linting Configuration
 

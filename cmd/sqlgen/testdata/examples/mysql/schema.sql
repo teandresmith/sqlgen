@@ -200,3 +200,48 @@ CREATE TABLE slugged_rows (
     name VARCHAR(64) NOT NULL DEFAULT '',
     slug VARCHAR(64) NOT NULL UNIQUE DEFAULT 'x'
 );
+
+-- time_keyed / time_keyed_notes: a DATETIME primary key and foreign key bind as
+-- times, so a key in any zone reaches the driver's loc conversion.
+CREATE TABLE time_keyed (
+    at DATETIME(6) PRIMARY KEY,
+    label VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE time_keyed_notes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    keyed_at DATETIME(6),
+    note VARCHAR(50) NOT NULL,
+    FOREIGN KEY (keyed_at) REFERENCES time_keyed (at)
+);
+
+-- bool_keyed / bool_keyed_notes: a BOOLEAN primary key and foreign key bind as
+-- bools; MySQL stores them as integers, so the text "true" matches no row.
+CREATE TABLE bool_keyed (
+    k BOOLEAN PRIMARY KEY,
+    label VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE bool_keyed_notes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    keyed_k BOOLEAN,
+    note VARCHAR(50) NOT NULL,
+    FOREIGN KEY (keyed_k) REFERENCES bool_keyed (k)
+);
+
+-- bins / bin_items: a composite foreign key into a composite primary key. Its
+-- members are nullable, so a row with one NULL member references nothing.
+CREATE TABLE bins (
+    aisle VARCHAR(10) NOT NULL,
+    slot INT NOT NULL,
+    label VARCHAR(50) NOT NULL,
+    PRIMARY KEY (aisle, slot)
+);
+
+CREATE TABLE bin_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    aisle VARCHAR(10),
+    slot INT,
+    name VARCHAR(50) NOT NULL,
+    FOREIGN KEY (aisle, slot) REFERENCES bins (aisle, slot)
+);

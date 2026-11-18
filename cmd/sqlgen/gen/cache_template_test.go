@@ -2,9 +2,13 @@ package gen_test
 
 import (
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"text/template"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
@@ -73,6 +77,31 @@ func TestCacheTemplate_emitsCompositePKKeyHelper(t *testing.T) {
 	}
 }
 
+// TestCacheTemplate_compositeKeyFollowsClauseOrder pins PRD §27.5 from DDL to
+// the rendered helper: keyFor{Table} joins the components in PRIMARY KEY (...)
+// order when it differs from column order.
+func TestCacheTemplate_compositeKeyFollowsClauseOrder(t *testing.T) {
+	schema := parseDDLForTest(t, config.DialectPostgres,
+		"CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT NULL, PRIMARY KEY (id, workspace_id));")
+	cfg := cacheTestConfig(true)
+	tables, err := gen.BuildTableContextsFromSchema(schema, cfg)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema: %v", err)
+	}
+	out := executeCacheTemplate(t, gen.BuildCacheContext(tables, nil, cfg, "db", "Client"))
+
+	start := strings.Index(out, "func (c *Cache) keyForCycle(pk CyclePK) string {")
+	if start < 0 {
+		t.Fatalf("missing keyForCycle helper; output:\n%s", out)
+	}
+	helper := out[start:]
+	idIdx := strings.Index(helper, "pk.ID,")
+	workspaceIdx := strings.Index(helper, "pk.WorkspaceID,")
+	if idIdx < 0 || workspaceIdx < 0 || idIdx >= workspaceIdx {
+		t.Errorf("keyForCycle component order: ID idx=%d, WorkspaceID idx=%d, want ID first\noutput:\n%s", idIdx, workspaceIdx, out)
+	}
+}
+
 func TestCacheTemplate_emitsInvalidateDispatch(t *testing.T) {
 	cfg := cacheTestConfig(true)
 	ctx := gen.BuildCacheContext(
@@ -81,13 +110,13 @@ func TestCacheTemplate_emitsInvalidateDispatch(t *testing.T) {
 	)
 	out := executeCacheTemplate(t, ctx)
 
-	if !strings.Contains(out, "case TableProducts:\n\t\tkeys, err = cache.KeysFromAny(pks, c.keyForProduct)") {
+	if !strings.Contains(out, "case TableProducts:\n\t\tkeys, err := cache.KeysFromAny(pks, c.keyForProduct)") {
 		t.Error("InvalidateMany dispatch missing Product case")
 	}
-	if !strings.Contains(out, "case TableOrderItems:\n\t\tkeys, err = cache.KeysFromAny(pks, c.keyForOrderItem)") {
+	if !strings.Contains(out, "case TableOrderItems:\n\t\tkeys, err := cache.KeysFromAny(pks, c.keyForOrderItem)") {
 		t.Error("InvalidateMany dispatch missing OrderItem case")
 	}
-	if !strings.Contains(out, `return fmt.Errorf("cache: unknown or non-cached table %q", table)`) {
+	if !strings.Contains(out, `return nil, fmt.Errorf("cache: unknown or non-cached table %q", table)`) {
 		t.Error("InvalidateMany missing canonical unknown-table error")
 	}
 }
@@ -118,7 +147,7 @@ func TestCacheTemplate_emitsCustomSerializerError(t *testing.T) {
 	ctx := gen.BuildCacheContext([]gen.TableContext{cacheTestTable()}, nil, cfg, "db", "Client")
 	out := executeCacheTemplate(t, ctx)
 
-	if !strings.Contains(out, `fmt.Errorf("cache: serializer: custom requires WithSerializer(...)`) {
+	if !strings.Contains(out, `fmt.Errorf("cache: serializer: custom requires WithSerializer(...) — see cache.serializer in sqlgen.yml")`) {
 		t.Errorf("missing custom-serializer construction error; output:\n%s", out)
 	}
 }
@@ -253,6 +282,44 @@ func TestCacheTemplate_emitsViewInvalidateSwitch(t *testing.T) {
 	}
 	if !strings.Contains(out, `"sqlgen:public.product_summary:*"`) {
 		t.Errorf("missing view invalidate pattern")
+	}
+}
+
+// A write that affected no row changed nothing a dependent view reads: like
+// the entity keys, the view patterns are left alone when AffectedPKs is empty.
+func TestCacheTemplate_viewInvalidationSkipsNoOpWrite(t *testing.T) {
+	cfg := cacheTestConfig(true)
+	cfg.Views["product_summary"] = config.ViewConfig{
+		StructName:   "ProductSummary",
+		Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+		InvalidateOn: []string{"products"},
+	}
+	views := []gen.ViewContext{
+		{
+			StructName:        "ProductSummary",
+			ViewName:          "product_summary",
+			TableNameConstant: "TableProductSummaries",
+			Schema:            "public",
+			Columns: []gen.ColumnContext{
+				{Name: "id", FieldName: "ID", GoType: "uuid.UUID", DBTag: "id"},
+			},
+		},
+	}
+	ctx := gen.BuildCacheContext([]gen.TableContext{cacheTestTable()}, views, cfg, "db", "Client")
+	out := executeCacheTemplate(t, ctx)
+
+	start := strings.Index(out, "viewOp := func(ctx context.Context) error {")
+	if start < 0 {
+		t.Fatalf("view invalidation callback not found\n%s", out)
+	}
+	viewOp := out[start:]
+	if end := strings.Index(viewOp, "\n\t}\n"); end >= 0 {
+		viewOp = viewOp[:end]
+	}
+	guard := strings.Index(viewOp, "if len(affected) == 0 {")
+	patterns := strings.Index(viewOp, "c.patternsForSourceTable(table)")
+	if guard < 0 || patterns < 0 || guard > patterns {
+		t.Errorf("view invalidation does not skip a write that affected no row before reading the view patterns\n%s", viewOp)
 	}
 }
 
@@ -431,7 +498,7 @@ func TestCacheTemplate_readThroughInFlightRecheck(t *testing.T) {
 	preFetch := out[flightStart : flightStart+fetchIdx]
 
 	for _, want := range []string{
-		"if c.breaker == nil || c.breaker.Allow() {",
+		"if c.breaker == nil || c.breaker.State() == cache.StateClosed {",
 		"cache.GetAs[*Product](ctx, c.backend, c.serializer, key)",
 		"return entity, nil",
 	} {
@@ -446,9 +513,10 @@ func TestCacheTemplate_readThroughInFlightRecheck(t *testing.T) {
 		"c.metrics.GetLatency(schema",
 		"c.breaker.RecordSuccess()",
 		"cache.RouteError(",
+		"c.breaker.Allow()",
 	} {
 		if strings.Contains(preFetch, banned) {
-			t.Errorf("in-flight re-check must not emit %q (outer probe already accounted for it); pre-fetch body:\n%s", banned, preFetch)
+			t.Errorf("in-flight re-check must not emit %q (it records no outcome, so it must neither report nor take a probe); pre-fetch body:\n%s", banned, preFetch)
 		}
 	}
 }
@@ -823,7 +891,7 @@ func TestCacheTemplate_emitsRefreshInvalidation(t *testing.T) {
 		"func (c *Cache) dispatchRefresh(ctx context.Context, table hook.TableName)",
 		"func (c *Cache) isCachedView(table hook.TableName) bool",
 		"case TableOrderSummaries:\n\t\treturn true",
-		"tx.OnCommit(refreshOp)",
+		"c.afterCommit(tx, refreshOp)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in generated output", want)
@@ -881,9 +949,8 @@ func TestCacheTemplate_whereOpsShareKeyBasedArm(t *testing.T) {
 		t.Errorf("BuildTablePattern call count = %d, want 1 (InvalidateTable only); a mutation-path pattern wipe has come back", got)
 	}
 
-	// The uncached-table guard keeps a cache-bookkeeping miss from failing a
-	// committed write under CallbackSync (PRD §27.9).
-	if !strings.Contains(out, "if _, ok := cacheSchemaFor(table); !ok {") {
+	// The uncached-table guard returns before any backend call.
+	if !strings.Contains(out, "schema, ok := cacheSchemaFor(table)\n\t\t\tif !ok {\n\t\t\t\treturn nil\n\t\t\t}") {
 		t.Error("invalidation arm missing the uncached-table guard")
 	}
 }
@@ -914,5 +981,114 @@ func TestCacheTemplate_tenantedWhereOpsStayPerRow(t *testing.T) {
 	// key.
 	if !strings.Contains(out, "_ = c.invalidatePattern(ctx, table, cache.BuildTablePattern(c.prefix, schema, name))") {
 		t.Error("tenant capture-gap fallback does not build its pattern from the bare SQL name")
+	}
+}
+
+// accessCacheTables builds the mixed-role users fixture with caching on. With
+// roles false every column keeps the default `public` role.
+func accessCacheTables(t *testing.T, roles bool) ([]gen.TableContext, *config.RootConfig) {
+	t.Helper()
+	in := apiTestInput(t, accessAPISchema())
+	in.Config.Cache = cacheTestConfig(true).Cache
+	if roles {
+		in.Config.Tables["users"] = config.TableConfig{
+			ColumnMap: map[string]config.ColumnOverride{
+				"email":          {Access: config.AccessPublic},
+				"created_at":     {Access: config.AccessReadOnly},
+				"new_password":   {Access: config.AccessWriteOnly},
+				"internal_score": {Access: config.AccessHidden},
+				"password_hash":  {Access: config.AccessInternal},
+			},
+		}
+	}
+	tables, err := gen.BuildTableContexts(in, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts: %v", err)
+	}
+	return tables, in.Config
+}
+
+// The cache stores the canonical Go entity, so `access` never redacts it: a
+// column of every role is part of the cached entity — the full field set
+// hydration fetches before caching, under the entity's unaltered json tag the
+// serializer marshals it by — and the cache layer carries no redaction step.
+func TestCacheTemplate_storesEveryAccessRoleUnredacted(t *testing.T) {
+	tables, cfg := accessCacheTables(t, true)
+	baseline, _ := accessCacheTables(t, false)
+
+	ctx := gen.BuildCacheContext(tables, nil, cfg, "db", "Client")
+	if ctx == nil || len(ctx.CachedTables) != 1 {
+		t.Fatalf("BuildCacheContext cached tables = %v, want exactly users", ctx)
+	}
+	cached := ctx.CachedTables[0]
+	out := executeCacheTemplate(t, ctx)
+	fullOptions := extractTopLevelFunc(t, out, "func fullParentFieldOptionsUser() *UserFieldOptions {")
+
+	columnNamed := func(tcs []gen.TableContext, name string) gen.ColumnContext {
+		t.Helper()
+		for _, c := range tcs[0].Columns {
+			if c.Name == name {
+				return c
+			}
+		}
+		t.Fatalf("users has no column %q", name)
+		return gen.ColumnContext{}
+	}
+
+	tests := []struct {
+		name   string
+		column string
+		role   string
+	}{
+		{name: "public column", column: "email", role: config.AccessPublic},
+		{name: "read_only column", column: "created_at", role: config.AccessReadOnly},
+		{name: "write_only column unredacted", column: "new_password", role: config.AccessWriteOnly},
+		{name: "hidden column", column: "internal_score", role: config.AccessHidden},
+		{name: "internal column unredacted", column: "password_hash", role: config.AccessInternal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			col := columnNamed(tables, tt.column)
+			if col.Access != tt.role {
+				t.Fatalf("control: %s access = %q, want %q", tt.column, col.Access, tt.role)
+			}
+			if !slices.Contains(cached.ColumnFieldNames, col.FieldName) {
+				t.Errorf("cached entity field set %v is missing %s", cached.ColumnFieldNames, col.FieldName)
+			}
+			if !strings.Contains(fullOptions, col.FieldName+": true,") {
+				t.Errorf("hydration field options do not select %s:\n%s", col.FieldName, fullOptions)
+			}
+			if want := columnNamed(baseline, tt.column).JSONTag; col.JSONTag != want || col.JSONTag == "-" {
+				t.Errorf("%s json tag = %q, want the unaltered %q the cache serializer marshals", tt.column, col.JSONTag, want)
+			}
+		})
+	}
+
+	if !strings.Contains(out, "cache.GetAs[*User](") {
+		t.Errorf("cache read path does not decode the full *User entity\n%s", out)
+	}
+}
+
+// TestCacheTemplate_errorOpLabels collects the op label of every error the
+// generated facade routes through the error policy. The event adapter's
+// "invalidate" belongs to the runtime cache package, not to this file.
+func TestCacheTemplate_errorOpLabels(t *testing.T) {
+	cfg := cacheTestConfig(true)
+	ctx := gen.BuildCacheContext([]gen.TableContext{cacheTestTable(), cacheTestTenantedTable()}, nil, cfg, "db", "Client")
+	out := executeCacheTemplate(t, ctx)
+
+	calls := regexp.MustCompile(`cache\.RouteError\(ctx, c\.metrics, c\.onError, [a-z.]+, "([a-z_]+)"`).FindAllStringSubmatch(out, -1)
+	if n := strings.Count(out, "cache.RouteError("); n != len(calls) {
+		t.Fatalf("matched an op label on %d of %d cache.RouteError calls; a call changed shape", len(calls), n)
+	}
+	var got []string
+	for _, c := range calls {
+		got = append(got, c[1])
+	}
+	slices.Sort(got)
+	got = slices.Compact(got)
+	want := []string{"get", "invalidate_many", "invalidate_pattern", "invalidate_tenant_fallback", "set"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("RouteError op labels mismatch (-want +got):\n%s", diff)
 	}
 }

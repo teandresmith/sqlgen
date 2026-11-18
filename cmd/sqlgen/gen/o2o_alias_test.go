@@ -64,9 +64,9 @@ func o2oAliasSchema() *parser.Schema {
 // (MySQL), `user` (PostgreSQL) and `go` (a Go keyword, failing generation).
 func TestO2OJoinAliases_NeverAKeyword(t *testing.T) {
 	in := testInput(o2oAliasSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	hasOne := func(name, table, fk string) config.TableRelationship {
-		return config.TableRelationship{Name: name, Type: "one_to_one", Table: table, FK: fk}
+		return config.TableRelationship{Name: name, Type: "one_to_one", Table: table, FK: config.KeyColumns{fk}}
 	}
 	in.Config.Tables["accounts"] = config.TableConfig{
 		Relationships: []config.TableRelationship{

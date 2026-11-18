@@ -1,6 +1,8 @@
 package cache_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -22,6 +24,14 @@ func TestJSONSerializerRoundTrip(t *testing.T) {
 	data, err := s.Marshal(want)
 	if err != nil {
 		t.Fatalf("JSONSerializer.Marshal() unexpected error: %v", err)
+	}
+
+	stdlib, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal() unexpected error: %v", err)
+	}
+	if !bytes.Equal(data, stdlib) {
+		t.Errorf("JSONSerializer.Marshal() = %s, want the encoding/json bytes %s", data, stdlib)
 	}
 
 	var got sampleEntity

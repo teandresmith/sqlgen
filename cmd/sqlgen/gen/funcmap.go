@@ -63,22 +63,30 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"softDeleteTypeConst":         funcSoftDeleteTypeConst,
 		"softDeleteRestoreGoValue":    funcSoftDeleteRestoreGoValue,
 		"softDeleteFilterOverride":    funcSoftDeleteFilterOverride,
+		"softDeleteFilterAny":         funcSoftDeleteFilterAny,
+		"writtenRowCtx":               funcWrittenRowCtx,
+		"compositePKLiteral":          funcCompositePKLiteral,
 		"softDeleteSubqueryPredicate": funcSoftDeleteSubqueryPredicate,
 		"softDeleteSubqueryArg":       funcSoftDeleteSubqueryArg,
 
 		// PK Filtering
-		"pkFilterExpr":      funcPKFilterExpr,
-		"pkFilterInExpr":    funcPKFilterInExpr,
-		"pkFilterInExprStr": funcPKFilterInExprStr,
-		"pkIsStringType":    funcPKIsStringType,
+		"pkFilterExpr":           funcPKFilterExpr,
+		"pkFilterInExpr":         funcPKFilterInExpr,
+		"pkFilterInExprByGoType": pkFilterInExpr,
+		"pkIsStringType":         funcPKIsStringType,
 
 		// Relationships
 		"fkStringExpr":       funcFKStringExpr,
 		"fkToString":         funcFKToString,
 		"fkToStringByGoType": funcFKToStringByGoType,
+		"nestedBucketKey":    funcNestedBucketKey,
 		"fkNullGuard":        funcFKNullGuard,
 		"fkLoadGuard":        funcFKLoadGuard(resolver),
 		"fkLoadKey":          funcFKLoadKey(resolver),
+		"keyedLoad":          funcKeyedLoad,
+		"keyTuple":           funcKeyTuple(resolver),
+		"keyGuard":           funcKeyGuard(resolver),
+		"keyValues":          funcKeyValues(resolver),
 		"isO2O":              funcIsO2O,
 		"isM2M":              funcIsM2M,
 		"reverseO2OTargets":  funcReverseO2OTargets,
@@ -105,6 +113,7 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"placeholder":       funcPlaceholder(dialect),
 		"quoteIdentifier":   funcQuoteIdentifier(dialect),
 		"supportsReturning": funcSupportsReturning(dialect),
+		"loadChunkSize":     funcLoadChunkSize(dialect),
 
 		// Cache / tenancy predicates
 		"anyTenanted": funcAnyTenanted,
@@ -118,11 +127,13 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"hasAnyRead":         funcHasAnyRead,
 		"hasAnyMutation":     funcHasAnyMutation,
 		"pkConvert":          funcPKConvert,
+		"pkFromRow":          funcPKFromRow,
 		"pkSchemaArgs":       funcPKSchemaArgs,
 		"pkGoArgs":           funcPKGoArgs,
 		"pkPassArgs":         funcPKPassArgs,
 		"inputCoerceBare":    funcInputCoerceBare,
 		"inputCoerceDeref":   funcInputCoerceDeref,
+		"inputCoerceDerefOf": funcInputCoerceDerefOf,
 	}
 }
 
@@ -168,11 +179,20 @@ func funcInputCoerceBare(f APIInputField) string {
 //   - default:             model wraps T (or is bare T); gqlgen emits
 //     `*T`. Deref and apply any size cast.
 func funcInputCoerceDeref(f APIInputField) string {
+	return funcInputCoerceDerefOf("in."+f.GoFieldName, f)
+}
+
+// funcInputCoerceDerefOf is funcInputCoerceDeref over an arbitrary source
+// expression rather than `in.<GoFieldName>`. The update translator needs it
+// for a field gqlgen wraps in `graphql.Omittable`: the value it coerces is the
+// one unwrapped into a local, in exactly the shape gqlgen would otherwise have
+// emitted for the field itself.
+func funcInputCoerceDerefOf(src string, f APIInputField) string {
 	if f.AddressOf {
-		return "&in." + f.GoFieldName
+		return "&" + src
 	}
 	if f.GqlgenIsBareNullable {
-		expr := "in." + f.GoFieldName
+		expr := src
 		// Named-slice bridge (e.g. gqlgen's `[]models.DocumentEntityTypeEnum`
 		// → model's `models.DocumentEntityTypeEnumSlice`): the gqlgen-emitted
 		// type is bare `[]T` but the model field uses a named slice, so the
@@ -185,9 +205,9 @@ func funcInputCoerceDeref(f APIInputField) string {
 	if f.ModelInnerIsPointer {
 		// Safe only when the pointee types match; PointerCast marks the case
 		// where they do not, and the template handles it without this helper.
-		return "in." + f.GoFieldName
+		return src
 	}
-	expr := "*in." + f.GoFieldName
+	expr := "*" + src
 	if f.CastTo != "" {
 		expr = f.CastTo + "(" + expr + ")"
 	}
@@ -229,6 +249,37 @@ func funcPKConvert(modelsPkg, structName string, args []APIPKArg) string {
 		b.WriteString(a.ModelFieldName)
 		b.WriteString(": ")
 		b.WriteString(convertOnePKArg(a))
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+// funcPKFromRow emits the PK argument expression for a row the resolver
+// already holds, read off its fields: `row.ID` for a single-column PK, or
+// `models.<T>PK{Field1: row.Field1, …}` for a composite one. The row is the
+// model's own struct, so its fields already carry the model's types and no
+// conversion applies.
+func funcPKFromRow(modelsPkg, structName, row string, args []APIPKArg) string {
+	if len(args) == 0 {
+		return ""
+	}
+	if len(args) == 1 {
+		return row + "." + args[0].ModelFieldName
+	}
+	var b strings.Builder
+	b.WriteString(modelsPkg)
+	b.WriteByte('.')
+	b.WriteString(structName)
+	b.WriteString("PK{")
+	for i, a := range args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(a.ModelFieldName)
+		b.WriteString(": ")
+		b.WriteString(row)
+		b.WriteByte('.')
+		b.WriteString(a.ModelFieldName)
 	}
 	b.WriteByte('}')
 	return b.String()
@@ -362,9 +413,13 @@ func flatMutationSurface(t APITableContext) bool {
 // template fragment. Dialect determines which guard variant is emitted; OpName
 // is interpolated into error messages so each call site reports the table-
 // scoped operation that failed (e.g. "get product", "connection products").
+// JoinsO2O reports whether the table has one-to-one relationships, whose
+// selection routes the read through a LEFT JOIN whose lock names the parent
+// alias.
 type LockGuardContext struct {
-	Dialect string
-	OpName  string
+	Dialect  string
+	OpName   string
+	JoinsO2O bool
 }
 
 // funcLockGuardCtx is the template helper that constructs a LockGuardContext
@@ -372,8 +427,9 @@ type LockGuardContext struct {
 // shared/_lock_mode_guard.tmpl.
 func funcLockGuardCtx(tc TableContext, opName string) LockGuardContext {
 	return LockGuardContext{
-		Dialect: string(tc.Dialect),
-		OpName:  opName,
+		Dialect:  string(tc.Dialect),
+		OpName:   opName,
+		JoinsO2O: tc.HasO2ORelationships,
 	}
 }
 
@@ -602,6 +658,66 @@ func funcSoftDeleteFilterOverride(f FilterFieldContext) string {
 	return "&" + ctype + "{Null: new(false)}"
 }
 
+// funcSoftDeleteFilterAny returns the soft-delete comparator literal that
+// scopes a write's trailing GetMany to every row, soft-deleted or not
+// ("&comparator.NullableTime{}"), or "" when the table has no soft-delete
+// column. The comparator is set, so GetMany injects no default "is not
+// deleted" condition (PRD §9.8 item 4), and it carries no condition of its
+// own, so it matches every row: a write returns the rows it wrote, including
+// one the write left soft-deleted. A soft-delete table with no filter field
+// for its column is an error, not an empty literal.
+func funcSoftDeleteFilterAny(tc TableContext) (string, error) {
+	if tc.SoftDelete == nil {
+		return "", nil
+	}
+	for _, f := range tc.FilterFields {
+		if f.IsSoftDeleteColumn {
+			return "&" + strings.TrimPrefix(f.ComparatorType, "*") + "{}", nil
+		}
+	}
+	return "", fmt.Errorf("table %s: soft-delete column %s has no filter field", tc.TableName, tc.SoftDelete.Column)
+}
+
+// WrittenRowContext is the data shape passed into the shared/written-row
+// template fragment: the single-row write method's table, and the key of the
+// row it wrote.
+type WrittenRowContext struct {
+	TableContext
+	// Key is the written key as a Go expression of the Get key type: the PK
+	// column's type, or the {Table}PK struct.
+	Key string
+	// PKsElem is Key as an element of a []{Table}PK literal, its type name
+	// elided. Composite PK only.
+	PKsElem string
+	// MissingNil returns nil, nil rather than ErrNotFound when the key reads
+	// back no row (the non-strict empty-update path).
+	MissingNil bool
+}
+
+// funcWrittenRowCtx is the template helper that constructs a
+// WrittenRowContext. The fragment lives in shared/_written_row.tmpl.
+func funcWrittenRowCtx(tc TableContext, key string, missingNil bool) WrittenRowContext {
+	elem := key
+	if tc.CompositePK {
+		elem = strings.TrimPrefix(key, tc.CompositePKStructName)
+	}
+	return WrittenRowContext{TableContext: tc, Key: key, PKsElem: elem, MissingNil: missingNil}
+}
+
+// funcCompositePKLiteral returns a {Table}PK literal whose fields are read
+// from the same-named fields of src, e.g. "OrderItemPK{OrderID:
+// input.OrderID, ProductID: input.ProductID, }" (gofmt drops the trailing
+// comma).
+func funcCompositePKLiteral(tc TableContext, src string) string {
+	var b strings.Builder
+	b.WriteString(tc.CompositePKStructName + "{")
+	for _, col := range tc.PKColumns {
+		b.WriteString(col.FieldName + ": " + src + "." + col.FieldName + ", ")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
 // --- Relationship functions ---
 
 // funcFKStringExpr returns the Go expression to convert a FK value to a string
@@ -623,14 +739,22 @@ func funcFKStringExpr(col ColumnContext) string {
 // For string PKs: &comparator.ID{Eq: new(id.String())}
 // For numeric PKs: &comparator.Number[int64]{Eq: new(id)}
 // For binary / network PKs: &comparator.Opaque[[]byte]{Eq: new(id)}
+// For enum PKs: &comparator.Enum[Kind]{Eq: new(id)}
+// For time PKs: &comparator.Time{Eq: new(id)}, or new(id.Time) for types.DateTime
+// For boolean PKs: &comparator.Bool{Eq: new(id)}
 //
 // The family is resolved by pkComparatorFamily, which mirrors
 // resolveGenericComparator — the expression has to match the type of the
 // filter field it is assigned into.
 func funcPKFilterExpr(col ColumnContext, varExpr string) string {
 	switch family, typeParam := pkComparatorFamily(col.GoType); family {
-	case "Number":
-		return fmt.Sprintf("&comparator.Number[%s]{Eq: new(%s)}", typeParam, varExpr)
+	case "Time":
+		// comparator.Time is not generic, and its operand is a time.Time.
+		return fmt.Sprintf("&comparator.Time{Eq: new(%s)}", nestedKeyValueExpr(strings.TrimPrefix(col.GoType, "*"), varExpr))
+	case "Bool":
+		return fmt.Sprintf("&comparator.Bool{Eq: new(%s)}", varExpr)
+	case "Enum", "Number":
+		return fmt.Sprintf("&comparator.%s[%s]{Eq: new(%s)}", family, typeParam, varExpr)
 	case "Opaque":
 		// The operand is the column's own Go type, so it is passed through
 		// rather than rendered — a binary or network key compared as text
@@ -652,30 +776,38 @@ func funcPKFilterExpr(col ColumnContext, varExpr string) string {
 // For non-nullable numeric PKs: &comparator.Number[int64]{In: ids}
 // For nullable string FKs: &comparator.NullableID{ID: comparator.ID{In: idStrings}}
 // For nullable numeric FKs: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: ids}}
+// For enum keys: &comparator.Enum[Kind]{In: ids}, wrapped as a numeric FK is when nullable
+// For time keys: &comparator.Time{In: ids}, through dateTimeKeys for types.DateTime
+// For boolean keys: &comparator.Bool{In: ids}
 func funcPKFilterInExpr(col ColumnContext, varExpr string, nullable bool) string {
 	baseGoType := strings.TrimPrefix(col.GoType, "*")
 	return pkFilterInExpr(baseGoType, varExpr, nullable)
 }
 
-// funcPKFilterInExprStr is like funcPKFilterInExpr but works with a Go type string
-// instead of a ColumnContext. Used for M2M relationships where only FKGoType is available.
-func funcPKFilterInExprStr(goType, varExpr string, nullable bool) string {
-	baseGoType := strings.TrimPrefix(goType, "*")
-	return pkFilterInExpr(baseGoType, varExpr, nullable)
-}
-
 func pkFilterInExpr(baseGoType, varExpr string, nullable bool) string {
-	switch family, typeParam := pkComparatorFamily(baseGoType); family {
-	case "Number":
-		if nullable {
-			return fmt.Sprintf("&comparator.NullableNumber[%s]{Number: comparator.Number[%s]{In: %s}}", typeParam, typeParam, varExpr)
+	family, typeParam := pkComparatorFamily(baseGoType)
+	if family == "Time" {
+		// comparator.Time is not generic, so the generic spelling below does
+		// not apply. Its operands are time.Time, which types.DateTime wraps.
+		if baseGoType == dateTimeGoType {
+			varExpr = "dateTimeKeys(" + varExpr + ")"
 		}
-		return fmt.Sprintf("&comparator.Number[%s]{In: %s}", typeParam, varExpr)
-	case "Opaque":
 		if nullable {
-			return fmt.Sprintf("&comparator.NullableOpaque[%s]{Opaque: comparator.Opaque[%s]{In: %s}}", typeParam, typeParam, varExpr)
+			return fmt.Sprintf("&comparator.NullableTime{Time: comparator.Time{In: %s}}", varExpr)
 		}
-		return fmt.Sprintf("&comparator.Opaque[%s]{In: %s}", typeParam, varExpr)
+		return fmt.Sprintf("&comparator.Time{In: %s}", varExpr)
+	}
+	if family == "Bool" {
+		if nullable {
+			return fmt.Sprintf("&comparator.NullableBool{Bool: comparator.Bool{In: %s}}", varExpr)
+		}
+		return fmt.Sprintf("&comparator.Bool{In: %s}", varExpr)
+	}
+	if family != "ID" {
+		if nullable {
+			return fmt.Sprintf("&comparator.Nullable%[1]s[%[2]s]{%[1]s: comparator.%[1]s[%[2]s]{In: %[3]s}}", family, typeParam, varExpr)
+		}
+		return fmt.Sprintf("&comparator.%s[%s]{In: %s}", family, typeParam, varExpr)
 	}
 	if nullable {
 		return fmt.Sprintf("&comparator.NullableID{ID: comparator.ID{In: %s}}", varExpr)
@@ -685,9 +817,11 @@ func pkFilterInExpr(baseGoType, varExpr string, nullable bool) string {
 
 // funcPKIsStringType reports whether a PK column uses a string-based comparator
 // (comparator.ID), and therefore whether the templates collect its keys as
-// []string via fmt.Sprint / .String(). Numeric PKs use comparator.Number[T] and
-// binary / network PKs use comparator.Opaque[T]; both take the key's own Go
-// type, so neither needs — or tolerates — the string conversion.
+// []string via fmt.Sprint / .String(). Numeric PKs use comparator.Number[T],
+// binary / network PKs use comparator.Opaque[T], enum PKs use
+// comparator.Enum[T], time PKs use comparator.Time and boolean PKs use
+// comparator.Bool; each takes the key's value, so none needs — or tolerates —
+// the string conversion.
 // Accepts either a ColumnContext or a string Go type.
 func funcPKIsStringType(v any) bool {
 	var goType string
@@ -719,10 +853,27 @@ func funcFKToString(col ColumnContext, varExpr string) string {
 	}
 }
 
+// funcNestedBucketKey renders expr, a nested target key of goType, as the key
+// the nested executor buckets and compares it on (PRD §9.9.6). A time key
+// renders as its instant in UTC: `==` and a map lookup on a time.Time also
+// compare the zone pointer, so a key named in another zone, or in time.Local
+// against a row the driver scanned in UTC, misses the row it names. UTC also
+// strips a monotonic reading. Every other key renders unchanged. The bucket's
+// type is nestedBucketGoType.
+func funcNestedBucketKey(goType, expr string) string {
+	if !isTimeKeyGoType(goType) {
+		return expr
+	}
+	if strings.HasPrefix(expr, "*") {
+		expr = "(" + expr + ")"
+	}
+	return nestedKeyValueExpr(goType, expr) + ".UTC()"
+}
+
 // funcFKToStringByGoType is funcFKToString driven by a Go type string instead
 // of a ColumnContext. Used by relationship loaders for the M2M target side
-// where only the target's PK Go type (RelationshipContext.FKGoType) is in
-// scope — picking the conversion via the parent's PK FKConvert mismatches
+// where only the Go type of the target column the junction references
+// (RelationshipContext.FKGoType) is in scope — picking the conversion via the parent's PK FKConvert mismatches
 // when target and parent PK types differ.
 func funcFKToStringByGoType(goType, varExpr string) string {
 	switch gotype.DeriveFKMethod(goType) {
@@ -769,6 +920,140 @@ func funcFKLoadKey(resolver *gotype.Resolver) func(string, string) string {
 		default:
 			return "fmt.Sprint(" + unwrapped + ")"
 		}
+	}
+}
+
+// keyedLoadData is what the keyed loader templates read: one edge of one table,
+// and the locals the loader body keeps its keys in.
+type keyedLoadData struct {
+	Table     TableContext
+	Rel       RelationshipContext
+	ResultVar string
+	RelVar    string
+	KeysVar   string
+	KeyedVar  string
+}
+
+// funcKeyedLoad packs an edge for its keyed loader template. The locals are
+// built from the struct name, so no table's result slice shadows them.
+func funcKeyedLoad(table TableContext, rel RelationshipContext, resultVar string) keyedLoadData {
+	stem := toCamelCase(table.StructName)
+	return keyedLoadData{
+		Table:     table,
+		Rel:       rel,
+		ResultVar: resultVar,
+		RelVar:    "related" + rel.FieldName,
+		KeysVar:   stem + "Keys",
+		KeyedVar:  stem + "Keyed",
+	}
+}
+
+// keyRead returns the Go type and expression of a key member. side is
+// "referenced" for the referenced column off the row recv, "junction" for the
+// scanned junction column, and "holder" for the FK column off the row recv.
+func keyRead(m KeyMemberContext, side, recv string) (goType, expr string) {
+	switch side {
+	case "referenced":
+		return m.Referenced.GoType, recv + "." + m.Referenced.FieldName
+	case "junction":
+		return m.GoType, m.Var
+	}
+	return m.GoType, recv + "." + m.FieldName
+}
+
+// funcKeyTuple returns the [N]string map key of a composite key, each member
+// stringified as fkLoadKey does for one column.
+func funcKeyTuple(resolver *gotype.Resolver) func([]KeyMemberContext, string, string) string {
+	loadKey := funcFKLoadKey(resolver)
+	return func(members []KeyMemberContext, side, recv string) string {
+		parts := make([]string, len(members))
+		for i, m := range members {
+			goType, expr := keyRead(m, side, recv)
+			parts[i] = loadKey(goType, expr)
+			if isFloatKey(keyCounterpartGoType(m, side)) && isIntegerKey(goType) {
+				// fmt.Sprint spells a float holding 1000000 as 1e+06.
+				parts[i] = "fmt.Sprint(float64(" + strings.ReplaceAll(resolver.DeriveScalarExtraction(goType).UnwrapExpr, "$v", expr) + "))"
+			}
+		}
+		return fmt.Sprintf("[%d]string{%s}", len(members), strings.Join(parts, ", "))
+	}
+}
+
+// funcKeyGuard returns the condition that every member of a key can be matched:
+// it is non-NULL and, on the referenced side, fits its FK column. It returns ""
+// when nothing can rule a member out.
+func funcKeyGuard(resolver *gotype.Resolver) func([]KeyMemberContext, string, string) string {
+	guard := funcFKLoadGuard(resolver)
+	return func(members []KeyMemberContext, side, recv string) string {
+		var parts []string
+		for _, m := range members {
+			goType, expr := keyRead(m, side, recv)
+			if g := guard(goType, expr); g != "" {
+				parts = append(parts, g)
+			}
+			if side == "referenced" {
+				value := strings.ReplaceAll(resolver.DeriveScalarExtraction(goType).UnwrapExpr, "$v", expr)
+				if g := keyFitsGuard(goType, m.GoType, value); g != "" {
+					parts = append(parts, g)
+				}
+			}
+		}
+		return strings.Join(parts, " && ")
+	}
+}
+
+// integerBits is the width of each integer Go type a key column can bind to,
+// negative for an unsigned one.
+var integerBits = map[string]int{
+	"int8": 8, "int16": 16, "int32": 32, "int64": 64, "int": 64,
+	"uint8": -8, "uint16": -16, "uint32": -32, "uint64": -64, "uint": -64,
+}
+
+// keyCounterpartGoType is the Go type on the other end of a key member's pair.
+func keyCounterpartGoType(m KeyMemberContext, side string) string {
+	if side == "referenced" {
+		return m.GoType
+	}
+	return m.Referenced.GoType
+}
+
+func isFloatKey(goType string) bool {
+	_, base := pkComparatorFamily(goType)
+	return base == "float32" || base == "float64"
+}
+
+func isIntegerKey(goType string) bool {
+	_, base := pkComparatorFamily(goType)
+	return integerBits[base] != 0
+}
+
+// keyFitsGuard returns the condition that a key fits the integer FK column
+// referencing it, or "" when every value does. A driver refuses to bind a value
+// its column's type cannot hold, and no row can reference one.
+func keyFitsGuard(referencedGoType, fkGoType, value string) string {
+	_, ref := pkComparatorFamily(referencedGoType)
+	_, fk := pkComparatorFamily(fkGoType)
+	refBits, fkBits := integerBits[ref], integerBits[fk]
+	if fkBits == 0 || !isFloatKey(ref) && refBits == 0 {
+		return ""
+	}
+	refSize, fkSize := max(refBits, -refBits), max(fkBits, -fkBits)
+	if refBits != 0 && ((refBits > 0) == (fkBits > 0) && refSize <= fkSize || fkBits > 0 && refSize < fkSize) {
+		return ""
+	}
+	return fmt.Sprintf("%s(%s(%s)) == %s", ref, fk, value, value)
+}
+
+// funcKeyValues returns the []any a tuple IN binds for one key, each member
+// unwrapped from its nullable form. Callers guard with keyGuard first.
+func funcKeyValues(resolver *gotype.Resolver) func([]KeyMemberContext, string, string) string {
+	return func(members []KeyMemberContext, side, recv string) string {
+		parts := make([]string, len(members))
+		for i, m := range members {
+			goType, expr := keyRead(m, side, recv)
+			parts[i] = strings.ReplaceAll(resolver.DeriveScalarExtraction(goType).UnwrapExpr, "$v", expr)
+		}
+		return "[]any{" + strings.Join(parts, ", ") + "}"
 	}
 }
 
@@ -841,6 +1126,42 @@ func funcQuoteIdentifier(d sql.Dialect) func(string) string {
 func funcSupportsReturning(d sql.Dialect) func() bool {
 	return func() bool {
 		return d.SupportsReturning()
+	}
+}
+
+// bindParamLimit is the most bind parameters one statement may carry on the
+// dialect. SQLite's is its compiled MAX_VARIABLE_NUMBER; PostgreSQL's wire
+// protocol counts parameters in a 16-bit field; MySQL refuses more with
+// Error 1390.
+func bindParamLimit(dialect string) int {
+	switch dialect {
+	case "postgres", "mysql":
+		return 65535
+	default: // sqlite
+		return 32766
+	}
+}
+
+// postgresTupleINKeys caps the rows of one PostgreSQL tuple IN. PostgreSQL nests
+// the list's row comparisons one level per row, and at the default
+// max_stack_depth of 2MB it refuses a list of 7000 to 8000 rows with error
+// 54001, however many columns each row has.
+const postgresTupleINKeys = 4000
+
+// funcLoadChunkSize returns a function giving how many parent keys one
+// relationship-loader statement binds: half the dialect's bind-parameter limit,
+// divided by the key's column count. The other half is left for the
+// relationship's filter, tenancy, soft-delete and static `filter:` parameters.
+// A key of several columns on PostgreSQL also stays under postgresTupleINKeys.
+func funcLoadChunkSize(d sql.Dialect) func(keyColumns int) int {
+	limit := bindParamLimit(d.Name())
+	postgres := d.Name() == string(config.DialectPostgres)
+	return func(keyColumns int) int {
+		size := limit / 2 / keyColumns
+		if postgres && keyColumns > 1 {
+			return min(size, postgresTupleINKeys)
+		}
+		return size
 	}
 }
 

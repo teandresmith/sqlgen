@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/sqlgenresolver"
 )
 
 // CreateUser is the resolver for the createUser field.
@@ -32,111 +31,12 @@ func (r *mutationResolver) CreateUsers(ctx context.Context, inputs []*gqlmodel.C
 
 // UpdateUser is the resolver for the updateUser field.
 func (r *mutationResolver) UpdateUser(ctx context.Context, id int, input gqlmodel.UpdateUserInput) (*models.User, error) {
-	if input.Age != nil && input.AgeInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"age\" cannot be both set and incremented in one mutation")
-	}
-	if input.AgeInc != nil && input.AgeDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"age\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Balance != nil && input.BalanceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"balance\" cannot be both set and incremented in one mutation")
-	}
-	if input.BalanceInc != nil && input.BalanceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"balance\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.LoginCount != nil && input.LoginCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"login_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.LoginCountInc != nil && input.LoginCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"login_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Score != nil && input.ScoreInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"score\" cannot be both set and incremented in one mutation")
-	}
-	if input.ScoreInc != nil && input.ScoreDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"score\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateUserInput(input)
-	hasSet := hasUpdateUserSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.UserIncrementColumn]
-	if input.AgeInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserIncrementColumn]{
-			Column: models.UserIncrementAge,
-			Amount: int(*input.AgeInc),
-		})
-	}
-	if input.AgeDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserIncrementColumn]{
-			Column: models.UserIncrementAge,
-			Amount: -int(*input.AgeDec),
-		})
-	}
-	if input.BalanceInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserIncrementColumn]{
-			Column: models.UserIncrementBalance,
-			Amount: int(*input.BalanceInc),
-		})
-	}
-	if input.BalanceDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserIncrementColumn]{
-			Column: models.UserIncrementBalance,
-			Amount: -int(*input.BalanceDec),
-		})
-	}
-	if input.LoginCountInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserIncrementColumn]{
-			Column: models.UserIncrementLoginCount,
-			Amount: int(*input.LoginCountInc),
-		})
-	}
-	if input.LoginCountDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserIncrementColumn]{
-			Column: models.UserIncrementLoginCount,
-			Amount: -int(*input.LoginCountDec),
-		})
-	}
-	if input.ScoreInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserIncrementColumn]{
-			Column: models.UserIncrementScore,
-			Amount: int(*input.ScoreInc),
-		})
-	}
-	if input.ScoreDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserIncrementColumn]{
-			Column: models.UserIncrementScore,
-			Amount: -int(*input.ScoreDec),
-		})
-	}
-	return r.M.UpdateUser(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateUser(ctx, id, translateUpdateUserRequest(input))
 }
 
 // UpdateUsers is the resolver for the updateUsers field.
 func (r *mutationResolver) UpdateUsers(ctx context.Context, filter gqlmodel.UserFilter, input gqlmodel.UpdateUserInput) ([]*models.User, error) {
-	if input.Age != nil && input.AgeInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"age\" cannot be both set and incremented in one mutation")
-	}
-	if input.AgeInc != nil && input.AgeDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"age\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Balance != nil && input.BalanceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"balance\" cannot be both set and incremented in one mutation")
-	}
-	if input.BalanceInc != nil && input.BalanceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"balance\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.LoginCount != nil && input.LoginCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"login_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.LoginCountInc != nil && input.LoginCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"login_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Score != nil && input.ScoreInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"score\" cannot be both set and incremented in one mutation")
-	}
-	if input.ScoreInc != nil && input.ScoreDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update users: column \"score\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateUsers(ctx, translateUserFilter(&filter), translateUpdateUserInput(input))
+	return r.M.UpdateUsers(ctx, translateUserFilter(&filter), translateUpdateUserRequest(input))
 }
 
 // UpsertUser is the resolver for the upsertUser field.

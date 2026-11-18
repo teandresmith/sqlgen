@@ -16,8 +16,10 @@ import (
 // in the source schema has a corresponding `case` clause here, so the
 // resolver can pre-compute the exact set of fields/relationships to load and
 // the unified client issues `1 + count(O2M selected) + 2 * count(M2M selected)`
-// queries per request, regardless of result-set size (each M2M edge costs
-// two queries — junction + entities).
+// queries per request while each relationship's parent set fits one chunk of
+// keys (each M2M edge costs two queries — junction + entities). A larger
+// parent set adds one query per chunked step for each extra chunk; the count
+// never depends on the number of children.
 //
 // `<table>FieldOptionsFromContext` is the entry point used by every per-table
 // resolver method. It pulls the collected fields out of ctx, descends through
@@ -214,6 +216,148 @@ func assetDocumentLinkFieldOptionsFromCollected(opCtx *graphql.OperationContext,
 	return fo
 }
 
+// badgeFieldOptionsFromContext returns the
+// models.BadgeFieldOptions for the current GraphQL request.
+func badgeFieldOptionsFromContext(ctx context.Context) *models.BadgeFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BadgeConnection", "BadgeListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BadgeFieldOptions{}
+	}
+	return badgeFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// badgeFieldOptionsFromCollected walks one level of
+// the Badge selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func badgeFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BadgeFieldOptions {
+	fo := &models.BadgeFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "code":
+			fo.Code = true
+		case "label":
+			fo.Label = true
+		case "binaryKeys":
+			fo.BinaryKeys = &models.BinaryKeyRelationshipOptions{
+				FieldOptions: binaryKeyFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		case "owners":
+			fo.Owners = &models.OwnerRelationshipOptions{
+				FieldOptions: ownerFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.Code = true
+	}
+	return fo
+}
+
+// binFieldOptionsFromContext returns the
+// models.BinFieldOptions for the current GraphQL request.
+func binFieldOptionsFromContext(ctx context.Context) *models.BinFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BinConnection", "BinListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BinFieldOptions{}
+	}
+	return binFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// binFieldOptionsFromCollected walks one level of
+// the Bin selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func binFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BinFieldOptions {
+	fo := &models.BinFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "aisle":
+			fo.Aisle = true
+		case "slot":
+			fo.Slot = true
+		case "label":
+			fo.Label = true
+		case "binItems":
+			fo.BinItems = &models.BinItemRelationshipOptions{
+				FieldOptions: binItemFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.Aisle = true
+		fo.Slot = true
+	}
+	return fo
+}
+
+// binItemFieldOptionsFromContext returns the
+// models.BinItemFieldOptions for the current GraphQL request.
+func binItemFieldOptionsFromContext(ctx context.Context) *models.BinItemFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BinItemConnection", "BinItemListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BinItemFieldOptions{}
+	}
+	return binItemFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// binItemFieldOptionsFromCollected walks one level of
+// the BinItem selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func binItemFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BinItemFieldOptions {
+	fo := &models.BinItemFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "aisle":
+			fo.Aisle = true
+		case "slot":
+			fo.Slot = true
+		case "name":
+			fo.Name = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
 // binaryKeyFieldOptionsFromContext returns the
 // models.BinaryKeyFieldOptions for the current GraphQL request.
 func binaryKeyFieldOptionsFromContext(ctx context.Context) *models.BinaryKeyFieldOptions {
@@ -247,6 +391,10 @@ func binaryKeyFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.Events = &models.BinaryKeyEventRelationshipOptions{
 				FieldOptions: binaryKeyEventFieldOptionsFromCollected(opCtx, f.Sub),
 			}
+		case "badges":
+			fo.Badges = &models.BadgeRelationshipOptions{
+				FieldOptions: badgeFieldOptionsFromCollected(opCtx, f.Sub),
+			}
 		case "binaryKeyEvents":
 			fo.BinaryKeyEvents = &models.BinaryKeyEventRelationshipOptions{
 				FieldOptions: binaryKeyEventFieldOptionsFromCollected(opCtx, f.Sub),
@@ -261,6 +409,48 @@ func binaryKeyFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
 		// the client method that reads them, not here.
 		fo.ID = true
+	}
+	return fo
+}
+
+// binaryKeyBadgeFieldOptionsFromContext returns the
+// models.BinaryKeyBadgeFieldOptions for the current GraphQL request.
+func binaryKeyBadgeFieldOptionsFromContext(ctx context.Context) *models.BinaryKeyBadgeFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BinaryKeyBadgeConnection", "BinaryKeyBadgeListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BinaryKeyBadgeFieldOptions{}
+	}
+	return binaryKeyBadgeFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// binaryKeyBadgeFieldOptionsFromCollected walks one level of
+// the BinaryKeyBadge selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func binaryKeyBadgeFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BinaryKeyBadgeFieldOptions {
+	fo := &models.BinaryKeyBadgeFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "binaryKeyID":
+			fo.BinaryKeyID = true
+		case "badgeCode":
+			fo.BadgeCode = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.BinaryKeyID = true
+		fo.BadgeCode = true
 	}
 	return fo
 }
@@ -294,6 +484,94 @@ func binaryKeyEventFieldOptionsFromCollected(opCtx *graphql.OperationContext, fi
 			fo.BinaryKeyID = true
 		case "label":
 			fo.Label = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
+// boolKeyedFieldOptionsFromContext returns the
+// models.BoolKeyedFieldOptions for the current GraphQL request.
+func boolKeyedFieldOptionsFromContext(ctx context.Context) *models.BoolKeyedFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BoolKeyedConnection", "BoolKeyedListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BoolKeyedFieldOptions{}
+	}
+	return boolKeyedFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// boolKeyedFieldOptionsFromCollected walks one level of
+// the BoolKeyed selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func boolKeyedFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BoolKeyedFieldOptions {
+	fo := &models.BoolKeyedFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "k":
+			fo.K = true
+		case "label":
+			fo.Label = true
+		case "boolKeyedNotes":
+			fo.BoolKeyedNotes = &models.BoolKeyedNoteRelationshipOptions{
+				FieldOptions: boolKeyedNoteFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.K = true
+	}
+	return fo
+}
+
+// boolKeyedNoteFieldOptionsFromContext returns the
+// models.BoolKeyedNoteFieldOptions for the current GraphQL request.
+func boolKeyedNoteFieldOptionsFromContext(ctx context.Context) *models.BoolKeyedNoteFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BoolKeyedNoteConnection", "BoolKeyedNoteListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BoolKeyedNoteFieldOptions{}
+	}
+	return boolKeyedNoteFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// boolKeyedNoteFieldOptionsFromCollected walks one level of
+// the BoolKeyedNote selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func boolKeyedNoteFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BoolKeyedNoteFieldOptions {
+	fo := &models.BoolKeyedNoteFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "keyedK":
+			fo.KeyedK = true
+		case "note":
+			fo.Note = true
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -508,6 +786,135 @@ func documentFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields [
 	return fo
 }
 
+// keyClassChildFieldOptionsFromContext returns the
+// models.KeyClassChildFieldOptions for the current GraphQL request.
+func keyClassChildFieldOptionsFromContext(ctx context.Context) *models.KeyClassChildFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "KeyClassChildConnection", "KeyClassChildListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.KeyClassChildFieldOptions{}
+	}
+	return keyClassChildFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// keyClassChildFieldOptionsFromCollected walks one level of
+// the KeyClassChild selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func keyClassChildFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.KeyClassChildFieldOptions {
+	fo := &models.KeyClassChildFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "parentID":
+			fo.ParentID = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
+// keyClassParentFieldOptionsFromContext returns the
+// models.KeyClassParentFieldOptions for the current GraphQL request.
+func keyClassParentFieldOptionsFromContext(ctx context.Context) *models.KeyClassParentFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "KeyClassParentConnection", "KeyClassParentListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.KeyClassParentFieldOptions{}
+	}
+	return keyClassParentFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// keyClassParentFieldOptionsFromCollected walks one level of
+// the KeyClassParent selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func keyClassParentFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.KeyClassParentFieldOptions {
+	fo := &models.KeyClassParentFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "keyClassChildren":
+			fo.KeyClassChildren = &models.KeyClassChildRelationshipOptions{
+				FieldOptions: keyClassChildFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		case "keyClassRealChildren":
+			fo.KeyClassRealChildren = &models.KeyClassRealChildRelationshipOptions{
+				FieldOptions: keyClassRealChildFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
+// keyClassRealChildFieldOptionsFromContext returns the
+// models.KeyClassRealChildFieldOptions for the current GraphQL request.
+func keyClassRealChildFieldOptionsFromContext(ctx context.Context) *models.KeyClassRealChildFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "KeyClassRealChildConnection", "KeyClassRealChildListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.KeyClassRealChildFieldOptions{}
+	}
+	return keyClassRealChildFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// keyClassRealChildFieldOptionsFromCollected walks one level of
+// the KeyClassRealChild selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func keyClassRealChildFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.KeyClassRealChildFieldOptions {
+	fo := &models.KeyClassRealChildFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "parentID":
+			fo.ParentID = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
 // keyOnlyRowFieldOptionsFromContext returns the
 // models.KeyOnlyRowFieldOptions for the current GraphQL request.
 func keyOnlyRowFieldOptionsFromContext(ctx context.Context) *models.KeyOnlyRowFieldOptions {
@@ -676,6 +1083,10 @@ func ownerFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 			fo.Name = true
 		case "ownerProfile":
 			fo.OwnerProfile = ownerProfileFieldOptionsFromCollected(opCtx, f.Sub)
+		case "badges":
+			fo.Badges = &models.BadgeRelationshipOptions{
+				FieldOptions: badgeFieldOptionsFromCollected(opCtx, f.Sub),
+			}
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -686,6 +1097,48 @@ func ownerFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
 		// the client method that reads them, not here.
 		fo.OwnerKey = true
+	}
+	return fo
+}
+
+// ownerBadgeFieldOptionsFromContext returns the
+// models.OwnerBadgeFieldOptions for the current GraphQL request.
+func ownerBadgeFieldOptionsFromContext(ctx context.Context) *models.OwnerBadgeFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "OwnerBadgeConnection", "OwnerBadgeListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.OwnerBadgeFieldOptions{}
+	}
+	return ownerBadgeFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// ownerBadgeFieldOptionsFromCollected walks one level of
+// the OwnerBadge selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func ownerBadgeFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.OwnerBadgeFieldOptions {
+	fo := &models.OwnerBadgeFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "ownerID":
+			fo.OwnerID = true
+		case "badgeCode":
+			fo.BadgeCode = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.OwnerID = true
+		fo.BadgeCode = true
 	}
 	return fo
 }
@@ -1070,6 +1523,94 @@ func tagFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []grap
 			fo.Name = true
 		case "isDeleted":
 			fo.IsDeleted = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
+// timeKeyedFieldOptionsFromContext returns the
+// models.TimeKeyedFieldOptions for the current GraphQL request.
+func timeKeyedFieldOptionsFromContext(ctx context.Context) *models.TimeKeyedFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "TimeKeyedConnection", "TimeKeyedListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.TimeKeyedFieldOptions{}
+	}
+	return timeKeyedFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// timeKeyedFieldOptionsFromCollected walks one level of
+// the TimeKeyed selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func timeKeyedFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.TimeKeyedFieldOptions {
+	fo := &models.TimeKeyedFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "at":
+			fo.At = true
+		case "label":
+			fo.Label = true
+		case "timeKeyedNotes":
+			fo.TimeKeyedNotes = &models.TimeKeyedNoteRelationshipOptions{
+				FieldOptions: timeKeyedNoteFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.At = true
+	}
+	return fo
+}
+
+// timeKeyedNoteFieldOptionsFromContext returns the
+// models.TimeKeyedNoteFieldOptions for the current GraphQL request.
+func timeKeyedNoteFieldOptionsFromContext(ctx context.Context) *models.TimeKeyedNoteFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "TimeKeyedNoteConnection", "TimeKeyedNoteListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.TimeKeyedNoteFieldOptions{}
+	}
+	return timeKeyedNoteFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// timeKeyedNoteFieldOptionsFromCollected walks one level of
+// the TimeKeyedNote selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func timeKeyedNoteFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.TimeKeyedNoteFieldOptions {
+	fo := &models.TimeKeyedNoteFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "keyedAt":
+			fo.KeyedAt = true
+		case "note":
+			fo.Note = true
 		}
 	}
 	if !fo.HasSelectedColumns() {

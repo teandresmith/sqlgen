@@ -3703,6 +3703,45 @@ Closure is `/close-phase 31`, with no sub-item of its own. It flips the design d
 - **`go:generate` for the new examples.** Generating needs a live database.
 - **A database version matrix.** PG 16 and MySQL 8.0 only.
 
+## Phase 32: Composite Foreign-Key Relationships
+
+> **Status: Complete (closed 2026-11-17).** Design doc `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (SYNCED 2026-11-17; option D; rulings R1–R7 settled 2026-10-20, each from a measured probe in its §9.4). Task file `docs/tracker/phase-32.md`. All 9 sub-items (32.0–32.8) landed. Full sweep clean under `-race` (check 223s / static-examples 18s / conformance 829s, 6256 pass / 80 untested of 6336 rows), no flakes. 10 FIXes originated in the phase and were resolved within it, along with 15 older defects the composite-key work surfaced; none carried forward.
+
+**Why.**
+- **A composite foreign key gives no relationship.** The relationship model holds one column per side, and detection reads only `Column.FKReference`, which `deriveFKReferences` sets from single-column FOREIGN KEYs alone. The tenant-isolation pattern `TENANT_SCOPED_REFERENCES.md` §1.3 recommends, `(workspace_id, x_id) → (workspace_id, id)`, therefore removes the edge it guards. `sqlgen-example` fails `validate` on it today (design §1.1).
+- **Its FK column also loses its FK standing.** With integer keys it gets increment operators (PRD §8.2), and a single-column PK that is a composite-FK member is classified by type in `autoDetectPKStrategy` (PRD §8.6).
+- **Past the parser, every edge joins the target's first PK column,** not the columns the foreign key references. So a single-column FK to a non-PK UNIQUE column generates a loader that does not compile (design §4.9, measured).
+
+**Normative spec:** design doc §4. 32.0 writes it into PRD §4.6/§4.8/§4.13, §5.3, §8.2, §8.6, §9.9, §13.1, §13.4, §25.1, §29.10, §30, the composite-key tuple-IN rows, `guidelines/SQL.md`, `MANIFEST.md` and `MCP.md`.
+
+**Depends on:** Phase 31 closed. FIX-358 (`c875fec9`, excluded link columns drop the edge), FIX-359 (`2ae215f8`, chunked loaders) and FIX-360 (`244ce2ee`, an excluded PK column is an error) landed first, as design §6 requires. The open FIX queue is empty.
+
+**Sub-items** (`docs/tracker/phase-32.md`):
+- **32.0** — **PRD and doc sync.** No code. Re-verify design §9.1 at HEAD. *Blocks every other sub-item.*
+- **32.1** — **Runtime.** `sql.Exists` with N correlation pairs; `PrefixConditions` on tuple IN; MySQL tuple IN (flag removed). *Depends on 32.0; runs alongside 32.2.*
+- **32.2** — **Parser model and detection.** `KeyPair`, `Relationship.Key` / `JunctionLocal` / `JunctionReference` / `Constraint` replace the three column strings; `Constraint.Match` on PostgreSQL; detection per design §4.2 (target key, redundant FKs, O2O by subset, the set-aside M2M rule, the four-step naming rule, the residual-collision error, the unresolvable-key warning). Parity on all three dialects under `files` and `database`. Starts from the §9.4 detection prototype. *Depends on 32.0.*
+- **32.3** — **Config, manifest and MCP shapes.** `fk` and the junction keys take a string or a list; manifest `fk` / `junction` key lists and `constraint`, `SchemaVersion` `0.2.0`; MCP `fk_columns`. *Depends on 32.2.*
+- **32.4** — **Gen contexts.** Key pairs replace the `PKColumns[0]` relationship reads; pinned and free members; E1 over every member; FK membership for increments and PK strategy. *Depends on 32.2, 32.3.*
+- **32.5** — **Read templates.** O2O join, O2M and M2M loaders (chunked, tuple keys, NULL members skipped), relationship filters. *Depends on 32.1, 32.4.*
+- **32.6** — **Nested writes through composite FKs.** Design §4.5 for single-column-PK parents and targets, including MATCH FULL disconnect eligibility. *Depends on 32.4, 32.5.*
+- **32.7** — **GraphQL.** Relationship fields and filters for the new edges. *Depends on 32.5, 32.6.*
+- **32.8** — **Examples.** `tenancy_postgres` gains a composite tenant FK, a tenant junction and a composite-PK target; `mysql` and `sqlite` one composite FK each; a `sqlgen-example` probe against HEAD. *Depends on 32.1–32.7.*
+
+Closure is `/close-phase 32`, with no sub-item of its own. It flips the design doc to SYNCED.
+
+**Tests required:**
+- **N = 1 invariant (design §4.9):** on every sub-item, the Go goldens of every existing example are byte-identical. The manifest goldens move once, in 32.3.
+- **Parser:** the design §6.1 table-driven set, from the §9.4 prototype's fixtures, plus parity under `files` and `database` on all three dialects.
+- **Runtime:** `Exists` with 1 and 2 pairs on every dialect; prefixed tuple IN; MySQL tuple IN.
+- **Gen:** pinned and free classification; E1 over every member; disconnect eligibility under SIMPLE and FULL; increment and PK-strategy treatment of every member.
+- **Loaders:** an N = 2 load past one chunk on every dialect, checking every child set.
+- **E2E:** the 32.8 examples against live databases, including a connect across tenants that fails before any write.
+- **Sweep:** `make check`, `make check-examples` and `make test-integration` are green.
+
+**Out of scope (design §5):**
+- **Composite-PK parents and targets in nested mutations.** The next phase (R3): lift E1 and E3, GraphQL `<T>PKInput` types, E8's opaque-key rule for key structs.
+- **Manual relationships to a non-PK key** (R7), **ON DELETE / ON UPDATE** recording, **MATCH PARTIAL**, FKs to tables outside the generated schema, and polymorphic references.
+
 ## Deferred Features
 
 These remain deferred until consumer demand justifies the implementation cost. Phase 15 establishes the unified client surface as feature-complete for direct Go consumers; Phase 16 extends it to GraphQL consumers. The deferred items below extend further or address adjacent surfaces.

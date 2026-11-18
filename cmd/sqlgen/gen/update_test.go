@@ -3,11 +3,13 @@ package gen_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"text/template"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/sql"
@@ -46,6 +48,7 @@ func executeUpdateTemplate(t *testing.T, ctx gen.TableContext, dialect sql.Diale
 func testUpdateContext_singlePK_postgres() gen.TableContext {
 	return gen.TableContext{
 		StructName:        "Product",
+		SnakeName:         "product",
 		TableName:         "products",
 		TableNameConstant: "TableProducts",
 		Schema:            "public",
@@ -123,6 +126,7 @@ func testUpdateContext_noUpdateColumns() gen.TableContext {
 func testUpdateContext_compositePK() gen.TableContext {
 	return gen.TableContext{
 		StructName:            "OrderItem",
+		SnakeName:             "order_item",
 		TableName:             "order_items",
 		TableNameConstant:     "TableOrderItems",
 		Schema:                "public",
@@ -228,9 +232,9 @@ func TestUpdateTemplate_strictUpdates(t *testing.T) {
 	output := executeUpdateTemplate(t, ctx, sql.NewPostgresDialect())
 
 	wantPatterns := []string{
-		"count, err := execResult.RowsAffected()",
-		`fmt.Errorf("update product rows affected: %w", err)`,
-		"if count == 0 {",
+		"matched, err := execResult.RowsAffected()",
+		`fmt.Errorf("rows affected: %w", err)`,
+		"if matched == 0 {",
 		"return nil, ErrNotFound",
 	}
 	for _, want := range wantPatterns {
@@ -244,12 +248,17 @@ func TestUpdateTemplate_noStrictUpdates(t *testing.T) {
 	ctx := testUpdateContext_noStrictUpdates()
 	output := executeUpdateTemplate(t, ctx, sql.NewPostgresDialect())
 
-	if strings.Contains(output, "ErrNotFound") {
-		t.Error("output without strict_updates should not contain ErrNotFound")
+	// Never returned. The only mention is the empty-update read-back, which
+	// maps the missing row to a nil entity and a nil error.
+	if strings.Contains(output, "return nil, ErrNotFound") {
+		t.Errorf("output without strict_updates should not return ErrNotFound\n\nfull output:\n%s", output)
 	}
-	// Should discard execResult
-	if !strings.Contains(output, "_ = execResult") {
-		t.Errorf("output without strict_updates should discard execResult\n\nfull output:\n%s", output)
+	if got := strings.Count(output, "ErrNotFound"); got != 1 || !strings.Contains(output, "if errors.Is(err, ErrNotFound) {\n\t\t\t\treturn nil, nil") {
+		t.Errorf("output without strict_updates should mention ErrNotFound once, to map the read-back's missing row to nil (got %d)\n\nfull output:\n%s", got, output)
+	}
+	// Counts the matched rows to gate the affected key, not to fail.
+	if !strings.Contains(output, "matched, err := execResult.RowsAffected()") {
+		t.Errorf("output without strict_updates should count the matched rows\n\nfull output:\n%s", output)
 	}
 }
 
@@ -312,6 +321,47 @@ func TestUpdateTemplate_updateMany_pgx(t *testing.T) {
 			t.Errorf("output missing pgx UpdateMany pattern: %q\n\nfull output:\n%s", want, output)
 		}
 	}
+	assertPgxUpdateManyFallbackInTransaction(t, output, "conn.Exec(ctx, q, batchArgs[i]...)")
+}
+
+// assertPgxUpdateManyFallbackInTransaction checks that pgx UpdateMany's
+// statement-by-statement fallback, taken when the querier has no SendBatch,
+// runs each sub-batch inside database.WithTransaction on the transaction's
+// connection, so a failing item rolls back its sub-batch as SendBatch does.
+// stmt is the fallback's per-statement call.
+func assertPgxUpdateManyFallbackInTransaction(t *testing.T, output, stmt string) {
+	t.Helper()
+	start := strings.Index(output, ") UpdateMany(")
+	if start < 0 {
+		t.Fatalf("output has no UpdateMany\n\nfull output:\n%s", output)
+	}
+	body := output[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	order := []string{
+		"for start := 0; start < len(items); start += c.batchSize {",
+		"batcher.SendBatch(ctx, pgxBatch)",
+		"} else {",
+		`database.WithTransaction(ctx, c.querier, "update_many_`,
+		"conn := database.Conn(ctx, c.querier)",
+		"for i, q := range batchQueries {",
+		stmt,
+		"return nil",
+		"}); err != nil {",
+		"return nil, err",
+	}
+	at := 0
+	for _, want := range order {
+		i := strings.Index(body[at:], want)
+		if i < 0 {
+			t.Fatalf("UpdateMany missing %q after offset %d; want the fallback's statements inside a per-batch transaction\n\nbody:\n%s", want, at, body)
+		}
+		at += i + len(want)
+	}
+	if got := strings.Count(body, stmt); got != 1 {
+		t.Errorf("UpdateMany sends %q %d times, want once, inside the fallback's transaction\n\nbody:\n%s", stmt, got, body)
+	}
 }
 
 func TestUpdateTemplate_updateMany_stdlib(t *testing.T) {
@@ -327,6 +377,35 @@ func TestUpdateTemplate_updateMany_stdlib(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing stdlib UpdateMany pattern: %q\n\nfull output:\n%s", want, output)
 		}
+	}
+
+	// Each sub-batch's UPDATEs run on the connection of a transaction opened
+	// inside the batch loop, so a failing item rolls its sub-batch back.
+	start := strings.Index(output, ") UpdateMany(")
+	if start < 0 {
+		t.Fatalf("output has no UpdateMany\n\nfull output:\n%s", output)
+	}
+	body := output[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	order := []string{
+		"for start := 0; start < len(items); start += c.batchSize {",
+		`database.WithTransaction(ctx, c.querier, "update_many_product", func(ctx context.Context) error {`,
+		"conn := database.Conn(ctx, c.querier)",
+		"for _, item := range batch {",
+		"conn.Exec(ctx, query, args...)",
+	}
+	at := 0
+	for _, want := range order {
+		i := strings.Index(body[at:], want)
+		if i < 0 {
+			t.Fatalf("UpdateMany missing %q after offset %d; want the batch's UPDATEs inside a per-batch transaction\n\nbody:\n%s", want, at, body)
+		}
+		at += i + len(want)
+	}
+	if got := strings.Count(body, "database.Conn(ctx, c.querier)"); got != 1 {
+		t.Errorf("UpdateMany resolves its connection %d times, want once, inside the per-batch transaction\n\nbody:\n%s", got, body)
 	}
 
 	// Should NOT have pgx batch
@@ -664,4 +743,209 @@ func singleRowUpdateBody(t *testing.T, output string) string {
 		return rest[:end]
 	}
 	return rest
+}
+
+// --- Tests: an UPDATE matching no row records no affected key ---
+
+// precedingLine returns the nearest non-blank line before lines[i], trimmed.
+func precedingLine(lines []string, i int) string {
+	for j := i - 1; j >= 0; j-- {
+		if s := strings.TrimSpace(lines[j]); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// tenantedUpdateContext is the tenanted product fixture on the given dialect
+// with Update and UpdateMany enabled.
+func tenantedUpdateContext(dialectName config.Dialect, driver config.Driver) gen.TableContext {
+	tc := tenantedProductContext()
+	tc.Dialect = dialectName
+	tc.Driver = driver
+	tc.Operations = gen.ResolvedOperations{Update: true, UpdateMany: true}
+	if driver == config.DriverPgx {
+		tc.Imports = append(tc.Imports, "github.com/jackc/pgx/v5")
+	}
+	return tc
+}
+
+// A non-strict Update whose key matches no row writes nothing. It must record
+// no affected key, so the cache invalidates nothing and the event hook
+// publishes nothing: the one m.AffectedPKs assignment sits behind the
+// matched-row check. A strict Update returns ErrNotFound before it.
+func TestUpdateTemplate_nonStrictNoOp_recordsNoAffectedPKs(t *testing.T) {
+	nonStrict := func(tc gen.TableContext) gen.TableContext {
+		tc.StrictUpdates = false
+		return tc
+	}
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+	}{
+		{name: "postgres exec", ctx: nonStrict(testUpdateContext_singlePK_postgres()), dialect: sql.NewPostgresDialect()},
+		{name: "mysql exec", ctx: nonStrict(testUpdateContext_singlePK_mysql()), dialect: sql.NewMySQLDialect()},
+		{name: "composite pk", ctx: nonStrict(testUpdateContext_compositePK()), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted postgres returning", ctx: nonStrict(tenantedUpdateContext("postgres", "pgx")), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted sqlite returning", ctx: nonStrict(tenantedUpdateContext("sqlite", "stdlib")), dialect: sql.NewSQLiteDialect()},
+		{name: "tenanted mysql pre-read", ctx: nonStrict(tenantedUpdateContext("mysql", "stdlib")), dialect: sql.NewMySQLDialect()},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			body := singleRowUpdateBody(t, executeUpdateTemplate(t, tt.ctx, tt.dialect))
+			lines := strings.Split(body, "\n")
+			assignments := 0
+			for i, line := range lines {
+				if !strings.Contains(line, "m.AffectedPKs =") {
+					continue
+				}
+				assignments++
+				if prev := precedingLine(lines, i); prev != "if matched > 0 {" {
+					t.Errorf("m.AffectedPKs assignment not behind the matched-row check; preceding line %q\n\nmethod:\n%s", prev, body)
+				}
+			}
+			if assignments != 1 {
+				t.Errorf("m.AffectedPKs assignments = %d, want 1\n\nmethod:\n%s", assignments, body)
+			}
+		})
+	}
+}
+
+// An UpdateMany item whose key matches no row writes nothing, and neither does
+// an item with no field set. Neither may reach AffectedPKs: only an item whose
+// UPDATE matched a row is recorded, and the published input is narrowed to
+// those items so each event still carries the input that wrote its row.
+func TestUpdateTemplate_updateManyNoOp_recordsOnlyWrittenItems(t *testing.T) {
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+	}{
+		{name: "postgres pgx batch", ctx: testUpdateContext_singlePK_postgres(), dialect: sql.NewPostgresDialect()},
+		{name: "postgres stdlib", ctx: testUpdateContext_stdlib(), dialect: sql.NewPostgresDialect()},
+		{name: "mysql", ctx: testUpdateContext_singlePK_mysql(), dialect: sql.NewMySQLDialect()},
+		{name: "composite pk pgx batch", ctx: testUpdateContext_compositePK(), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted postgres pgx batch", ctx: tenantedUpdateContext("postgres", "pgx"), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted sqlite returning", ctx: tenantedUpdateContext("sqlite", "stdlib"), dialect: sql.NewSQLiteDialect()},
+		{name: "tenanted mysql pre-read", ctx: tenantedUpdateContext("mysql", "stdlib"), dialect: sql.NewMySQLDialect()},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			body := methodBody(t, executeUpdateTemplate(t, tt.ctx, tt.dialect), "UpdateMany")
+			for _, listed := range []string{"m.AffectedPKs = toAnySlice(allIDs)", "m.AffectedPKs = toAnySlice(allPKs)"} {
+				if strings.Contains(body, listed) {
+					t.Errorf("records every listed key (%q)\n\nmethod:\n%s", listed, body)
+				}
+			}
+			lines := strings.Split(body, "\n")
+			appends := 0
+			for i, line := range lines {
+				if !strings.Contains(line, "writtenItems = append(writtenItems, ") {
+					continue
+				}
+				appends++
+				if prev := precedingLine(lines, i); prev != "if matched > 0 {" {
+					t.Errorf("written item recorded outside the matched-row check; preceding line %q\n\nmethod:\n%s", prev, body)
+				}
+			}
+			if appends == 0 {
+				t.Errorf("no written item is recorded\n\nmethod:\n%s", body)
+			}
+			if !strings.Contains(body, "m.Input = writtenItems") {
+				t.Errorf("published input not narrowed to the written items\n\nmethod:\n%s", body)
+			}
+		})
+	}
+}
+
+// MySQL counts the rows an UPDATE changed, not the rows it matched, so an
+// Update that sets a column to its current value reports none. On MySQL alone
+// a zero count looks the row up under the conditions the write used before
+// the strict check or the affected-key gate reads it.
+func TestUpdateTemplate_zeroCountLooksUpRowOnMySQL(t *testing.T) {
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+		want    bool
+	}{
+		{name: "mysql", ctx: testUpdateContext_singlePK_mysql(), dialect: sql.NewMySQLDialect(), want: true},
+		{name: "tenanted mysql", ctx: tenantedUpdateContext("mysql", "stdlib"), dialect: sql.NewMySQLDialect(), want: true},
+		{name: "postgres", ctx: testUpdateContext_singlePK_postgres(), dialect: sql.NewPostgresDialect(), want: false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			body := singleRowUpdateBody(t, executeUpdateTemplate(t, tt.ctx, tt.dialect))
+			lookup := strings.Index(body, "found, err := c.rowMatches(ctx, conn, updateConds)")
+			if got := lookup >= 0; got != tt.want {
+				t.Fatalf("row lookup emitted = %v, want %v\n\nmethod:\n%s", got, tt.want, body)
+			}
+			if !tt.want {
+				return
+			}
+			count := strings.Index(body, "matched, err := execResult.RowsAffected()")
+			gate := strings.LastIndex(body, "if matched ")
+			if count < 0 || count > lookup || gate < lookup {
+				t.Errorf("row lookup must sit between the affected-row count and the matched-row gate\n\nmethod:\n%s", body)
+			}
+		})
+	}
+}
+
+// --- Tests: the write read-back returns soft-deleted rows ---
+
+// withSoftDelete adds a timestamp soft-delete column to ctx, wired as
+// production wires it: the SoftDelete context and its filter field.
+func withSoftDelete(ctx gen.TableContext) gen.TableContext {
+	ctx.SoftDelete = &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt", Strategy: "timestamp"}
+	ctx.FilterFields = append(slices.Clone(ctx.FilterFields), gen.FilterFieldContext{
+		FieldName: "DeletedAt", ComparatorType: "*comparator.NullableTime", Filterable: true, IsSoftDeleteColumn: true,
+	})
+	return ctx
+}
+
+// On a soft-delete table the write read-backs set an empty soft-delete
+// comparator, so GetMany injects no "is not deleted" default; elsewhere Update
+// reads back through Get.
+func TestUpdateTemplate_readBackIncludesSoftDeleted(t *testing.T) {
+	const anyDeleted = "DeletedAt: &comparator.NullableTime{},"
+	tests := []struct {
+		name         string
+		ctx          gen.TableContext
+		wantScoped   int // single-row Update read-backs scoped to every row
+		wantGet      int // single-row Update read-backs through Get
+		wantMissNil  bool
+		wantFileWide int // every scoped read-back in the file
+	}{
+		{"soft delete, strict", withSoftDelete(testUpdateContext_singlePK_postgres()), 2, 0, false, 5},
+		{"soft delete, not strict", withSoftDelete(testUpdateContext_noStrictUpdates()), 2, 0, true, 5},
+		{"no soft delete", testUpdateContext_singlePK_postgres(), 0, 2, false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := executeUpdateTemplate(t, tt.ctx, sql.NewPostgresDialect())
+			body := singleRowUpdateBody(t, output)
+			if got := strings.Count(body, anyDeleted); got != tt.wantScoped {
+				t.Errorf("single-row Update has %d read-backs with %q, want %d\n\nbody:\n%s", got, anyDeleted, tt.wantScoped, body)
+			}
+			if got := strings.Count(body, "c.Get(ctx, id,"); got != tt.wantGet {
+				t.Errorf("single-row Update has %d read-backs through Get, want %d\n\nbody:\n%s", got, tt.wantGet, body)
+			}
+			// Without strict updates the empty-update read-back of a key with
+			// no row returns nil, nil rather than ErrNotFound.
+			from, to := strings.Index(body, "// Empty update — no fields set"), strings.Index(body, "query, args := sql.BuildUpdate")
+			if from < 0 || to < from {
+				t.Fatalf("Update body lacks the empty-update path markers (at %d and %d):\n%s", from, to, body)
+			}
+			emptyPath := body[from:to]
+			missNil := strings.Contains(emptyPath, "if len(written) == 0 {") && !strings.Contains(emptyPath, "return nil, ErrNotFound")
+			if tt.wantScoped > 0 && missNil != tt.wantMissNil {
+				t.Errorf("empty-update read-back returns nil, nil on no row = %v, want %v\n\npath:\n%s", missNil, tt.wantMissNil, emptyPath)
+			}
+			if got := strings.Count(output, anyDeleted) + strings.Count(output, "scoped.DeletedAt = &comparator.NullableTime{}"); got != tt.wantFileWide {
+				t.Errorf("file has %d read-backs scoped to every row, want %d", got, tt.wantFileWide)
+			}
+		})
+	}
 }

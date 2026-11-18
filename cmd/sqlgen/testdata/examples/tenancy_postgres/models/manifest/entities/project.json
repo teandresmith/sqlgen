@@ -1,0 +1,515 @@
+{
+  "kind": "table",
+  "name": "Project",
+  "table": "projects",
+  "schema": "public",
+  "file_prefix": "project",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "projects_pkey",
+      "columns": [
+        "workspace_id",
+        "code"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "composite",
+    "struct": "ProjectPK",
+    "columns": [
+      {
+        "name": "workspace_id",
+        "go_field": "WorkspaceID",
+        "go_type": "uuid.UUID"
+      },
+      {
+        "name": "code",
+        "go_field": "Code",
+        "go_type": "string"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:project:{workspace_id}:{code}",
+      "invalidates_on": [
+        "Update",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "ProjectCreated",
+        "ProjectDeleted",
+        "ProjectUpdated"
+      ],
+      "payload_shape": "models.ProjectEvent"
+    },
+    "tenancy": {
+      "column": "workspace_id",
+      "mode": "verify-match",
+      "missing_resolver_error": "tenancy.ErrMissing",
+      "mismatch_error": "tenancy.ErrMismatch"
+    }
+  },
+  "columns": [
+    {
+      "name": "workspace_id",
+      "go_field": "WorkspaceID",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "code",
+      "go_field": "Code",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "name",
+      "go_field": "Name",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "tasks",
+      "kind": "o2m",
+      "target_entity": "Task",
+      "fk": {
+        "table": "tasks",
+        "schema": "public",
+        "columns": [
+          "workspace_id",
+          "project_code"
+        ],
+        "references": [
+          "workspace_id",
+          "code"
+        ],
+        "constraint": "tasks_workspace_id_project_code_fkey"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "pk",
+            "type": "ProjectPK"
+          }
+        ],
+        "returns": "*Project",
+        "errors": [
+          "ErrNotFound",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"code\", \"name\", \"workspace_id\" FROM \"public\".\"projects\" WHERE \"workspace_id\" = $1 AND \"code\" = $2 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetProjectsInput"
+          }
+        ],
+        "returns": "[]*Project",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT \"code\", \"name\", \"workspace_id\" FROM \"public\".\"projects\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "pk",
+            "type": "ProjectPK"
+          }
+        ],
+        "returns": "bool",
+        "errors": [
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"projects\" WHERE \"workspace_id\" = $1 AND \"code\" = $2)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProjectFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"projects\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProjectFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"projects\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[ProjectFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Project]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[ProjectFilter]"
+          }
+        ],
+        "returns": "*Connection[Project]",
+        "errors": [
+          "ErrInvalidCursor",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamProjectsInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Project, error]",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"code\", \"name\", \"workspace_id\" FROM \"public\".\"projects\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateProjectInput"
+          }
+        ],
+        "returns": "*Project",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"projects\" (<columns>) VALUES (<values>)"
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateProjectInput"
+          }
+        ],
+        "returns": "[]*Project",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"projects\" (<columns>) VALUES <values>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "pk",
+            "type": "ProjectPK"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateProjectInput"
+          }
+        ],
+        "returns": "*Project",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"projects\" SET <set> WHERE \"workspace_id\" = $1 AND \"code\" = $2"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateProjectItem"
+          }
+        ],
+        "returns": "[]*Project",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"projects\" SET <set> WHERE \"workspace_id\" = $1 AND \"code\" = $2"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProjectFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateProjectInput"
+          }
+        ],
+        "returns": "[]*Project",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"projects\" SET <set> WHERE <filter> RETURNING \"workspace_id\", \"code\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateProjectInput"
+          },
+          {
+            "name": "target",
+            "type": "ProjectConflictTarget"
+          }
+        ],
+        "returns": "*Project",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"projects\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateProjectInput"
+          },
+          {
+            "name": "target",
+            "type": "ProjectConflictTarget"
+          }
+        ],
+        "returns": "[]*Project",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"projects\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "pk",
+            "type": "ProjectPK"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"projects\" WHERE \"workspace_id\" = $1 AND \"code\" = $2"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "pks",
+            "type": "[]ProjectPK"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"projects\" WHERE (\"workspace_id\", \"code\") IN (<pks>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProjectFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter",
+          "tenancy.ErrMissing"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"projects\" WHERE <filter> RETURNING \"workspace_id\", \"code\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "ProjectFilter",
+    "fields": [
+      {
+        "name": "Code",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "Name",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "WorkspaceID",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*ProjectFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*ProjectFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "ProjectSort",
+    "fields": [
+      "Code",
+      "Name",
+      "WorkspaceID"
+    ]
+  },
+  "examples": {
+    "read": [
+      "row, err := client.Projects().Get(ctx, models.ProjectPK{WorkspaceID: uuid.NewV4(), Code: \"example\"})",
+      "rows, err := client.Projects().GetMany(ctx, &models.GetProjectsInput{Filter: &models.ProjectFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Projects().Create(ctx, &models.CreateProjectInput{WorkspaceID: uuid.NewV4(), Code: \"example\", Name: \"example\"})",
+      "updated, err := client.Projects().Update(ctx, models.ProjectPK{WorkspaceID: uuid.NewV4(), Code: \"example\"}, &models.UpdateProjectInput{Name: omittable.Set(\"example\")})"
+    ]
+  }
+}

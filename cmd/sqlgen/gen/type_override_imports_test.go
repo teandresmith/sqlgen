@@ -73,15 +73,37 @@ func TestTypeOverrideRejectsUnimportableLiteral(t *testing.T) {
 			wantErr: "overrides.types.text.nullable.type",
 		},
 		{
+			name: "a known literal nullable variant from another package than the parent",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["jsonb"] = config.TypeOverride{
+					Type:     "pgtype.Text",
+					Import:   "github.com/jackc/pgx/v5/pgtype",
+					Nullable: config.NullableVariant{Type: "types.JSON"},
+				}
+			},
+			wantErr: "overrides.types.jsonb.nullable.type",
+		},
+		{
+			name: "a nullable variant from another package than the parent",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["text"] = config.TypeOverride{
+					Type:     "pgtype.Text",
+					Import:   "github.com/jackc/pgx/v5/pgtype",
+					Nullable: config.NullableVariant{Type: "sql.NullString"},
+				}
+			},
+			wantErr: "overrides.types.text.nullable.type",
+		},
+		{
 			name: "an extras field without an import",
 			apply: func(cfg *config.RootConfig) {
-				cfg.Extras["payload"] = config.ExtraType{
+				cfg.Extras["Payload"] = config.ExtraType{
 					Fields: map[string]config.ExtraTypeField{
-						"trace_id": {Type: "uuid.UUID"},
+						"TraceID": {Type: "uuid.UUID"},
 					},
 				}
 			},
-			wantErr: "extras.payload.fields.trace_id.type",
+			wantErr: "extras.Payload.fields.TraceID.type",
 		},
 	}
 
@@ -154,6 +176,35 @@ func TestTypeOverrideAcceptsImportableLiteral(t *testing.T) {
 			},
 		},
 		{
+			name: "a pointer nullable variant shares the parent's package",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["numeric"] = config.TypeOverride{
+					Type:     "decimal.Decimal",
+					Import:   "github.com/shopspring/decimal",
+					Nullable: config.NullableVariant{Type: "*decimal.Decimal"},
+				}
+			},
+		},
+		{
+			name: "a known literal nullable variant under a parent with no import",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["jsonb"] = config.TypeOverride{
+					Type:     "json.RawMessage",
+					Nullable: config.NullableVariant{Type: "types.JSON"},
+				}
+			},
+		},
+		{
+			name: "a nullable variant from another package with its own import",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["jsonb"] = config.TypeOverride{
+					Type:     "pgtype.Text",
+					Import:   "github.com/jackc/pgx/v5/pgtype",
+					Nullable: config.NullableVariant{Type: "types.JSON", Import: "github.com/teandresmith/sqlgen/types"},
+				}
+			},
+		},
+		{
 			name: "table-scoped builtins need no import",
 			apply: func(cfg *config.RootConfig) {
 				cfg.Tables["sessions"] = config.TableConfig{
@@ -169,7 +220,7 @@ func TestTypeOverrideAcceptsImportableLiteral(t *testing.T) {
 		{
 			name: "an extras field on a builtin",
 			apply: func(cfg *config.RootConfig) {
-				cfg.Extras["payload"] = config.ExtraType{
+				cfg.Extras["Payload"] = config.ExtraType{
 					Fields: map[string]config.ExtraTypeField{
 						"view_count": {Type: "int"},
 						"seen_at":    {Type: "time.Time"},
@@ -196,8 +247,8 @@ func TestTypeOverrideAcceptsImportableLiteral(t *testing.T) {
 func TestTypeOverrideImportsReportedTogether(t *testing.T) {
 	schema, cfg := typeOverrideImportConfig(t)
 	cfg.Overrides.Types["numeric"] = config.TypeOverride{Type: "decimal.Decimal"}
-	cfg.Extras["payload"] = config.ExtraType{
-		Fields: map[string]config.ExtraTypeField{"trace_id": {Type: "uuid.UUID"}},
+	cfg.Extras["Payload"] = config.ExtraType{
+		Fields: map[string]config.ExtraTypeField{"TraceID": {Type: "uuid.UUID"}},
 	}
 
 	_, err := gen.ValidateGeneration(schema, cfg)
@@ -206,7 +257,7 @@ func TestTypeOverrideImportsReportedTogether(t *testing.T) {
 	}
 	for _, want := range []string{
 		"overrides.types.numeric.type",
-		"extras.payload.fields.trace_id.type",
+		"extras.Payload.fields.TraceID.type",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("ValidateGeneration() error = %q, want it to mention %q", err, want)

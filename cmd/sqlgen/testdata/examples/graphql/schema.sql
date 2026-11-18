@@ -326,11 +326,12 @@ CREATE TYPE workspace_note_kind_enum AS ENUM (
 -- this example was uuid/text/int only, so a view over it could not reach the
 -- enum family or the JSONB family at all.
 --
--- Both are NOT NULL, and a DEFAULT does NOT excuse a column from the create
--- input: every NOT NULL non-generated column is required on Create<T>Input
--- (`kind: WorkspaceNoteKindEnum!` / `labels: JSON!`), the same rule that makes
--- `pinned_order` and `created_at` required above. The two createWorkspaceNote
--- call sites in tests/tenant_update_input_test.go pass both.
+-- Both are NOT NULL with a DEFAULT, so the Go CreateWorkspaceNoteInput holds
+-- them as omittable and Create<T>Input mirrors that: `kind:
+-- WorkspaceNoteKindEnum` / `labels: JSON`, optional like `pinned_order` and
+-- `created_at`, with the default applying when the client leaves one out
+-- (PRD §26.4). The two createWorkspaceNote call sites in
+-- tests/tenant_update_input_test.go pass both anyway.
 --
 -- `parent_id` is a self-referential FK, and it is the one column that
 -- makes two otherwise-unreachable GraphQL shapes testable in this example.
@@ -534,6 +535,53 @@ CREATE TABLE keyed_code_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     keyed_code_id UUID NOT NULL,
     note TEXT NOT NULL
+);
+
+-- Composite tenant foreign keys. Each child reaches its parent through
+-- (workspace_id, <parent>_id), so a row can only point at a parent in its own
+-- workspace. Detection gives an O2M cycles → tasks, an O2O task_reports →
+-- tasks (task_id is UNIQUE) and an M2M tasks ↔ labels through the tenant
+-- junction task_labels, whose primary key is the union of both keys. Every
+-- table carries workspace_id, so each is tenanted and the GraphQL edges load
+-- through the tenant-scoped client.
+CREATE TABLE cycles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    cycle_id UUID,
+    title TEXT NOT NULL,
+    UNIQUE (workspace_id, id),
+    FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);
+
+CREATE TABLE task_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    task_id UUID NOT NULL UNIQUE,
+    summary TEXT NOT NULL,
+    FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id)
+);
+
+CREATE TABLE labels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+CREATE TABLE task_labels (
+    workspace_id UUID NOT NULL,
+    task_id UUID NOT NULL,
+    label_id UUID NOT NULL,
+    PRIMARY KEY (workspace_id, task_id, label_id),
+    FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id),
+    FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id)
 );
 
 -- Manifest + GraphQL description fixtures. COMMENT ON exercises the §26.4

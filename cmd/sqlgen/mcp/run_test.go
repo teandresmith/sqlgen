@@ -17,36 +17,6 @@ type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
 
-// freeLoopbackAddr reserves an ephemeral loopback port and returns its address.
-func freeLoopbackAddr(t *testing.T) string {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve loopback port: %v", err)
-	}
-	addr := l.Addr().String()
-	if err := l.Close(); err != nil {
-		t.Fatalf("release reserved port: %v", err)
-	}
-	return addr
-}
-
-// waitForListen blocks until addr accepts a TCP connection or the deadline
-// passes, confirming a transport bound before the test cancels it.
-func waitForListen(t *testing.T, addr string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("http transport did not begin listening on %s within 2s", addr)
-}
-
 func TestRunNoTransportEnabled(t *testing.T) {
 	err := sqlgenmcp.Run(t.Context(), io.NopCloser(strings.NewReader("")), nopWriteCloser{io.Discard}, sqlgenmcp.Options{
 		Version: "test",
@@ -81,7 +51,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 			opts := sqlgenmcp.Options{Version: "test", Stdio: tt.stdio, ManifestPath: "testdata/manifest_gen.json"}
 			var addr string
 			if tt.withHTTP {
-				addr = freeLoopbackAddr(t)
+				addr = sqlgenmcp.FreeLoopbackAddr(t)
 				opts.HTTPAddr = addr
 			}
 
@@ -91,7 +61,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 			}()
 
 			if tt.withHTTP {
-				waitForListen(t, addr)
+				sqlgenmcp.WaitForListen(t, addr)
 			}
 
 			cancel()

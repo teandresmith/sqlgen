@@ -892,8 +892,10 @@ func TestInputTranslate_NullableSizedIntGoesThroughALocal(t *testing.T) {
 	if !strings.Contains(out[createIdx:updateIdx], "v := int32(*in.RetryCount)") {
 		t.Error("create translator does not convert through a local")
 	}
-	if !strings.Contains(out[updateIdx:], "v := int32(*in.RetryCount)") {
-		t.Error("update translator does not convert through a local")
+	// The update field is a gqlgen Omittable (an explicit null clears the
+	// column), so the value converted is the one unwrapped into `val`.
+	if !strings.Contains(out[updateIdx:], "v := int32(*val)\n\t\t\tout.RetryCount = omittable.Set(&v)") {
+		t.Errorf("update translator does not convert through a local:\n%s", out[updateIdx:])
 	}
 }
 
@@ -956,7 +958,7 @@ func TestInputTranslate_Float32ColumnsAreCast(t *testing.T) {
 		{arm: "create/NOT NULL", body: create, want: "out.Reading = float32(in.Reading)"},
 		{arm: "create/nullable", body: create, want: "v := float32(*in.OffsetVal)\n\t\tout.OffsetVal = omittable.Set(&v)"},
 		{arm: "update/NOT NULL", body: update, want: "out.Reading = omittable.Set(float32(*in.Reading))"},
-		{arm: "update/nullable", body: update, want: "v := float32(*in.OffsetVal)\n\t\tout.OffsetVal = omittable.Set(&v)"},
+		{arm: "update/nullable", body: update, want: "v := float32(*val)\n\t\t\tout.OffsetVal = omittable.Set(&v)"},
 	} {
 		if !strings.Contains(tt.body, tt.want) {
 			t.Errorf("%s arm does not cast to float32:\nwant:\n%s\ngot:\n%s", tt.arm, tt.want, tt.body)

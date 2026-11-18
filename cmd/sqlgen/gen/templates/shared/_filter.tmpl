@@ -161,7 +161,22 @@ func (f *{{ .StructName }}Filter) usesRelationshipFilter() bool {
 func {{ .HelperName }}(f *{{ .TargetStructName }}Filter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
 	scope := resolveFilterScope(opts)
 	tgt := filterSubqueryAlias("tgt", scope.depth)
-{{- if .IsM2M }}
+{{- if and .IsM2M .CompositeKey }}
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .JunctionSchema }}, Name: {{ printf "%q" .JunctionTable }}}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}}) + " " + tgt
+{{- range $i, $p := .TargetJoin }} +
+		" {{ if $i }}AND{{ else }}ON{{ end }} " + tgt + "." + dialect.QuoteIdentifier({{ printf "%q" $p.Referenced }}) + " = " + jn + "." + dialect.QuoteIdentifier({{ printf "%q" $p.Local }})
+{{- end }}
+{{- range $i, $column := .CorrelationKey }} +
+		" {{ if $i }}AND{{ else }}WHERE{{ end }} " + jn + "." + dialect.QuoteIdentifier({{ printf "%q" $column }}) + " = " + sql.CorrelationTokenAt({{ $i }})
+{{- end }}
+{{- else if .CompositeKey }}
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}}) + " " + tgt
+{{- range $i, $column := .CorrelationKey }} +
+		" {{ if $i }}AND{{ else }}WHERE{{ end }} " + tgt + "." + dialect.QuoteIdentifier({{ printf "%q" $column }}) + " = " + sql.CorrelationTokenAt({{ $i }})
+{{- end }}
+{{- else if .IsM2M }}
 	jn := filterSubqueryAlias("jn", scope.depth)
 	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .JunctionSchema }}, Name: {{ printf "%q" .JunctionTable }}}) + " " + jn +
 		" JOIN " + dialect.FormatTable(sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}}) + " " + tgt +
@@ -223,6 +238,6 @@ func {{ .HelperName }}(f *{{ .TargetStructName }}Filter, dialect sql.Dialect, op
 	}
 {{- end }}
 
-	return sql.Exists({{ printf "%q" .CorrelationColumn }}, sql.Subquery{SQL: subSQL, Args: subArgs})
+	return sql.Exists({{ if .CompositeKey }}[]string{ {{- range $i, $c := .CorrelationColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $c }}{{ end -}} }{{ else }}{{ printf "%q" .CorrelationColumn }}{{ end }}, sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 {{- end -}}

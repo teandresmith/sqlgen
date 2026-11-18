@@ -133,3 +133,104 @@ CREATE TABLE articles (
     deleted_at DATETIME,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
+
+-- Composite tenant foreign keys under nested writes. tasks.workspace_id is the
+-- tenant column and a member of the key, so no edge rewrites it.
+CREATE TABLE cycles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id BLOB NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+CREATE TABLE tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id BLOB NOT NULL,
+    cycle_id INTEGER,
+    title TEXT NOT NULL,
+    FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);
+
+CREATE TABLE labels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id BLOB NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+-- A shared parent holding a key into tenanted children: their workspace_id comes
+-- from owner_workspace, which tenancy does not guard, and from the resolver.
+CREATE TABLE templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_workspace BLOB NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (owner_workspace, id)
+);
+
+CREATE TABLE template_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id BLOB NOT NULL,
+    template_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id)
+);
+
+CREATE TABLE template_labels (
+    workspace_id BLOB NOT NULL,
+    template_id INTEGER NOT NULL,
+    label_id INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, template_id, label_id),
+    FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id),
+    FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id)
+);
+
+-- A tenant junction between two shared tables: the keys agree on workspace_id,
+-- and only the tenancy check can find that the resolver does not.
+CREATE TABLE stamps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_workspace BLOB NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (owner_workspace, id)
+);
+
+CREATE TABLE template_stamps (
+    workspace_id BLOB NOT NULL,
+    template_id INTEGER NOT NULL,
+    stamp_id INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, template_id, stamp_id),
+    FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id),
+    FOREIGN KEY (workspace_id, stamp_id) REFERENCES stamps (owner_workspace, id)
+);
+
+-- A single-column FK on the tenant column, from a shared parent.
+CREATE TABLE workspace_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id BLOB NOT NULL REFERENCES workspaces (id),
+    body TEXT NOT NULL
+);
+
+-- moments: a time-keyed nested target. The executor buckets the ids a
+-- connect or disconnect names by instant, so a key in another zone than the
+-- row the driver scans back still names that row. moment_owners carries O2M
+-- over the nullable owner_id, moment_tags M2M over moment_tag_links.
+CREATE TABLE moment_owners (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE moments (
+    at DATETIME PRIMARY KEY,
+    owner_id INTEGER REFERENCES moment_owners (id),
+    label TEXT NOT NULL
+);
+
+CREATE TABLE moment_tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE moment_tag_links (
+    tag_id INTEGER NOT NULL REFERENCES moment_tags (id),
+    moment_at DATETIME NOT NULL REFERENCES moments (at),
+    PRIMARY KEY (tag_id, moment_at)
+);

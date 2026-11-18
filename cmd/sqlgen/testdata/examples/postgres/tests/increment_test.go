@@ -2,9 +2,7 @@ package tests
 
 import (
 	"context"
-	"errors"
 	"testing"
-	"uuid"
 
 	"github.com/teandresmith/sqlgen/omittable"
 
@@ -43,75 +41,6 @@ func seedIncrementProduct(t *testing.T, ctx context.Context, client *models.Clie
 		_ = client.Categories().HardDelete(ctx, cat.ID)
 	}
 	return product, cleanup
-}
-
-func TestIncrement_IntegerColumn_Positive(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	product, cleanup := seedIncrementProduct(t, ctx, client, 10.00, 5)
-	t.Cleanup(cleanup)
-
-	if err := client.Products().Increment(ctx, product.ID, models.IncrementInput[models.ProductIncrementColumn]{
-		Column: models.ProductIncrementQuantity,
-		Amount: 7,
-	}); err != nil {
-		t.Fatalf("Increment quantity +7: %v", err)
-	}
-
-	got, err := client.Products().Get(ctx, product.ID)
-	if err != nil {
-		t.Fatalf("Get product: %v", err)
-	}
-	if got.Quantity != 12 {
-		t.Errorf("quantity after +7: got %d, want 12", got.Quantity)
-	}
-}
-
-func TestIncrement_IntegerColumn_Negative(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	product, cleanup := seedIncrementProduct(t, ctx, client, 10.00, 20)
-	t.Cleanup(cleanup)
-
-	if err := client.Products().Increment(ctx, product.ID, models.IncrementInput[models.ProductIncrementColumn]{
-		Column: models.ProductIncrementQuantity,
-		Amount: -5,
-	}); err != nil {
-		t.Fatalf("Increment quantity -5: %v", err)
-	}
-
-	got, err := client.Products().Get(ctx, product.ID)
-	if err != nil {
-		t.Fatalf("Get product: %v", err)
-	}
-	if got.Quantity != 15 {
-		t.Errorf("quantity after -5: got %d, want 15", got.Quantity)
-	}
-}
-
-func TestIncrement_IntegerColumn_Zero(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	product, cleanup := seedIncrementProduct(t, ctx, client, 10.00, 8)
-	t.Cleanup(cleanup)
-
-	if err := client.Products().Increment(ctx, product.ID, models.IncrementInput[models.ProductIncrementColumn]{
-		Column: models.ProductIncrementQuantity,
-		Amount: 0,
-	}); err != nil {
-		t.Fatalf("Increment quantity 0: %v", err)
-	}
-
-	got, err := client.Products().Get(ctx, product.ID)
-	if err != nil {
-		t.Fatalf("Get product: %v", err)
-	}
-	if got.Quantity != 8 {
-		t.Errorf("quantity after 0-delta: got %d, want 8 (unchanged)", got.Quantity)
-	}
 }
 
 func TestIncrement_NumericColumn_Positive(t *testing.T) {
@@ -216,34 +145,5 @@ func TestIncrement_OrderItemColumns(t *testing.T) {
 	}
 	if got.UnitPrice != 7.00 {
 		t.Errorf("order_item.unit_price: got %v, want 7.00", got.UnitPrice)
-	}
-}
-
-func TestIncrement_MissingPK_StrictUpdates_ReturnsErrNotFound(t *testing.T) {
-	// products.strict_updates defaults to true → missing PK returns ErrNotFound.
-	ctx := context.Background()
-	client := newClient()
-
-	err := client.Products().Increment(ctx, (uuid.UUID{}), models.IncrementInput[models.ProductIncrementColumn]{
-		Column: models.ProductIncrementQuantity,
-		Amount: 1,
-	})
-	if !errors.Is(err, models.ErrNotFound) {
-		t.Fatalf("Increment missing PK (strict_updates=true): got err=%v, want ErrNotFound", err)
-	}
-}
-
-func TestIncrement_MissingPK_NonStrict_ReturnsNil(t *testing.T) {
-	// orders.strict_updates is configured to false in sqlgen.yml → missing PK is
-	// an idempotent no-op that returns nil (PRD §9.5).
-	ctx := context.Background()
-	client := newClient()
-
-	err := client.Orders().Increment(ctx, (uuid.UUID{}), models.IncrementInput[models.OrderIncrementColumn]{
-		Column: models.OrderIncrementTotal,
-		Amount: 10,
-	})
-	if err != nil {
-		t.Fatalf("Increment missing PK (strict_updates=false): got err=%v, want nil", err)
 	}
 }

@@ -81,10 +81,10 @@ input CreateProductInput {
   title: String!
   price: Float!
   weightKg: Float
-  inStock: Boolean!
+  inStock: Boolean
   sku: String!
   attributes: JSON!
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateProductInput {
   categoryID: Int

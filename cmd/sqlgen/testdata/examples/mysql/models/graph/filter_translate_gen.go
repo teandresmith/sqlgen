@@ -148,6 +148,153 @@ func translateAssetDocumentLinkFilter(in *gqlmodel.AssetDocumentLinkFilter) *mod
 	return out
 }
 
+// translateBinFilter converts the gqlgen-generated
+// BinFilter into a *models.BinFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBinFilter(in *gqlmodel.BinFilter) *models.BinFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BinFilter{}
+	if in.Label != nil {
+		out.Label = translateStringComparator(in.Label)
+	}
+	if in.BinItems != nil {
+		out.BinItems = translateBinItemFilter(in.BinItems)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BinFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBinFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BinFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBinFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateBinItemFilter converts the gqlgen-generated
+// BinItemFilter into a *models.BinItemFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBinItemFilter(in *gqlmodel.BinItemFilter) *models.BinItemFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BinItemFilter{}
+	if in.Aisle != nil {
+		out.Aisle = translateNullableStringComparator(in.Aisle)
+	}
+	if in.Name != nil {
+		out.Name = translateStringComparator(in.Name)
+	}
+	if in.Slot != nil {
+		out.Slot = translateNullableNumericComparatorInt32(in.Slot)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BinItemFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBinItemFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BinItemFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBinItemFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateBoolKeyedFilter converts the gqlgen-generated
+// BoolKeyedFilter into a *models.BoolKeyedFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBoolKeyedFilter(in *gqlmodel.BoolKeyedFilter) *models.BoolKeyedFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BoolKeyedFilter{}
+	if in.Label != nil {
+		out.Label = translateStringComparator(in.Label)
+	}
+	if in.BoolKeyedNotes != nil {
+		out.BoolKeyedNotes = translateBoolKeyedNoteFilter(in.BoolKeyedNotes)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BoolKeyedFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBoolKeyedFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BoolKeyedFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBoolKeyedFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateBoolKeyedNoteFilter converts the gqlgen-generated
+// BoolKeyedNoteFilter into a *models.BoolKeyedNoteFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBoolKeyedNoteFilter(in *gqlmodel.BoolKeyedNoteFilter) *models.BoolKeyedNoteFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BoolKeyedNoteFilter{}
+	if in.KeyedK != nil {
+		out.KeyedK = translateNullableBooleanComparator(in.KeyedK)
+	}
+	if in.Note != nil {
+		out.Note = translateStringComparator(in.Note)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BoolKeyedNoteFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBoolKeyedNoteFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BoolKeyedNoteFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBoolKeyedNoteFilter(sub))
+		}
+	}
+	return out
+}
+
 // translateCategoryFilter converts the gqlgen-generated
 // CategoryFilter into a *models.CategoryFilter.
 // Returns nil when the input is nil so the model layer's "nil filter ⇒ no
@@ -218,7 +365,7 @@ func translateCategoryStatFilter(in *gqlmodel.CategoryStatFilter) *models.Catego
 		out.ProductNames = translateNullableStringComparator(in.ProductNames)
 	}
 	if in.ProductNamesJSON != nil {
-		out.ProductNamesJSON = translateJSONComparator(in.ProductNamesJSON)
+		out.ProductNamesJSON = translateNullableJSONComparator(in.ProductNamesJSON)
 	}
 	if in.TotalPrice != nil {
 		out.TotalPrice = translateNullableNumericComparatorFloat64(in.TotalPrice)
@@ -695,6 +842,78 @@ func translateTagFilter(in *gqlmodel.TagFilter) *models.TagFilter {
 				continue
 			}
 			out.Or = append(out.Or, translateTagFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateTimeKeyedFilter converts the gqlgen-generated
+// TimeKeyedFilter into a *models.TimeKeyedFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateTimeKeyedFilter(in *gqlmodel.TimeKeyedFilter) *models.TimeKeyedFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.TimeKeyedFilter{}
+	if in.Label != nil {
+		out.Label = translateStringComparator(in.Label)
+	}
+	if in.TimeKeyedNotes != nil {
+		out.TimeKeyedNotes = translateTimeKeyedNoteFilter(in.TimeKeyedNotes)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.TimeKeyedFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateTimeKeyedFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.TimeKeyedFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateTimeKeyedFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateTimeKeyedNoteFilter converts the gqlgen-generated
+// TimeKeyedNoteFilter into a *models.TimeKeyedNoteFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateTimeKeyedNoteFilter(in *gqlmodel.TimeKeyedNoteFilter) *models.TimeKeyedNoteFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.TimeKeyedNoteFilter{}
+	if in.KeyedAt != nil {
+		out.KeyedAt = translateNullableTimeComparator(in.KeyedAt)
+	}
+	if in.Note != nil {
+		out.Note = translateStringComparator(in.Note)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.TimeKeyedNoteFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateTimeKeyedNoteFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.TimeKeyedNoteFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateTimeKeyedNoteFilter(sub))
 		}
 	}
 	return out

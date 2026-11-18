@@ -67,19 +67,6 @@ postgres:
 SELECT "created_at", "description", "id", "name" FROM "public"."categories" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *CategoryFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."categories" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -104,6 +91,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."categories" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *CategoryFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."categories" WHERE <filter>
 ```
 
 ### Paginate
@@ -164,36 +164,6 @@ postgres:
 INSERT INTO "public"."categories" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateCategoryInput`, `target CategoryConflictTarget`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."categories" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateCategoryInput`, `target CategoryConflictTarget`
-- Returns: `[]*Category`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."categories" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateCategoryInput`
@@ -239,6 +209,57 @@ postgres:
 UPDATE "public"."categories" SET <set> WHERE <filter> RETURNING "id"
 ```
 
+### Upsert
+
+- Params: `input *CreateCategoryInput`, `target CategoryConflictTarget`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."categories" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateCategoryInput`, `target CategoryConflictTarget`
+- Returns: `[]*Category`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."categories" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateCategoryWithRelatedInput`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Products, Users), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id int64`, `input *UpdateCategoryWithRelatedInput`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Products, Users), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertCategoryWithRelatedInput`, `target CategoryConflictTarget`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Products, Users), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
 ### HardDelete
 
 - Params: `id int64`
@@ -282,27 +303,6 @@ postgres:
 DELETE FROM "public"."categories" WHERE <filter> RETURNING "id"
 ```
 
-### CreateWithRelated
-
-- Params: `input *CreateCategoryWithRelatedInput`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Products, Users), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id int64`, `input *UpdateCategoryWithRelatedInput`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Products, Users), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertCategoryWithRelatedInput`, `target CategoryConflictTarget`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Products, Users), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
 ## Filter
 
 Type `CategoryFilter`.
@@ -321,3 +321,17 @@ Type `CategoryFilter`.
 Type `CategorySort`.
 
 Fields: CreatedAt, Description, ID, Name
+
+## Read examples
+
+```go
+row, err := client.Categories().Get(ctx, 1)
+rows, err := client.Categories().GetMany(ctx, &models.GetCategoriesInput{Filter: &models.CategoryFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "example"})
+updated, err := client.Categories().Update(ctx, 1, &models.UpdateCategoryInput{Name: omittable.Set("example")})
+```

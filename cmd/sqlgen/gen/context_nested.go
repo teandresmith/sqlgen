@@ -120,6 +120,7 @@ func wireNestedMutations(contexts []TableContext, cfg *config.RootConfig, resolv
 			SelectsRelationshipFunc: toCamelCase(tc.StructName) + "NestedSelectsRelationship",
 			RelationshipFieldNames:  relationshipFieldNames(tc),
 			Edges:                   edges,
+			ParentKeyFields:         nestedParentKeyFields(tc, edges),
 			EmitCreate:              nestedMutationAllowed(nm.Operations, "create"),
 			EmitUpdate:              nestedMutationAllowed(nm.Operations, "update"),
 			// The upsert conflict-target rule: UpsertWithRelated takes a
@@ -146,6 +147,20 @@ func wireNestedMutations(contexts []TableContext, cfg *config.RootConfig, resolv
 	}
 }
 
+// nestedParentKeyFields unions the parent fields tc's edges reference, leaving
+// out the primary key, which every parent write selects.
+func nestedParentKeyFields(tc *TableContext, edges []NestedEdgeContext) []string {
+	var fields []string
+	for _, e := range edges {
+		for _, f := range e.ParentKeyFields {
+			if f != tc.PKColumns[0].FieldName && !slices.Contains(fields, f) {
+				fields = append(fields, f)
+			}
+		}
+	}
+	return fields
+}
+
 // ValidateNestedWriteEligibility reports every edge a table's
 // `nested_mutations.relationships` allowlist names that cannot carry a nested
 // write (PRD §9.9.4).
@@ -156,6 +171,14 @@ func wireNestedMutations(contexts []TableContext, cfg *config.RootConfig, resolv
 // names no relationship at all is reported here too: the config asked for an
 // edge that does not exist, which no other pass catches.
 func ValidateNestedWriteEligibility(contexts []TableContext, cfg *config.RootConfig, resolver *gotype.Resolver) error {
+	return validateNestedWriteEligibility(contexts, cfg, resolver, nil)
+}
+
+// validateNestedWriteEligibility is ValidateNestedWriteEligibility over the
+// tables that built when others failed (failed holds their qualifiedOrBare
+// keys). An edge whose target or junction failed is not reported: that table's
+// own error already is, and "not in the generated set" would misstate why.
+func validateNestedWriteEligibility(contexts []TableContext, cfg *config.RootConfig, resolver *gotype.Resolver, failed map[string]bool) error {
 	if !nestedMutationsEnabled(cfg) {
 		return nil
 	}
@@ -192,12 +215,35 @@ func ValidateNestedWriteEligibility(contexts []TableContext, cfg *config.RootCon
 		_, resolveRejected := resolveNestedEdges(tc, byTable, cfg, resolver)
 		rejected = append(rejected, resolveRejected...)
 		for _, r := range rejected {
+			if edgeIntoFailedTable(tc, r.edge, failed) {
+				continue
+			}
 			if _, listed := allow[r.edge]; listed {
 				errs = append(errs, fmt.Errorf("tables.%s.nested_mutations: %s", table, r))
 			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// edgeIntoFailedTable reports whether the named edge of tc targets, or links
+// through, a table whose context failed to build.
+func edgeIntoFailedTable(tc *TableContext, edge string, failed map[string]bool) bool {
+	if len(failed) == 0 {
+		return false
+	}
+	for _, rel := range tc.Relationships {
+		if rel.FieldName != edge {
+			continue
+		}
+		if failed[qualifiedOrBare(rel.TargetSchema, rel.TargetTable)] {
+			return true
+		}
+		if rel.JunctionTable != "" && failed[qualifiedOrBare(rel.JunctionSchema, rel.JunctionTable)] {
+			return true
+		}
+	}
+	return false
 }
 
 // listedShapeFailures reports the listed edges that nestedCandidateEdges
@@ -287,8 +333,9 @@ func nestedEdgeImports(edges []NestedEdgeContext) []string {
 // restates the target's create-input field types. The target's primary key
 // spells the `connect` list, the link step's dedupe set and the key of the
 // owner map — and on an M2M edge there are no child fields, so that is the
-// only source there. The traversed FK's *column* type is the owner map's
+// only source there. The traversed FK's *column* types are the owner map's
 // value, which is the Null-wrapper or pointer form rather than the input form.
+// A key holding the tenant column also names tenancy.ErrMismatch.
 func nestedEdgeTypeImports(edge *NestedEdgeContext, rel RelationshipContext, target *TableContext) []string {
 	var imports []string
 	add := func(path string) {
@@ -300,8 +347,14 @@ func nestedEdgeTypeImports(edge *NestedEdgeContext, rel RelationshipContext, tar
 		add(f.Import)
 	}
 	add(target.PKColumns[0].Import)
-	if col, ok := columnBySQLName(target.Columns, rel.FKColumn); ok {
-		add(col.Import)
+	for _, name := range keyLocals(rel) {
+		if col, ok := columnBySQLName(target.Columns, name); ok {
+			add(col.Import)
+		}
+	}
+	if edge.TenantKeyMember {
+		add("errors")
+		add("github.com/teandresmith/sqlgen/tenancy")
 	}
 	return imports
 }
@@ -357,7 +410,7 @@ func resolveNestedEdges(
 // single-keyed target, and a non-empty create input. No rule requires the
 // target's Create and CreateMany: the client has no operations toggle (PRD
 // §4.6), so every generated target has both.
-func resolveNestedTarget(rel RelationshipContext, byTable tableIndex) (*TableContext, *nestedIneligible) {
+func resolveNestedTarget(tc *TableContext, rel RelationshipContext, byTable tableIndex) (*TableContext, *nestedIneligible) {
 	reject := func(reason string) (*TableContext, *nestedIneligible) {
 		return nil, &nestedIneligible{edge: rel.FieldName, reason: reason}
 	}
@@ -378,6 +431,11 @@ func resolveNestedTarget(rel RelationshipContext, byTable tableIndex) (*TableCon
 	}
 	if len(target.PKColumns) != 1 {
 		return reject("the target has a composite primary key, which the link and visibility reads cannot key on")
+	}
+	for _, key := range nestedReferencedColumns(tc, rel, target) {
+		if key.Nullable {
+			return reject(fmt.Sprintf("the edge's key references the nullable column %q, which a nested write cannot copy into the key", key.Name))
+		}
 	}
 
 	// A write surface into a table with nothing writable writes nothing.
@@ -410,12 +468,12 @@ func buildNestedEdge(
 	isM2M := rel.Type == parser.ManyToMany
 	hasOne := rel.Type == parser.OneToOne
 
-	target, ineligible := resolveNestedTarget(rel, byTable)
+	target, ineligible := resolveNestedTarget(tc, rel, byTable)
 	if ineligible != nil {
 		return NestedEdgeContext{}, []nestedIneligible{*ineligible}
 	}
 
-	parentPK := tc.PKColumns[0]
+	parentKey := nestedParentKey(tc, rel)
 	discColumn, discLiteral := "", ""
 	if rel.Discriminator != nil {
 		discColumn, discLiteral = rel.Discriminator.Column, rel.Discriminator.GoLiteral
@@ -438,6 +496,9 @@ func buildNestedEdge(
 		AllowReparent:     entry.AllowReparent,
 	}
 	edge.TargetPKIsString = funcPKIsStringType(target.PKColumns[0].GoType)
+	for _, key := range nestedParentKeys(tc, rel) {
+		edge.ParentKeyFields = append(edge.ParentKeyFields, key.FieldName)
+	}
 	edge.SelfReferential = target.Schema == tc.Schema && target.TableName == tc.TableName
 	edge.TargetResolvesTenant = target.resolvesTenantDirectly()
 
@@ -460,21 +521,20 @@ func buildNestedEdge(
 	}
 
 	var notes []nestedIneligible
+	var note *nestedIneligible
 	if isM2M {
-		if err := resolveNestedM2M(&edge, rel, target, byTable, parentPK, want, resolver); err != nil {
-			return NestedEdgeContext{}, []nestedIneligible{*err}
-		}
+		note = resolveNestedM2M(&edge, rel, tc, target, byTable, parentKey, want, resolver)
 		edge.ChildCreateType = "Create" + target.StructName + "Input"
 	} else {
-		note := resolveNestedToMany(&edge, rel, target, parentPK, want, resolver)
-		if note != nil {
-			if note.verb == "" {
-				return NestedEdgeContext{}, []nestedIneligible{*note}
-			}
-			notes = append(notes, *note)
-		}
+		note = resolveNestedToMany(&edge, rel, nestedParentKeys(tc, rel), target, want, resolver)
 		edge.ChildInputName = nestedChildInputName(tc.StructName, rel.FieldName)
 		edge.ChildCreateType = edge.ChildInputName
+	}
+	if note != nil {
+		if note.verb == "" {
+			return NestedEdgeContext{}, []nestedIneligible{*note}
+		}
+		notes = append(notes, *note)
 	}
 
 	notes = append(notes, resolveNestedConnectKey(&edge, target, rel.FieldName)...)
@@ -608,36 +668,94 @@ func resolveNestedCreatePK(edge *NestedEdgeContext, target *TableContext) {
 	edge.ChildCreatePKOmittable = omittable
 }
 
-// resolveNestedToMany fills the shape-2 and shape-3 half of an edge: the child
-// input's surviving fields, the traversed FK assignment, the discriminator
-// assignment, and the expressions the `connect` adoption needs.
-func resolveNestedToMany(
-	edge *NestedEdgeContext,
-	rel RelationshipContext,
-	target *TableContext,
-	parentPK ColumnContext,
-	want nestedVerbMask,
-	resolver *gotype.Resolver,
-) *nestedIneligible {
+// nestedParentKey is the parent side of an edge: the column its key
+// references, the parent's PK unless the key references a UNIQUE column (PRD
+// §13.1).
+func nestedParentKey(tc *TableContext, rel RelationshipContext) ColumnContext {
+	if rel.ParentKey.Name != "" {
+		return rel.ParentKey
+	}
+	return tc.PKColumns[0]
+}
+
+// nestedParentKeys is nestedParentKey for every pair of the edge's key: the
+// junction's key into the parent on M2M.
+func nestedParentKeys(tc *TableContext, rel RelationshipContext) []ColumnContext {
+	pairs := rel.Key
+	if rel.Type == parser.ManyToMany {
+		pairs = rel.JunctionLocal
+	}
+	return keyParents(tc, pairs, nestedParentKey(tc, rel))
+}
+
+// nestedReferencedColumns lists every column the edge's key references: the
+// parent's, and on M2M the target's, whichever side supplies a junction column
+// the two keys share. An M2M edge with no reference pairs references the
+// target's primary key, which is never nullable.
+func nestedReferencedColumns(tc *TableContext, rel RelationshipContext, target *TableContext) []ColumnContext {
+	columns := nestedParentKeys(tc, rel)
+	for _, p := range rel.JunctionReference {
+		if col, ok := columnBySQLName(target.Columns, p.Referenced); ok {
+			columns = append(columns, col)
+		}
+	}
+	return columns
+}
+
+// splitNestedKeyMembers records the traversed key's pinned and free members on
+// the edge, and rejects it when a member is absent from the target's create
+// input: a nested create sets every member, and a generated one is not there.
+func splitNestedKeyMembers(edge *NestedEdgeContext, rel RelationshipContext, target *TableContext, members []keyMember) *nestedIneligible {
+	for _, m := range members {
+		if _, ok := inputFieldByColumn(target.CreateInputFields, m.column); !ok {
+			return &nestedIneligible{edge: rel.FieldName, reason: fmt.Sprintf(
+				"the traversed FK column %q is absent from the target's create input, so a nested create cannot set it", m.column)}
+		}
+		if m.pinned {
+			edge.PinnedMembers = append(edge.PinnedMembers, m.column)
+		} else {
+			edge.FreeMembers = append(edge.FreeMembers, m.column)
+		}
+		edge.TenantKeyMember = edge.TenantKeyMember || m.tenant
+	}
+	return nil
+}
+
+// resolveNestedKeyAssign fills edge.KeyMembers with the assignment that sets
+// each member from the parent column it references.
+func resolveNestedKeyAssign(edge *NestedEdgeContext, rel RelationshipContext, target *TableContext, members []keyMember, parents []ColumnContext, resolver *gotype.Resolver) *nestedIneligible {
+	edge.KeyMembers = make([]NestedKeyMemberContext, 0, len(members))
+	for i, m := range members {
+		field, _ := inputFieldByColumn(target.CreateInputFields, m.column)
+		expr := nestedAssignExpr(field.GoType, field.Required, parents[i].GoType, "parent."+parents[i].FieldName, resolver)
+		if expr == "" {
+			return &nestedIneligible{edge: rel.FieldName, reason: fmt.Sprintf(
+				"the traversed FK column %q binds to %s, which sqlgen cannot construct from the parent's key", m.column, field.GoType)}
+		}
+		edge.KeyMembers = append(edge.KeyMembers, NestedKeyMemberContext{
+			Column: m.column, FieldName: field.FieldName, Pinned: m.pinned, AssignExpr: expr,
+		})
+		if m.tenant && !parents[i].Tenant {
+			edge.TenantKeyParent, edge.TenantKeyClient = "parent."+parents[i].FieldName, edge.TargetClientField
+		}
+	}
+	return nil
+}
+
+// resolveNestedChildInput fills the nested child input's fields and the
+// discriminator assignment. The input drops every member of the traversed
+// key, the tenant column included, since the parent's referenced columns set
+// them all (PRD §9.9.5), and the discriminator, which the executor sets from
+// the edge's declared value.
+func resolveNestedChildInput(edge *NestedEdgeContext, rel RelationshipContext, target *TableContext, members []keyMember, resolver *gotype.Resolver) *nestedIneligible {
 	reject := func(reason string) *nestedIneligible {
 		return &nestedIneligible{edge: rel.FieldName, reason: reason}
 	}
-
-	fkField, ok := inputFieldByColumn(target.CreateInputFields, rel.FKColumn)
-	if !ok {
-		return reject(fmt.Sprintf("the traversed FK column %q is absent from the target's create input, so a nested create cannot set it", rel.FKColumn))
+	drop := make(map[string]bool, len(members)+1)
+	for _, m := range members {
+		drop[m.column] = true
 	}
-	edge.FKFieldName = fkField.FieldName
-	edge.FKAssignExpr = nestedAssignExpr(fkField.GoType, fkField.Required, parentPK.GoType, "parent."+parentPK.FieldName, resolver)
-	if edge.FKAssignExpr == "" {
-		return reject(fmt.Sprintf("the traversed FK column %q binds to %s, which sqlgen cannot construct from the parent's key", rel.FKColumn, fkField.GoType))
-	}
-
-	drop := map[string]bool{rel.FKColumn: true}
 	if rel.Discriminator != nil {
-		// The discriminator is set by the executor from the edge's declared
-		// value, so it is elided from the caller's input the same way the
-		// traversed FK is.
 		discField, found := inputFieldByColumn(target.CreateInputFields, rel.Discriminator.Column)
 		if !found {
 			return reject(fmt.Sprintf("the discriminator column %q is absent from the target's create input", rel.Discriminator.Column))
@@ -657,8 +775,36 @@ func resolveNestedToMany(
 		}
 		edge.ChildFields = append(edge.ChildFields, f)
 	}
+	return nil
+}
+
+// resolveNestedToMany fills the shape-2 and shape-3 half of an edge: the child
+// input's surviving fields, the traversed FK assignment, the discriminator
+// assignment, and the expressions the `connect` adoption needs.
+func resolveNestedToMany(
+	edge *NestedEdgeContext,
+	rel RelationshipContext,
+	parents []ColumnContext,
+	target *TableContext,
+	want nestedVerbMask,
+	resolver *gotype.Resolver,
+) *nestedIneligible {
+	members := edgeKeyMembers(rel, target)
+	if note := splitNestedKeyMembers(edge, rel, target, members); note != nil {
+		return note
+	}
+	if note := resolveNestedKeyAssign(edge, rel, target, members, parents, resolver); note != nil {
+		return note
+	}
+	edge.CompositeKey = len(members) > 1
+	edge.LoadKey = rel.LoadKey
+
+	if note := resolveNestedChildInput(edge, rel, target, members, resolver); note != nil {
+		return note
+	}
 
 	edge.ConnectIDGoType = target.PKColumns[0].GoType
+	edge.ConnectBucketGoType = nestedBucketGoType(edge.ConnectIDGoType)
 
 	// §9.9.4's has-one occupancy clause — the occupancy read `create` runs
 	// first. Every other verb that would survive needs the same two terms for
@@ -666,33 +812,37 @@ func resolveNestedToMany(
 	// names `create`, and the caller reports the empty edge on top of it. With
 	// `create` already masked off, the verbs below report their own losses.
 	if edge.Shape == "has_one" && edge.HasCreate {
-		if reason := resolveNestedHasOneScope(edge, rel, target, parentPK); reason != "" {
+		if reason := resolveNestedHasOneScope(edge, rel, target, parents); reason != "" {
 			edge.HasCreate = false
 			return &nestedIneligible{edge: rel.FieldName, verb: "create", reason: reason}
 		}
 	}
 
-	// `connect`, `disconnect` and `clear` all need a nullable FK: nothing
-	// on a NOT NULL edge is ever unparented, and unlinking would violate the
-	// constraint. The generator declining to emit the fields is the schema
-	// saying so at compile time (PRD §9.9.3).
-	if !rel.FKNullable {
+	// `connect`, `disconnect` and `clear` all need a nullable FK, one with a free
+	// member and every free member nullable: nothing on a NOT NULL edge is ever
+	// unparented, and unlinking would violate the constraint. Under MATCH FULL a
+	// pinned member narrows them further. The generator declining to emit the
+	// fields is the schema saying so at compile time (PRD §9.9.3, §9.9.4).
+	rewrite := keyRewriteVerbs(members, rel.Match, edge.AllowReparent)
+	if !rewrite.connect && !rewrite.unlink {
 		return nil
 	}
 
 	// Every statement below scopes itself the same two ways — to this parent
 	// and, on a polymorphic edge, to this edge's own discriminator value — so
 	// the terms are resolved once here rather than per verb.
-	resolveNestedEdgeScope(edge, rel, target, parentPK)
+	resolveNestedEdgeScope(edge, rel, target, parents)
 
-	if note := resolveNestedUnlink(edge, rel, target, want, resolver); note != nil {
-		return note
+	if rewrite.unlink {
+		if note := resolveNestedUnlink(edge, rel, target, want, resolver); note != nil {
+			return note
+		}
 	}
-	if !want.connect {
+	if !want.connect || !rewrite.connect {
 		return nil
 	}
 	edge.HasConnect = true
-	return resolveNestedAdoption(edge, rel, target, parentPK, resolver)
+	return resolveNestedAdoption(edge, rel, target, parents, resolver)
 }
 
 // resolveNestedHasOneScope resolves the scope a has-one edge's occupancy read
@@ -705,10 +855,10 @@ func resolveNestedToMany(
 // render them cannot run it. So it loses `create` rather than writing a second
 // child. `connect` needs the same terms for its own verify read and is dropped
 // there, under the same rule.
-func resolveNestedHasOneScope(edge *NestedEdgeContext, rel RelationshipContext, target *TableContext, parentPK ColumnContext) string {
-	resolveNestedEdgeScope(edge, rel, target, parentPK)
-	if edge.ParentFilterExpr == "" {
-		return fmt.Sprintf("the traversed FK column %q carries no `= parent` filter term, so the occupancy read cannot find the child this parent already has", rel.FKColumn)
+func resolveNestedHasOneScope(edge *NestedEdgeContext, rel RelationshipContext, target *TableContext, parents []ColumnContext) string {
+	resolveNestedEdgeScope(edge, rel, target, parents)
+	if column := unscopedKeyMember(edge, target); column != "" {
+		return fmt.Sprintf("the traversed FK column %q carries no `= parent` filter term, so the occupancy read cannot find the child this parent already has", column)
 	}
 	if rel.Discriminator != nil && edge.DiscFilterExpr == "" {
 		return fmt.Sprintf("the discriminator column %q carries no `Eq` filter term, so the occupancy read cannot scope itself to this edge rather than to every edge over %q", rel.Discriminator.Column, rel.FKColumn)
@@ -716,10 +866,10 @@ func resolveNestedHasOneScope(edge *NestedEdgeContext, rel RelationshipContext, 
 	return ""
 }
 
-// resolveNestedEdgeScope fills the two filter terms every parent-scoped
-// statement on a shape-2 or shape-3 edge carries: `fk = parent`, and the
-// discriminator equality that separates one polymorphic edge from its siblings
-// over the same foreign key.
+// resolveNestedEdgeScope fills the filter terms every parent-scoped statement
+// on a shape-2 or shape-3 edge carries: `fk = parent`, one term per key member,
+// and the discriminator equality that separates one polymorphic edge from its
+// siblings over the same foreign key.
 //
 // Each of the three consumers reads them differently, which is why they are
 // resolved unconditionally and gated at the call site: the two unlink verbs
@@ -730,15 +880,12 @@ func resolveNestedHasOneScope(edge *NestedEdgeContext, rel RelationshipContext, 
 //
 // An unrenderable term leaves the field empty rather than rejecting anything.
 // The verbs that need it decide for themselves whether that is fatal.
-func resolveNestedEdgeScope(edge *NestedEdgeContext, rel RelationshipContext, target *TableContext, parentPK ColumnContext) {
-	if ff, found := filterFieldByColumn(target.FilterFields, rel.FKColumn); found {
-		edge.FKFilterField = ff.FieldName
-		edge.ParentKeyExpr = nestedParentKeyExpr(rel.FKGoType, parentPK)
-		edge.ParentFilterExpr = nestedEqFilterExpr(ff.ComparatorType, "pid")
-		if edge.ParentFilterExpr == "" {
-			edge.ParentKeyExpr = ""
-		}
+func resolveNestedEdgeScope(edge *NestedEdgeContext, rel RelationshipContext, target *TableContext, parents []ColumnContext) {
+	columns := make([]string, len(edge.KeyMembers))
+	for i, m := range edge.KeyMembers {
+		columns[i] = m.Column
 	}
+	edge.ParentScope = nestedParentScope(columns, parents, target.FilterFields)
 	if rel.Discriminator == nil {
 		return
 	}
@@ -751,6 +898,49 @@ func resolveNestedEdgeScope(edge *NestedEdgeContext, rel RelationshipContext, ta
 		return
 	}
 	edge.DiscFilterField, edge.DiscFilterExpr = df.FieldName, expr
+}
+
+// nestedParentScope renders the `fk = parent` term of each column against
+// fields, or nil when any of them cannot render. parents[i] is the parent
+// column that columns[i] references.
+func nestedParentScope(columns []string, parents []ColumnContext, fields []FilterFieldContext) []NestedScopeTerm {
+	terms := make([]NestedScopeTerm, 0, len(columns))
+	for i, column := range columns {
+		v := "pid"
+		if len(columns) > 1 {
+			v = fmt.Sprintf("pid%d", i)
+		}
+		ff, found := filterFieldByColumn(fields, column)
+		if !found {
+			return nil
+		}
+		expr := nestedEqFilterExpr(ff.ComparatorType, v)
+		if expr == "" {
+			return nil
+		}
+		terms = append(terms, NestedScopeTerm{
+			FilterField:   ff.FieldName,
+			ParentVar:     v,
+			ParentKeyExpr: nestedParentKeyExpr(ff.ComparatorType, parents[i]),
+			FilterExpr:    expr,
+		})
+	}
+	return terms
+}
+
+// unscopedKeyMember names the first key member with no `= parent` term, or ""
+// when the edge's scope rendered.
+func unscopedKeyMember(edge *NestedEdgeContext, target *TableContext) string {
+	if len(edge.ParentScope) > 0 {
+		return ""
+	}
+	for _, m := range edge.KeyMembers {
+		ff, found := filterFieldByColumn(target.FilterFields, m.Column)
+		if !found || nestedEqFilterExpr(ff.ComparatorType, "pid") == "" {
+			return m.Column
+		}
+	}
+	return ""
 }
 
 // resolveNestedUnlink fills the expressions `disconnect` and `clear` share on a
@@ -785,21 +975,27 @@ func resolveNestedUnlink(
 		}
 	}
 
-	updField, found := inputFieldByColumn(target.UpdateInputFields, rel.FKColumn)
-	if !found {
-		return drop(fmt.Sprintf("the traversed FK column %q is absent from the target's update input, so an unlink cannot set it NULL", rel.FKColumn))
-	}
-	edge.FKUnlinkAssignExpr = nestedNullAssignExpr(updField.GoType, resolver)
-	if edge.FKUnlinkAssignExpr == "" {
-		// The wrong spelling is the one failure a rows-affected check
-		// cannot catch, because the rows do match. Refusing to emit an unlink
-		// sqlgen cannot spell as "set this column NULL" is the fail-closed
-		// direction.
-		return drop(fmt.Sprintf("the traversed FK column %q binds to %s on the target's update input, which sqlgen cannot set to NULL rather than omit", rel.FKColumn, updField.GoType))
+	for i := range edge.KeyMembers {
+		m := &edge.KeyMembers[i]
+		if m.Pinned {
+			continue
+		}
+		updField, found := inputFieldByColumn(target.UpdateInputFields, m.Column)
+		if !found {
+			return drop(fmt.Sprintf("the traversed FK column %q is absent from the target's update input, so an unlink cannot set it NULL", m.Column))
+		}
+		m.UnlinkAssignExpr = nestedNullAssignExpr(updField.GoType, resolver)
+		if m.UnlinkAssignExpr == "" {
+			// The wrong spelling is the one failure a rows-affected check
+			// cannot catch, because the rows do match. Refusing to emit an
+			// unlink sqlgen cannot spell as "set this column NULL" is the
+			// fail-closed direction.
+			return drop(fmt.Sprintf("the traversed FK column %q binds to %s on the target's update input, which sqlgen cannot set to NULL rather than omit", m.Column, updField.GoType))
+		}
 	}
 
-	if edge.ParentFilterExpr == "" {
-		return drop(fmt.Sprintf("the traversed FK column %q carries no `= parent` filter term, so an unlink cannot scope itself to this parent", rel.FKColumn))
+	if column := unscopedKeyMember(edge, target); column != "" {
+		return drop(fmt.Sprintf("the traversed FK column %q carries no `= parent` filter term, so an unlink cannot scope itself to this parent", column))
 	}
 	// The discriminator rule applied to the unlink half. `clear` unlinks every
 	// row *on this edge*, and the edge is `fk = parent AND <disc> = <value>`;
@@ -829,7 +1025,7 @@ func resolveNestedAdoption(
 	edge *NestedEdgeContext,
 	rel RelationshipContext,
 	target *TableContext,
-	parentPK ColumnContext,
+	parents []ColumnContext,
 	resolver *gotype.Resolver,
 ) *nestedIneligible {
 	dropConnect := func(reason string) *nestedIneligible {
@@ -849,33 +1045,31 @@ func resolveNestedAdoption(
 		return dropConnect(fmt.Sprintf("the discriminator column %q carries no `Eq` filter term, so the adoption cannot scope itself to this edge where the visibility read already does", rel.Discriminator.Column))
 	}
 
-	updField, found := inputFieldByColumn(target.UpdateInputFields, rel.FKColumn)
-	if !found {
-		return dropConnect(fmt.Sprintf("the traversed FK column %q is absent from the target's update input, so an adoption cannot set it", rel.FKColumn))
-	}
-	edge.FKUpdateAssignExpr = nestedAssignExpr(updField.GoType, false, parentPK.GoType, "parent."+parentPK.FieldName, resolver)
-	if edge.FKUpdateAssignExpr == "" {
-		return dropConnect(fmt.Sprintf("the traversed FK column %q binds to %s on the target's update input, which sqlgen cannot construct from the parent's key", rel.FKColumn, updField.GoType))
+	for i := range edge.KeyMembers {
+		m := &edge.KeyMembers[i]
+		if m.Pinned {
+			continue
+		}
+		updField, found := inputFieldByColumn(target.UpdateInputFields, m.Column)
+		if !found {
+			return dropConnect(fmt.Sprintf("the traversed FK column %q is absent from the target's update input, so an adoption cannot set it", m.Column))
+		}
+		m.UpdateAssignExpr = nestedAssignExpr(updField.GoType, false, parents[i].GoType, "parent."+parents[i].FieldName, resolver)
+		if m.UpdateAssignExpr == "" {
+			return dropConnect(fmt.Sprintf("the traversed FK column %q binds to %s on the target's update input, which sqlgen cannot construct from the parent's key", m.Column, updField.GoType))
+		}
 	}
 
-	// The unwrap has to render before the three-way split can: a nullable FK
-	// is always a pointer or a Null wrapper, so the guard is non-empty in
-	// every reachable case, and an empty one would emit a guard that is always
-	// true rather than a split.
-	ext := resolver.DeriveScalarExtraction(rel.FKColumnGoType)
-	edge.FKOwnerGoType = rel.FKColumnGoType
-	edge.FKOwnerGuard = strings.ReplaceAll(ext.GuardExpr, "$v", "cur")
-	edge.FKOwnerKey = strings.ReplaceAll(ext.UnwrapExpr, "$v", "cur")
-	if edge.FKOwnerGuard == "" {
-		return dropConnect(fmt.Sprintf("the traversed FK column binds to %s on the target entity, which carries no null guard for the three-way adoption split", rel.FKColumnGoType))
+	if reason := resolveNestedOwnerRead(edge, rel, parents[0], resolver); reason != "" {
+		return dropConnect(reason)
 	}
 
 	// The verify read after each adoption chunk counts the chunk's ids that
 	// now carry `fk = parent`, and that count is the shortfall check on every
 	// dialect (PRD §9.9.6). It is required under `allow_reparent` too: the
 	// flag removes the guard, not the check.
-	if edge.ParentFilterExpr == "" {
-		return dropConnect(fmt.Sprintf("the traversed FK column %q carries no `= parent` filter term, so the adoption cannot verify which rows it adopted", rel.FKColumn))
+	if column := unscopedKeyMember(edge, target); column != "" {
+		return dropConnect(fmt.Sprintf("the traversed FK column %q carries no `= parent` filter term, so the adoption cannot verify which rows it adopted", column))
 	}
 
 	// The `fk IS NULL` term is what makes the adoption atomic against a
@@ -886,30 +1080,197 @@ func resolveNestedAdoption(
 	if edge.AllowReparent {
 		return nil
 	}
-	ff, found := filterFieldByColumn(target.FilterFields, rel.FKColumn)
-	if !found {
-		return dropConnect(fmt.Sprintf("the traversed FK column %q is absent from the target's filter, so the adoption has no `IS NULL` guard to run under", rel.FKColumn))
-	}
-	edge.FKFilterNullExpr = nestedNullFilterExpr(ff.ComparatorType)
-	if edge.FKFilterNullExpr == "" {
-		return dropConnect(fmt.Sprintf("the traversed FK column %q filters through %s, which has no `Null` member for the adoption guard", rel.FKColumn, ff.ComparatorType))
+	for i := range edge.KeyMembers {
+		m := &edge.KeyMembers[i]
+		if m.Pinned {
+			continue
+		}
+		ff, found := filterFieldByColumn(target.FilterFields, m.Column)
+		if !found {
+			return dropConnect(fmt.Sprintf("the traversed FK column %q is absent from the target's filter, so the adoption has no `IS NULL` guard to run under", m.Column))
+		}
+		m.FilterField = ff.FieldName
+		m.NullFilterExpr = nestedNullFilterExpr(ff.ComparatorType)
+		if m.NullFilterExpr == "" {
+			return dropConnect(fmt.Sprintf("the traversed FK column %q filters through %s, which has no `Null` member for the adoption guard", m.Column, ff.ComparatorType))
+		}
 	}
 	return nil
 }
 
+// resolveNestedOwnerRead fills the expressions that read the key back off a
+// visibility-read row, and returns why it cannot, or "" when it can.
+//
+// The unwrap has to render before the three-way split can: a nullable FK is
+// always a pointer or a Null wrapper, so the guard is non-empty in every
+// reachable case, and an empty one would emit a guard that is always true
+// rather than a split.
+func resolveNestedOwnerRead(edge *NestedEdgeContext, rel RelationshipContext, parentKey ColumnContext, resolver *gotype.Resolver) string {
+	if edge.CompositeKey {
+		if column := resolveNestedOwnerTuple(edge, rel, resolver); column != "" {
+			return fmt.Sprintf("the traversed FK column %q carries no null guard for the three-way adoption split", column)
+		}
+		return ""
+	}
+	ext := resolver.DeriveScalarExtraction(rel.FKColumnGoType)
+	edge.FKOwnerGoType = rel.FKColumnGoType
+	edge.FKOwnerGuard = strings.ReplaceAll(ext.GuardExpr, "$v", "cur")
+	edge.FKOwnerIsParent = nestedOwnerIsParentExpr(strings.ReplaceAll(ext.UnwrapExpr, "$v", "cur"), parentKey)
+	if edge.FKOwnerGuard == "" {
+		return fmt.Sprintf("the traversed FK column binds to %s on the target entity, which carries no null guard for the three-way adoption split", rel.FKColumnGoType)
+	}
+	return ""
+}
+
+// nestedOwnerIsParentExpr compares a row's unwrapped key with the parent's. A
+// time key compares as an instant: `==` on a time.Time also compares the zone
+// pointer, which differs between two rows read back with the same non-hour
+// offset.
+func nestedOwnerIsParentExpr(key string, parentKey ColumnContext) string {
+	parent := nestedKeyValueExpr(parentKey.GoType, "parent."+parentKey.FieldName)
+	if parentKey.GoType == "time.Time" || parentKey.GoType == "types.DateTime" {
+		return key + ".Equal(" + parent + ")"
+	}
+	return key + " == " + parent
+}
+
+// resolveNestedOwnerTuple fills the expressions that read a composite key off a
+// visibility-read row and split the row three ways (PRD §9.9.6). A pinned
+// member must equal the parent's value, and a key is held when any free member
+// holds a value. NULL is tracked apart from the tuple, because a NULL member
+// and an empty string stringify alike. It returns a free member with no null
+// guard, which would read NULL as held, or "" when every one has one.
+func resolveNestedOwnerTuple(edge *NestedEdgeContext, rel RelationshipContext, resolver *gotype.Resolver) string {
+	loadKey, guard := funcFKLoadKey(resolver), funcFKLoadGuard(resolver)
+	var mismatch, held []string
+	for i, m := range rel.LoadKey {
+		goType, expr := keyRead(m, "holder", "row")
+		member := NestedOwnerMember{Index: i, Guard: guard(goType, expr), Key: loadKey(goType, expr)}
+		edge.OwnerMembers = append(edge.OwnerMembers, member)
+		switch {
+		case !edge.KeyMembers[i].Pinned:
+			if member.Guard == "" {
+				return m.Column
+			}
+			held = append(held, fmt.Sprintf("!null[%d]", i))
+		case member.Guard != "":
+			mismatch = append(mismatch, fmt.Sprintf("null[%d] || cur[%d] != want[%d]", i, i, i))
+		default:
+			mismatch = append(mismatch, fmt.Sprintf("cur[%d] != want[%d]", i, i))
+		}
+	}
+	edge.OwnerPinnedMismatch = strings.Join(mismatch, " || ")
+	edge.OwnerAllHeld = strings.Join(held, " && ")
+	edge.OwnerAnyHeld = strings.Join(held, " || ")
+	return ""
+}
+
+// junctionLink is one column of a link row and where its value comes from.
+type junctionLink struct {
+	column, fieldName string
+	// sourceGoType / source spell the value, read off the parent or the target.
+	sourceGoType, source string
+	// fromRow reports a value on the target beyond its primary key.
+	fromRow bool
+}
+
+// junctionKeyPairs returns an M2M edge's two junction keys. An edge built
+// without key pairs has its one column each.
+func junctionKeyPairs(rel RelationshipContext, parentKey ColumnContext, target *TableContext) (local, reference []parser.KeyPair) {
+	local, reference = rel.JunctionLocal, rel.JunctionReference
+	if len(local) == 0 {
+		local = []parser.KeyPair{{Local: rel.JunctionLocalFK, Referenced: parentKey.Name}}
+	}
+	if len(reference) == 0 {
+		reference = []parser.KeyPair{{Local: rel.JunctionReferenceFK, Referenced: target.PKColumns[0].Name}}
+	}
+	return local, reference
+}
+
+// junctionLinks lists the union of a junction's two keys. A column in both
+// takes the parent's value, and `connect` and `create` refuse a target that
+// disagrees (resolveJunctionSharedRead).
+func junctionLinks(local, reference []parser.KeyPair, parents []ColumnContext, target *TableContext, fields []InputFieldContext) []junctionLink {
+	links := make([]junctionLink, 0, len(local)+len(reference))
+	seen := make(map[string]bool, len(local))
+	for i, p := range local {
+		seen[p.Local] = true
+		f, _ := inputFieldByColumn(fields, p.Local)
+		links = append(links, junctionLink{
+			column: p.Local, fieldName: f.FieldName,
+			sourceGoType: parents[i].GoType, source: "parent." + parents[i].FieldName,
+		})
+	}
+	pk := target.PKColumns[0]
+	for _, p := range reference {
+		if seen[p.Local] {
+			continue
+		}
+		f, _ := inputFieldByColumn(fields, p.Local)
+		link := junctionLink{column: p.Local, fieldName: f.FieldName, sourceGoType: pk.GoType, source: "tid"}
+		if col, ok := columnBySQLName(target.Columns, p.Referenced); ok && col.Name != pk.Name {
+			link.sourceGoType, link.source, link.fromRow = col.GoType, "row."+col.FieldName, true
+		}
+		links = append(links, link)
+	}
+	return links
+}
+
+// resolveJunctionSharedRead fills what `connect` and `create` need to compare
+// each column both junction keys share with the target's own value (PRD
+// §9.9.6). The link row takes such a column from the parent, so without this
+// nothing reads the target's side, and only a foreign key the database enforces
+// would notice. Neither side can be NULL: the edge's referenced columns are NOT
+// NULL (PRD §9.9.4).
+func resolveJunctionSharedRead(edge *NestedEdgeContext, local, reference []parser.KeyPair, parents []ColumnContext, target *TableContext, resolver *gotype.Resolver) {
+	loadKey := funcFKLoadKey(resolver)
+	var agrees []string
+	for _, p := range reference {
+		i := slices.IndexFunc(local, func(l parser.KeyPair) bool { return l.Local == p.Local })
+		if i < 0 {
+			continue
+		}
+		col, ok := columnBySQLName(target.Columns, p.Referenced)
+		if !ok {
+			continue
+		}
+		if col.Name != target.PKColumns[0].Name {
+			edge.JunctionSharedFields = append(edge.JunctionSharedFields, col.FieldName)
+		}
+		agrees = append(agrees, loadKey(col.GoType, "row."+col.FieldName)+" == "+loadKey(parents[i].GoType, "parent."+parents[i].FieldName))
+	}
+	edge.JunctionSharedAgrees = strings.Join(agrees, " && ")
+}
+
+// setJunctionTenantParent records the parent column the junction's tenant column
+// takes through the local key. A tenant column only in the reference key comes
+// off the target and cannot contradict the tenant filter on an unlink.
+func setJunctionTenantParent(edge *NestedEdgeContext, junction *TableContext, local []parser.KeyPair, parents []ColumnContext) {
+	if junction.Tenancy == nil || !junction.Tenancy.Tenanted {
+		return
+	}
+	for i, p := range local {
+		if p.Local == junction.Tenancy.Column && !parents[i].Tenant {
+			edge.TenantKeyParent, edge.TenantKeyClient = "parent."+parents[i].FieldName, edge.JunctionClientField
+		}
+	}
+}
+
 // resolveNestedM2M fills the shape-4 half: the junction the link rows go
-// through and the two FK members they carry.
+// through and the union of its two keys.
 //
 // Every M2M verb routes through the junction's own client — `create` and
 // `connect` both end in the §9.9.6 link step, which is a batched upsert on the
 // junction — so an unresolvable junction makes the whole edge ineligible
-// rather than only its connect half.
+// rather than only its connect half. A note naming a verb means the edge
+// survives without that verb.
 func resolveNestedM2M(
 	edge *NestedEdgeContext,
 	rel RelationshipContext,
+	tc *TableContext,
 	target *TableContext,
 	byTable tableIndex,
-	parentPK ColumnContext,
+	parentKey ColumnContext,
 	want nestedVerbMask,
 	resolver *gotype.Resolver,
 ) *nestedIneligible {
@@ -932,26 +1293,18 @@ func resolveNestedM2M(
 		return reject("the edge is many-to-many and declares a `discriminator:`; PRD §9.9.5 makes an M2M `create` take the target's create input unchanged, which leaves the executor no way to set the discriminator column to the edge's declared value")
 	}
 
-	junction, ineligible := resolveNestedJunction(rel, byTable)
+	local, reference := junctionKeyPairs(rel, parentKey, target)
+	junction, ineligible := resolveNestedJunction(rel, local, reference, byTable)
 	if ineligible != nil {
 		return ineligible
 	}
-	conflict := ""
-	for _, ct := range junction.ConflictTargets {
-		if ct.CoversPK {
-			conflict = ct.ConstantName
-			break
-		}
-	}
+	conflict := junctionLinkTarget(junction, local, reference)
 	if conflict == "" {
-		// The upsert conflict-target rule one level down: a table whose
-		// uniqueness is app-enforced through `primary_key.columns` emits no
-		// conflict-target constant (PRD §9.5), and the link step has to pass
-		// one.
-		return reject("the junction table emits no PK-covering conflict-target constant for the link step to pass")
+		// The link step is `<Junction>().UpsertMany(dedup(created ∪ connected))`
+		// (PRD §9.9.6), and it runs for `create` as much as for `connect`, which
+		// is why this takes the whole edge rather than a verb.
+		return reject("the junction table emits no conflict-target constant equal to the union of its two keys for the link step to pass")
 	}
-	localField, _ := inputFieldByColumn(junction.CreateInputFields, rel.JunctionLocalFK)
-	refField, _ := inputFieldByColumn(junction.CreateInputFields, rel.JunctionReferenceFK)
 
 	edge.JunctionStructName = junction.StructName
 	edge.JunctionClientField = toCamelCase(junction.StructName) + "Client"
@@ -960,49 +1313,65 @@ func resolveNestedM2M(
 	// single-resolve hoist (PRD §29.6).
 	edge.TargetResolvesTenant = edge.TargetResolvesTenant || junction.resolvesTenantDirectly()
 	edge.JunctionConflictTarget = conflict
-	edge.JunctionLocalField = localField.FieldName
-	edge.JunctionReferenceField = refField.FieldName
-	edge.JunctionLocalAssignExpr = nestedAssignExpr(localField.GoType, localField.Required, parentPK.GoType, "parent."+parentPK.FieldName, resolver)
-	if edge.JunctionLocalAssignExpr == "" {
-		return reject(fmt.Sprintf("the junction's local FK %q binds to %s, which sqlgen cannot construct from the parent's key", rel.JunctionLocalFK, localField.GoType))
-	}
+
+	parents := keyParents(tc, local, parentKey)
+	links := junctionLinks(local, reference, parents, target, junction.CreateInputFields)
+	setJunctionTenantParent(edge, junction, local, parents)
 	if !GoTypeIsValidMapKey(target.PKColumns[0].GoType) {
 		// The §9.9.6 link step dedupes `created ∪ connected` through a set
 		// keyed on the target id, so a PK that is not a valid Go map key makes
 		// every M2M verb unrenderable rather than only the connect half.
 		return reject(fmt.Sprintf("the target's primary key binds to %s, which is not a valid Go map key for the link step's dedupe", target.PKColumns[0].GoType))
 	}
-	edge.JunctionReferenceAssignExpr = nestedAssignExpr(refField.GoType, refField.Required, target.PKColumns[0].GoType, "tid", resolver)
-	if edge.JunctionReferenceAssignExpr == "" {
-		return reject(fmt.Sprintf("the junction's reference FK %q binds to %s, which sqlgen cannot construct from the target's key", rel.JunctionReferenceFK, refField.GoType))
+	for _, link := range links {
+		f, _ := inputFieldByColumn(junction.CreateInputFields, link.column)
+		expr := nestedAssignExpr(f.GoType, f.Required, link.sourceGoType, link.source, resolver)
+		if expr == "" {
+			key, from := "reference", "the target's key"
+			if slices.ContainsFunc(local, func(p parser.KeyPair) bool { return p.Local == link.column }) {
+				key, from = "local", "the parent's key"
+			}
+			return reject(fmt.Sprintf("the junction's %s FK %q binds to %s, which sqlgen cannot construct from %s", key, link.column, f.GoType, from))
+		}
+		edge.JunctionLinkFields = append(edge.JunctionLinkFields, NestedFieldAssign{FieldName: link.fieldName, AssignExpr: expr})
+		if junction.Tenancy != nil && junction.Tenancy.Tenanted && junction.Tenancy.Column == link.column {
+			edge.TenantKeyMember = true
+		}
+		if link.fromRow {
+			edge.TargetReadFields = append(edge.TargetReadFields, strings.TrimPrefix(link.source, "row."))
+		}
 	}
+	resolveJunctionSharedRead(edge, local, reference, parents, target, resolver)
 	edge.ConnectIDGoType = target.PKColumns[0].GoType
+	edge.ConnectBucketGoType = nestedBucketGoType(edge.ConnectIDGoType)
 	// An M2M `connect` writes its link row through the junction's own
 	// UpsertMany and is unlinked again through its HardDelete surface; the
 	// client generates both on every junction that emits a conflict target
 	// (PRD §4.6), so no rule has to require them.
 	edge.HasConnect = want.connect
-	resolveNestedM2MUnlink(edge, rel, junction, parentPK, want)
-	return nil
+	return resolveNestedM2MUnlink(edge, rel, junction, local, parents, links, want)
 }
 
 // resolveNestedM2MUnlink fills the shape-4 half of `disconnect` and `clear`:
-// the `<Junction>PK` pair HardDeleteMany takes, and the junction filter term
+// the `<Junction>PK` value HardDeleteMany takes, and the junction filter terms
 // HardDeleteWhere scopes a clear with (PRD §9.9.6).
 //
-// Nothing here reports. Every reason a verb is lost on this shape is a
-// config-visible fact — a soft-delete column on the junction, a junction keyed
-// on something other than its two foreign keys — so §9.9.4's rule makes the
-// drop silent.
+// Every reason but one that a verb is lost on this shape is a config-visible
+// fact — a soft-delete column on the junction, a junction keyed on something
+// other than its two foreign keys — so §9.9.4's rule makes the drop silent. The
+// exception is a junction key `disconnect` cannot build: the verb takes target
+// ids and reads no row, which is a generator limitation and is reported.
 func resolveNestedM2MUnlink(
 	edge *NestedEdgeContext,
 	rel RelationshipContext,
 	junction *TableContext,
-	parentPK ColumnContext,
+	local []parser.KeyPair,
+	parents []ColumnContext,
+	links []junctionLink,
 	want nestedVerbMask,
-) {
+) *nestedIneligible {
 	if !want.disconnect && !want.clear {
-		return
+		return nil
 	}
 	// With a soft-delete column on the junction neither mechanism is
 	// correct: a hard delete destroys a row the schema marked soft-deletable,
@@ -1010,50 +1379,77 @@ func resolveNestedM2MUnlink(
 	// junction query carries no soft-delete predicate (PRD §13.2). Refusing is
 	// the fail-closed direction.
 	if junction.SoftDelete != nil {
-		return
+		return nil
 	}
 
 	if want.clear {
-		if ff, found := filterFieldByColumn(junction.FilterFields, rel.JunctionLocalFK); found {
-			edge.JunctionLocalFilterField = ff.FieldName
-			edge.ParentKeyExpr = nestedParentKeyExpr(rel.FKColumnGoType, parentPK)
-			edge.ParentFilterExpr = nestedEqFilterExpr(ff.ComparatorType, "pid")
-			edge.HasClear = edge.ParentFilterExpr != ""
+		columns := make([]string, len(local))
+		for i, p := range local {
+			columns[i] = p.Local
 		}
+		edge.ParentScope = nestedParentScope(columns, parents, junction.FilterFields)
+		edge.HasClear = len(edge.ParentScope) > 0
 	}
 
 	if !want.disconnect {
-		return
+		return nil
 	}
-	// HardDeleteMany takes the junction's own key, so the pair is expressible
-	// only when that key IS the two foreign keys. A junction with a surrogate
-	// key takes an id list the executor has no way to build.
-	if !junction.CompositePK || len(junction.PKColumns) != 2 {
-		return
+	// HardDeleteMany takes the junction's own key, so the value is expressible
+	// only when that key IS the union of the two foreign keys. A junction with a
+	// surrogate key takes an id list the executor has no way to build.
+	if len(junction.PKColumns) != len(links) {
+		return nil
 	}
-	local, okLocal := columnBySQLName(junction.PKColumns, rel.JunctionLocalFK)
-	ref, okRef := columnBySQLName(junction.PKColumns, rel.JunctionReferenceFK)
-	if !okLocal || !okRef {
-		return
-	}
-	// The PK struct carries the columns' own Go types rather than the create
-	// input's bindings, so the two assignments are bare or the verb is off.
-	if local.GoType != parentPK.GoType || ref.GoType != edge.ConnectIDGoType {
-		return
+	fields := make([]NestedFieldAssign, 0, len(links))
+	for _, link := range links {
+		col, ok := columnBySQLName(junction.PKColumns, link.column)
+		if !ok {
+			return nil
+		}
+		if link.fromRow {
+			return &nestedIneligible{edge: rel.FieldName, verb: "disconnect", reason: fmt.Sprintf(
+				"the junction's key holds %q, a target column beyond its primary key, and a disconnect reads no target to take it from", link.column)}
+		}
+		// The PK struct carries the columns' own Go types rather than the create
+		// input's bindings, so the assignment is bare or the verb is off.
+		if col.GoType != link.sourceGoType {
+			return nil
+		}
+		fields = append(fields, NestedFieldAssign{FieldName: col.FieldName, AssignExpr: link.source})
 	}
 	edge.JunctionPKStructName = junction.CompositePKStructName
-	edge.JunctionPKLocalField = local.FieldName
-	edge.JunctionPKReferenceField = ref.FieldName
-	edge.JunctionPKLocalAssignExpr = "parent." + parentPK.FieldName
-	edge.JunctionPKReferenceAssignExpr = "tid"
+	edge.JunctionPKFields = fields
 	edge.HasDisconnect = true
+	return nil
+}
+
+// junctionLinkTarget returns the junction's conflict target whose columns are
+// exactly the union of its two keys, or "" when it has none (PRD §9.9.4).
+//
+// A link row's keys are that union. A wider target names a column the row does
+// not supply, which is what a surrogate primary key is: UpsertMany refuses it at
+// run time or, on an application-generated key, inserts a fresh row per link. A
+// narrower one fires on any row sharing part of the pair, and its update half
+// rewrites that row into the new link.
+func junctionLinkTarget(junction *TableContext, local, reference []parser.KeyPair) string {
+	union := make(map[string]bool, len(local)+len(reference))
+	for _, p := range slices.Concat(local, reference) {
+		union[p.Local] = true
+	}
+	for _, ct := range junction.ConflictTargets {
+		if len(ct.Columns) == len(union) &&
+			!slices.ContainsFunc(ct.Columns, func(c string) bool { return !union[c] }) {
+			return ct.ConstantName
+		}
+	}
+	return ""
 }
 
 // resolveNestedJunction answers the eligibility rules that depend on the M2M
-// junction alone: it is generated, it emits the conflict target the link step's
-// UpsertMany takes, it declares both FK members, and it carries no column
-// beyond them that a link row could not populate or a re-link would reset.
-func resolveNestedJunction(rel RelationshipContext, byTable tableIndex) (*TableContext, *nestedIneligible) {
+// junction's columns: it is generated, it declares every member of both keys,
+// and it carries no column beyond them that a link row could not populate or a
+// re-link would reset.
+func resolveNestedJunction(rel RelationshipContext, local, reference []parser.KeyPair, byTable tableIndex) (*TableContext, *nestedIneligible) {
 	reject := func(reason string) (*TableContext, *nestedIneligible) {
 		return nil, &nestedIneligible{edge: rel.FieldName, reason: reason}
 	}
@@ -1062,31 +1458,30 @@ func resolveNestedJunction(rel RelationshipContext, byTable tableIndex) (*TableC
 	if !ok {
 		return reject(fmt.Sprintf("the junction table %q is not in the generated set, so there is no client to write link rows through", rel.JunctionTable))
 	}
-	if len(junction.ConflictTargets) == 0 {
-		// The link step is `<Junction>().UpsertMany(dedup(created ∪ connected))`
-		// (PRD §9.9.6), and a junction with no conflict-target constant has
-		// its upsert operations resolved off (PRD §9.5), so there is neither a
-		// target to pass nor a method to call. It runs for `create` as much as
-		// for `connect`, which is why it takes the whole edge.
-		return reject("the junction table emits no PK-covering conflict-target constant for the link step to pass")
+	union := make(map[string]bool, len(local)+len(reference))
+	for _, p := range local {
+		if _, ok := inputFieldByColumn(junction.CreateInputFields, p.Local); !ok {
+			return reject(fmt.Sprintf("the junction's local FK %q is absent from its create input", p.Local))
+		}
+		union[p.Local] = true
 	}
-	if _, ok := inputFieldByColumn(junction.CreateInputFields, rel.JunctionLocalFK); !ok {
-		return reject(fmt.Sprintf("the junction's local FK %q is absent from its create input", rel.JunctionLocalFK))
-	}
-	if _, ok := inputFieldByColumn(junction.CreateInputFields, rel.JunctionReferenceFK); !ok {
-		return reject(fmt.Sprintf("the junction's reference FK %q is absent from its create input", rel.JunctionReferenceFK))
+	for _, p := range reference {
+		if _, ok := inputFieldByColumn(junction.CreateInputFields, p.Local); !ok {
+			return reject(fmt.Sprintf("the junction's reference FK %q is absent from its create input", p.Local))
+		}
+		union[p.Local] = true
 	}
 
-	// The junction carries no column beyond its two FKs. A required one
+	// The junction carries no column beyond its two keys. A required one
 	// is a column a nested link row cannot populate. An optional one is
 	// worse, because it fails silently: the link step upserts on the
-	// junction's key and UpsertMany puts every other insert column but a
+	// union of both keys and UpsertMany puts every other insert column but a
 	// sequence column in the update half, so re-linking an existing pair
 	// resets the column to its default and reports success. Measured on the
 	// mysql example: re-connecting a linked category took
 	// `user_categories.slot` from 7 to NULL.
 	for _, f := range junction.CreateInputFields {
-		if f.ColumnName == rel.JunctionLocalFK || f.ColumnName == rel.JunctionReferenceFK {
+		if union[f.ColumnName] {
 			continue
 		}
 		if f.Required {
@@ -1186,7 +1581,10 @@ func nestedAssignExpr(goType string, required bool, pkGoType, parentExpr string,
 	case "*" + pkGoType:
 		return "omittable.Set(&" + parentExpr + ")"
 	}
-	lit := nullWrapperLiteral(inner, parentExpr, resolver)
+	if !nullWrapperHolds(inner, pkGoType) {
+		return ""
+	}
+	lit := nullWrapperLiteral(inner, nestedKeyValueExpr(pkGoType, parentExpr), resolver)
 	if lit == "" {
 		return ""
 	}
@@ -1329,11 +1727,11 @@ func nestedNullFilterExpr(comparatorType string) string {
 	// against all of them, and naming three was a narrower rule than the fact
 	// it encodes.
 	//
-	// No schema reaches the other members through an FK: applyConfigDeclaredFKs
-	// stamps a synthetic FKReference on every config-declared `fk:`, so an
-	// edge's traversed column always classifies as a key and lands on the ID,
-	// Number or Opaque family. The widening is therefore defensive; what makes
-	// a residual miss loud rather than silent is the per-verb diagnostic the
+	// A one-column FK lands on Enum when its column is an enum, and otherwise on
+	// the ID, Number or Opaque family, because applyConfigDeclaredFKs stamps a synthetic FKReference on every
+	// config-declared `fk:` and the column classifies as a key. A composite-key
+	// member classifies by its column and can land on the others. What makes a
+	// residual miss loud rather than silent is the per-verb diagnostic the
 	// caller returns, not this list.
 	base := strings.TrimPrefix(comparatorType, "*")
 	if strings.HasPrefix(base, "comparator.Nullable") {
@@ -1354,25 +1752,26 @@ func nestedNullFilterExpr(comparatorType string) string {
 // comparator.JSONB, comparator.Slice), which drops the verb rather than
 // emitting an unlink with no scope.
 func nestedEqFilterExpr(comparatorType, valueExpr string) string {
-	base := strings.TrimPrefix(comparatorType, "*")
-	inner, nullable := strings.CutPrefix(base, "comparator.Nullable")
-	family := inner
-	if !nullable {
-		family = strings.TrimPrefix(base, "comparator.")
-	}
-	if name, _, generic := strings.Cut(family, "["); generic {
-		family = name
-	}
-	switch family {
+	switch nestedComparatorFamily(comparatorType) {
 	case "Bool", "Enum", "ID", "Number", "Opaque", "String", "Time":
 	default:
 		return ""
 	}
+	base := strings.TrimPrefix(comparatorType, "*")
+	inner, nullable := strings.CutPrefix(base, "comparator.Nullable")
 	if !nullable {
 		return fmt.Sprintf("&%s{Eq: new(%s)}", base, valueExpr)
 	}
 	embedded, _, _ := strings.Cut(inner, "[")
 	return fmt.Sprintf("&%s{%s: comparator.%s{Eq: new(%s)}}", base, embedded, inner, valueExpr)
+}
+
+// nestedComparatorFamily names a filter field's comparator family, without the
+// pointer, the Nullable prefix or a type argument.
+func nestedComparatorFamily(comparatorType string) string {
+	family := strings.TrimPrefix(strings.TrimPrefix(comparatorType, "*"), "comparator.")
+	family, _, _ = strings.Cut(strings.TrimPrefix(family, "Nullable"), "[")
+	return family
 }
 
 // comparatorOperandLiteral spells a Go source literal in the operand type a
@@ -1396,18 +1795,66 @@ func comparatorOperandLiteral(comparatorType, literal string) string {
 	return arg + "(" + literal + ")"
 }
 
-// nestedParentKeyExpr converts the parent's primary key into the element type
-// the FK's comparator takes — a string on the comparator.ID family, the key's
-// own Go type on comparator.Number and comparator.Opaque (PRD §11.2).
+// nestedParentKeyExpr spells the parent's referenced column in the operand type
+// of the comparator filtering the key member: a string on comparator.ID and
+// comparator.String, the column's own value on every other family (PRD §11.2).
 //
-// fkGoType is the FK's *value* type as the relationship builder resolved it,
-// which is the parent's key type by construction; it is what decides the
-// family, exactly as it does for the read loader's `IN` term.
-func nestedParentKeyExpr(fkGoType string, parentPK ColumnContext) string {
-	if funcPKIsStringType(strings.TrimPrefix(fkGoType, "*")) {
-		return funcFKToString(parentPK, "parent."+parentPK.FieldName)
+// The filter field decides, not the parent's Go type. A key member classifies
+// by the column holding it, so an enum, timestamp or boolean member need not
+// land on the family a primary key of that type would.
+func nestedParentKeyExpr(comparatorType string, parentKey ColumnContext) string {
+	expr := "parent." + parentKey.FieldName
+	switch nestedComparatorFamily(comparatorType) {
+	case "ID", "String":
+		return funcFKToString(parentKey, expr)
 	}
-	return "parent." + parentPK.FieldName
+	return nestedKeyValueExpr(parentKey.GoType, expr)
+}
+
+// builtinWrapperValues is the Go type each built-in integration's Null wrapper
+// holds; database/sql's come from gotype.StdNullUnderlying.
+var builtinWrapperValues = map[string]string{
+	"types.NullDateTime":  "time.Time",
+	"uuid.NullUUID":       "uuid.UUID",
+	"decimal.NullDecimal": "decimal.Decimal",
+}
+
+// nullWrapperHolds reports whether a Null wrapper can carry the parent's key,
+// read as nestedKeyValueExpr reads it. A built-in wrapper holds one Go type:
+// sql.NullInt32 cannot carry an int64 key, nor types.NullDateTime a string. A
+// user-declared wrapper's value type is the consumer's, so it is not refused.
+func nullWrapperHolds(wrapper, pkGoType string) bool {
+	held, ok := gotype.StdNullUnderlying(wrapper)
+	if !ok {
+		held, ok = builtinWrapperValues[wrapper]
+	}
+	if !ok {
+		return true
+	}
+	if pkGoType == dateTimeGoType {
+		pkGoType = "time.Time"
+	}
+	return held == pkGoType
+}
+
+// nestedKeyValueExpr reads a key column as the value comparator.Time and
+// types.NullDateTime hold: types.DateTime embeds a time.Time and is not one.
+func nestedKeyValueExpr(goType, expr string) string {
+	if goType == "types.DateTime" {
+		return expr + ".Time"
+	}
+	return expr
+}
+
+// nestedBucketGoType is the map key type the nested executor buckets a target
+// key of goType on (NestedEdgeContext.ConnectBucketGoType). A time key buckets
+// as a time.Time in UTC, see funcNestedBucketKey; every other key buckets as
+// itself.
+func nestedBucketGoType(goType string) string {
+	if isTimeKeyGoType(goType) {
+		return "time.Time"
+	}
+	return goType
 }
 
 // nestedNullAssignExpr renders the right-hand side that sets a nullable FK to

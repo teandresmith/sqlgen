@@ -171,7 +171,7 @@ func usersEntity() manifest.Entity {
 				Name:         "Posts",
 				Kind:         "o2m",
 				TargetEntity: "Post",
-				FK:           &manifest.FK{Table: "posts", Column: "author_id"},
+				FK:           &manifest.FK{Table: "posts", Columns: []string{"author_id"}, References: []string{"id"}},
 			},
 		},
 		Methods: manifest.Methods{
@@ -314,6 +314,51 @@ func TestEmitJSON_PerEntityLayout(t *testing.T) {
 	for _, table := range []string{"users", "active_users"} {
 		got := readFile(t, filepath.Join(dir, "manifest", "entities", table+".json"))
 		checkGolden(t, filepath.Join("testdata", "golden", "per_entity", "entities", table+".json"), got)
+	}
+}
+
+// TestEmitJSON_PerEntityIndexCarriesSchema gives one entity a schema and
+// expects the per_entity index to carry it on that entity's entry alone.
+func TestEmitJSON_PerEntityIndexCarriesSchema(t *testing.T) {
+	doc := newFixtureDocument()
+	doc.Layout = string(config.JSONLayoutPerEntity)
+	if len(doc.Entities) < 2 {
+		t.Fatalf("fixture has %d entities, want at least 2", len(doc.Entities))
+	}
+	doc.Entities[0].Schema = "audit"
+	dir := t.TempDir()
+	if err := manifest.EmitJSON(doc, manifestCfg(config.JSONLayoutPerEntity), dir); err != nil {
+		t.Fatalf("EmitJSON(per_entity) error: %v", err)
+	}
+
+	var index struct {
+		Entities []map[string]any `json:"entities"`
+	}
+	if err := json.Unmarshal(readFile(t, filepath.Join(dir, "manifest", "manifest_gen.json")), &index); err != nil {
+		t.Fatalf("decoding index: %v", err)
+	}
+	// A missing key and an explicit null decode alike from a map, so the entry
+	// records whether the key is present at all.
+	type schemaKey struct {
+		Present bool
+		Value   any
+	}
+	got := map[string]schemaKey{}
+	for _, entry := range index.Entities {
+		table, _ := entry["table"].(string)
+		v, ok := entry["schema"]
+		got[table] = schemaKey{Present: ok, Value: v}
+	}
+	want := map[string]schemaKey{}
+	for i, e := range doc.Entities {
+		if i == 0 {
+			want[e.Table] = schemaKey{Present: true, Value: "audit"}
+			continue
+		}
+		want[e.Table] = schemaKey{}
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("index schema per table (-want +got):\n%s", diff)
 	}
 }
 

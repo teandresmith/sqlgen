@@ -22,17 +22,19 @@ type MergeInput struct {
 	Models map[string][]string
 	// ModelFields carries the per-field overrides sqlgen dictates for the
 	// types gqlgen generates, keyed by GraphQL type then GraphQL field. Each
-	// entry becomes `models.<Type>.fields.<field>.{fieldName,type}`, both of
-	// which gqlgen's modelgen honours in place of its own derivation — the
-	// name in place of `templates.ToGo`, the type in place of the scalar's
-	// `Model[0]` binding.
+	// entry becomes `models.<Type>.fields.<field>.{fieldName,type,omittable}`,
+	// each of which gqlgen's modelgen honours in place of its own derivation —
+	// the name in place of `templates.ToGo`, the type in place of the scalar's
+	// `Model[0]` binding, and the `graphql.Omittable` wrap in place of the
+	// global `nullable_input_omittable` setting.
 	//
 	// `fieldName` is what lets sqlgen's translators reference
 	// gqlgen-generated identifiers by name without predicting how gqlgen
 	// would have spelled them (PRD §26.5.6 "Go field naming").
 	// `type` is what lets a numeric-array input field carry the model's own
 	// element width instead of gqlgen's default `[]int` / `[]float64`, which
-	// no Go conversion bridges.
+	// no Go conversion bridges. `omittable` is what lets the update
+	// translator tell an explicit `null` from an omitted field.
 	//
 	// A `fields:` entry does not bind the type — gqlgen treats a type as
 	// consumer-supplied only when it carries a `model:` path — so listing a
@@ -62,6 +64,11 @@ type ModelField struct {
 	// GoType becomes `type:` — the Go type gqlgen gives the field on a type
 	// it generates, overriding its own scalar binding.
 	GoType string
+	// Omittable becomes `omittable: true` — gqlgen wraps the field in
+	// `graphql.Omittable`, keeping an explicit `null` distinct from an
+	// omitted field. sqlgen owns the key when this is true, overwriting a
+	// consumer value; false emits no key and leaves a consumer's alone.
+	Omittable bool
 }
 
 // Merge merges sqlgen-owned entries into the consumer's gqlgen YAML.
@@ -275,13 +282,25 @@ func mergeModelFields(modelsNode *yaml.Node, modelFields map[string]map[string]M
 // `models.<Type>.fields.<field>` entry. Precedence is per KEY, not per field
 // (§26.5.6): a consumer who wrote `fieldName` keeps theirs and still receives
 // sqlgen's `type`, and vice versa. An empty value writes no key at all —
-// `type: ""` would bind the field to the empty Go type.
+// `type: ""` would bind the field to the empty Go type. `omittable` is the
+// exception: sqlgen owns it on the fields it marks, and overwrites it.
 func writeModelFieldKeys(entry *yaml.Node, f ModelField) {
 	if f.FieldName != "" && findChild(entry, "fieldName") == nil {
 		entry.Content = append(entry.Content, scalarNode("fieldName"), scalarNode(f.FieldName))
 	}
 	if f.GoType != "" && findChild(entry, "type") == nil {
 		entry.Content = append(entry.Content, scalarNode("type"), scalarNode(f.GoType))
+	}
+	// `omittable` is sqlgen-owned, unlike the two keys above: the update
+	// translator reads the field through `graphql.Omittable`, so a consumer
+	// value of false would only produce a translator that does not compile.
+	// It is overwritten in the merged temp config, never on disk.
+	if f.Omittable {
+		if v := findChild(entry, "omittable"); v != nil {
+			*v = *boolScalarNode(true)
+		} else {
+			entry.Content = append(entry.Content, scalarNode("omittable"), boolScalarNode(true))
+		}
 	}
 }
 

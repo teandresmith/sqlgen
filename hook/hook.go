@@ -146,7 +146,7 @@ type QueryHandler func(ctx context.Context, q *QueryContext) (any, error)
 
 // QueryContext provides metadata and access to the query being performed.
 type QueryContext struct {
-	Op          QueryOp   // Get, GetMany, Exists, Count, Paginate, Connection
+	Op          QueryOp   // Get, GetMany, Exists, Count, Paginate, Connection, Stream, Refresh
 	Table       TableName // table name constant (e.g., TableProducts)
 	Schema      string    // schema name (e.g., "public", "" for MySQL/SQLite)
 	PK          any       // primary key value (for Get/Exists; nil for GetMany/Count)

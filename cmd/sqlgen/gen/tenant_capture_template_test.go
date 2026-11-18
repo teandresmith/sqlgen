@@ -79,8 +79,8 @@ func TestTenantCapture_update_returningDialects(t *testing.T) {
 }
 
 // Update on MySQL pre-reads the row's tenant before the UPDATE (no
-// RETURNING); UpdateMany performs exactly one batched pre-read before the
-// per-item loop; UpdateWhere widens the existing
+// RETURNING); UpdateMany performs one batched pre-read per sub-batch, before
+// that sub-batch's per-item loop; UpdateWhere widens the existing
 // collectAffectedIDs pre-SELECT to project the tenant column.
 func TestTenantCapture_update_mysqlPreRead(t *testing.T) {
 	tc := captureProductContext("mysql", "stdlib")
@@ -89,12 +89,13 @@ func TestTenantCapture_update_mysqlPreRead(t *testing.T) {
 	wants := []string{
 		// Single-row by-PK pre-read against the same conditions as the UPDATE.
 		"tenantByPK, err := c.captureAffectedTenants(ctx, conn, updateConds)",
-		"capturedTenant := tenantByPK[id]",
+		"for _, tenant := range tenantByPK {",
 		"m.AffectedTenants = []any{capturedTenant}",
-		// UpdateMany: one batched pre-read, IN over every item PK, tenant
-		// filter appended only when tenancy applies.
-		`preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(itemPKs)...)}`,
-		"tenantByPK, err = c.captureAffectedTenants(ctx, conn, preConds)",
+		// UpdateMany: one batched pre-read per sub-batch, IN over the
+		// sub-batch's item PKs, tenant filter appended only when tenancy
+		// applies.
+		`preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(batchPKs)...)}`,
+		"batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)",
 		"m.AffectedTenants = affectedTenants",
 		// UpdateWhere: widened collect returns index-aligned tenants.
 		"ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)",
@@ -109,9 +110,10 @@ func TestTenantCapture_update_mysqlPreRead(t *testing.T) {
 	if strings.Contains(out, "ReturningColumns") {
 		t.Errorf("mysql update must not emit RETURNING\nfull output:\n%s", out)
 	}
-	// Exactly one batched pre-read call in UpdateMany — not per-item.
+	// Exactly one batched pre-read call site in UpdateMany, inside the
+	// sub-batch loop — per sub-batch, not per item.
 	if got := strings.Count(out, "c.captureAffectedTenants(ctx, conn, preConds)"); got != 1 {
-		t.Errorf("mysql UpdateMany batched pre-read count = %d, want 1", got)
+		t.Errorf("mysql UpdateMany batched pre-read call sites = %d, want 1", got)
 	}
 }
 
@@ -148,6 +150,8 @@ func TestTenantCapture_delete_acrossDialects(t *testing.T) {
 		out := renderTenantCapture(t, base("mysql", "stdlib"), "table/delete", sql.NewMySQLDialect())
 		wants := []string{
 			"tenantByPK, err := c.captureAffectedTenants(ctx, conn, hardConds)",
+			// The *Many methods pre-read each sub-batch and merge the tenants.
+			"batchTenants, err := c.captureAffectedTenants(ctx, conn, hardConds)",
 			"m.AffectedTenants = []any{capturedTenant}",
 			"ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)",
 			"m.AffectedTenants = affectedTenants",
@@ -270,7 +274,7 @@ func TestTenantCapture_increment_acrossDialects(t *testing.T) {
 		out := renderTenantCapture(t, base("mysql", "stdlib"), "table/increment", sql.NewMySQLDialect())
 		wants := []string{
 			"tenantByPK, err := c.captureAffectedTenants(ctx, conn, incConds)",
-			"capturedTenant := tenantByPK[id]",
+			"for _, tenant := range tenantByPK {",
 			"m.AffectedTenants = []any{capturedTenant}",
 		}
 		for _, want := range wants {
@@ -420,6 +424,11 @@ func TestTenantCapture_rendersSyntacticallyValidGo(t *testing.T) {
 		tc.Operations.Upsert = true
 		tc.Operations.Increment = true
 		tc.SoftDelete = &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt", Strategy: "timestamp"}
+		// Production wires the soft-delete column's filter field with the
+		// SoftDelete context; the write read-backs name its comparator.
+		tc.FilterFields = append(tc.FilterFields, gen.FilterFieldContext{
+			FieldName: "DeletedAt", ComparatorType: "*comparator.NullableTime", Filterable: true, IsSoftDeleteColumn: true,
+		})
 		tc.ConflictTargets = []gen.ConflictTargetContext{
 			{ConstantName: "ProductConflictPK", Columns: []string{"id"}, CoversPK: true, Comment: "PRIMARY KEY (id)"},
 		}
@@ -545,7 +554,7 @@ func TestTenantCapture_compositeTenantOutsidePK(t *testing.T) {
 	pgUpdate := renderTenantCapture(t, compositeTenantOutsidePKContext("postgres", "pgx"), "table/update", sql.NewPostgresDialect())
 	for _, want := range []string{
 		"tenantByPK := make(map[LineItemPK]any, len(items))",
-		"queuedPKs = append(queuedPKs, item.PK)",
+		"tenantByPK[queuedItems[i].PK] = rowTenant",
 		`"order_id", "product_id", "workspace_id"`,
 	} {
 		if !strings.Contains(pgUpdate, want) {
@@ -564,5 +573,38 @@ func TestTenantCapture_compositeTenantOutsidePK(t *testing.T) {
 	myClient := renderTenantCapture(t, compositeTenantOutsidePKContext("mysql", "stdlib"), "table/client", sql.NewMySQLDialect())
 	if !strings.Contains(myClient, "map[LineItemPK]any") {
 		t.Errorf("mysql composite client helper missing PK-struct-keyed map")
+	}
+}
+
+// pgx UpdateMany's tenant-capturing fallback, taken when the querier has no
+// SendBatch, runs each sub-batch's RETURNING statements inside a per-batch
+// transaction, as the plain fallback does.
+func TestTenantCapture_updateMany_pgxFallbackInTransaction(t *testing.T) {
+	out := renderTenantCapture(t, captureProductContext("postgres", "pgx"), "table/update", sql.NewPostgresDialect())
+	assertPgxUpdateManyFallbackInTransaction(t, out, "conn.Query(ctx, q, batchArgs[i]...)")
+}
+
+// MySQL UpdateMany captures tenants with one pre-read per sub-batch, inside
+// the batch loop, so the pre-read's IN list is bounded by batch_size like the
+// delete family's.
+func TestTenantCapture_updateMany_mysqlPreReadPerSubBatch(t *testing.T) {
+	tc := captureProductContext("mysql", "stdlib")
+	out := renderTenantCapture(t, tc, "table/update", sql.NewMySQLDialect())
+
+	start := strings.Index(out, ") UpdateMany(")
+	if start < 0 {
+		t.Fatalf("mysql update output has no UpdateMany\nfull output:\n%s", out)
+	}
+	body := out[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	loop := strings.Index(body, "for start := 0; start < len(items); start += c.batchSize {")
+	read := strings.Index(body, "c.captureAffectedTenants(ctx, conn, preConds)")
+	if loop < 0 || read < 0 {
+		t.Fatalf("UpdateMany batch loop at %d, pre-read at %d; want both\nbody:\n%s", loop, read, body)
+	}
+	if read < loop {
+		t.Errorf("UpdateMany pre-read runs before the sub-batch loop, over every item; want one pre-read per sub-batch\nbody:\n%s", body)
 	}
 }

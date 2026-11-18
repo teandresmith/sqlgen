@@ -63,19 +63,6 @@ postgres:
 SELECT "id", "label", "user_id" FROM "public"."user_badges" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserBadgeFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."user_badges" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -100,6 +87,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."user_badges" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserBadgeFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."user_badges" WHERE <filter>
 ```
 
 ### Paginate
@@ -160,36 +160,6 @@ postgres:
 INSERT INTO "public"."user_badges" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateUserBadgeInput`, `target UserBadgeConflictTarget`
-- Returns: `*UserBadge`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserBadgeConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."user_badges" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserBadgeInput`, `target UserBadgeConflictTarget`
-- Returns: `[]*UserBadge`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."user_badges" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateUserBadgeInput`
@@ -233,6 +203,36 @@ postgres:
 
 ```sql
 UPDATE "public"."user_badges" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateUserBadgeInput`, `target UserBadgeConflictTarget`
+- Returns: `*UserBadge`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserBadgeConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."user_badges" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserBadgeInput`, `target UserBadgeConflictTarget`
+- Returns: `[]*UserBadge`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."user_badges" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -295,3 +295,17 @@ Type `UserBadgeFilter`.
 Type `UserBadgeSort`.
 
 Fields: ID, Label, UserID
+
+## Read examples
+
+```go
+row, err := client.UserBadges().Get(ctx, 1)
+rows, err := client.UserBadges().GetMany(ctx, &models.GetUserBadgesInput{Filter: &models.UserBadgeFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserBadges().Create(ctx, &models.CreateUserBadgeInput{Label: "example"})
+updated, err := client.UserBadges().Update(ctx, 1, &models.UpdateUserBadgeInput{UserID: omittable.Set(new(uuid.NewV4()))})
+```

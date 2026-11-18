@@ -60,19 +60,6 @@ sqlite:
 SELECT "author", "body", "created_at", "deleted_at", "id", "title" FROM "articles" WHERE <filter> AND "deleted_at" IS NULL ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ArticleFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "articles" WHERE <filter> AND "deleted_at" IS NULL
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -97,6 +84,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "articles" WHERE <filter> AND "deleted_at" IS NULL)
+```
+
+### Count
+
+- Params: `filter *ArticleFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "articles" WHERE <filter> AND "deleted_at" IS NULL
 ```
 
 ### Paginate
@@ -157,36 +157,6 @@ sqlite:
 INSERT INTO "articles" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateArticleInput`, `target ArticleConflictTarget`
-- Returns: `*Article`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "articles" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateArticleInput`, `target ArticleConflictTarget`
-- Returns: `[]*Article`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "articles" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateArticleInput`
@@ -230,6 +200,36 @@ sqlite:
 
 ```sql
 UPDATE "articles" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateArticleInput`, `target ArticleConflictTarget`
+- Returns: `*Article`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "articles" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateArticleInput`, `target ArticleConflictTarget`
+- Returns: `[]*Article`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "articles" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### SoftDelete
@@ -381,3 +381,17 @@ Type `ArticleFilter`.
 Type `ArticleSort`.
 
 Fields: Author, Body, CreatedAt, DeletedAt, ID, Title
+
+## Read examples
+
+```go
+row, err := client.Articles().Get(ctx, 1)
+rows, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{Filter: &models.ArticleFilter{Author: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: "example", Author: "example"})
+updated, err := client.Articles().Update(ctx, 1, &models.UpdateArticleInput{Title: omittable.Set("example")})
+```

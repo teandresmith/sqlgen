@@ -319,7 +319,7 @@ schema shapes.
 | M1 | `Count(pred) == len(Find(pred))` | Predicate translator divergence between Count and Find paths |
 | M2 | `Insert(x); Get(x.ID) == x` (round-trip) | Scan / value-binding bugs, type coercion bugs |
 | M3 | `Find(WhereEq(c,v))` returns only rows with `row.c == v` | Predicate-builder bugs, identifier quoting bugs |
-| M4 | `SoftDelete(x); Find()` excludes `x`; `Find(IncludeDeleted)` includes | Soft-delete filter injection in WHERE / JOIN |
+| M4 | `SoftDelete(x); Find()` excludes `x`; `Find` with the soft-delete comparator set includes | Soft-delete filter injection in WHERE / JOIN |
 | M5 | Pagination sum: `Σ len(page_i) == Count()` over full traversal | Cursor encoding, OFFSET/LIMIT off-by-one |
 | M6 | Cross-tenant: rows inserted as tenant A never returned for tenant B | Tenancy filter injection completeness |
 | M7 | `Find().OrderBy(c, Asc)` is monotonically non-decreasing on `c` | ORDER BY emission, nullability ordering |

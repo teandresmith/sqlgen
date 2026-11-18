@@ -188,7 +188,7 @@ Each driver adapter (`database/pgx/`, `database/stdlib/`) translates driver-spec
 | Unique | `23505` | `1062` | `2067` |
 | Foreign key | `23503` | `1451` / `1452` | `787` |
 | Check | `23514` | `3819` | `275` |
-| Not null | `23502` | `1048` | `1299` |
+| Not null | `23502` | `1048` / `1364` | `1299` |
 | Primary key | `23505` | `1062` | `1555` |
 
 **Non-constraint errors:**
@@ -250,6 +250,7 @@ MySQL does not expose constraint name, table, or column as structured fields. Th
 | `1062` | `"Duplicate entry 'VALUE' for key 'TABLE.CONSTRAINT'"` | Constraint name after `for key` |
 | `1451` / `1452` | `"... a foreign key constraint fails (SCHEMA.TABLE, CONSTRAINT ...)"` | Constraint in parentheses |
 | `1048` | `"Column 'COLUMN' cannot be null"` | Column name in single quotes |
+| `1364` | `"Field 'COLUMN' doesn't have a default value"` | Column name in single quotes |
 
 **modernc.org/sqlite** — `*sqlite.Error`:
 
@@ -307,8 +308,9 @@ fmt.Errorf("parsing column custom_id: %w", err)
 1. **One wrap per layer.** Generated code wraps once with operation + table. The driver adapter wraps once when mapping to `ConstraintError`. Do not double-wrap.
 2. **Always use `%w`.** Consumers need `errors.Is()` and `errors.As()` to work through the chain. Use `%v` only at true system boundaries where the underlying error should not be part of the API.
 3. **Operation names are lowercase.** `"create product"`, not `"Create Product"` or `"CREATE product"`.
-4. **Table names are singular.** `"create product"`, not `"create products"`. The table name matches the Go struct name convention.
-5. **The `wrapcheck` linter enforces this.** Errors from external packages (pgx, database/sql) must be wrapped with context before returning.
+4. **Singular for single-row methods, the table name as written for the rest.** Methods that address one row (`Get`, `Exists`, `Create`, `Update`, `Upsert`, `Increment`, `SoftDelete`, `Restore`, `HardDelete`, and the `*WithRelated` methods) use the singularized table name: `"create product"`, `"create order_item"`. Every other method uses the SQL table or view name as written: `"get many products"`, `"update order_items where"`. The full prefix table is in PRD §22.3.
+5. **One prefix per exported method, sentinels included.** Each exported client method wraps every error it returns, `ErrNotFound`, `ErrNilInput`, `ErrEmptyFilter` and `ErrInvalidCursor` among them, with its own prefix exactly once, at its return points, whichever step failed (beginning its transaction, a statement, a scan, or reading the result set). Inner steps return their cause unprefixed, or with a step label (`scan product:`), so no method's prefix is doubled. A cause may begin with the prefix of another client method called internally: `get product: get many products: …`.
+6. **The `wrapcheck` linter enforces this.** Errors from external packages (pgx, database/sql) must be wrapped with context before returning.
 
 ---
 
@@ -417,7 +419,7 @@ Events, cache invalidation, and other side effects are collected via `Tx.OnCommi
 When `OnCommit` callbacks fail after a successful commit:
 
 1. Retry once immediately.
-2. Log on second failure with full context (table, PK, operation, error).
+2. Log the callback's error on second failure; the hook that registered it supplies the table, PK and operation.
 3. Continue — one failure does not block others.
 4. Trip the circuit breaker if failures exceed threshold.
 
@@ -545,7 +547,7 @@ Each driver adapter has unit tests that construct real driver error types and ve
 - Verify all `ConstraintError` fields are populated from structured pgx fields.
 
 **MySQL:**
-- `*mysql.MySQLError` with numbers `1062`, `1451`, `1452`, `1048`, `3819`, `1213`, `2002`, `2006`.
+- `*mysql.MySQLError` with numbers `1062`, `1451`, `1452`, `1048`, `1364`, `3819`, `1213`, `2002`, `2006`.
 - Verify message parsing extracts constraint and column names.
 - Test graceful fallback when message format is unrecognized (fields left empty).
 

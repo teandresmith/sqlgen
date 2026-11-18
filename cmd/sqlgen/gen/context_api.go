@@ -252,6 +252,11 @@ type APITableContext struct {
 	// rowIdentityFields for how the set is chosen; empty only for an entity
 	// with no columns at all, which the walker then leaves untouched.
 	RowIdentityFields []string
+	// RowKeys spells the updates' re-read of the rows they wrote: how each
+	// row's key is collected and the one filter that selects them all, for
+	// the bulk update with operators and, on a soft-delete table, the single
+	// and nested updates. Zero when the table has no primary key.
+	RowKeys APIRowKeys
 	// Nested is the GraphQL projection of the table's nested-mutation surface
 	// (PRD §9.9, §26.5.1) — the three `…WithRelated` mutations, their wrapper
 	// and verb-block inputs, and the upsert's conflict-target enum. nil when
@@ -511,6 +516,7 @@ var shippedComparatorFamilies = []APIComparatorFamily{
 		Operators: []APIComparatorOperator{
 			{Name: "eq", Type: "Boolean"},
 			{Name: "neq", Type: "Boolean"},
+			{Name: "in", Type: "[Boolean!]"},
 		},
 	},
 	{
@@ -741,8 +747,9 @@ type APIPKArg struct {
 	// unions GoImport across every PK column on every table for the file's
 	// import block.
 	GoImport string
-	// ModelGoType is the Go type the consumer model's PK struct field expects
-	// (e.g. "int64" for `BIGSERIAL PRIMARY KEY`). When ModelGoType differs
+	// ModelGoType is the Go type the consumer model's PK struct field expects,
+	// spelled from the resolver package (e.g. "int64" for `BIGSERIAL PRIMARY
+	// KEY`, "models.Kind" for an enum). When ModelGoType differs
 	// from GoType, the `pkConvert` helper emits a Go conversion at the model-
 	// call boundary. Same value as GoType when no cast is needed.
 	ModelGoType string
@@ -868,11 +875,21 @@ type APIInputField struct {
 	GoFieldName    string // Go field name on the gqlgen-generated input, dictated via models.<T>.fields
 	ModelFieldName string // consumer model's input field name (e.g. "Name")
 	GoType         string // bare Go type without omittable / pointer wrappers (e.g. "string", "int32")
-	// SchemaNullable mirrors the column's `col.Nullable`. True → the GraphQL
-	// schema declares the field as nullable, gqlgen emits the input field as
-	// `*T` (the translator must nil-check before deref). False → schema is
-	// `T!`, gqlgen emits bare `T`, no nil-check required.
+	// SchemaNullable reports whether the GraphQL input field is nullable.
+	// True → gqlgen emits the input field as `*T` (the translator must
+	// nil-check before deref). False → schema is `T!`, gqlgen emits bare `T`,
+	// no nil-check required. It is the column's `col.Nullable`, and on a
+	// create input it is also true for a non-PK field the model holds as
+	// omittable — a NOT NULL column with a default, which the client may
+	// leave out.
 	SchemaNullable bool
+	// GqlgenOmittable reports that sqlgen dictates
+	// `models.<Input>.fields.<f>.omittable: true` for this field, so gqlgen
+	// emits it as `graphql.Omittable[*T]` and an explicit `null` stays
+	// distinguishable from an omitted field. Set on update-input fields over
+	// a nullable column: there `null` clears the column, while an omitted
+	// field leaves it alone.
+	GqlgenOmittable bool
 	// ModelOmittable reports whether the consumer model wraps the field in
 	// `omittable.Value[…]`. The wrap drives whether the translator emits a
 	// bare assignment or `omittable.Set(…)`. Mirrors `InputFieldContext.Omittable`.
@@ -943,10 +960,16 @@ type APIUpdateOp struct {
 	// suffix on SetGoField rather than something gqlgen has to re-derive.
 	IncGraphQLName string // "stock_inc"
 	DecGraphQLName string // "stock_dec"
+	// SetGoField is the column's Go field name on both the gqlgen-generated
+	// Update<T>Input and the model's Update<T>Input.
 	SetGoField     string // "Stock"
 	IncGoField     string // "StockInc"
 	DecGoField     string // "StockDec"
 	IncColumnConst string // "ProductIncrementStock"
+	// SetGqlgenOmittable mirrors the set field's APIInputField.GqlgenOmittable:
+	// gqlgen emits it as `graphql.Omittable[*T]`, so its presence is
+	// `.IsSet()` rather than a nil check.
+	SetGqlgenOmittable bool
 }
 
 // APIFieldContext holds one column emitted as a GraphQL field on a type.
@@ -955,7 +978,13 @@ type APIFieldContext struct {
 	GraphQLName string // "userId" or "user_id"
 	GraphQLType string // "String!" / "UUID" / "DateTime!"
 	GraphQLBare string // "String" / "UUID" — without the "!" suffix
-	GoFieldName string // PascalCase Go field name on the FieldOptions struct (e.g. "UserID")
+	// CreateGraphQLType is the field's type on `Create<T>Input` and on every
+	// nested child input built from it. It is GraphQLType, except that a
+	// column the Go `Create<T>Input` holds as `omittable.Value[…]` (a NOT NULL
+	// column with a default) drops the `!`: the client may leave it out and
+	// let the default apply. Empty when InCreateInput is false.
+	CreateGraphQLType string
+	GoFieldName       string // PascalCase Go field name on the FieldOptions struct (e.g. "UserID")
 	// GoFieldOverridden reports that GoFieldName came from
 	// `column_map.<col>.name` rather than from the naming engine. The bound
 	// row type then needs an explicit `models.<T>.fields.<f>.fieldName`
@@ -1406,7 +1435,7 @@ func BuildAPIContext(tables []TableContext, views []ViewContext, enums []EnumCon
 	exposedTargets := apiExposedTargets(cfg, tables, views)
 
 	for _, tc := range tables {
-		if !tableAPIEnabled(cfg, tc.TableName, tc.Schema) {
+		if !tableAPIExposed(cfg, &tc) {
 			continue
 		}
 		at, err := buildOneAPITable(cfg, g, tc, scalarsByName, translatorsByName, binds, usedEnumsByName, exposedTargets)
@@ -2684,10 +2713,15 @@ func buildAPITableContext(tc TableContext, apiOps ResolvedOperations, g *config.
 	}
 
 	updateOps, incEnumType := buildAPIIncrementBindings(tc, gqlNameByColumn)
+	applyAPIInputShapes(fields, createInputFields, updateInputFields, updateOps)
 	apiFilterFields := buildAPIFilterFields(ent, fields, translatorsByName)
 	apiFilterRels := buildAPIFilterRelationships(tc.RelationshipFilters, g.FieldCasing, exposedTargets, filterFieldNameSet(apiFilterFields))
 	sortFields, sortEnumType, sortInputType := buildAPISortBindings(ent, fields)
 
+	rowKeys, err := buildAPIRowKeys(tc, modelsPkg)
+	if err != nil {
+		return APITableContext{}, err
+	}
 	return APITableContext{
 		StructName:          tc.StructName,
 		SnakeName:           tc.SnakeName,
@@ -2749,7 +2783,114 @@ func buildAPITableContext(tc TableContext, apiOps ResolvedOperations, g *config.
 		SortFields:          sortFields,
 
 		RowIdentityFields: rowIdentityFields(ent),
+		RowKeys:           rowKeys,
 	}, nil
+}
+
+// APIRowKeys is the Go the updates emit to re-read, in one GetMany, the rows
+// they wrote. The spellings fix the loop variable to `row` and the key
+// slice to `keys`. Only an enum key's ElemType and FilterMember carry the models
+// package; the template qualifies a composite key's with its own alias.
+type APIRowKeys struct {
+	// Composite reports a composite key: ElemType and FromRow then name the
+	// model's PK struct and need the models package in front.
+	Composite bool
+	// ElemType is the key slice's element type: the model's PK struct for a
+	// composite key, otherwise the type the PK column's filter comparator
+	// takes (`string` for comparator.ID).
+	ElemType string // "string" / "int64" / "UserCategoryPK"
+	// FromRow reads one key off `row`, converted to ElemType.
+	FromRow string // "row.ID.String()" / "row.ID" / "UserCategoryPK{UserID: row.UserID, …}"
+	// FromKeyFormat converts a key of the model's key type to ElemType: a
+	// format whose one %s is the key expression.
+	FromKeyFormat string // "%s.String()" / "%s"
+	// FilterMember is the `<T>Filter` member that selects every row in
+	// `keys`.
+	FilterMember string // "ID: &comparator.ID{In: keys}" / "PKs: keys"
+	// Imports are the import paths FromRow / FromKeyFormat / FilterMember /
+	// ElemType need beyond the models package, sorted.
+	Imports []string
+}
+
+// buildAPIRowKeys derives APIRowKeys from the table's key the same way the
+// client's own UpdateWhere read-back does: a composite key through the
+// filter's PKs member, a single column through its comparator's `In`, and on
+// a soft-delete table the soft-delete comparator set empty, so a row the
+// update soft-deleted is read back too.
+func buildAPIRowKeys(tc TableContext, modelsPkg string) (APIRowKeys, error) {
+	if len(tc.PKColumns) == 0 {
+		return APIRowKeys{}, nil
+	}
+	keys := buildAPIRowKeyMembers(tc, modelsPkg)
+	lit, err := funcSoftDeleteFilterAny(tc)
+	if err != nil {
+		return APIRowKeys{}, err
+	}
+	if lit != "" {
+		keys.FilterMember += ", " + tc.SoftDelete.FieldName + ": " + lit
+		if !slices.Contains(keys.Imports, comparatorImport) {
+			keys.Imports = append(keys.Imports, comparatorImport)
+			slices.Sort(keys.Imports)
+		}
+	}
+	return keys, nil
+}
+
+// comparatorImport is the import path of the runtime comparator package.
+const comparatorImport = "github.com/teandresmith/sqlgen/comparator"
+
+// buildAPIRowKeyMembers is buildAPIRowKeys without the soft-delete member.
+func buildAPIRowKeyMembers(tc TableContext, modelsPkg string) APIRowKeys {
+	if tc.CompositePK {
+		var b strings.Builder
+		b.WriteString(tc.CompositePKStructName + "{")
+		for i, col := range tc.PKColumns {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(col.FieldName + ": row." + col.FieldName)
+		}
+		b.WriteString("}")
+		return APIRowKeys{Composite: true, ElemType: tc.CompositePKStructName, FromRow: b.String(), FromKeyFormat: "%s", FilterMember: "PKs: keys"}
+	}
+	col := tc.PKColumns[0]
+	base := strings.TrimPrefix(col.GoType, "*")
+	imports := []string{comparatorImport}
+	family, _ := pkComparatorFamily(base)
+	elem, fromRow, fromKey := base, "row."+col.FieldName, "%s"
+	filter := pkFilterInExpr(base, "keys", false)
+	switch {
+	case base == dateTimeGoType:
+		// comparator.Time takes the time.Time a types.DateTime wraps, and the
+		// shared dateTimeKeys helper is not visible from this package.
+		elem = "time.Time"
+		fromRow = nestedKeyValueExpr(base, fromRow)
+		fromKey = nestedKeyValueExpr(base, fromKey)
+		filter = pkFilterInExpr(elem, "keys", false)
+		imports = append(imports, "time")
+	case family == "Enum":
+		// The enum is declared in the models package; the resolver is not.
+		elem = modelsPkg + "." + base
+		filter = "&comparator.Enum[" + elem + "]{In: keys}"
+	case family == "ID":
+		elem = "string"
+		fromRow = funcFKToStringByGoType(base, fromRow)
+		fromKey = funcFKToStringByGoType(base, fromKey)
+		if strings.HasPrefix(fromRow, "fmt.") {
+			imports = append(imports, "fmt")
+		}
+	case col.Import != "":
+		// A qualified element type (time.Duration, net.IP) needs its package.
+		imports = append(imports, col.Import)
+	}
+	slices.Sort(imports)
+	return APIRowKeys{
+		ElemType:      elem,
+		FromRow:       fromRow,
+		FromKeyFormat: fromKey,
+		FilterMember:  col.FieldName + ": " + filter,
+		Imports:       imports,
+	}
 }
 
 // apiColumnFields is the per-column pass's result: the field contexts plus the
@@ -2817,11 +2958,11 @@ func buildAPIColumnFields(ent APIEntity, g *config.GraphQLAPIConfig, callerPK bo
 // because either failing is the same class of failure — a column whose Go type
 // the translator cannot bridge onto gqlgen's.
 func buildAPIMutationInputs(tc TableContext, gqlNameByColumn, scalarByColumn map[string]string, modelsPkg string, callerPK bool, tenantCol string) (create, update []APIInputField, err error) {
-	create, err = buildAPIInputFields(tc.CreateInputFields, tc.Columns, gqlNameByColumn, scalarByColumn, modelsPkg, callerPK, "")
+	create, err = buildAPIInputFields(tc.CreateInputFields, tc.Columns, gqlNameByColumn, scalarByColumn, modelsPkg, apiCreateInput, callerPK, "")
 	if err != nil {
 		return nil, nil, fmt.Errorf("table %s create input: %w", tc.TableName, err)
 	}
-	update, err = buildAPIInputFields(tc.UpdateInputFields, tc.Columns, gqlNameByColumn, scalarByColumn, modelsPkg, false, tenantCol)
+	update, err = buildAPIInputFields(tc.UpdateInputFields, tc.Columns, gqlNameByColumn, scalarByColumn, modelsPkg, apiUpdateInput, false, tenantCol)
 	if err != nil {
 		return nil, nil, fmt.Errorf("table %s update input: %w", tc.TableName, err)
 	}
@@ -2858,6 +2999,12 @@ func buildAPIPKArgs(ent APIEntity, casing string, scalarsByName map[string]APISc
 		// column, but stripping `[]` unconditionally would mis-type a
 		// `[]byte` PK arg as `byte`.
 		modelGoType := strings.TrimPrefix(col.GoType, "*")
+		if isEnumLikeType(modelGoType) {
+			// The enum is declared in the models package; the resolver and
+			// seed files are not. Qualifying the model side too keeps
+			// pkConvert and the nested id verbs on the identity arm.
+			modelGoType = binds.modelsPkg + "." + modelGoType
+		}
 		argGoType := gqlgenGoTypeFor(bareScalar, modelGoType)
 		// PK arg matches the model's Go type (custom scalars: UUID, Decimal,
 		// DateTime, etc.) — third-party imports flow through. The four spec
@@ -2927,6 +3074,35 @@ func buildAPIIncrementBindings(tc TableContext, gqlNameByColumn map[string]strin
 		enumType = tc.StructName + "IncrementColumn"
 	}
 	return ops, enumType
+}
+
+// applyAPIInputShapes copies the per-input decisions buildAPIInputFields made
+// back onto the two places that read them from elsewhere: the schema field's
+// create-input type, and the presence test the `_inc` / `_dec` pairing check
+// applies to an operator's set field. Deriving either a second time would let
+// the schema, gqlgen's Go shape and the translators disagree.
+func applyAPIInputShapes(fields []APIFieldContext, create, update []APIInputField, ops []APIUpdateOp) {
+	createByName := make(map[string]APIInputField, len(create))
+	for _, in := range create {
+		createByName[in.GraphQLName] = in
+	}
+	for i := range fields {
+		f := &fields[i]
+		if !f.InCreateInput {
+			continue
+		}
+		f.CreateGraphQLType = f.GraphQLType
+		if in, ok := createByName[f.GraphQLName]; ok && in.SchemaNullable {
+			f.CreateGraphQLType = f.GraphQLBare
+		}
+	}
+	omittableByGoField := make(map[string]bool, len(update))
+	for _, in := range update {
+		omittableByGoField[in.GoFieldName] = in.GqlgenOmittable
+	}
+	for i := range ops {
+		ops[i].SetGqlgenOmittable = omittableByGoField[ops[i].SetGoField]
+	}
 }
 
 // buildAPISortBindings derives the per-table sort field set and the matching
@@ -3602,7 +3778,7 @@ func buildUpdateOps(tc TableContext, gqlNameByColumn map[string]string) []APIUpd
 	for _, col := range columns {
 		// §32.2: `_inc` / `_dec` operators are emitted only for API-writable
 		// numeric columns — the schema-side gate (`$f.InUpdateInput` plus
-		// `$f.Numeric`) and this resolver/seed-side list must stay in sync.
+		// `$f.Numeric`) and this resolver-side list must stay in sync.
 		if !columnAccessCapabilities(col).APIWritable {
 			continue
 		}
@@ -3664,6 +3840,11 @@ func inputDroppedColumns(columns []ColumnContext, keepCallerPKs bool, dropTenant
 // no field for it there, so `translateUpdate<T>Input` and
 // `hasUpdate<T>SetFields` must stop referencing one.
 //
+// `side` says which input the fields belong to, which decides two things the
+// model field alone does not: a create field the model holds as omittable is
+// optional in the schema (PRD §26.4), and an update field over a nullable
+// column is a gqlgen `Omittable` so `null` can clear it (PRD §26.5.4).
+//
 // `columns` provides the original `ColumnContext` slice so the function can
 // look up `col.Nullable` (schema-side nullability) per input field — neither
 // `InputFieldContext` nor `APIInputField` track this on their own.
@@ -3673,7 +3854,7 @@ func inputDroppedColumns(columns []ColumnContext, keepCallerPKs bool, dropTenant
 // pass that produced the schema. The coercion has to be decided against the
 // binding the schema actually advertises; re-deriving it here would let the
 // two diverge one type at a time.
-func buildAPIInputFields(fields []InputFieldContext, columns []ColumnContext, gqlNameByColumn, scalarByColumn map[string]string, modelsPkg string, keepCallerPKs bool, dropTenantColumn string) ([]APIInputField, error) {
+func buildAPIInputFields(fields []InputFieldContext, columns []ColumnContext, gqlNameByColumn, scalarByColumn map[string]string, modelsPkg string, side apiInputSide, keepCallerPKs bool, dropTenantColumn string) ([]APIInputField, error) {
 	colByName := make(map[string]ColumnContext, len(columns))
 	for _, c := range columns {
 		colByName[c.Name] = c
@@ -3713,12 +3894,17 @@ func buildAPIInputFields(fields []InputFieldContext, columns []ColumnContext, gq
 			return nil, err
 		}
 
+		// A caller-strategy PK stays required even if the model could omit
+		// it: nothing generates the value, so an omitted key would write a
+		// zero-valued one (PRD §26.4 "PK columns in the create input").
+		optionalByDefault := side == apiCreateInput && f.Omittable && !col.PrimaryKey
 		out = append(out, APIInputField{
 			GraphQLName:          gqlNameByColumn[f.ColumnName],
 			GoFieldName:          f.FieldName,
 			ModelFieldName:       f.FieldName,
 			GoType:               bareGoType,
-			SchemaNullable:       col.Nullable,
+			SchemaNullable:       col.Nullable || optionalByDefault,
+			GqlgenOmittable:      side == apiUpdateInput && col.Nullable,
 			ModelOmittable:       f.Omittable,
 			ModelInnerIsPointer:  innerIsPointer,
 			CastTo:               coerce.CastTo,
@@ -3730,6 +3916,14 @@ func buildAPIInputFields(fields []InputFieldContext, columns []ColumnContext, gq
 	}
 	return out, nil
 }
+
+// apiInputSide names the mutation input an APIInputField list is built for.
+type apiInputSide int
+
+const (
+	apiCreateInput apiInputSide = iota
+	apiUpdateInput
+)
 
 // inputCoercion carries the four flags that decide how one create/update
 // input field is coerced from its gqlgen-emitted shape onto the model's.

@@ -94,6 +94,36 @@ func entityNames(doc *manifest.Document) []string {
 	return names
 }
 
+// detectRelationships runs relationship detection on a hand-built schema. A
+// parsed schema carries a FOREIGN KEY constraint for every column reference,
+// and detection reads only the constraints, so each reference without one
+// gets one here first.
+func detectRelationships(s *parser.Schema) {
+	for i := range s.Tables {
+		t := &s.Tables[i]
+		for _, col := range t.Columns {
+			ref := col.FKReference
+			if ref == nil || ref.Synthetic || slices.ContainsFunc(t.Constraints, func(c parser.Constraint) bool {
+				return c.Type == parser.ForeignKey && slices.Equal(c.Columns, []string{col.Name})
+			}) {
+				continue
+			}
+			refCol := ref.Column
+			if refCol == "" {
+				refCol = "id"
+			}
+			t.Constraints = append(t.Constraints, parser.Constraint{
+				Type:             parser.ForeignKey,
+				Columns:          []string{col.Name},
+				ReferenceSchema:  ref.Schema,
+				ReferenceTable:   ref.Table,
+				ReferenceColumns: []string{refCol},
+			})
+		}
+	}
+	parser.DetectRelationships(s)
+}
+
 // --- entity-shape tests ---
 
 func TestBuild_SinglePKTable(t *testing.T) {
@@ -320,16 +350,16 @@ func TestBuild_M2MRelationship(t *testing.T) {
 					{Name: "user_id", Type: "uuid", PrimaryKey: true, FKReference: &parser.FKReference{Table: "users", Column: "id"}},
 					{Name: "role_id", Type: "uuid", PrimaryKey: true, FKReference: &parser.FKReference{Table: "roles", Column: "id"}},
 				},
-				// Composite PRIMARY KEY constraint is what the parser's
-				// junctionConstraint() matches against to flip the table from
-				// O2M into M2M (parser/relationship.go).
+				// Composite PRIMARY KEY constraint is what junction
+				// detection matches against to flip the table from O2M into
+				// M2M (parser.DetectRelationships).
 				Constraints: []parser.Constraint{
 					{Type: parser.PrimaryKey, Columns: []string{"user_id", "role_id"}},
 				},
 			},
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -383,7 +413,7 @@ func TestBuild_M2MJunctionSchema(t *testing.T) {
 			junction("audit", "tag_id", "tags"),
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -396,8 +426,16 @@ func TestBuild_M2MJunctionSchema(t *testing.T) {
 		}
 	}
 	want := map[string]*manifest.Junction{
-		"labels": {Table: "document_labels", Schema: "public", LocalFK: "document_id", TargetFK: "label_id"},
-		"tags":   {Table: "document_labels", Schema: "audit", LocalFK: "document_id", TargetFK: "tag_id"},
+		"labels": {
+			Table: "document_labels", Schema: "public",
+			LocalFK:  manifest.JunctionKey{Columns: []string{"document_id"}, References: []string{"id"}, Constraint: "document_labels(document_id) → documents(id)"},
+			TargetFK: manifest.JunctionKey{Columns: []string{"label_id"}, References: []string{"id"}, Constraint: "document_labels(label_id) → labels(id)"},
+		},
+		"tags": {
+			Table: "document_labels", Schema: "audit",
+			LocalFK:  manifest.JunctionKey{Columns: []string{"document_id"}, References: []string{"id"}, Constraint: "document_labels(document_id) → documents(id)"},
+			TargetFK: manifest.JunctionKey{Columns: []string{"tag_id"}, References: []string{"id"}, Constraint: "document_labels(tag_id) → tags(id)"},
+		},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Document m2m junctions mismatch (-want +got):\n%s", diff)
@@ -431,7 +469,7 @@ func TestBuild_FKSchema(t *testing.T) {
 			table("public", "event_refs", fkCol("event_id", "audit", "events", true)),
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -446,9 +484,9 @@ func TestBuild_FKSchema(t *testing.T) {
 		}
 	}
 	want := map[string]*manifest.FK{
-		"Document.document_notes": {Table: "document_notes", Schema: "audit", Column: "document_id"},
-		"Product.document_notes":  {Table: "document_notes", Schema: "public", Column: "product_id"},
-		"EventRef.events":         {Table: "event_refs", Schema: "public", Column: "event_id"},
+		"Document.document_notes": {Table: "document_notes", Schema: "audit", Columns: []string{"document_id"}, References: []string{"id"}, Constraint: "document_notes(document_id) → documents(id)"},
+		"Product.document_notes":  {Table: "document_notes", Schema: "public", Columns: []string{"product_id"}, References: []string{"id"}, Constraint: "document_notes(product_id) → products(id)"},
+		"EventRef.events":         {Table: "event_refs", Schema: "public", Columns: []string{"event_id"}, References: []string{"id"}, Constraint: "event_refs(event_id) → events(id)"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("FK edges mismatch (-want +got):\n%s", diff)
@@ -465,7 +503,7 @@ func TestBuild_O2MFKNotOnTargetStaysOnTarget(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Tables = map[string]config.TableConfig{
 		"users": {Relationships: []config.TableRelationship{
-			{Name: "Notes", Type: "one_to_many", Table: "notes", FK: "email"},
+			{Name: "Notes", Type: "one_to_many", Table: "notes", FK: config.KeyColumns{"email"}},
 		}},
 	}
 	schema := &parser.Schema{
@@ -474,7 +512,7 @@ func TestBuild_O2MFKNotOnTargetStaysOnTarget(t *testing.T) {
 			{Name: "notes", Columns: []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "body", Type: "text"}}},
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -485,7 +523,7 @@ func TestBuild_O2MFKNotOnTargetStaysOnTarget(t *testing.T) {
 			got = r.FK
 		}
 	}
-	want := &manifest.FK{Table: "notes", Column: "email"}
+	want := &manifest.FK{Table: "notes", Columns: []string{"email"}, References: []string{"id"}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("User.Notes FK mismatch (-want +got):\n%s", diff)
 	}
@@ -1123,9 +1161,11 @@ func TestBuild_GenerationConfig_AllOn(t *testing.T) {
 	// output.dir=models with a top-level sibling graph dir → graph_top_level.
 	cfg.Output.Dir = "models"
 	cfg.API = &config.APIConfig{Enabled: true, GraphQL: &config.GraphQLAPIConfig{Enabled: true, SchemaDir: "graph", ResolverDir: "graph"}}
-	cfg.Views["v"] = config.ViewConfig{}
+	// generation_config.views follows the generated views (PRD §30.4.3), so
+	// the fixture carries a real schema view rather than a bare config entry.
 	schema := &parser.Schema{
 		Tables: []parser.Table{{Name: "t", Columns: []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "tenant_id", Type: "uuid"}, {Name: "deleted_at", Type: "timestamptz", Nullable: true}, {Name: "updated_at", Type: "timestamptz"}}}},
+		Views:  []parser.View{{Name: "v", SQL: "SELECT id FROM t", Columns: []parser.Column{{Name: "id", Type: "uuid"}}}},
 	}
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {
@@ -1570,7 +1610,7 @@ func TestBuild_O2OSideDisambiguation(t *testing.T) {
 				Columns: []parser.Column{
 					{Name: "id", Type: "uuid", PrimaryKey: true},
 					// Nullable UNIQUE FK — auto-detection drives this through
-					// addO2O (Side: SideParent) so the manifest emits "o2o" on
+					// detection (Side: SideParent) so the manifest emits "o2o" on
 					// the User entity without any config help.
 					{
 						Name:        "profile_id",
@@ -1583,7 +1623,7 @@ func TestBuild_O2OSideDisambiguation(t *testing.T) {
 			},
 		},
 	}
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 
 	// Inverse view from the referenced side: opt in via config with
 	// `side: child`. configRelationshipToContext threads Side through to
@@ -1591,7 +1631,7 @@ func TestBuild_O2OSideDisambiguation(t *testing.T) {
 	// switch resolves (OneToOne, SideChild) to "m2o".
 	cfg.Tables["profiles"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child"},
+			{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "child"},
 		},
 	}
 

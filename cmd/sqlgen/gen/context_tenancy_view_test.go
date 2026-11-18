@@ -40,6 +40,9 @@ func TestBuildTenancyContext_viewDetection(t *testing.T) {
 		want       gen.TenancyContext
 		wantErr    string
 		wantWarned bool
+		// anchor adds a tenanted table, which a fixture whose view is shared
+		// needs for the package to have a tenant type at all.
+		anchor bool
 	}{
 		{
 			name: "tenant column present detects tenanted (rule 2)",
@@ -61,7 +64,8 @@ func TestBuildTenancyContext_viewDetection(t *testing.T) {
 				viewCol("id", "uuid", false),
 				viewCol("total", "bigint", false),
 			},
-			want: gen.TenancyContext{Tenanted: false},
+			want:   gen.TenancyContext{Tenanted: false},
+			anchor: true,
 		},
 		{
 			name:    "enabled false forces shared even with the column present (rule 4)",
@@ -70,7 +74,8 @@ func TestBuildTenancyContext_viewDetection(t *testing.T) {
 				viewCol("id", "uuid", false),
 				viewCol("workspace_id", "uuid", false),
 			},
-			want: gen.TenancyContext{Tenanted: false},
+			want:   gen.TenancyContext{Tenanted: false},
+			anchor: true,
 		},
 		{
 			name:    "enabled true with the column absent is a hard error (rule 5)",
@@ -180,6 +185,9 @@ func TestBuildTenancyContext_viewDetection(t *testing.T) {
 				cfg.Views["project_stats"] = *tt.viewCfg
 			}
 			schema := viewSchema("project_stats", tt.columns...)
+			if tt.anchor {
+				withTenantAnchor(schema)
+			}
 
 			got, warnings, err := gen.BuildTenancyContext(cfg, schema, tenancyTestResolver(cfg))
 
@@ -689,5 +697,75 @@ func TestGenerate_viewOnlyTenantedPackageStillEmitsExplicitTenantOption(t *testi
 	// re-aligns the whole struct whenever a longer field name is added to it.
 	if !regexp.MustCompile(`Tenant +\*uuid\.UUID`).MatchString(shared) {
 		t.Errorf("shared_types_gen.go missing the concretely-typed explicit-tenant field; got:\n%s", shared)
+	}
+}
+
+// TestValidateGeneration_ReportsViewTenancyErrorsWithTheOthers pins PRD
+// §4.13's "all validation errors are reported together" for the view tenancy
+// rules: each comes back from ValidateGeneration beside an unrelated error, a
+// table column whose derived field name the generated code reserves.
+func TestValidateGeneration_ReportsViewTenancyErrorsWithTheOthers(t *testing.T) {
+	const partner = `resolves to Go field name "Columns"`
+	catalogs := parser.Table{
+		Name: "catalogs", Schema: "public",
+		Columns: []parser.Column{tableCol("id", "uuid", false, true), tableCol("columns", "text", false, false)},
+	}
+	enabled := &config.ViewConfig{Tenancy: &config.TableTenancyConfig{Enabled: new(true)}}
+
+	tests := []struct {
+		name    string
+		viewCfg *config.ViewConfig
+		tables  []parser.Table
+		columns []parser.Column
+		want    string
+	}{
+		{
+			name:    "enabled view without its tenant column",
+			viewCfg: enabled,
+			columns: []parser.Column{viewCol("id", "uuid", false)},
+			want:    `view public.project_stats declares tenancy.enabled=true but tenant column "workspace_id" is not present`,
+		},
+		{
+			name:    "enabled view with a nullable tenant column",
+			viewCfg: enabled,
+			columns: []parser.Column{viewCol("id", "uuid", false), viewCol("workspace_id", "uuid", true)},
+			want:    `view public.project_stats declares tenancy.enabled=true but tenant column "workspace_id" is nullable`,
+		},
+		{
+			name: "view tenant type diverging from a table's",
+			tables: []parser.Table{{
+				Name: "users", Schema: "public",
+				Columns: []parser.Column{tableCol("id", "uuid", false, true), tableCol("workspace_id", "uuid", false, false)},
+			}},
+			columns: []parser.Column{viewCol("id", "bigint", false), viewCol("workspace_id", "bigint", false)},
+			want:    "tenanted entities must resolve to a uniform tenant Go type",
+		},
+		{
+			name:    "no tenanted table or view",
+			columns: []parser.Column{viewCol("id", "uuid", false)},
+			want:    `no table or view is tenanted: no generated table or view carries tenant column "workspace_id"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tenancyTestConfig()
+			cfg.Overrides.Types["uuid"] = config.TypeOverride{Type: "uuid.UUID", Import: "github.com/google/uuid"}
+			if tt.viewCfg != nil {
+				cfg.Views = map[string]config.ViewConfig{"project_stats": *tt.viewCfg}
+			}
+			schema := viewSchema("project_stats", tt.columns...)
+			schema.Tables = append([]parser.Table{catalogs}, tt.tables...)
+
+			_, err := gen.ValidateGeneration(schema, cfg)
+			if err == nil {
+				t.Fatalf("ValidateGeneration() = nil, want %q and %q", tt.want, partner)
+			}
+			for _, want := range []string{tt.want, partner} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("ValidateGeneration() error = %v, want it to contain %q", err, want)
+				}
+			}
+		})
 	}
 }

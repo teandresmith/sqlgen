@@ -38,7 +38,7 @@ GROUP BY p.id, p.name, p.price, p.description, c.name;
 | `price` | Price | `float64` | `numeric(10,2)` |  |  |  |  | `comparator.Number[float64]` |  |
 | `description` | Description | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
 | `category_name` | CategoryName | `string` | `text` |  |  |  |  | `comparator.String` |  |
-| `order_count` | OrderCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |
+| `order_count` | OrderCount | `int32` | `int64` |  |  |  |  | `comparator.Number[int32]` |  |
 
 ## Query methods
 
@@ -116,3 +116,10 @@ Type `ProductSummaryFilter`.
 Type `ProductSummarySort`.
 
 Fields: CategoryName, Description, ID, Name, OrderCount, Price
+
+## Read examples
+
+```go
+row, err := client.ProductSummary().Get(ctx, uuid.NewV4())
+rows, err := client.ProductSummary().GetMany(ctx, &models.GetProductSummariesInput{Filter: &models.ProductSummaryFilter{CategoryName: &comparator.String{Eq: new("example")}}})
+```

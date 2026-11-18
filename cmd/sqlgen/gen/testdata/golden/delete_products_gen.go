@@ -28,11 +28,19 @@ func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID, opts ...fu
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete product: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -61,7 +69,7 @@ func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID, opts ...fu
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete product: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -85,22 +93,59 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 		if len(ids) == 0 {
 			return []*Product{}, nil
 		}
+
 		idStrings := make([]string, len(ids))
 		for i, id := range ids {
 			idStrings[i] = id.String()
 		}
 
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:     "deleted_at",
-			Type:       sql.SoftDeleteTimestamp,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings)...)},
-		})
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("soft delete products: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:           "deleted_at",
+				Type:             sql.SoftDeleteTimestamp,
+				Conditions:       delConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted product key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -120,7 +165,7 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete many products: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -138,6 +183,13 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -159,7 +211,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete products where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []string
@@ -196,7 +248,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete products where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -220,25 +272,45 @@ func (c *productClient) Restore(ctx context.Context, id uuid.UUID, opts ...func(
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore product: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetProductsInput{
+			Filter: &ProductFilter{ID: &comparator.ID{Eq: new(id.String())}},
+			Limit:  new(1),
+		}, func(o *CallOptions[ProductFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore product: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -262,21 +334,58 @@ func (c *productClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts .
 		if len(ids) == 0 {
 			return []*Product{}, nil
 		}
+
 		idStrings := make([]string, len(ids))
 		for i, id := range ids {
 			idStrings[i] = id.String()
 		}
 
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{"deleted_at": nil},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings)...)},
-		})
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("restore products: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses:       map[string]any{"deleted_at": nil},
+				Conditions:       restoreConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored product key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -295,7 +404,7 @@ func (c *productClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts .
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore many products: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -304,8 +413,8 @@ func (c *productClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts .
 }
 
 // RestoreWhere restores all soft-deleted products matching the filter and returns them.
-// Always scoped to deleted rows — only soft-deleted entities are restored.
-// Returns empty slice when no rows match.
+// Always scoped to deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
 func (c *productClient) RestoreWhere(ctx context.Context, filter *ProductFilter, opts ...func(*CallOptions[ProductFieldOptions])) ([]*Product, error) {
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -313,6 +422,13 @@ func (c *productClient) RestoreWhere(ctx context.Context, filter *ProductFilter,
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -333,7 +449,7 @@ func (c *productClient) RestoreWhere(ctx context.Context, filter *ProductFilter,
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore products where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []string
@@ -368,7 +484,7 @@ func (c *productClient) RestoreWhere(ctx context.Context, filter *ProductFilter,
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore products where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -389,14 +505,25 @@ func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID, opts ...fu
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete product: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete product: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple products from the database.
@@ -408,20 +535,57 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
-			},
-		})
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[uuid.UUID]struct{}, len(ids))
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete products: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[uuid.UUID]struct{}, end-start)
+			for rows.Next() {
+				var rowID uuid.UUID
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted product key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many products: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all products matching the filter.
@@ -448,7 +612,7 @@ func (c *productClient) HardDeleteWhere(ctx context.Context, filter *ProductFilt
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete products where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []string
@@ -465,5 +629,34 @@ func (c *productClient) HardDeleteWhere(ctx context.Context, filter *ProductFilt
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete products where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *productClient) recordWrittenKeys(written map[uuid.UUID]struct{}, listed []uuid.UUID, rowKeys map[uuid.UUID]struct{}) {
+	found := make(map[uuid.UUID]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }

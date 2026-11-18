@@ -30,6 +30,11 @@ func TestBool_Parse(t *testing.T) {
 			want: []sql.Condition{{Clause: "active != $", Value: true, Column: "active"}},
 		},
 		{
+			name: "In",
+			comp: comparator.Bool{In: []bool{true, false}},
+			want: []sql.Condition{{Clause: "active = ANY($)", Value: []bool{true, false}, Column: "active"}},
+		},
+		{
 			name: "Custom passthrough",
 			comp: comparator.Bool{Custom: []sql.Condition{{Clause: "active = $", Value: true}}},
 			want: []sql.Condition{{Clause: "active = $", Value: true}},

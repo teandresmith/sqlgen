@@ -57,19 +57,6 @@ sqlite:
 SELECT "id", "is_deleted", "name" FROM "tags" WHERE <filter> AND "is_deleted" = FALSE ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *TagFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "tags" WHERE <filter> AND "is_deleted" = FALSE
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -94,6 +81,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "tags" WHERE <filter> AND "is_deleted" = FALSE)
+```
+
+### Count
+
+- Params: `filter *TagFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "tags" WHERE <filter> AND "is_deleted" = FALSE
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ sqlite:
 INSERT INTO "tags" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateTagInput`, `target TagConflictTarget`
-- Returns: `*Tag`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated TagConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "tags" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateTagInput`, `target TagConflictTarget`
-- Returns: `[]*Tag`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same TagConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "tags" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateTagInput`
@@ -227,6 +197,36 @@ sqlite:
 
 ```sql
 UPDATE "tags" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateTagInput`, `target TagConflictTarget`
+- Returns: `*Tag`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated TagConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "tags" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateTagInput`, `target TagConflictTarget`
+- Returns: `[]*Tag`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same TagConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "tags" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### SoftDelete
@@ -375,3 +375,17 @@ Type `TagFilter`.
 Type `TagSort`.
 
 Fields: ID, IsDeleted, Name
+
+## Read examples
+
+```go
+row, err := client.Tags().Get(ctx, 1)
+rows, err := client.Tags().GetMany(ctx, &models.GetTagsInput{Filter: &models.TagFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Tags().Create(ctx, &models.CreateTagInput{Name: "example"})
+updated, err := client.Tags().Update(ctx, 1, &models.UpdateTagInput{Name: omittable.Set("example")})
+```

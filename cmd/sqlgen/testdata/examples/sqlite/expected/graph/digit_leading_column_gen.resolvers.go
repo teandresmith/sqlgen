@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/sqlgenresolver"
 )
 
 // CreateDigitLeadingColumn is the resolver for the createDigitLeadingColumn field.
@@ -32,63 +31,12 @@ func (r *mutationResolver) CreateDigitLeadingColumns(ctx context.Context, inputs
 
 // UpdateDigitLeadingColumn is the resolver for the updateDigitLeadingColumn field.
 func (r *mutationResolver) UpdateDigitLeadingColumn(ctx context.Context, id int, input gqlmodel.UpdateDigitLeadingColumnInput) (*models.DigitLeadingColumn, error) {
-	if input.Col2010Revenue != nil && input.Col2010RevenueInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both set and incremented in one mutation")
-	}
-	if input.Col2010RevenueInc != nil && input.Col2010RevenueDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Col2024Quota != nil && input.Col2024QuotaInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both set and incremented in one mutation")
-	}
-	if input.Col2024QuotaInc != nil && input.Col2024QuotaDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateDigitLeadingColumnInput(input)
-	hasSet := hasUpdateDigitLeadingColumnSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.DigitLeadingColumnIncrementColumn]
-	if input.Col2010RevenueInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.DigitLeadingColumnIncrementColumn]{
-			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
-			Amount: int(*input.Col2010RevenueInc),
-		})
-	}
-	if input.Col2010RevenueDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.DigitLeadingColumnIncrementColumn]{
-			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
-			Amount: -int(*input.Col2010RevenueDec),
-		})
-	}
-	if input.Col2024QuotaInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.DigitLeadingColumnIncrementColumn]{
-			Column: models.DigitLeadingColumnIncrementCol2024Quota,
-			Amount: int(*input.Col2024QuotaInc),
-		})
-	}
-	if input.Col2024QuotaDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.DigitLeadingColumnIncrementColumn]{
-			Column: models.DigitLeadingColumnIncrementCol2024Quota,
-			Amount: -int(*input.Col2024QuotaDec),
-		})
-	}
-	return r.M.UpdateDigitLeadingColumn(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateDigitLeadingColumn(ctx, id, translateUpdateDigitLeadingColumnRequest(input))
 }
 
 // UpdateDigitLeadingColumns is the resolver for the updateDigitLeadingColumns field.
 func (r *mutationResolver) UpdateDigitLeadingColumns(ctx context.Context, filter gqlmodel.DigitLeadingColumnFilter, input gqlmodel.UpdateDigitLeadingColumnInput) ([]*models.DigitLeadingColumn, error) {
-	if input.Col2010Revenue != nil && input.Col2010RevenueInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both set and incremented in one mutation")
-	}
-	if input.Col2010RevenueInc != nil && input.Col2010RevenueDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Col2024Quota != nil && input.Col2024QuotaInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both set and incremented in one mutation")
-	}
-	if input.Col2024QuotaInc != nil && input.Col2024QuotaDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateDigitLeadingColumns(ctx, translateDigitLeadingColumnFilter(&filter), translateUpdateDigitLeadingColumnInput(input))
+	return r.M.UpdateDigitLeadingColumns(ctx, translateDigitLeadingColumnFilter(&filter), translateUpdateDigitLeadingColumnRequest(input))
 }
 
 // UpsertDigitLeadingColumn is the resolver for the upsertDigitLeadingColumn field.

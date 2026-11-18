@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/teandresmith/sqlgen/comparator"
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 	"github.com/teandresmith/sqlgen/event"
 	"github.com/teandresmith/sqlgen/event/memorybus"
@@ -203,5 +204,85 @@ func TestEventConfig_EventHookOutermost(t *testing.T) {
 	// hook's post-logic publishes). Expect eh > uh.
 	if eh <= uh {
 		t.Errorf("event hook order %d should be > user hook order %d (event hook outermost, runs last)", eh, uh)
+	}
+}
+
+// SkipEvents inside a transaction collects nothing: the commit publishes only
+// the mutation that did not skip.
+func TestEventConfig_SkipEventsInsideTransaction(t *testing.T) {
+	ctx := context.Background()
+	client, bus := newClientWithBus(t)
+	got := subscribe(t, bus, event.SubscribeOptions{})
+
+	var skippedID, publishedID int64
+	err := client.WithTx(ctx, "skip-events", func(txCtx context.Context) error {
+		p, err := client.Products().Create(txCtx, &models.CreateProductInput{
+			Name: "SkipTx", SKU: "EV-SKIP-TX-1", Price: 1,
+		}, func(o *models.CallOptions[models.ProductFieldOptions]) { o.SkipEvents = true })
+		if err != nil {
+			return err
+		}
+		skippedID = p.ID
+		q, err := client.Products().Create(txCtx, &models.CreateProductInput{
+			Name: "NoSkipTx", SKU: "EV-SKIP-TX-2", Price: 1,
+		})
+		if err != nil {
+			return err
+		}
+		publishedID = q.ID
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithTx: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.Products().HardDelete(ctx, skippedID)
+		_ = client.Products().HardDelete(ctx, publishedID)
+	})
+
+	// The unskipped event arriving shows the commit's callbacks have run.
+	got.waitFor(t, 1)
+	events := got.waitStable()
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (the skipped Create collects nothing): %+v", len(events), events)
+	}
+	if events[0].PK != publishedID {
+		t.Errorf("event PK = %v, want the unskipped row %d (skipped row was %d)", events[0].PK, publishedID, skippedID)
+	}
+}
+
+// A fire-and-forget Create (empty FieldOptions) returns no entity, but the
+// event still carries the database-generated PK.
+func TestEventConfig_FireAndForgetCreateCarriesGeneratedPK(t *testing.T) {
+	ctx := context.Background()
+	client, bus := newClientWithBus(t)
+	got := subscribe(t, bus, event.SubscribeOptions{Actions: []event.Action{event.Create}})
+
+	p, err := client.Products().Create(ctx, &models.CreateProductInput{
+		Name: "FireForget", SKU: "EV-FF-1", Price: 1,
+	}, func(o *models.CallOptions[models.ProductFieldOptions]) {
+		o.FieldOptions = &models.ProductFieldOptions{}
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if p != nil {
+		t.Fatalf("fire-and-forget Create returned %+v, want nil", p)
+	}
+	sku := "EV-FF-1"
+	rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{
+		Filter: &models.ProductFilter{SKU: &comparator.String{Eq: &sku}},
+	})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("GetMany by SKU = %v, %v; want one row", rows, err)
+	}
+	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, rows[0].ID) })
+
+	events := got.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].PK != rows[0].ID {
+		t.Errorf("event PK = %v (%T), want the generated ID %d", events[0].PK, events[0].PK, rows[0].ID)
 	}
 }

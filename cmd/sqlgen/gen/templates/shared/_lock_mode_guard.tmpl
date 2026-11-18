@@ -11,6 +11,12 @@ Behavior:
   - MySQL only: LockForUpdateNoWait / LockForUpdateSkipLocked require server >= 8.0.
     The version is probed once via SELECT VERSION() and cached on the unified
     client (see mysqlVersionCache in client.go.tmpl).
+  - MySQL only, on a table with one-to-one relationships: a locked read that
+    selects one goes through a LEFT JOIN whose lock clause names the parent
+    alias (FOR UPDATE OF / FOR SHARE OF), so only the parent rows are locked.
+    MySQL accepts the OF form from 8.0 and MariaDB not at all, so any mode is
+    rejected there, through the same cached probe. A read that selects no
+    one-to-one relationship is not affected.
 
 Callers must place this fragment immediately after resolveCallOptions(opts) and
 before constructing &hook.QueryContext{...} so the SkipCache force is visible to
@@ -39,6 +45,21 @@ the cache hook in the QueryContext snapshot.
 				return nil, fmt.Errorf("{{ $opName }}: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+{{- if .JoinsO2O }}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("{{ $opName }}: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("{{ $opName }}: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+{{- end }}
 {{- end }}
 	}
 {{- end }}

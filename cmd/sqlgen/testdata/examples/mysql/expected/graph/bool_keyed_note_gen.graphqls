@@ -1,0 +1,72 @@
+"""
+BoolKeyedNote corresponds to the bool_keyed_notes table.
+"""
+type BoolKeyedNote {
+  "id"
+  id: Int!
+  "keyed_k"
+  keyedK: Boolean
+  "note"
+  note: String!
+}
+
+type BoolKeyedNoteConnection {
+  edges:      [BoolKeyedNoteEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type BoolKeyedNoteEdge {
+  node:   BoolKeyedNote!
+  cursor: String!
+}
+
+type BoolKeyedNoteListResult {
+  items:      [BoolKeyedNote!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input BoolKeyedNoteFilter {
+  keyedK: NullableBooleanComparator
+  note: StringComparator
+  and: [BoolKeyedNoteFilter!]
+  or:  [BoolKeyedNoteFilter!]
+}
+
+enum BoolKeyedNoteSortField {
+  ID
+  KEYED_K
+  NOTE
+}
+
+input BoolKeyedNoteSort {
+  field:     BoolKeyedNoteSortField!
+  direction: SortDirection!
+}
+input CreateBoolKeyedNoteInput {
+  keyedK: Boolean
+  note: String!
+}
+input UpdateBoolKeyedNoteInput {
+  keyedK: Boolean
+  note: String
+}
+
+extend type Query {
+  boolKeyedNote(id: Int!): BoolKeyedNote
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to boolKeyedNoteList instead."
+  boolKeyedNotes(filter: BoolKeyedNoteFilter, first: Int, after: String, last: Int, before: String): BoolKeyedNoteConnection!
+  boolKeyedNoteList(filter: BoolKeyedNoteFilter, sort: [BoolKeyedNoteSort!], limit: Int, offset: Int): BoolKeyedNoteListResult!
+}
+
+extend type Mutation {
+  createBoolKeyedNote(input: CreateBoolKeyedNoteInput!): BoolKeyedNote!
+  createBoolKeyedNotes(inputs: [CreateBoolKeyedNoteInput!]!): [BoolKeyedNote!]!
+  updateBoolKeyedNote(id: Int!, input: UpdateBoolKeyedNoteInput!): BoolKeyedNote!
+  updateBoolKeyedNotes(filter: BoolKeyedNoteFilter!, input: UpdateBoolKeyedNoteInput!): [BoolKeyedNote!]!
+  upsertBoolKeyedNote(input: CreateBoolKeyedNoteInput!): BoolKeyedNote!
+  deleteBoolKeyedNote(id: Int!): Boolean!
+}

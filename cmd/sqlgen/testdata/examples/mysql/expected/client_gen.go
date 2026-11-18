@@ -59,17 +59,20 @@ func WithQueryHook(h hook.QueryHook) ClientOption {
 }
 
 // mysqlVersion holds the parsed MySQL server version reported by SELECT VERSION().
-// Used by the LockMode runtime guard to reject NoWait / SkipLocked on MySQL < 8.0
-// before any SQL round-trip.
+// Used by the LockMode runtime guard to reject NoWait / SkipLocked on MySQL < 8.0,
+// and a locked read that joins a one-to-one relationship on MySQL < 8.0 or
+// MariaDB, before any SQL round-trip.
 type mysqlVersion struct {
-	Raw   string // full version string as returned by the server, e.g. "8.0.34" or "5.7.40-log"
-	Major int    // major version parsed from Raw, e.g. 8 or 5
+	Raw     string // full version string as returned by the server, e.g. "8.0.34" or "5.7.40-log"
+	Major   int    // major version parsed from Raw, e.g. 8 or 5
+	MariaDB bool   // Raw names a MariaDB server, e.g. "10.11.6-MariaDB"
 }
 
 // mysqlVersionCache lazily probes and caches the MySQL server version for the
 // lifetime of the client. The probe runs at most once (sync.Once) on the first
-// call to a Get / GetMany / Connection method that requests a version-gated
-// LockMode (NoWait / SkipLocked), always on the pool rather than on a caller's
+// call to a Get / GetMany / Paginate / Connection method that requests a version-gated
+// LockMode (NoWait / SkipLocked, or any mode on a read that joins a one-to-one
+// relationship), always on the pool rather than on a caller's
 // transaction connection. Cached errors are returned to every caller so a
 // transient probe failure surfaces immediately to the application instead of
 // silently retrying.
@@ -109,7 +112,7 @@ func (c *mysqlVersionCache) get(ctx context.Context) (mysqlVersion, error) {
 			c.err = fmt.Errorf("parse mysql version %q: %w", raw, err)
 			return
 		}
-		c.version = mysqlVersion{Raw: raw, Major: major}
+		c.version = mysqlVersion{Raw: raw, Major: major, MariaDB: strings.Contains(raw, "MariaDB")}
 	})
 	return c.version, c.err
 }
@@ -124,6 +127,10 @@ type Client struct {
 	article           *articleClient
 	asset             *assetClient
 	assetDocumentLink *assetDocumentLinkClient
+	bin               *binClient
+	binItem           *binItemClient
+	boolKeyed         *boolKeyedClient
+	boolKeyedNote     *boolKeyedNoteClient
 	category          *categoryClient
 	categoryStat      *categoryStatClient
 	defaultOnlyRow    *defaultOnlyRowClient
@@ -137,6 +144,8 @@ type Client struct {
 	profile           *profileClient
 	sluggedRow        *sluggedRowClient
 	tag               *tagClient
+	timeKeyed         *timeKeyedClient
+	timeKeyedNote     *timeKeyedNoteClient
 	user              *userClient
 	userCategory      *userCategoryClient
 	userEvent         *userEventClient
@@ -161,6 +170,10 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		article:           newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		asset:             newAssetClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		assetDocumentLink: newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		bin:               newBinClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		binItem:           newBinItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		boolKeyed:         newBoolKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		boolKeyedNote:     newBoolKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		category:          newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		categoryStat:      newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		defaultOnlyRow:    newDefaultOnlyRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -174,6 +187,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		profile:           newProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		sluggedRow:        newSluggedRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		tag:               newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		timeKeyed:         newTimeKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		timeKeyedNote:     newTimeKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		user:              newUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		userCategory:      newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		userEvent:         newUserEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -186,16 +201,20 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
 	c.asset.callbackMode = options.callbackMode
+	c.boolKeyed.callbackMode = options.callbackMode
 	c.category.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
 	c.order.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
+	c.timeKeyed.callbackMode = options.callbackMode
 	c.user.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
 	c.asset.documentClient = c.document
 	c.asset.assetDocumentLinkClient = c.assetDocumentLink
+	c.bin.binItemClient = c.binItem
+	c.boolKeyed.boolKeyedNoteClient = c.boolKeyedNote
 	c.category.productClient = c.product
 	c.category.userClient = c.user
 	c.category.userCategoryClient = c.userCategory
@@ -204,6 +223,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.order.orderItemClient = c.orderItem
 	c.product.orderItemClient = c.orderItem
 	c.product.productTagLabelClient = c.productTagLabel
+	c.timeKeyed.timeKeyedNoteClient = c.timeKeyedNote
 	c.user.orderClient = c.order
 	c.user.userEventClient = c.userEvent
 	c.user.categoryClient = c.category
@@ -226,6 +246,26 @@ func (c *Client) Assets() AssetClient {
 // AssetDocumentLinks returns the AssetDocumentLinkClient for AssetDocumentLink operations.
 func (c *Client) AssetDocumentLinks() AssetDocumentLinkClient {
 	return c.assetDocumentLink
+}
+
+// Bins returns the BinClient for Bin operations.
+func (c *Client) Bins() BinClient {
+	return c.bin
+}
+
+// BinItems returns the BinItemClient for BinItem operations.
+func (c *Client) BinItems() BinItemClient {
+	return c.binItem
+}
+
+// BoolKeyeds returns the BoolKeyedClient for BoolKeyed operations.
+func (c *Client) BoolKeyeds() BoolKeyedClient {
+	return c.boolKeyed
+}
+
+// BoolKeyedNotes returns the BoolKeyedNoteClient for BoolKeyedNote operations.
+func (c *Client) BoolKeyedNotes() BoolKeyedNoteClient {
+	return c.boolKeyedNote
 }
 
 // Categories returns the CategoryClient for Category operations.
@@ -291,6 +331,16 @@ func (c *Client) SluggedRows() SluggedRowClient {
 // Tags returns the TagClient for Tag operations.
 func (c *Client) Tags() TagClient {
 	return c.tag
+}
+
+// TimeKeyeds returns the TimeKeyedClient for TimeKeyed operations.
+func (c *Client) TimeKeyeds() TimeKeyedClient {
+	return c.timeKeyed
+}
+
+// TimeKeyedNotes returns the TimeKeyedNoteClient for TimeKeyedNote operations.
+func (c *Client) TimeKeyedNotes() TimeKeyedNoteClient {
+	return c.timeKeyedNote
 }
 
 // Users returns the UserClient for User operations.

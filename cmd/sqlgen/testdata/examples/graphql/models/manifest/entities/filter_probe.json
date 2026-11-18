@@ -35,12 +35,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:filterprobe:{id}",
       "invalidates_on": [
-        "Create",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -180,20 +182,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*FilterProbeFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"filter_probes\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -219,6 +207,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"filter_probes\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*FilterProbeFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"filter_probes\" WHERE <filter>"
         }
       },
       {
@@ -300,50 +302,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateFilterProbeInput"
-          },
-          {
-            "name": "target",
-            "type": "FilterProbeConflictTarget"
-          }
-        ],
-        "returns": "*FilterProbe",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated FilterProbeConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"filter_probes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateFilterProbeInput"
-          },
-          {
-            "name": "target",
-            "type": "FilterProbeConflictTarget"
-          }
-        ],
-        "returns": "[]*FilterProbe",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same FilterProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"filter_probes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -405,6 +363,50 @@
         "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"filter_probes\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateFilterProbeInput"
+          },
+          {
+            "name": "target",
+            "type": "FilterProbeConflictTarget"
+          }
+        ],
+        "returns": "*FilterProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated FilterProbeConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"filter_probes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateFilterProbeInput"
+          },
+          {
+            "name": "target",
+            "type": "FilterProbeConflictTarget"
+          }
+        ],
+        "returns": "[]*FilterProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same FilterProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"filter_probes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {
@@ -509,5 +511,14 @@
       "Weights"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.FilterProbes().Get(ctx, uuid.NewV4())",
+      "rows, err := client.FilterProbes().GetMany(ctx, &models.GetFilterProbesInput{Filter: &models.FilterProbeFilter{CreatedAt: &comparator.Time{Eq: new(time.Now())}}})"
+    ],
+    "write": [
+      "created, err := client.FilterProbes().Create(ctx, &models.CreateFilterProbeInput{})",
+      "updated, err := client.FilterProbes().Update(ctx, uuid.NewV4(), &models.UpdateFilterProbeInput{Doc: omittable.Set(types.JSON(\"{}\"))})"
+    ]
+  }
 }

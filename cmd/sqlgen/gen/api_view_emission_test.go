@@ -218,7 +218,7 @@ func TestViewWalker_ColumnsOnly(t *testing.T) {
 		Type:        parser.OneToMany,
 		SourceTable: "notes",
 		TargetTable: "note_comments",
-		FKColumn:    "note_id",
+		Key:         []parser.KeyPair{{Local: "note_id", Referenced: "id"}},
 	}}
 
 	out := renderViewWalker(t, schema)

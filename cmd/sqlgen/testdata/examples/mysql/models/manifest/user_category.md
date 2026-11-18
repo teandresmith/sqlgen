@@ -62,19 +62,6 @@ mysql:
 SELECT `category_id`, `slot`, `user_id` FROM `user_categories` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserCategoryFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `user_categories` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk UserCategoryPK`
@@ -99,6 +86,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `user_categories` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserCategoryFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `user_categories` WHERE <filter>
 ```
 
 ### Paginate
@@ -159,36 +159,6 @@ mysql:
 INSERT INTO `user_categories` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateUserCategoryInput`, `target UserCategoryConflictTarget`
-- Returns: `*UserCategory`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `user_categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserCategoryInput`, `target UserCategoryConflictTarget`
-- Returns: `[]*UserCategory`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `user_categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `pk UserCategoryPK`, `input *UpdateUserCategoryInput`
@@ -234,6 +204,36 @@ mysql:
 UPDATE `user_categories` SET <set> WHERE <filter>
 ```
 
+### Upsert
+
+- Params: `input *CreateUserCategoryInput`, `target UserCategoryConflictTarget`
+- Returns: `*UserCategory`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserCategoryConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `user_categories` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserCategoryInput`, `target UserCategoryConflictTarget`
+- Returns: `[]*UserCategory`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserCategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `user_categories` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
+```
+
 ### Increment
 
 - Params: `pk UserCategoryPK`, `input IncrementInput[UserCategoryIncrementColumn]`
@@ -274,7 +274,7 @@ Generated SQL:
 mysql:
 
 ```sql
-DELETE FROM `user_categories` WHERE <pks>
+DELETE FROM `user_categories` WHERE (`user_id`, `category_id`) IN (<pks>)
 ```
 
 ### HardDeleteWhere
@@ -309,3 +309,17 @@ Type `UserCategoryFilter`.
 Type `UserCategorySort`.
 
 Fields: CategoryID, Slot, UserID
+
+## Read examples
+
+```go
+row, err := client.UserCategories().Get(ctx, models.UserCategoryPK{UserID: 1, CategoryID: 1})
+rows, err := client.UserCategories().GetMany(ctx, &models.GetUserCategoriesInput{Filter: &models.UserCategoryFilter{Slot: &comparator.NullableNumber[int32]{Null: new(true)}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserCategories().Create(ctx, &models.CreateUserCategoryInput{UserID: 1, CategoryID: 1})
+updated, err := client.UserCategories().Update(ctx, models.UserCategoryPK{UserID: 1, CategoryID: 1}, &models.UpdateUserCategoryInput{Slot: omittable.Set(new(int32(1)))})
+```

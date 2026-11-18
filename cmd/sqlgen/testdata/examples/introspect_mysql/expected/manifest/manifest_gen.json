@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-01-01T00:00:00Z",
   "generator": {
     "name": "sqlgen",
@@ -47,6 +47,11 @@
       },
       {
         "name": "ErrConnectionFailed",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrTxDone",
         "graphql_code": "",
         "package": "models"
       },
@@ -154,7 +159,7 @@
     "graph_top_level": false,
     "soft_delete": false,
     "tenancy": false,
-    "views": false
+    "views": true
   },
   "entities": [
     {
@@ -285,7 +290,13 @@
           "target_entity": "Project",
           "fk": {
             "table": "projects",
-            "column": "account_id"
+            "columns": [
+              "account_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "projects_account_id_fkey"
           }
         },
         {
@@ -294,7 +305,13 @@
           "target_entity": "Task",
           "fk": {
             "table": "tasks",
-            "column": "assignee_id"
+            "columns": [
+              "assignee_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks_assignee_id_fkey"
           }
         }
       ],
@@ -332,20 +349,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*AccountFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `accounts` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -371,6 +374,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `accounts` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AccountFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `accounts` WHERE <filter>"
             }
           },
           {
@@ -452,50 +469,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateAccountInput"
-              },
-              {
-                "name": "target",
-                "type": "AccountConflictTarget"
-              }
-            ],
-            "returns": "*Account",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `accounts` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateAccountInput"
-              },
-              {
-                "name": "target",
-                "type": "AccountConflictTarget"
-              }
-            ],
-            "returns": "[]*Account",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `accounts` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -557,6 +530,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `accounts` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateAccountInput"
+              },
+              {
+                "name": "target",
+                "type": "AccountConflictTarget"
+              }
+            ],
+            "returns": "*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `accounts` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAccountInput"
+              },
+              {
+                "name": "target",
+                "type": "AccountConflictTarget"
+              }
+            ],
+            "returns": "[]*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `accounts` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -661,7 +678,16 @@
           "Nickname"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Accounts().Get(ctx, 1)",
+          "rows, err := client.Accounts().GetMany(ctx, &models.GetAccountsInput{Filter: &models.AccountFilter{DisplayName: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Accounts().Create(ctx, &models.CreateAccountInput{Email: \"example\", DisplayName: \"example\"})",
+          "updated, err := client.Accounts().Update(ctx, 1, &models.UpdateAccountInput{Email: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -792,7 +818,13 @@
           "target_entity": "Task",
           "fk": {
             "table": "tasks",
-            "column": "project_id"
+            "columns": [
+              "project_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks_project_id_fkey"
           }
         }
       ],
@@ -830,20 +862,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProjectFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `projects` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -869,6 +887,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `projects` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `projects` WHERE <filter>"
             }
           },
           {
@@ -950,50 +982,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProjectInput"
-              },
-              {
-                "name": "target",
-                "type": "ProjectConflictTarget"
-              }
-            ],
-            "returns": "*Project",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `projects` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProjectInput"
-              },
-              {
-                "name": "target",
-                "type": "ProjectConflictTarget"
-              }
-            ],
-            "returns": "[]*Project",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `projects` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1055,6 +1043,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `projects` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProjectInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectConflictTarget"
+              }
+            ],
+            "returns": "*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `projects` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProjectInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectConflictTarget"
+              }
+            ],
+            "returns": "[]*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `projects` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -1154,7 +1186,16 @@
           "Tags"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Projects().Get(ctx, 1)",
+          "rows, err := client.Projects().GetMany(ctx, &models.GetProjectsInput{Filter: &models.ProjectFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Projects().Create(ctx, &models.CreateProjectInput{AccountID: 1, Name: \"example\", Slug: \"example\", Summary: \"example\"})",
+          "updated, err := client.Projects().Update(ctx, 1, &models.UpdateProjectInput{AccountID: omittable.Set(uint64(1))})"
+        ]
+      }
     },
     {
       "kind": "view",
@@ -1327,6 +1368,12 @@
           "Name",
           "Summary"
         ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.ProjectSummary().Get(ctx, 1)",
+          "rows, err := client.ProjectSummary().GetMany(ctx, &models.GetProjectSummariesInput{Filter: &models.ProjectSummaryFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ]
       }
     },
     {
@@ -1471,7 +1518,13 @@
           "target_entity": "TaskLabel",
           "fk": {
             "table": "task_labels",
-            "column": "task_id"
+            "columns": [
+              "task_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "task_labels_task_id_fkey"
           }
         }
       ],
@@ -1509,20 +1562,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*TaskFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `tasks` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -1548,6 +1587,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `tasks` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `tasks` WHERE <filter>"
             }
           },
           {
@@ -1629,50 +1682,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateTaskInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskConflictTarget"
-              }
-            ],
-            "returns": "*Task",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `tasks` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateTaskInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskConflictTarget"
-              }
-            ],
-            "returns": "[]*Task",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `tasks` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1734,6 +1743,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `tasks` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskConflictTarget"
+              }
+            ],
+            "returns": "*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `tasks` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskConflictTarget"
+              }
+            ],
+            "returns": "[]*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `tasks` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -1859,7 +1912,16 @@
           "Title"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Tasks().Get(ctx, 1)",
+          "rows, err := client.Tasks().GetMany(ctx, &models.GetTasksInput{Filter: &models.TaskFilter{Title: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Tasks().Create(ctx, &models.CreateTaskInput{ProjectID: 1, Title: \"example\"})",
+          "updated, err := client.Tasks().Update(ctx, 1, &models.UpdateTaskInput{ProjectID: omittable.Set(uint64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -1975,20 +2037,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*TaskLabelFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "mysql": "SELECT COUNT(*) FROM `task_labels` WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -2014,6 +2062,20 @@
             "errors": [],
             "sql_bodies": {
               "mysql": "SELECT EXISTS(SELECT 1 FROM `task_labels` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskLabelFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `task_labels` WHERE <filter>"
             }
           },
           {
@@ -2095,50 +2157,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateTaskLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskLabelConflictTarget"
-              }
-            ],
-            "returns": "*TaskLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `task_labels` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateTaskLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskLabelConflictTarget"
-              }
-            ],
-            "returns": "[]*TaskLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "mysql": "INSERT INTO `task_labels` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2200,6 +2218,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "mysql": "UPDATE `task_labels` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskLabelConflictTarget"
+              }
+            ],
+            "returns": "*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `task_labels` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskLabelConflictTarget"
+              }
+            ],
+            "returns": "[]*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `task_labels` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
             }
           },
           {
@@ -2284,7 +2346,16 @@
           "TaskID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.TaskLabels().Get(ctx, 1)",
+          "rows, err := client.TaskLabels().GetMany(ctx, &models.GetTaskLabelsInput{Filter: &models.TaskLabelFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.TaskLabels().Create(ctx, &models.CreateTaskLabelInput{TaskID: 1, Label: \"example\"})",
+          "updated, err := client.TaskLabels().Update(ctx, 1, &models.UpdateTaskLabelInput{TaskID: omittable.Set(uint64(1))})"
+        ]
+      }
     }
   ],
   "enums": [

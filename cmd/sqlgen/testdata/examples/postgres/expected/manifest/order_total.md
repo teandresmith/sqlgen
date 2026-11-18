@@ -29,7 +29,7 @@ GROUP BY oi.product_id;
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `product_id` | ProductID | `uuid.UUID` | `uuid` |  | yes |  |  | `comparator.ID` |  |
 | `line_count` | LineCount | `int64` | `int64` |  |  |  |  | `comparator.Number[int64]` |  |
-| `total_quantity` | TotalQuantity | `int64` | `int64` |  |  |  |  | `comparator.Number[int64]` |  |
+| `total_quantity` | TotalQuantity | `int64` | `bigint` |  |  |  |  | `comparator.Number[int64]` |  |
 
 ## Query methods
 
@@ -135,3 +135,10 @@ Type `OrderTotalFilter`.
 Type `OrderTotalSort`.
 
 Fields: LineCount, ProductID, TotalQuantity
+
+## Read examples
+
+```go
+row, err := client.OrderTotal().Get(ctx, uuid.NewV4())
+rows, err := client.OrderTotal().GetMany(ctx, &models.GetOrderTotalsInput{Filter: &models.OrderTotalFilter{LineCount: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```

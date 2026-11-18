@@ -25,6 +25,8 @@ type BinaryKey struct {
 
 	// Events - one-to-many relationship with the binary_key_events table.
 	Events []*BinaryKeyEvent `db:"-" json:"events"`
+	// Badges - many-to-many relationship with the badges table.
+	Badges []*Badge `db:"-" json:"badges"`
 	// BinaryKeyEvents - one-to-many relationship with the binary_key_events table.
 	BinaryKeyEvents []*BinaryKeyEvent `db:"-" json:"binary_key_events"`
 }
@@ -130,7 +132,10 @@ type binaryKeyClient struct {
 	callbackMode               database.CallbackMode
 	eventsDefaultSort          []sql.Sort
 	binaryKeyEventsDefaultSort []sql.Sort
+	badgesDefaultSort          []sql.Sort
+	badgeClient                *badgeClient
 	binaryKeyEventClient       *binaryKeyEventClient
+	binaryKeyBadgeClient       *binaryKeyBadgeClient
 }
 
 // newBinaryKeyClient creates a new binaryKeyClient.
@@ -224,6 +229,11 @@ func (c *binaryKeyClient) Get(ctx context.Context, id []byte, opts ...func(*Call
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[BinaryKeyFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -246,7 +256,7 @@ func (c *binaryKeyClient) Get(ctx context.Context, id []byte, opts ...func(*Call
 		return binaryKeys[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get binary_key: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -268,7 +278,7 @@ func (c *binaryKeyClient) GetMany(ctx context.Context, input *GetBinaryKeysInput
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get binary_keys: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many binary_keys: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableBinaryKeys, Schema: "",
@@ -337,7 +347,7 @@ func (c *binaryKeyClient) GetMany(ctx context.Context, input *GetBinaryKeysInput
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get binary_keys: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -349,7 +359,7 @@ func (c *binaryKeyClient) GetMany(ctx context.Context, input *GetBinaryKeysInput
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, binaryKeys, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, binaryKeys, options); err != nil {
 				return nil, err
 			}
 		}
@@ -357,7 +367,7 @@ func (c *binaryKeyClient) GetMany(ctx context.Context, input *GetBinaryKeysInput
 		return binaryKeys, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many binary_keys: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -376,6 +386,9 @@ func (fo *BinaryKeyFieldOptions) loadsRelationships() bool {
 	if fo.BinaryKeyEvents != nil {
 		return true
 	}
+	if fo.Badges != nil {
+		return true
+	}
 	return false
 }
 
@@ -383,13 +396,27 @@ func (fo *BinaryKeyFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Querier, binaryKeys []*BinaryKey, fo *BinaryKeyFieldOptions) error {
+func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Querier, binaryKeys []*BinaryKey, options CallOptions[BinaryKeyFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Events != nil {
@@ -400,38 +427,50 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				binaryKeyIDs[idx] = b.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &BinaryKeyEventFilter{
-				BinaryKeyID: &comparator.Opaque[[]byte]{In: binaryKeyIDs},
-			}
-			if fo.Events.Filter != nil {
-				filter.And = append(filter.And, fo.Events.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.Events.Sorts
 			if len(sorts) == 0 {
 				sorts = c.eventsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (binaryKeys) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedEvents, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"binary_key_id"},
-			}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
-				co.FieldOptions = fo.Events.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load binary_key binary_key_events: %w", err)
+			var relatedEvents []*BinaryKeyEvent
+			for start := 0; start < len(binaryKeyIDs); start += 16383 {
+				chunk := binaryKeyIDs[start:min(start+16383, len(binaryKeyIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &BinaryKeyEventFilter{
+					BinaryKeyID: &comparator.Opaque[[]byte]{In: chunk},
+				}
+				if fo.Events.Filter != nil {
+					filter.And = append(filter.And, fo.Events.Filter)
+				}
+
+				loaded, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"binary_key_id"},
+				}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
+					co.FieldOptions = fo.Events.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load binary_key binary_key_events: %w", err)
+				}
+				relatedEvents = append(relatedEvents, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -443,8 +482,21 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				key := fmt.Sprint(r.BinaryKeyID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range binaryKeys {
-				binaryKeys[i].Events = byFK[fmt.Sprint(binaryKeys[i].ID)]
+				key := fmt.Sprint(binaryKeys[i].ID)
+				rs, ok := byFK[key]
+				binaryKeys[i].Events = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load binary_key binary_key_events: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -458,38 +510,50 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				binaryKeyIDs[idx] = b.ID
 			}
 
-			// Build FK-based filter, merged with consumer filter
-			filter := &BinaryKeyEventFilter{
-				BinaryKeyID: &comparator.Opaque[[]byte]{In: binaryKeyIDs},
-			}
-			if fo.BinaryKeyEvents.Filter != nil {
-				filter.And = append(filter.And, fo.BinaryKeyEvents.Filter)
-			}
-
-			// Load via related entity client
 			sorts := fo.BinaryKeyEvents.Sorts
 			if len(sorts) == 0 {
 				sorts = c.binaryKeyEventsDefaultSort
 			}
 
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
 			// Self-referential relationships share the parent's entity type, so
 			// the loaded children must use a name distinct from the parent slice
 			// (binaryKeys) to avoid shadowing it and mis-mapping the results
 			// onto the children instead of the parents.
-			relatedBinaryKeyEvents, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
-				Filter: filter,
-				Sorts:  sorts,
-				Limit:  new(0),
-				// The mapping below keys every child on its FK, so the fetch
-				// declares that column rather than mutating the caller's
-				// FieldOptions — a narrowed selection that omits it would
-				// otherwise map every child onto the zero value.
-				requiredColumns: []string{"binary_key_id"},
-			}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
-				co.FieldOptions = fo.BinaryKeyEvents.FieldOptions
-			})
-			if err != nil {
-				return fmt.Errorf("load binary_key binary_key_events: %w", err)
+			var relatedBinaryKeyEvents []*BinaryKeyEvent
+			for start := 0; start < len(binaryKeyIDs); start += 16383 {
+				chunk := binaryKeyIDs[start:min(start+16383, len(binaryKeyIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &BinaryKeyEventFilter{
+					BinaryKeyID: &comparator.Opaque[[]byte]{In: chunk},
+				}
+				if fo.BinaryKeyEvents.Filter != nil {
+					filter.And = append(filter.And, fo.BinaryKeyEvents.Filter)
+				}
+
+				loaded, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"binary_key_id"},
+				}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
+					co.FieldOptions = fo.BinaryKeyEvents.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load binary_key binary_key_events: %w", err)
+				}
+				relatedBinaryKeyEvents = append(relatedBinaryKeyEvents, loaded...)
 			}
 
 			// Map results back to parent entities by FK. The FK column on the
@@ -501,8 +565,191 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				key := fmt.Sprint(r.BinaryKeyID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range binaryKeys {
-				binaryKeys[i].BinaryKeyEvents = byFK[fmt.Sprint(binaryKeys[i].ID)]
+				key := fmt.Sprint(binaryKeys[i].ID)
+				rs, ok := byFK[key]
+				binaryKeys[i].BinaryKeyEvents = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load binary_key binary_key_events: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
+			}
+			return nil
+		})
+	}
+
+	if fo.Badges != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			binaryKeyIDs := make([][]byte, len(binaryKeys))
+			for idx, b := range binaryKeys {
+				binaryKeyIDs[idx] = b.ID
+			}
+
+			sorts := fo.Badges.Sorts
+			if len(sorts) == 0 {
+				sorts = c.badgesDefaultSort
+			}
+
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(binaryKeyIDs); start += 16383 {
+				chunk := binaryKeyIDs[start:min(start+16383, len(binaryKeyIDs))]
+
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key column
+				// only; step 2 decides which targets load.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: "", Name: "binary_key_badges"}, []sql.JoinClause{{
+						Table:   sql.Table{Schema: "", Name: "badges"},
+						Alias:   "t",
+						On:      "t." + c.dialect.QuoteIdentifier("code") + " = j." + c.dialect.QuoteIdentifier("badge_code"),
+						Columns: []string{"code"},
+					}}, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{"binary_key_id"},
+						Conditions: []sql.Condition{
+							sql.Where("j." + c.dialect.QuoteIdentifier("binary_key_id")).In(toAnySlice(chunk)...),
+							// The builder's join is a LEFT JOIN: a junction row whose
+							// target is gone maps nothing.
+							sql.Where("t." + c.dialect.QuoteIdentifier("code")).IsNotNull(),
+						},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load binary_key badges junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load binary_key badges junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "j.binary_key_id":
+							localIdx = i
+						case "t.code":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey []byte
+						var target Badge
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &target.Code
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan binary_key badges junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), target.Code
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate binary_key badges junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("binary_key_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("code")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("badge_code") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "binary_key_badges"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &BadgeFilter{}
+				if fo.Badges.Filter != nil {
+					filter.And = append(filter.And, fo.Badges.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (binaryKeys) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedBadges, err := c.badgeClient.GetMany(ctx, &GetBadgesInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"code"},
+				}, func(co *CallOptions[BadgeFieldOptions]) {
+					co.FieldOptions = fo.Badges.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load binary_key badges: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the column's comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
+				parentsByTarget := make(map[string][]int, len(relatedBadges))
+				matched := make(map[string]struct{}, len(parentToTargetIDs))
+				for i := start; i < start+len(chunk); i++ {
+					key := fmt.Sprint(binaryKeys[i].ID)
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load binary_key badges junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
+				}
+				for _, t := range relatedBadges {
+					for _, i := range parentsByTarget[t.Code] {
+						binaryKeys[i].Badges = append(binaryKeys[i].Badges, t)
+					}
+				}
 			}
 			return nil
 		})
@@ -519,7 +766,7 @@ func (c *binaryKeyClient) Create(ctx context.Context, input *CreateBinaryKeyInpu
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create binary_key: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -538,7 +785,7 @@ func (c *binaryKeyClient) Create(ctx context.Context, input *CreateBinaryKeyInpu
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create binary_key: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -554,7 +801,7 @@ func (c *binaryKeyClient) Create(ctx context.Context, input *CreateBinaryKeyInpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create binary_key: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -570,7 +817,7 @@ func (c *binaryKeyClient) CreateMany(ctx context.Context, inputs []*CreateBinary
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many binary_keys: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -609,7 +856,7 @@ func (c *binaryKeyClient) CreateMany(ctx context.Context, inputs []*CreateBinary
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create binary_keys batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -632,7 +879,7 @@ func (c *binaryKeyClient) CreateMany(ctx context.Context, inputs []*CreateBinary
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many binary_keys: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -691,7 +938,7 @@ func (c *binaryKeyClient) Update(ctx context.Context, id []byte, input *UpdateBi
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update binary_key: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -730,13 +977,13 @@ func (c *binaryKeyClient) Update(ctx context.Context, id []byte, input *UpdateBi
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update binary_key: %w", err)
+			return nil, err
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update binary_key rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -753,7 +1000,7 @@ func (c *binaryKeyClient) Update(ctx context.Context, id []byte, input *UpdateBi
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update binary_key: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -769,14 +1016,16 @@ type UpdateBinaryKeyItem struct {
 
 // UpdateMany partially updates multiple binary_keys and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *binaryKeyClient) UpdateMany(ctx context.Context, items []UpdateBinaryKeyItem, opts ...func(*CallOptions[BinaryKeyFieldOptions])) ([]*BinaryKey, error) {
 	// UpdateBinaryKeyItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many binary_keys: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -784,7 +1033,6 @@ func (c *binaryKeyClient) UpdateMany(ctx context.Context, items []UpdateBinaryKe
 		Op: hook.OpUpdateMany, Table: TableBinaryKeys, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -794,39 +1042,70 @@ func (c *binaryKeyClient) UpdateMany(ctx context.Context, items []UpdateBinaryKe
 			return []*BinaryKey{}, nil
 		}
 		var allIDs [][]byte
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateBinaryKeyItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Name.Get(); ok {
-					setClauses["name"] = v
-				}
-				if v, ok := item.Input.CreatedAt.Get(); ok {
-					setClauses["created_at"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_binary_key", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+					if v, ok := item.Input.CreatedAt.Get(); ok {
+						setClauses["created_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.ID)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
-				})
-
-				_, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update binary_key %v: %w", item.ID, err)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -844,7 +1123,7 @@ func (c *binaryKeyClient) UpdateMany(ctx context.Context, items []UpdateBinaryKe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many binary_keys: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -862,7 +1141,7 @@ func (c *binaryKeyClient) UpdateWhere(ctx context.Context, filter *BinaryKeyFilt
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update binary_keys where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -909,7 +1188,7 @@ func (c *binaryKeyClient) UpdateWhere(ctx context.Context, filter *BinaryKeyFilt
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update binary_keys where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids [][]byte
@@ -946,7 +1225,7 @@ func (c *binaryKeyClient) UpdateWhere(ctx context.Context, filter *BinaryKeyFilt
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update binary_keys where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -967,14 +1246,25 @@ func (c *binaryKeyClient) HardDelete(ctx context.Context, id []byte, opts ...fun
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete binary_key: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete binary_key: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple binary_keys from the database.
@@ -986,20 +1276,57 @@ func (c *binaryKeyClient) HardDeleteMany(ctx context.Context, ids [][]byte, opts
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
-			},
-		})
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[string]struct{}, len(ids))
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete binary_keys: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[string]struct{}, end-start)
+			for rows.Next() {
+				var rowID []byte
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted binary_key key: %w", err)
+				}
+				batchKeys[fmt.Sprintf("%#v", rowID)] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[fmt.Sprintf("%#v", key)]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many binary_keys: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all binary_keys matching the filter.
@@ -1026,7 +1353,7 @@ func (c *binaryKeyClient) HardDeleteWhere(ctx context.Context, filter *BinaryKey
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete binary_keys where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids [][]byte
@@ -1043,7 +1370,36 @@ func (c *binaryKeyClient) HardDeleteWhere(ctx context.Context, filter *BinaryKey
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete binary_keys where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *binaryKeyClient) recordWrittenKeys(written map[string]struct{}, listed [][]byte, rowKeys map[string]struct{}) {
+	found := make(map[string]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[fmt.Sprintf("%#v", key)]; ok {
+			found[fmt.Sprintf("%#v", key)] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[fmt.Sprintf("%#v", key)] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // BinaryKeyConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -1072,7 +1428,7 @@ func (c *binaryKeyClient) Upsert(ctx context.Context, input *CreateBinaryKeyInpu
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert binary_key: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1097,7 +1453,7 @@ func (c *binaryKeyClient) Upsert(ctx context.Context, input *CreateBinaryKeyInpu
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert binary_key: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -1113,7 +1469,7 @@ func (c *binaryKeyClient) Upsert(ctx context.Context, input *CreateBinaryKeyInpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert binary_key: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1171,9 +1527,9 @@ func (c *binaryKeyClient) insertUpsertAndResolveID(ctx context.Context, conn dat
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -1240,7 +1596,7 @@ func (c *binaryKeyClient) UpsertMany(ctx context.Context, inputs []*CreateBinary
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many binary_keys: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1334,7 +1690,7 @@ func (c *binaryKeyClient) UpsertMany(ctx context.Context, inputs []*CreateBinary
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert binary_keys batch: %w", err)
+				return nil, err
 			}
 		}
 
@@ -1345,7 +1701,7 @@ func (c *binaryKeyClient) UpsertMany(ctx context.Context, inputs []*CreateBinary
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetBinaryKeysInput{
+		written, err := c.GetMany(ctx, &GetBinaryKeysInput{
 			Filter: &BinaryKeyFilter{
 				ID: &comparator.Opaque[[]byte]{In: rowIDs},
 			},
@@ -1355,9 +1711,20 @@ func (c *binaryKeyClient) UpsertMany(ctx context.Context, inputs []*CreateBinary
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many binary_keys: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1379,12 +1746,12 @@ func (c *binaryKeyClient) Exists(ctx context.Context, id []byte, opts ...func(*C
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists binary_key: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists binary_key: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1407,12 +1774,12 @@ func (c *binaryKeyClient) ExistsWhere(ctx context.Context, filter *BinaryKeyFilt
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists binary_key where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists binary_keys where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1436,12 +1803,12 @@ func (c *binaryKeyClient) Count(ctx context.Context, filter *BinaryKeyFilter, op
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count binary_keys: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count binary_keys: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1450,6 +1817,10 @@ func (c *binaryKeyClient) Count(ctx context.Context, filter *BinaryKeyFilter, op
 // A nil filter paginates all binary_keys.
 func (c *binaryKeyClient) Paginate(ctx context.Context, input PaginateInput[BinaryKeyFilter], opts ...func(*CallOptions[BinaryKeyFieldOptions])) (*PaginateResult[BinaryKey], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate binary_keys: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableBinaryKeys, Schema: "",
 		Input: input, CallOptions: options,
@@ -1463,7 +1834,7 @@ func (c *binaryKeyClient) Paginate(ctx context.Context, input PaginateInput[Bina
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate binary_keys count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1474,7 +1845,7 @@ func (c *binaryKeyClient) Paginate(ctx context.Context, input PaginateInput[Bina
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate binary_keys: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[BinaryKey]{
@@ -1482,11 +1853,11 @@ func (c *binaryKeyClient) Paginate(ctx context.Context, input PaginateInput[Bina
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate binary_keys: %w", err)
 	}
 	return result.(*PaginateResult[BinaryKey]), nil
 }
@@ -1518,7 +1889,7 @@ func (c *binaryKeyClient) Connection(ctx context.Context, input ConnectionInput[
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection binary_keys count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1562,7 +1933,7 @@ func (c *binaryKeyClient) Connection(ctx context.Context, input ConnectionInput[
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection binary_keys: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1601,7 +1972,7 @@ func (c *binaryKeyClient) Connection(ctx context.Context, input ConnectionInput[
 		return &Connection[BinaryKey]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection binary_keys: %w", err)
 	}
 	return result.(*Connection[BinaryKey]), nil
 }
@@ -1763,9 +2134,13 @@ func (c *binaryKeyClient) Stream(ctx context.Context, input *StreamBinaryKeysInp
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *BinaryKey, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream binary_keys: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -1804,7 +2179,7 @@ func (c *binaryKeyClient) Stream(ctx context.Context, input *StreamBinaryKeysInp
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream binary_keys: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -1827,7 +2202,7 @@ func (c *binaryKeyClient) Stream(ctx context.Context, input *StreamBinaryKeysInp
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream binary_keys: %w", err))
 		}
 	}
 }
@@ -1837,6 +2212,7 @@ type BinaryKeyFilter struct {
 	CreatedAt       *comparator.Time           `json:"created_at"`
 	ID              *comparator.Opaque[[]byte] `json:"id"`
 	Name            *comparator.String         `json:"name"`
+	Badges          *BadgeFilter               `json:"badges"`
 	BinaryKeyEvents *BinaryKeyEventFilter      `json:"binary_key_events"`
 	Events          *BinaryKeyEventFilter      `json:"events"`
 	And             []*BinaryKeyFilter         `json:"and"`
@@ -1868,6 +2244,10 @@ func (f *BinaryKeyFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 	if f.Name != nil {
 		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Badges != nil {
+		conds = append(conds, binaryKeyBadgesFilterExists(f.Badges, dialect, opts))
 	}
 
 	if f.BinaryKeyEvents != nil {
@@ -1907,6 +2287,45 @@ func (f *BinaryKeyFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 	}
 
 	return conds
+}
+
+// binaryKeyBadgesFilterExists compiles a BadgeFilter set on the
+// Badges relationship into a correlated EXISTS over badges, joined through the binary_key_badges junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func binaryKeyBadgesFilterExists(f *BadgeFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "binary_key_badges"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "badges"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("code") + " = " + jn + "." + dialect.QuoteIdentifier("badge_code") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("binary_key_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
 // binaryKeyBinaryKeyEventsFilterExists compiles a BinaryKeyEventFilter set on the
@@ -1987,6 +2406,7 @@ type BinaryKeyFieldOptions struct {
 	Name            bool                               `json:"name"`
 	CreatedAt       bool                               `json:"created_at"`
 	Events          *BinaryKeyEventRelationshipOptions `json:"events"`
+	Badges          *BadgeRelationshipOptions          `json:"badges"`
 	BinaryKeyEvents *BinaryKeyEventRelationshipOptions `json:"binary_key_events"`
 }
 
@@ -2030,10 +2450,20 @@ func (fo *BinaryKeyFieldOptions) HasSelectedColumns() bool {
 	if fo.Events != nil {
 		return true
 	}
+	if fo.Badges != nil {
+		return true
+	}
 	if fo.BinaryKeyEvents != nil {
 		return true
 	}
 	return false
+}
+
+// BadgeRelationshipOptions controls loading options for Badge relationships.
+type BadgeRelationshipOptions struct {
+	FieldOptions *BadgeFieldOptions `json:"field_options"`
+	Filter       *BadgeFilter       `json:"filter"`
+	Sorts        []sql.Sort         `json:"sorts"`
 }
 
 // BinaryKeyEventRelationshipOptions controls loading options for BinaryKeyEvent relationships.

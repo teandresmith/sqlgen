@@ -38,12 +38,21 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:product:{id}",
       "invalidates_on": [
-        "Create",
         "Update",
-        "Delete",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "Increment",
         "SoftDelete",
+        "SoftDeleteMany",
+        "SoftDeleteWhere",
         "Restore",
-        "Increment"
+        "RestoreMany",
+        "RestoreWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -179,7 +188,13 @@
       "fk": {
         "table": "order_items",
         "schema": "public",
-        "column": "product_id"
+        "columns": [
+          "product_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "order_items_product_id_fkey"
       }
     }
   ],
@@ -217,20 +232,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*ProductFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"products\" WHERE <filter> AND \"deleted_at\" IS NULL"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -256,6 +257,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"products\" WHERE <filter> AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProductFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"products\" WHERE <filter> AND \"deleted_at\" IS NULL"
         }
       },
       {
@@ -337,50 +352,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateProductInput"
-          },
-          {
-            "name": "target",
-            "type": "ProductConflictTarget"
-          }
-        ],
-        "returns": "*Product",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"products\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateProductInput"
-          },
-          {
-            "name": "target",
-            "type": "ProductConflictTarget"
-          }
-        ],
-        "returns": "[]*Product",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"products\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -443,6 +414,104 @@
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"products\" SET <set> WHERE <filter> RETURNING \"id\""
         }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateProductInput"
+          },
+          {
+            "name": "target",
+            "type": "ProductConflictTarget"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"products\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateProductInput"
+          },
+          {
+            "name": "target",
+            "type": "ProductConflictTarget"
+          }
+        ],
+        "returns": "[]*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"products\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateProductWithRelatedInput"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateProductWithRelatedInput"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertProductWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "ProductConflictTarget"
+          }
+        ],
+        "returns": "*Product",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "Increment",
@@ -605,60 +674,6 @@
         "sql_bodies": {
           "postgres": "DELETE FROM \"public\".\"products\" WHERE <filter> RETURNING \"id\""
         }
-      },
-      {
-        "name": "CreateWithRelated",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateProductWithRelatedInput"
-          }
-        ],
-        "returns": "*Product",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-      },
-      {
-        "name": "UpdateWithRelated",
-        "params": [
-          {
-            "name": "id",
-            "type": "uuid.UUID"
-          },
-          {
-            "name": "input",
-            "type": "*UpdateProductWithRelatedInput"
-          }
-        ],
-        "returns": "*Product",
-        "errors": [
-          "ErrNilInput",
-          "ErrNotFound",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-      },
-      {
-        "name": "UpsertWithRelated",
-        "params": [
-          {
-            "name": "input",
-            "type": "*UpsertProductWithRelatedInput"
-          },
-          {
-            "name": "target",
-            "type": "ProductConflictTarget"
-          }
-        ],
-        "returns": "*Product",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       }
     ]
   },
@@ -725,5 +740,14 @@
       "UpdatedAt"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Products().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{Filter: &models.ProductFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Products().Create(ctx, &models.CreateProductInput{Name: \"example\", Price: decimal.NewFromInt(1), CategoryID: 1})",
+      "updated, err := client.Products().Update(ctx, uuid.NewV4(), &models.UpdateProductInput{Name: omittable.Set(\"example\")})"
+    ]
+  }
 }

@@ -87,17 +87,30 @@ type Client struct {
 	opts             clientOptions
 	article          *articleClient
 	auditLog         *auditLogClient
+	cycle            *cycleClient
+	label            *labelClient
 	legacyWidget     *legacyWidgetClient
+	moment           *momentClient
+	momentOwner      *momentOwnerClient
+	momentTag        *momentTagClient
+	momentTagLink    *momentTagLinkClient
 	orderItem        *orderItemClient
 	post             *postClient
 	postTag          *postTagClient
 	product          *productClient
 	productStat      *productStatClient
+	stamp            *stampClient
 	tag              *tagClient
 	tagLink          *tagLinkClient
+	task             *taskClient
+	template         *templateClient
+	templateLabel    *templateLabelClient
+	templateStamp    *templateStampClient
+	templateStep     *templateStepClient
 	user             *userClient
 	userProfile      *userProfileClient
 	workspace        *workspaceClient
+	workspaceNote    *workspaceNoteClient
 	workspaceSummary *workspaceSummaryClient
 }
 
@@ -129,17 +142,30 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		opts:             options,
 		article:          newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		auditLog:         newAuditLogClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		cycle:            newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		label:            newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		legacyWidget:     newLegacyWidgetClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		moment:           newMomentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		momentOwner:      newMomentOwnerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		momentTag:        newMomentTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		momentTagLink:    newMomentTagLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		orderItem:        newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		post:             newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		postTag:          newPostTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		product:          newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		productStat:      newProductStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		stamp:            newStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		tag:              newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		tagLink:          newTagLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		task:             newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		template:         newTemplateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateLabel:    newTemplateLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateStamp:    newTemplateStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateStep:     newTemplateStepClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		user:             newUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		userProfile:      newUserProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		workspace:        newWorkspaceClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		workspaceNote:    newWorkspaceNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		workspaceSummary: newWorkspaceSummaryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 	}
 
@@ -167,36 +193,71 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// a zero resolver return leaves the subquery unscoped rather than
 	// erroring — a resolver error still propagates.
 	c.article.tenantResolver = options.tenantResolver
+	c.cycle.tenantResolver = options.tenantResolver
+	c.label.tenantResolver = options.tenantResolver
 	c.legacyWidget.tenantResolver = options.tenantResolver
 	c.orderItem.tenantResolver = options.tenantResolver
 	c.post.tenantResolver = options.tenantResolver
 	c.product.tenantResolver = options.tenantResolver
 	c.productStat.tenantResolver = options.tenantResolver
+	c.stamp.tenantResolver = options.tenantResolver
 	c.tag.tenantResolver = options.tenantResolver
 	c.tagLink.tenantResolver = options.tenantResolver
+	c.task.tenantResolver = options.tenantResolver
+	c.template.tenantResolver = options.tenantResolver
+	c.templateLabel.tenantResolver = options.tenantResolver
+	c.templateStamp.tenantResolver = options.tenantResolver
+	c.templateStep.tenantResolver = options.tenantResolver
 	c.user.tenantResolver = options.tenantResolver
 	c.userProfile.tenantResolver = options.tenantResolver
+	c.workspace.tenantResolver = options.tenantResolver
+	c.workspaceNote.tenantResolver = options.tenantResolver
 
 	// Push the configured CallbackMode down to every entity client that can
 	// carry a nested-mutation surface: the nested methods open the transaction
 	// the whole nested write runs in and pass this mode to it, so
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
+	c.cycle.callbackMode = options.callbackMode
+	c.label.callbackMode = options.callbackMode
+	c.moment.callbackMode = options.callbackMode
+	c.momentOwner.callbackMode = options.callbackMode
+	c.momentTag.callbackMode = options.callbackMode
 	c.post.callbackMode = options.callbackMode
+	c.stamp.callbackMode = options.callbackMode
 	c.tag.callbackMode = options.callbackMode
+	c.template.callbackMode = options.callbackMode
 	c.user.callbackMode = options.callbackMode
+	c.workspace.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
+	c.cycle.taskClient = c.task
+	c.label.templateClient = c.template
+	c.label.templateLabelClient = c.templateLabel
+	c.moment.momentTagClient = c.momentTag
+	c.moment.momentTagLinkClient = c.momentTagLink
+	c.momentOwner.momentClient = c.moment
+	c.momentTag.momentClient = c.moment
+	c.momentTag.momentTagLinkClient = c.momentTagLink
 	c.post.tagClient = c.tag
 	c.post.postTagClient = c.postTag
+	c.stamp.templateClient = c.template
+	c.stamp.templateStampClient = c.templateStamp
 	c.tag.postClient = c.post
 	c.tag.tagClient = c.tag
 	c.tag.postTagClient = c.postTag
 	c.tag.tagLinkClient = c.tagLink
+	c.template.templateStepClient = c.templateStep
+	c.template.labelClient = c.label
+	c.template.stampClient = c.stamp
+	c.template.templateLabelClient = c.templateLabel
+	c.template.templateStampClient = c.templateStamp
 	c.user.articleClient = c.article
 	c.user.postClient = c.post
 	c.user.userProfileClient = c.userProfile
+	c.workspace.productStatClient = c.productStat
+	c.workspace.workspaceNoteClient = c.workspaceNote
 
 	return c
 }
@@ -211,9 +272,39 @@ func (c *Client) AuditLogs() AuditLogClient {
 	return c.auditLog
 }
 
+// Cycles returns the CycleClient for Cycle operations.
+func (c *Client) Cycles() CycleClient {
+	return c.cycle
+}
+
+// Labels returns the LabelClient for Label operations.
+func (c *Client) Labels() LabelClient {
+	return c.label
+}
+
 // LegacyWidgets returns the LegacyWidgetClient for LegacyWidget operations.
 func (c *Client) LegacyWidgets() LegacyWidgetClient {
 	return c.legacyWidget
+}
+
+// Moments returns the MomentClient for Moment operations.
+func (c *Client) Moments() MomentClient {
+	return c.moment
+}
+
+// MomentOwners returns the MomentOwnerClient for MomentOwner operations.
+func (c *Client) MomentOwners() MomentOwnerClient {
+	return c.momentOwner
+}
+
+// MomentTags returns the MomentTagClient for MomentTag operations.
+func (c *Client) MomentTags() MomentTagClient {
+	return c.momentTag
+}
+
+// MomentTagLinks returns the MomentTagLinkClient for MomentTagLink operations.
+func (c *Client) MomentTagLinks() MomentTagLinkClient {
+	return c.momentTagLink
 }
 
 // OrderItems returns the OrderItemClient for OrderItem operations.
@@ -241,6 +332,11 @@ func (c *Client) ProductStat() ProductStatClient {
 	return c.productStat
 }
 
+// Stamps returns the StampClient for Stamp operations.
+func (c *Client) Stamps() StampClient {
+	return c.stamp
+}
+
 // Tags returns the TagClient for Tag operations.
 func (c *Client) Tags() TagClient {
 	return c.tag
@@ -249,6 +345,31 @@ func (c *Client) Tags() TagClient {
 // TagLinks returns the TagLinkClient for TagLink operations.
 func (c *Client) TagLinks() TagLinkClient {
 	return c.tagLink
+}
+
+// Tasks returns the TaskClient for Task operations.
+func (c *Client) Tasks() TaskClient {
+	return c.task
+}
+
+// Templates returns the TemplateClient for Template operations.
+func (c *Client) Templates() TemplateClient {
+	return c.template
+}
+
+// TemplateLabels returns the TemplateLabelClient for TemplateLabel operations.
+func (c *Client) TemplateLabels() TemplateLabelClient {
+	return c.templateLabel
+}
+
+// TemplateStamps returns the TemplateStampClient for TemplateStamp operations.
+func (c *Client) TemplateStamps() TemplateStampClient {
+	return c.templateStamp
+}
+
+// TemplateSteps returns the TemplateStepClient for TemplateStep operations.
+func (c *Client) TemplateSteps() TemplateStepClient {
+	return c.templateStep
 }
 
 // Users returns the UserClient for User operations.
@@ -264,6 +385,11 @@ func (c *Client) UserProfiles() UserProfileClient {
 // Workspaces returns the WorkspaceClient for Workspace operations.
 func (c *Client) Workspaces() WorkspaceClient {
 	return c.workspace
+}
+
+// WorkspaceNotes returns the WorkspaceNoteClient for WorkspaceNote operations.
+func (c *Client) WorkspaceNotes() WorkspaceNoteClient {
+	return c.workspaceNote
 }
 
 // WorkspaceSummary returns the WorkspaceSummaryClient for WorkspaceSummary operations.
@@ -397,12 +523,22 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // Close closes all closeable dependencies held by the client.
+// Besides the querier, it closes the cache and the event publisher, when
+// configured.
 // If a dependency does not implement io.Closer, it is silently skipped.
 // All close errors are collected and returned as a joined error.
 func (c *Client) Close() error {
 	var errs []error
 	if closer, ok := c.querier.(io.Closer); ok {
 		errs = append(errs, closer.Close())
+	}
+	if c.opts.cache != nil {
+		errs = append(errs, c.opts.cache.Close())
+	}
+	if c.opts.eventPublisher != nil {
+		if closer, ok := c.opts.eventPublisher.(io.Closer); ok {
+			errs = append(errs, closer.Close())
+		}
 	}
 	return errors.Join(errs...)
 }

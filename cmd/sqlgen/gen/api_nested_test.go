@@ -3,6 +3,7 @@ package gen_test
 import (
 	goparser "go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -229,7 +230,7 @@ func TestAPINested_ProjectedEmptyTargetGetsNoMember(t *testing.T) {
 		t.Fatalf("control: Events with create masked = %v, want the three relink verbs", got)
 	}
 
-	apiCtx, _ = buildNestedAPI(t, func(cfg *config.RootConfig) {
+	apiCtx, tables := buildNestedAPI(t, func(cfg *config.RootConfig) {
 		maskCreate(cfg)
 		tc := cfg.Tables["events"]
 		tc.ColumnMap = map[string]config.ColumnOverride{
@@ -240,6 +241,72 @@ func TestAPINested_ProjectedEmptyTargetGetsNoMember(t *testing.T) {
 	})
 	if verbs, ok := apiNestedVerbs(apiUsers(t, apiCtx))["Events"]; ok {
 		t.Errorf("Events = %v, want no member once the projected create input is empty", verbs)
+	}
+
+	// The Go client reads the unprojected input, which access never empties:
+	// it keeps the edge, its create verb, and the hidden column.
+	goEvents := nestedEdge(t, tables["users"], "Events")
+	if !goEvents.HasCreate {
+		t.Errorf("Go Events edge create = false, want true — access never narrows the Go nested surface")
+	}
+	if !hasInputColumn(goEvents.ChildFields, "action") {
+		t.Errorf("Go Events child input = %v, want it to keep the access-hidden `action`", goEvents.ChildFields)
+	}
+}
+
+// hasInputColumn reports whether fields carries the column.
+func hasInputColumn(fields []gen.InputFieldContext, column string) bool {
+	return slices.ContainsFunc(fields, func(f gen.InputFieldContext) bool { return f.ColumnName == column })
+}
+
+// The access projection reaches nested child inputs: a column a child's role
+// drops from its create input is absent from the nested child input, which is
+// built from that projected input — while the Go nested child input, which
+// access never touches, keeps it.
+func TestAPINested_ChildInputDropsAccessProjectedColumn(t *testing.T) {
+	schema := nestedSchema()
+	orders := &schema.Tables[slices.IndexFunc(schema.Tables, func(tb parser.Table) bool { return tb.Name == "orders" })]
+	orders.Columns = append(orders.Columns, parser.Column{Name: "internal_note", Type: "text", Nullable: true})
+
+	input := apiTestInput(t, schema)
+	cfg := input.Config
+	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
+	cfg.Tables["users"] = config.TableConfig{Relationships: nestedUserRelationships()}
+	cfg.Tables["orders"] = config.TableConfig{
+		ColumnMap: map[string]config.ColumnOverride{"internal_note": {Access: config.AccessHidden}},
+	}
+	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, cfg)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
+	}
+	apiCtx, err := gen.BuildAPIContext(contexts, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatalf("BuildAPIContext() error: %v", err)
+	}
+	users := contexts[slices.IndexFunc(contexts, func(c gen.TableContext) bool { return c.TableName == "users" })]
+
+	apiOrders := edgeNamed(t, apiUsers(t, apiCtx).Nested, "Orders")
+	if !apiOrders.HasCreate || apiOrders.ChildInputName == "" {
+		t.Fatalf("control: API Orders create=%v childInput=%q, want a create over a declared child input", apiOrders.HasCreate, apiOrders.ChildInputName)
+	}
+	apiChildHas := func(modelField string) bool {
+		return slices.ContainsFunc(apiOrders.ChildFields, func(f gen.APINestedChildField) bool { return f.Input.ModelFieldName == modelField })
+	}
+	if !apiChildHas("Notes") {
+		t.Errorf("API Orders child input = %+v, want the public `notes` kept", apiOrders.ChildFields)
+	}
+	if apiChildHas("InternalNote") {
+		t.Errorf("API Orders child input = %+v, want no access-hidden `internal_note`", apiOrders.ChildFields)
+	}
+
+	out := renderAPITableSchema(t, *apiUsers(t, apiCtx))
+	child := nestedSchemaBlock(t, out, "input "+apiOrders.ChildInputName+" {")
+	mustContain(t, child, "notes:")
+	mustNotContain(t, child, "internalNote")
+
+	goOrders := nestedEdge(t, users, "Orders")
+	if !hasInputColumn(goOrders.ChildFields, "internal_note") {
+		t.Errorf("Go Orders child input = %v, want it to keep `internal_note` — access never narrows the Go client", goOrders.ChildFields)
 	}
 }
 
@@ -342,26 +409,36 @@ func TestAPINested_ConflictTargetsProjectAccess(t *testing.T) {
 		role        string
 		pkRole      string // access role on `id`; empty leaves the default
 		appEnforced bool
+		generated   bool     // api_key_hash is a generated column
 		want        []string // enum values; nil means no upsert mutation
 	}{
-		{"public", config.AccessPublic, "", false, []string{"API_KEY_HASH", "PK"}},
-		{"read_only", config.AccessReadOnly, "", false, []string{"PK"}},
-		{"write_only", config.AccessWriteOnly, "", false, []string{"API_KEY_HASH", "PK"}},
-		{"hidden", config.AccessHidden, "", false, []string{"PK"}},
-		{"internal", config.AccessInternal, "", false, []string{"PK"}},
-		{"read_only, read_only PK", config.AccessReadOnly, config.AccessReadOnly, false, []string{"PK"}},
-		{"public, read_only PK", config.AccessPublic, config.AccessReadOnly, false, []string{"API_KEY_HASH", "PK"}},
-		{"public, app-enforced key", config.AccessPublic, "", true, []string{"API_KEY_HASH"}},
-		{"read_only, app-enforced key", config.AccessReadOnly, "", true, nil},
-		{"write_only, app-enforced key", config.AccessWriteOnly, "", true, []string{"API_KEY_HASH"}},
-		{"hidden, app-enforced key", config.AccessHidden, "", true, nil},
-		{"internal, app-enforced key", config.AccessInternal, "", true, nil},
+		{"public", config.AccessPublic, "", false, false, []string{"API_KEY_HASH", "PK"}},
+		{"read_only", config.AccessReadOnly, "", false, false, []string{"PK"}},
+		{"write_only", config.AccessWriteOnly, "", false, false, []string{"API_KEY_HASH", "PK"}},
+		{"hidden", config.AccessHidden, "", false, false, []string{"PK"}},
+		{"internal", config.AccessInternal, "", false, false, []string{"PK"}},
+		{"read_only, read_only PK", config.AccessReadOnly, config.AccessReadOnly, false, false, []string{"PK"}},
+		{"public, read_only PK", config.AccessPublic, config.AccessReadOnly, false, false, []string{"API_KEY_HASH", "PK"}},
+		{"public, app-enforced key", config.AccessPublic, "", true, false, []string{"API_KEY_HASH"}},
+		{"read_only, app-enforced key", config.AccessReadOnly, "", true, false, nil},
+		{"write_only, app-enforced key", config.AccessWriteOnly, "", true, false, []string{"API_KEY_HASH"}},
+		{"hidden, app-enforced key", config.AccessHidden, "", true, false, nil},
+		{"internal, app-enforced key", config.AccessInternal, "", true, false, nil},
+		// A generated column is never in Create<T>Input, yet its target
+		// follows its access role like any other column's.
+		{"public generated column", config.AccessPublic, "", false, true, []string{"API_KEY_HASH", "PK"}},
+		{"read_only generated column", config.AccessReadOnly, "", false, true, []string{"PK"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			schema := nestedSchema()
 			users := &schema.Tables[slices.IndexFunc(schema.Tables, func(tb parser.Table) bool { return tb.Name == "users" })]
-			users.Columns = append(users.Columns, parser.Column{Name: "api_key_hash", Type: "text", Nullable: true, Unique: true})
+			keyCol := parser.Column{Name: "api_key_hash", Type: "text", Nullable: true, Unique: true}
+			if tt.generated {
+				keyCol.GeneratedExpr = "md5(email)"
+				keyCol.GeneratedStorage = "STORED"
+			}
+			users.Columns = append(users.Columns, keyCol)
 			tcfg := config.TableConfig{
 				Relationships: nestedUserRelationships(),
 				ColumnMap:     map[string]config.ColumnOverride{"api_key_hash": {Access: tt.role}},
@@ -390,6 +467,9 @@ func TestAPINested_ConflictTargetsProjectAccess(t *testing.T) {
 			tc := contexts[slices.IndexFunc(contexts, func(c gen.TableContext) bool { return c.TableName == "users" })]
 			if tc.Nested == nil || !tc.Nested.EmitUpsert {
 				t.Fatalf("control: the Go client emits no UpsertWithRelated for users (role %s)", tt.role)
+			}
+			if tt.generated && slices.ContainsFunc(tc.CreateInputFields, func(f gen.InputFieldContext) bool { return f.ColumnName == "api_key_hash" }) {
+				t.Fatalf("control: generated api_key_hash is in CreateUserInput, so it is not resolved as a generated column")
 			}
 			if err := gen.ValidateAPINestedCompleteness(tc, *at); err != nil {
 				t.Errorf("ValidateAPINestedCompleteness() = %v, want nil", err)
@@ -970,19 +1050,17 @@ func incrementNestedSchema() *parser.Schema {
 	}
 }
 
-// TestAPINestedTemplates_IncrementBranch renders the one branch no users-based
-// fixture reaches: an update wrapper whose flat half carries `_inc` / `_dec`.
-// It pins the ruling (the increments run in the nested mutation's own
-// transaction) and the read-back's hook skip, which keeps the cache from
-// answering the mutation with the pre-mutation row while the writes' own
-// invalidation waits for commit (PRD §9.9.6). The E2E example compiles the
-// branch; this is the gate `make check` runs.
-func TestAPINestedTemplates_IncrementBranch(t *testing.T) {
+// incrementNestedRenderer builds the API context for incrementNestedSchema
+// with nested mutations on and accounts.Entries declared, and returns a
+// renderer that executes one API template against it and fails the test
+// unless the output parses as Go.
+func incrementNestedRenderer(t *testing.T) func(name string) string {
+	t.Helper()
 	input := apiTestInput(t, incrementNestedSchema())
 	cfg := input.Config
 	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
 	cfg.Tables["accounts"] = config.TableConfig{Relationships: []config.TableRelationship{
-		{Name: "Entries", Type: "one_to_many", Table: "ledger_entries", FK: "account_id"},
+		{Name: "Entries", Type: "one_to_many", Table: "ledger_entries", FK: config.KeyColumns{"account_id"}},
 	}}
 	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, cfg)
 	if err != nil {
@@ -1010,6 +1088,18 @@ func TestAPINestedTemplates_IncrementBranch(t *testing.T) {
 		}
 		return src
 	}
+	return render
+}
+
+// TestAPINestedTemplates_IncrementBranch renders the one branch no users-based
+// fixture reaches: an update wrapper whose flat half carries `_inc` / `_dec`.
+// It pins the ruling (the increments run in the nested mutation's own
+// transaction) and the read-back's hook skip, which keeps the cache from
+// answering the mutation with the pre-mutation row while the writes' own
+// invalidation waits for commit (PRD §9.9.6). The E2E example compiles the
+// branch; this is the gate `make check` runs.
+func TestAPINestedTemplates_IncrementBranch(t *testing.T) {
+	render := incrementNestedRenderer(t)
 
 	resolvers := render("api/resolvers")
 	mustContainAll(t, resolvers,
@@ -1031,4 +1121,153 @@ func TestAPINestedTemplates_IncrementBranch(t *testing.T) {
 	mustContain(t, render("api/input-translate"),
 		"func updateAccountWithRelatedIncrementOps(in gqlmodel.UpdateAccountWithRelatedInput) ([]sqlgenresolver.IncrementOp[models.AccountIncrementColumn], error) {")
 	mustContain(t, render("api/seeds"), "incOps, err := updateAccountWithRelatedIncrementOps(input)")
+}
+
+// TestAPINested_FamiliesFollowTheSurvivingEdges pins the per-family drop on
+// the GraphQL surface (PRD §9.9.4), applied after the API projection:
+// `create<T>WithRelated` goes when no surviving edge carries `create` or
+// `connect`, and the update and upsert mutations go when no edge survives at
+// all. The Go surface keeps all three methods in both cases, since its rule is
+// per parent.
+func TestAPINested_FamiliesFollowTheSurvivingEdges(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*config.RootConfig)
+		want   []string // nested root fields
+	}{
+		{
+			name: "no surviving edge carries create or connect",
+			mutate: func(cfg *config.RootConfig) {
+				cfg.Generation.NestedMutations.Verbs = []string{"disconnect", "clear"}
+			},
+			want: []string{"UpdateUserWithRelated", "UpsertUserWithRelated"},
+		},
+		{
+			name: "no edge survives",
+			mutate: func(cfg *config.RootConfig) {
+				tc := cfg.Tables["users"]
+				tc.NestedMutations = &config.TableNestedMutationsConfig{
+					Relationships: []config.TableNestedRelationship{{Name: "Events"}},
+				}
+				cfg.Tables["users"] = tc
+				setTableAPI(cfg, "events", config.TableAPIConfig{Enabled: new(false)})
+			},
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			apiCtx, tables := buildNestedAPI(t, tt.mutate)
+
+			goNested := tables["users"].Nested
+			if goNested == nil || len(goNested.Edges) == 0 {
+				t.Fatal("control: the Go surface of users carries no edge, so the API drop is not the projection's doing")
+			}
+			if !goNested.EmitCreate || !goNested.EmitUpdate || !goNested.EmitUpsert {
+				t.Errorf("Go families create=%v update=%v upsert=%v, want all three kept",
+					goNested.EmitCreate, goNested.EmitUpdate, goNested.EmitUpsert)
+			}
+
+			_, mutations := gen.CollectSqlgenRootFields(apiCtx)
+			var got []string
+			for _, m := range mutations {
+				if strings.HasSuffix(m.GoName, "WithRelated") {
+					got = append(got, m.GoName)
+				}
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("nested root fields = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAPINestedTemplates_IDVerbElementShapes renders the nested block
+// translators over a target keyed on each shape gqlgen gives a `[<Key>!]`
+// list. A struct key (`Time`, `DateTime`, `Decimal`) arrives as []*T and is
+// dereferenced into the model's []T, a key the model binds at another width
+// is converted, and any other key threads through.
+func TestAPINestedTemplates_IDVerbElementShapes(t *testing.T) {
+	deref := []string{"out.Connect = append(out.Connect, *v)", "out.Disconnect = append(out.Disconnect, *v)"}
+	tests := []struct {
+		name     string
+		dialect  config.Dialect
+		driver   config.Driver
+		keyDDL   string
+		override map[string]config.TypeOverride
+		want     []string
+		notWant  []string
+	}{
+		{
+			name: "postgres timestamptz", dialect: config.DialectPostgres, driver: config.DriverPgx,
+			keyDDL: "timestamptz", want: deref,
+			notWant: []string{"out.Connect = in.Connect", "out.Disconnect = in.Disconnect"},
+		},
+		{
+			name: "mysql datetime", dialect: config.DialectMySQL, driver: config.DriverStdlib,
+			keyDDL: "datetime(6)", want: deref,
+		},
+		{
+			name: "sqlite datetime", dialect: config.DialectSQLite, driver: config.DriverStdlib,
+			keyDDL: "datetime", want: deref,
+		},
+		{
+			name: "mysql decimal override", dialect: config.DialectMySQL, driver: config.DriverStdlib,
+			keyDDL: "decimal(10,2)", want: deref,
+			override: map[string]config.TypeOverride{"decimal": {
+				Type: "decimal.Decimal", Import: "github.com/shopspring/decimal",
+				Nullable: config.NullableVariant{Type: "decimal.NullDecimal", Import: "github.com/shopspring/decimal"},
+			}},
+		},
+		{
+			name: "postgres bigint", dialect: config.DialectPostgres, driver: config.DriverPgx,
+			keyDDL: "bigint", want: []string{"out.Connect = append(out.Connect, int64(v))"},
+			notWant: []string{"*v"},
+		},
+		{
+			name: "postgres uuid", dialect: config.DialectPostgres, driver: config.DriverPgx,
+			keyDDL: "uuid", want: []string{"out.Connect = in.Connect\n", "out.Disconnect = in.Disconnect\n"},
+			notWant: []string{"*v"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ddl := "CREATE TABLE owners (id bigint PRIMARY KEY, name varchar(50) NOT NULL);\n" +
+				"CREATE TABLE stamps (k " + tt.keyDDL + " PRIMARY KEY, owner_id bigint, label varchar(50) NOT NULL, " +
+				"FOREIGN KEY (owner_id) REFERENCES owners (id));\n"
+			input := apiTestInput(t, parseDDLForTest(t, tt.dialect, ddl))
+			cfg := input.Config
+			cfg.Input.Dialect = tt.dialect
+			cfg.Output.Driver = tt.driver
+			cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
+			maps.Copy(cfg.Overrides.Types, tt.override)
+			cfg.Tables["owners"] = config.TableConfig{Relationships: []config.TableRelationship{
+				{Name: "Stamps", Type: "one_to_many", Table: "stamps", FK: config.KeyColumns{"owner_id"}},
+			}}
+			contexts, err := gen.BuildTableContextsFromSchema(input.Schema, cfg)
+			if err != nil {
+				t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
+			}
+			apiCtx, err := gen.BuildAPIContext(contexts, nil, nil, nil, cfg)
+			if err != nil {
+				t.Fatalf("BuildAPIContext() error: %v", err)
+			}
+			apiCtx.ModelsPackage = "models"
+			apiCtx.GqlgenModelAlias = "gqlmodel"
+			apiCtx.SqlgenResolverPkgName = "sqlgenresolver"
+			apiCtx.ClientName = "Client"
+
+			var buf strings.Builder
+			if err := loadAPIAllTemplates(t).ExecuteTemplate(&buf, "api/input-translate", apiCtx); err != nil {
+				t.Fatalf("rendering api/input-translate: %v", err)
+			}
+			_, block, found := strings.Cut(buf.String(), "func translateOwnerStampsUpdateNested(")
+			if !found {
+				t.Fatalf("no update-side block translator for Owner.Stamps:\n%s", buf.String())
+			}
+			block, _, _ = strings.Cut(block, "\n}\n")
+			mustContainAll(t, block, tt.want...)
+			mustNotContain(t, block, tt.notWant...)
+		})
+	}
 }

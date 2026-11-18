@@ -10,7 +10,7 @@ import (
 // given static sort (PRD §4.8).
 func sortRel(relType string, sort ...config.RelationshipSort) config.TableRelationship {
 	return config.TableRelationship{
-		Name: "Attachments", Type: relType, Table: "documents", FK: "entity_id",
+		Name: "Attachments", Type: relType, Table: "documents", FK: config.KeyColumns{"entity_id"},
 		Sort: sort,
 	}
 }
@@ -19,7 +19,7 @@ func sortRel(relType string, sort ...config.RelationshipSort) config.TableRelati
 // not an fk (PRD §4.8), so it carries one and no fk.
 func m2mSortRel(sort ...config.RelationshipSort) config.TableRelationship {
 	r := sortRel("m2m", sort...)
-	r.FK, r.Junction = "", "asset_documents"
+	r.FK, r.Junction = nil, "asset_documents"
 	return r
 }
 
@@ -46,12 +46,12 @@ func TestValidateRelationships_SortRejected(t *testing.T) {
 		{
 			name: "missing column",
 			rel:  sortRel("o2m", config.RelationshipSort{Direction: "desc"}),
-			want: []string{"tables.assets.relationships[0]", ".sort[0].column: required"},
+			want: []string{`tables.assets.relationships[0] ("Attachments").sort[0].column: required`},
 		},
 		{
 			name: "unknown direction",
 			rel:  m2mSortRel(config.RelationshipSort{Column: "name"}, config.RelationshipSort{Column: "id", Direction: "descending"}),
-			want: []string{"tables.assets.relationships[0]", ".sort[1].direction", `"descending"`, "allowed: asc, desc"},
+			want: []string{`tables.assets.relationships[0] ("Attachments").sort[1].direction`, `"descending"`, "allowed: asc, desc"},
 		},
 	}
 	for _, tt := range tests {

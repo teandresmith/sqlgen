@@ -56,6 +56,18 @@ type BreadcrumbsInput struct {
 	// MarkdownDir is the resolved markdown_dir (default "manifest"), relative to
 	// OutputDir. Breadcrumb pointers into the manifest use it.
 	MarkdownDir string
+	// JSONOnly reports that formats has no markdown, so no _index.md,
+	// _conventions.md or per-entity .md is written. Every pointer then names
+	// the JSON artifact instead: <markdown_dir>/<json_filename> for the index
+	// and the conventions, and the per-entity JSON file (json_layout:
+	// per_entity) or the single JSON file for each entity.
+	JSONOnly bool
+	// JSONFilename and JSONPerEntityDir are the resolved json_filename and
+	// json_per_entity_dir; PerEntityJSON reports json_layout: per_entity. They
+	// are read only when JSONOnly is set.
+	JSONFilename     string
+	JSONPerEntityDir string
+	PerEntityJSON    bool
 	// GraphDir, when non-empty, is the resolved graph package directory (nested
 	// under models or a top-level sibling). Its presence causes graph/CLAUDE.md
 	// and graph/AGENTS.md to be emitted there using the three-pointer graph
@@ -84,11 +96,13 @@ func EmitBreadcrumbs(in BreadcrumbsInput) ([]string, error) {
 
 	var warnings []string
 
-	modelsBody, err := renderMarkdown("breadcrumb.md.tmpl", modelsBreadcrumbData(in.Doc, mdDir))
+	targets := in.pointerTargets(mdDir)
+
+	modelsBody, err := renderMarkdown("breadcrumb.md.tmpl", modelsBreadcrumbData(in.Doc, mdDir, targets))
 	if err != nil {
 		return nil, err
 	}
-	modelsIndex := "./" + path.Join(mdDir, "_index.md")
+	modelsIndex := "./" + path.Join(mdDir, targets.index)
 	ws, err := writeBreadcrumbPair(in.OutputDir, modelsBody, modelsIndex, in.Breadcrumbs)
 	if err != nil {
 		return nil, err
@@ -96,7 +110,7 @@ func EmitBreadcrumbs(in BreadcrumbsInput) ([]string, error) {
 	warnings = append(warnings, ws...)
 
 	if in.GraphDir != "" {
-		graphIndex := relIndexPath(in.GraphDir, in.OutputDir, mdDir)
+		graphIndex := relIndexPath(in.GraphDir, in.OutputDir, mdDir, targets.index)
 		layeredBody, err := renderMarkdown("breadcrumb_layered.md.tmpl", layeredBreadcrumbData(in.Doc, graphIndex))
 		if err != nil {
 			return nil, err
@@ -111,9 +125,41 @@ func EmitBreadcrumbs(in BreadcrumbsInput) ([]string, error) {
 	return warnings, nil
 }
 
+// pointerTargets names the manifest files a breadcrumb points at, each
+// relative to the markdown dir: the markdown set when formats includes
+// markdown, the JSON artifacts otherwise — a breadcrumb must never point at a
+// file the run did not write.
+type pointerTargets struct {
+	index       string
+	conventions string
+	// entity returns an entity's pointer from its file prefix.
+	entity func(filePrefix string) string
+}
+
+func (in BreadcrumbsInput) pointerTargets(mdDir string) pointerTargets {
+	if !in.JSONOnly {
+		return pointerTargets{
+			index:       "_index.md",
+			conventions: "_conventions.md",
+			entity:      func(prefix string) string { return prefix + ".md" },
+		}
+	}
+	jsonFile := dirOrDefault(in.JSONFilename, defaultJSONFilename)
+	t := pointerTargets{
+		index:       jsonFile,
+		conventions: jsonFile,
+		entity:      func(string) string { return jsonFile },
+	}
+	if in.PerEntityJSON {
+		entitiesDir := dirOrDefault(in.JSONPerEntityDir, "entities")
+		t.entity = func(prefix string) string { return path.Join(entitiesDir, prefix+".json") }
+	}
+	return t
+}
+
 // writeBreadcrumbPair writes body to <dir>/CLAUDE.md and <dir>/AGENTS.md,
 // each gated by its sub-flag and subject to the ownership rule. indexPath is the
-// manifest _index.md pointer used in the user-owned-file warning. Returns any
+// manifest index pointer used in the user-owned-file warning. Returns any
 // warnings from skipped user-owned targets.
 func writeBreadcrumbPair(dir string, body []byte, indexPath string, cfg config.BreadcrumbsConfig) ([]string, error) {
 	targets := []struct {
@@ -251,7 +297,7 @@ type layeredBreadcrumb struct {
 // modelsBreadcrumbData projects the document onto the models breadcrumb data.
 // Doc.Entities is already in the builder's stable order, so the pointer list is
 // deterministic. Pointers are forward-slash, markdown-relative paths.
-func modelsBreadcrumbData(doc *Document, mdDir string) modelsBreadcrumb {
+func modelsBreadcrumbData(doc *Document, mdDir string, targets pointerTargets) modelsBreadcrumb {
 	ents := make([]breadcrumbEntity, len(doc.Entities))
 	for i := range doc.Entities {
 		e := &doc.Entities[i]
@@ -259,14 +305,14 @@ func modelsBreadcrumbData(doc *Document, mdDir string) modelsBreadcrumb {
 			Name:  e.Name,
 			Table: e.Table,
 			Kind:  e.Kind,
-			Path:  "./" + path.Join(mdDir, e.FilePrefix+".md"),
+			Path:  "./" + path.Join(mdDir, targets.entity(e.FilePrefix)),
 		}
 	}
 	return modelsBreadcrumb{
 		Package:   doc.Package,
 		Dialect:   doc.Dialect,
-		IndexPath: "./" + path.Join(mdDir, "_index.md"),
-		ConvPath:  "./" + path.Join(mdDir, "_conventions.md"),
+		IndexPath: "./" + path.Join(mdDir, targets.index),
+		ConvPath:  "./" + path.Join(mdDir, targets.conventions),
 		Entities:  ents,
 	}
 }
@@ -276,13 +322,14 @@ func layeredBreadcrumbData(doc *Document, indexPath string) layeredBreadcrumb {
 	return layeredBreadcrumb{Package: doc.Package, IndexPath: indexPath}
 }
 
-// relIndexPath computes the manifest _index.md pointer from graphDir's
+// relIndexPath computes the manifest index pointer (indexFile, relative to
+// mdDir) from graphDir's
 // perspective (PRD §30.3 GraphQL breadcrumbs — the pointer adapts whether graph
 // is nested under output.dir or a top-level sibling). Output is forward-slash so
 // the markdown stays portable across OSes. Falls back to the joined target if
 // the two paths cannot be related (e.g. different Windows volumes).
-func relIndexPath(graphDir, outputDir, mdDir string) string {
-	target := filepath.Join(outputDir, mdDir, "_index.md")
+func relIndexPath(graphDir, outputDir, mdDir, indexFile string) string {
+	target := filepath.Join(outputDir, mdDir, indexFile)
 	rel, err := filepath.Rel(graphDir, target)
 	if err != nil {
 		rel = target

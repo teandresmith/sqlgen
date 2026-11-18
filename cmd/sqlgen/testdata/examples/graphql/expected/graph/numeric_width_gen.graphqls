@@ -83,12 +83,12 @@ input CreateNumericWidthInput {
   smallN: Int
   ratio: Float!
   ratioN: Float
-  smalls: [Int!]!
-  scores: [Int!]!
-  bigs: [Int!]!
-  ratios: [Float!]!
+  smalls: [Int!]
+  scores: [Int!]
+  bigs: [Int!]
+  ratios: [Float!]
   scoresN: [Int!]
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateNumericWidthInput {
   small: Int

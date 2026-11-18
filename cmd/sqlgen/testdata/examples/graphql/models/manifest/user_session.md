@@ -57,19 +57,6 @@ postgres:
 SELECT "created_at", "id", "token_hash", "user_id" FROM "public"."user_sessions" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *UserSessionFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."user_sessions" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -94,6 +81,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."user_sessions" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *UserSessionFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."user_sessions" WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ postgres:
 INSERT INTO "public"."user_sessions" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateUserSessionInput`, `target UserSessionConflictTarget`
-- Returns: `*UserSession`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated UserSessionConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."user_sessions" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateUserSessionInput`, `target UserSessionConflictTarget`
-- Returns: `[]*UserSession`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same UserSessionConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."user_sessions" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateUserSessionInput`
@@ -227,6 +197,36 @@ postgres:
 
 ```sql
 UPDATE "public"."user_sessions" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateUserSessionInput`, `target UserSessionConflictTarget`
+- Returns: `*UserSession`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated UserSessionConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."user_sessions" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateUserSessionInput`, `target UserSessionConflictTarget`
+- Returns: `[]*UserSession`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same UserSessionConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."user_sessions" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -290,3 +290,17 @@ Type `UserSessionFilter`.
 Type `UserSessionSort`.
 
 Fields: CreatedAt, ID, TokenHash, UserID
+
+## Read examples
+
+```go
+row, err := client.UserSessions().Get(ctx, uuid.NewV4())
+rows, err := client.UserSessions().GetMany(ctx, &models.GetUserSessionsInput{Filter: &models.UserSessionFilter{TokenHash: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserSessions().Create(ctx, &models.CreateUserSessionInput{UserID: uuid.NewV4(), TokenHash: "example"})
+updated, err := client.UserSessions().Update(ctx, uuid.NewV4(), &models.UpdateUserSessionInput{UserID: omittable.Set(uuid.NewV4())})
+```

@@ -8,8 +8,6 @@ package tests
 //   - early termination via consumer break: deferred rows.Close runs and the
 //     pgx pool's in-use connection count returns to its pre-stream baseline
 //   - filter / sort propagation: WHERE + ORDER BY captured in the recorded SQL
-//   - soft-delete hook composition: deleted rows excluded by default; setting
-//     Filter.DeletedAt overrides the default exclusion
 //   - mid-stream connection failure: ctx cancellation surfaces (nil, err) and
 //     terminates the iterator without leaking a goroutine or holding the conn
 //   - scalar-only column selection via StreamFieldOptions: only listed columns
@@ -124,47 +122,6 @@ func seedArticles(t *testing.T, ctx context.Context, client *models.Client, auth
 		}
 	})
 	return ids
-}
-
-// TestStream_YieldsAllRowsInSortOrder is the happy-path baseline: stream a
-// modest backlog filtered by author, sorted ascending by id, and verify every
-// seeded row appears exactly once in the captured order.
-func TestStream_YieldsAllRowsInSortOrder(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	author := t.Name()
-	const n = 50
-	ids := seedArticles(t, ctx, client, author, n)
-
-	authorEq := author
-	got := make([]uuid.UUID, 0, n)
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream yielded error: %v", err)
-		}
-		got = append(got, a.ID)
-	}
-	if len(got) != n {
-		t.Fatalf("Stream yielded %d rows, want %d", len(got), n)
-	}
-	// Insertion order is the natural creation timestamp order; ids[] is the
-	// authoritative sequence (PK is gen_random_uuid so we don't compare ids
-	// directly — instead verify set equality and uniqueness).
-	seen := make(map[uuid.UUID]int, n)
-	for _, id := range got {
-		seen[id]++
-	}
-	if len(seen) != n {
-		t.Errorf("Stream yielded duplicates: distinct=%d, total=%d", len(seen), len(got))
-	}
-	for _, id := range ids {
-		if seen[id] == 0 {
-			t.Errorf("Stream missed seeded id %q", id)
-		}
-	}
 }
 
 // TestStream_FilterAndSortPropagation verifies that input.Filter and input.Sorts
@@ -326,74 +283,6 @@ func TestStream_ScalarOnlyColumnSelection(t *testing.T) {
 	}
 }
 
-// TestStream_SoftDeleteExcludedByDefault verifies that the soft-delete hook
-// composes with Stream: rows where deleted_at IS NOT NULL are excluded by
-// default, and setting Filter.DeletedAt explicitly overrides the default
-// exclusion to include them.
-func TestStream_SoftDeleteExcludedByDefault(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	author := t.Name()
-
-	live, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title:  "live",
-		Author: author,
-	})
-	if err != nil {
-		t.Fatalf("Create live: %v", err)
-	}
-	deleted, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title:  "deleted",
-		Author: author,
-	})
-	if err != nil {
-		t.Fatalf("Create deleted: %v", err)
-	}
-	if _, err := client.Articles().SoftDelete(ctx, deleted.ID); err != nil {
-		t.Fatalf("SoftDelete: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = client.Articles().HardDelete(ctx, live.ID)
-		_ = client.Articles().HardDelete(ctx, deleted.ID)
-	})
-
-	authorEq := author
-
-	// Default: soft-deleted rows excluded.
-	var defaultIDs []uuid.UUID
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream default: %v", err)
-		}
-		defaultIDs = append(defaultIDs, a.ID)
-	}
-	if len(defaultIDs) != 1 || defaultIDs[0] != live.ID {
-		t.Errorf("Stream default: got %v, want [%s]", defaultIDs, live.ID)
-	}
-
-	// Override: explicit Filter.DeletedAt (IsNotNull) lets the hook know to
-	// not auto-add deleted_at IS NULL — the row appears.
-	var overrideIDs []uuid.UUID
-	notNull := false
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{
-			Author:    &comparator.String{Eq: &authorEq},
-			DeletedAt: &comparator.NullableTime{Null: &notNull},
-		},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream override: %v", err)
-		}
-		overrideIDs = append(overrideIDs, a.ID)
-	}
-	if len(overrideIDs) != 1 || overrideIDs[0] != deleted.ID {
-		t.Errorf("Stream override: got %v, want [%s]", overrideIDs, deleted.ID)
-	}
-}
-
 // TestStream_EarlyBreakReleasesConnection verifies that consumer `break`
 // triggers the Stream method's defer rows.Close() — the pool's in-use
 // connection count returns to baseline after a partial iteration. Without the
@@ -451,7 +340,7 @@ func TestStream_EarlyBreakReleasesConnection(t *testing.T) {
 // cancel can land. We assert the contract loosely (any error observed must be
 // a ctx error) and use a much larger backlog to give the cancel headroom.
 // The strict "iterator yields (nil, err) on failure mid-stream" contract is
-// pinned by TestStream_RowFailureMidStream below using a fake Rows wrapper.
+// pinned by the conformance suite's Stream row-error subtest.
 func TestStream_MidStreamCancellation(t *testing.T) {
 	parentCtx := context.Background()
 	client := newClient()
@@ -485,112 +374,6 @@ func TestStream_MidStreamCancellation(t *testing.T) {
 	}
 	if yielded == 0 {
 		t.Error("Stream after ctx cancel: yielded 0 rows before cancel, want > 0")
-	}
-}
-
-// stubFailRows wraps a database.Rows and forces rows.Err() to return a
-// sentinel error after N successful rows have been yielded. Simulates a
-// connection failure mid-stream — the protocol-level case where the driver
-// returns false from Next() with a non-nil Err() because the network
-// connection failed (or any other transient driver error).
-type stubFailRows struct {
-	inner database.Rows
-	max   int
-	count int
-	err   error
-}
-
-func (s *stubFailRows) Next() bool {
-	if s.count >= s.max {
-		s.err = errStubMidStreamFailure
-		return false
-	}
-	if !s.inner.Next() {
-		return false
-	}
-	s.count++
-	return true
-}
-
-func (s *stubFailRows) Scan(dest ...any) error     { return s.inner.Scan(dest...) }
-func (s *stubFailRows) Columns() ([]string, error) { return s.inner.Columns() }
-func (s *stubFailRows) Close() error               { return s.inner.Close() }
-func (s *stubFailRows) Err() error {
-	if s.err != nil {
-		return s.err
-	}
-	return s.inner.Err()
-}
-
-// stubFailQuerier wraps the postgres pgx querier but rewrites Query() to
-// return rows that fail after N. Other methods delegate.
-type stubFailQuerier struct {
-	inner database.Querier
-	max   int
-}
-
-func (s *stubFailQuerier) Exec(ctx context.Context, sqlStr string, args ...any) (database.Result, error) {
-	return s.inner.Exec(ctx, sqlStr, args...)
-}
-
-func (s *stubFailQuerier) Query(ctx context.Context, sqlStr string, args ...any) (database.Rows, error) {
-	rows, err := s.inner.Query(ctx, sqlStr, args...)
-	if err != nil {
-		return nil, err
-	}
-	return &stubFailRows{inner: rows, max: s.max}, nil
-}
-
-func (s *stubFailQuerier) QueryRow(ctx context.Context, sqlStr string, args ...any) database.Row {
-	return s.inner.QueryRow(ctx, sqlStr, args...)
-}
-
-func (s *stubFailQuerier) Begin(ctx context.Context, name string, opts ...database.TxOptions) (*database.Tx, error) {
-	return s.inner.Begin(ctx, name, opts...)
-}
-
-var errStubMidStreamFailure = errors.New("stub: simulated mid-stream connection failure")
-
-// TestStream_RowFailureMidStream verifies the contract: when the underlying
-// rows return an error from Err() after iteration begins, the Stream method
-// emits a (nil, err) yield and terminates. Pinned with a fake Rows wrapper so
-// the assertion doesn't depend on driver-specific cancellation semantics
-// (pgx's row buffering can hide ctx cancellation on small result sets, per
-// TestStream_MidStreamCancellation's relaxed contract).
-func TestStream_RowFailureMidStream(t *testing.T) {
-	ctx := context.Background()
-
-	stub := &stubFailQuerier{inner: dbpgx.New(testPool), max: 3}
-	client := models.New(stub)
-
-	author := t.Name()
-	const n = 10
-	// Seed via a separate non-stub client so the writes succeed.
-	seedClient := newClient()
-	_ = seedArticles(t, ctx, seedClient, author, n)
-
-	authorEq := author
-	yielded := 0
-	var streamErr error
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-	}) {
-		if err != nil {
-			streamErr = err
-			break
-		}
-		_ = a
-		yielded++
-	}
-
-	if streamErr == nil {
-		t.Fatal("Stream after row failure: streamErr = nil, want simulated failure")
-	}
-	if !errors.Is(streamErr, errStubMidStreamFailure) {
-		t.Errorf("Stream row failure: err = %v, want errors.Is(errStubMidStreamFailure)", streamErr)
-	}
-	if yielded != 3 {
-		t.Errorf("Stream row failure: yielded = %d, want 3 (max before stub fails)", yielded)
 	}
 }
 

@@ -74,19 +74,6 @@ postgres:
 SELECT "action", "address2_id", "adjustment", "ascii_art", "csv_data", "fk_val", "http2_flag", "id", "io_count", "line2_id", "mac", "occurred_at", "os_name", "pk_val", "processed_at", "retry_count", "s3_url", "succeeded", "tcp_port", "user_id", "utf8_body" FROM "public"."events" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *EventFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."events" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -111,6 +98,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."events" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *EventFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."events" WHERE <filter>
 ```
 
 ### Paginate
@@ -171,36 +171,6 @@ postgres:
 INSERT INTO "public"."events" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateEventInput`, `target EventConflictTarget`
-- Returns: `*Event`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated EventConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."events" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateEventInput`, `target EventConflictTarget`
-- Returns: `[]*Event`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same EventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."events" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateEventInput`
@@ -244,6 +214,36 @@ postgres:
 
 ```sql
 UPDATE "public"."events" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateEventInput`, `target EventConflictTarget`
+- Returns: `*Event`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated EventConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."events" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateEventInput`, `target EventConflictTarget`
+- Returns: `[]*Event`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same EventConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."events" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment
@@ -339,3 +339,17 @@ Type `EventFilter`.
 Type `EventSort`.
 
 Fields: ASCIIArt, Action, Address2ID, Adjustment, CSVData, FKVal, HTTP2Flag, ID, IOCount, Line2ID, MAC, OSName, OccurredAt, PKVal, ProcessedAt, RetryCount, S3URL, Succeeded, TCPPort, UserID, Utf8Body
+
+## Read examples
+
+```go
+row, err := client.Events().Get(ctx, uuid.NewV4())
+rows, err := client.Events().GetMany(ctx, &models.GetEventsInput{Filter: &models.EventFilter{Action: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Events().Create(ctx, &models.CreateEventInput{Action: "example", OccurredAt: *new(types.DateTime)})
+updated, err := client.Events().Update(ctx, uuid.NewV4(), &models.UpdateEventInput{UserID: omittable.Set(new(uuid.NewV4()))})
+```

@@ -69,20 +69,6 @@ postgres:
 SELECT "body", "created_at", "id", "kind", "labels", "parent_id", "pinned_order", "workspace_id" FROM "public"."workspace_notes" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *WorkspaceNoteFilter`
-- Returns: `int64`, `error`
-- Errors: `tenancy.ErrMissing`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."workspace_notes" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -109,6 +95,20 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."workspace_notes" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *WorkspaceNoteFilter`
+- Returns: `int64`, `error`
+- Errors: `tenancy.ErrMissing`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."workspace_notes" WHERE <filter>
 ```
 
 ### Paginate
@@ -171,36 +171,6 @@ postgres:
 INSERT INTO "public"."workspace_notes" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateWorkspaceNoteInput`, `target WorkspaceNoteConflictTarget`
-- Returns: `*WorkspaceNote`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: One method over the generated WorkspaceNoteConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."workspace_notes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateWorkspaceNoteInput`, `target WorkspaceNoteConflictTarget`
-- Returns: `[]*WorkspaceNote`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Batched in generation.batch_size chunks over the same WorkspaceNoteConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."workspace_notes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateWorkspaceNoteInput`
@@ -245,6 +215,57 @@ postgres:
 ```sql
 UPDATE "public"."workspace_notes" SET <set> WHERE <filter> RETURNING "id"
 ```
+
+### Upsert
+
+- Params: `input *CreateWorkspaceNoteInput`, `target WorkspaceNoteConflictTarget`
+- Returns: `*WorkspaceNote`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: One method over the generated WorkspaceNoteConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."workspace_notes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateWorkspaceNoteInput`, `target WorkspaceNoteConflictTarget`
+- Returns: `[]*WorkspaceNote`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: Batched in generation.batch_size chunks over the same WorkspaceNoteConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."workspace_notes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateWorkspaceNoteWithRelatedInput`
+- Returns: `*WorkspaceNote`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id uuid.UUID`, `input *UpdateWorkspaceNoteWithRelatedInput`
+- Returns: `*WorkspaceNote`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertWorkspaceNoteWithRelatedInput`, `target WorkspaceNoteConflictTarget`
+- Returns: `*WorkspaceNote`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ### Increment
 
@@ -306,27 +327,6 @@ postgres:
 DELETE FROM "public"."workspace_notes" WHERE <filter> RETURNING "id"
 ```
 
-### CreateWithRelated
-
-- Params: `input *CreateWorkspaceNoteWithRelatedInput`
-- Returns: `*WorkspaceNote`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id uuid.UUID`, `input *UpdateWorkspaceNoteWithRelatedInput`
-- Returns: `*WorkspaceNote`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertWorkspaceNoteWithRelatedInput`, `target WorkspaceNoteConflictTarget`
-- Returns: `*WorkspaceNote`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Children, DraftChildren), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
 ## Filter
 
 Type `WorkspaceNoteFilter`.
@@ -349,3 +349,17 @@ Type `WorkspaceNoteFilter`.
 Type `WorkspaceNoteSort`.
 
 Fields: Body, CreatedAt, ID, Kind, Labels, ParentID, PinnedOrder, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.WorkspaceNotes().Get(ctx, uuid.NewV4())
+rows, err := client.WorkspaceNotes().GetMany(ctx, &models.GetWorkspaceNotesInput{Filter: &models.WorkspaceNoteFilter{Body: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.WorkspaceNotes().Create(ctx, &models.CreateWorkspaceNoteInput{Body: "example"})
+updated, err := client.WorkspaceNotes().Update(ctx, uuid.NewV4(), &models.UpdateWorkspaceNoteInput{WorkspaceID: omittable.Set(uuid.NewV4())})
+```

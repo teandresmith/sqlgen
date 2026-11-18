@@ -78,12 +78,17 @@ type Client struct {
 	assetDocumentLink *assetDocumentLinkClient
 	auditNote         *auditNoteClient
 	auditUser         *auditUserClient
+	boolKeyed         *boolKeyedClient
+	boolKeyedNote     *boolKeyedNoteClient
 	category          *categoryClient
 	categoryStat      *categoryStatClient
 	counter           *counterClient
 	defaultOnlyRow    *defaultOnlyRowClient
 	document          *documentClient
 	event             *eventClient
+	fingerprint       *fingerprintClient
+	host              *hostClient
+	hostFingerprint   *hostFingerprintClient
 	keyOnlyRow        *keyOnlyRowClient
 	noteWatcher       *noteWatcherClient
 	order             *orderClient
@@ -99,8 +104,16 @@ type Client struct {
 	sequenceRow       *sequenceRowClient
 	sluggedRow        *sluggedRowClient
 	tag               *tagClient
+	timeKeyed         *timeKeyedClient
+	timeKeyedNote     *timeKeyedNoteClient
 	userCategory      *userCategoryClient
 	warehouse         *warehouseClient
+	widthBig          *widthBigClient
+	widthLink         *widthLinkClient
+	widthNarrowChild  *widthNarrowChildClient
+	widthScopedChild  *widthScopedChildClient
+	widthSmall        *widthSmallClient
+	widthWideChild    *widthWideChildClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -134,12 +147,17 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		assetDocumentLink: newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		auditNote:         newAuditNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		auditUser:         newAuditUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		boolKeyed:         newBoolKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		boolKeyedNote:     newBoolKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		category:          newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		categoryStat:      newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		counter:           newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		defaultOnlyRow:    newDefaultOnlyRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		document:          newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		event:             newEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		fingerprint:       newFingerprintClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		host:              newHostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		hostFingerprint:   newHostFingerprintClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		keyOnlyRow:        newKeyOnlyRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		noteWatcher:       newNoteWatcherClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		order:             newOrderClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -155,8 +173,16 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		sequenceRow:       newSequenceRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		sluggedRow:        newSluggedRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		tag:               newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		timeKeyed:         newTimeKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		timeKeyedNote:     newTimeKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		userCategory:      newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		warehouse:         newWarehouseClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthBig:          newWidthBigClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthLink:         newWidthLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthNarrowChild:  newWidthNarrowChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthScopedChild:  newWidthScopedChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthSmall:        newWidthSmallClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthWideChild:    newWidthWideChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 	}
 
 	// Push the configured CallbackMode down to every entity client that can
@@ -165,18 +191,25 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
 	c.asset.callbackMode = options.callbackMode
+	c.boolKeyed.callbackMode = options.callbackMode
 	c.category.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
 	c.event.callbackMode = options.callbackMode
+	c.fingerprint.callbackMode = options.callbackMode
+	c.host.callbackMode = options.callbackMode
 	c.order.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
 	c.publicUser.callbackMode = options.callbackMode
+	c.timeKeyed.callbackMode = options.callbackMode
 	c.warehouse.callbackMode = options.callbackMode
+	c.widthBig.callbackMode = options.callbackMode
+	c.widthSmall.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
 	c.asset.documentClient = c.document
 	c.asset.assetDocumentLinkClient = c.assetDocumentLink
+	c.boolKeyed.boolKeyedNoteClient = c.boolKeyedNote
 	c.category.productClient = c.product
 	c.category.publicUserClient = c.publicUser
 	c.category.userCategoryClient = c.userCategory
@@ -184,6 +217,10 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.document.assetDocumentLinkClient = c.assetDocumentLink
 	c.event.auditNoteClient = c.auditNote
 	c.event.publicNoteClient = c.publicNote
+	c.fingerprint.hostClient = c.host
+	c.fingerprint.hostFingerprintClient = c.hostFingerprint
+	c.host.fingerprintClient = c.fingerprint
+	c.host.hostFingerprintClient = c.hostFingerprint
 	c.order.orderItemClient = c.orderItem
 	c.product.orderItemClient = c.orderItem
 	c.product.productTagLabelClient = c.productTagLabel
@@ -194,7 +231,15 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.publicUser.noteWatcherClient = c.noteWatcher
 	c.publicUser.profileClient = c.profile
 	c.publicUser.userCategoryClient = c.userCategory
+	c.timeKeyed.timeKeyedNoteClient = c.timeKeyedNote
 	c.warehouse.warehouseClient = c.warehouse
+	c.widthBig.widthNarrowChildClient = c.widthNarrowChild
+	c.widthBig.widthSmallClient = c.widthSmall
+	c.widthBig.widthLinkClient = c.widthLink
+	c.widthSmall.widthScopedChildClient = c.widthScopedChild
+	c.widthSmall.widthWideChildClient = c.widthWideChild
+	c.widthSmall.widthBigClient = c.widthBig
+	c.widthSmall.widthLinkClient = c.widthLink
 
 	return c
 }
@@ -222,6 +267,16 @@ func (c *Client) AuditNotes() AuditNoteClient {
 // AuditUsers returns the AuditUserClient for AuditUser operations.
 func (c *Client) AuditUsers() AuditUserClient {
 	return c.auditUser
+}
+
+// BoolKeyeds returns the BoolKeyedClient for BoolKeyed operations.
+func (c *Client) BoolKeyeds() BoolKeyedClient {
+	return c.boolKeyed
+}
+
+// BoolKeyedNotes returns the BoolKeyedNoteClient for BoolKeyedNote operations.
+func (c *Client) BoolKeyedNotes() BoolKeyedNoteClient {
+	return c.boolKeyedNote
 }
 
 // Categories returns the CategoryClient for Category operations.
@@ -252,6 +307,21 @@ func (c *Client) Documents() DocumentClient {
 // Events returns the EventClient for Event operations.
 func (c *Client) Events() EventClient {
 	return c.event
+}
+
+// Fingerprints returns the FingerprintClient for Fingerprint operations.
+func (c *Client) Fingerprints() FingerprintClient {
+	return c.fingerprint
+}
+
+// Hosts returns the HostClient for Host operations.
+func (c *Client) Hosts() HostClient {
+	return c.host
+}
+
+// HostFingerprints returns the HostFingerprintClient for HostFingerprint operations.
+func (c *Client) HostFingerprints() HostFingerprintClient {
+	return c.hostFingerprint
 }
 
 // KeyOnlyRows returns the KeyOnlyRowClient for KeyOnlyRow operations.
@@ -329,6 +399,16 @@ func (c *Client) Tags() TagClient {
 	return c.tag
 }
 
+// TimeKeyeds returns the TimeKeyedClient for TimeKeyed operations.
+func (c *Client) TimeKeyeds() TimeKeyedClient {
+	return c.timeKeyed
+}
+
+// TimeKeyedNotes returns the TimeKeyedNoteClient for TimeKeyedNote operations.
+func (c *Client) TimeKeyedNotes() TimeKeyedNoteClient {
+	return c.timeKeyedNote
+}
+
 // UserCategories returns the UserCategoryClient for UserCategory operations.
 func (c *Client) UserCategories() UserCategoryClient {
 	return c.userCategory
@@ -337,6 +417,36 @@ func (c *Client) UserCategories() UserCategoryClient {
 // Warehouses returns the WarehouseClient for Warehouse operations.
 func (c *Client) Warehouses() WarehouseClient {
 	return c.warehouse
+}
+
+// WidthBigs returns the WidthBigClient for WidthBig operations.
+func (c *Client) WidthBigs() WidthBigClient {
+	return c.widthBig
+}
+
+// WidthLinks returns the WidthLinkClient for WidthLink operations.
+func (c *Client) WidthLinks() WidthLinkClient {
+	return c.widthLink
+}
+
+// WidthNarrowChildren returns the WidthNarrowChildClient for WidthNarrowChild operations.
+func (c *Client) WidthNarrowChildren() WidthNarrowChildClient {
+	return c.widthNarrowChild
+}
+
+// WidthScopedChildren returns the WidthScopedChildClient for WidthScopedChild operations.
+func (c *Client) WidthScopedChildren() WidthScopedChildClient {
+	return c.widthScopedChild
+}
+
+// WidthSmalls returns the WidthSmallClient for WidthSmall operations.
+func (c *Client) WidthSmalls() WidthSmallClient {
+	return c.widthSmall
+}
+
+// WidthWideChildren returns the WidthWideChildClient for WidthWideChild operations.
+func (c *Client) WidthWideChildren() WidthWideChildClient {
+	return c.widthWideChild
 }
 
 // Begin starts a new transaction with the given name.
@@ -463,12 +573,22 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // Close closes all closeable dependencies held by the client.
+// Besides the querier, it closes the cache and the event publisher, when
+// configured.
 // If a dependency does not implement io.Closer, it is silently skipped.
 // All close errors are collected and returned as a joined error.
 func (c *Client) Close() error {
 	var errs []error
 	if closer, ok := c.querier.(io.Closer); ok {
 		errs = append(errs, closer.Close())
+	}
+	if c.opts.cache != nil {
+		errs = append(errs, c.opts.cache.Close())
+	}
+	if c.opts.eventPublisher != nil {
+		if closer, ok := c.opts.eventPublisher.(io.Closer); ok {
+			errs = append(errs, closer.Close())
+		}
 	}
 	return errors.Join(errs...)
 }

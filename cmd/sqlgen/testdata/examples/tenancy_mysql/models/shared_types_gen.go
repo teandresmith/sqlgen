@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/teandresmith/sqlgen/sql"
@@ -12,14 +13,15 @@ import (
 
 // CallOptions controls per-call behavior overrides.
 type CallOptions[FO any] struct {
-	SkipCache          bool         `json:"skip_cache"`           // bypass cache read-through and write-through
-	SkipEvents         bool         `json:"skip_events"`          // suppress event publishing for this mutation
-	SkipHooks          bool         `json:"skip_hooks"`           // bypass all hooks except panic recovery
-	SkipTenancy        bool         `json:"skip_tenancy"`         // bypass tenant auto-filter and mutation mismatch check; orthogonal to SkipHooks
-	Tenant             *string      `json:"tenant"`               // explicit tenant: resolve tenancy to this value (filter + auto-set) instead of the ctx resolver; wins over SkipTenancy; nil = unset
-	FieldOptions       *FO          `json:"field_options"`        // column selection and relationship loading
-	LockMode           sql.LockMode `json:"lock_mode"`            // row-level lock clause for read methods
-	AllowInTransaction bool         `json:"allow_in_transaction"` // permit Stream inside a transaction; commits the caller to issuing nothing else on that txCtx
+	SkipCache          bool          `json:"skip_cache"`           // bypass cache read-through and write-through
+	SkipEvents         bool          `json:"skip_events"`          // suppress event publishing for this mutation
+	SkipHooks          bool          `json:"skip_hooks"`           // bypass all hooks except panic recovery
+	SkipTenancy        bool          `json:"skip_tenancy"`         // bypass tenant auto-filter and mutation mismatch check; orthogonal to SkipHooks
+	Tenant             *string       `json:"tenant"`               // explicit tenant: resolve tenancy to this value (filter + auto-set) instead of the ctx resolver; wins over SkipTenancy; nil = unset
+	FieldOptions       *FO           `json:"field_options"`        // column selection and relationship loading
+	LockMode           sql.LockMode  `json:"lock_mode"`            // row-level lock clause for read methods
+	AllowInTransaction bool          `json:"allow_in_transaction"` // permit Stream inside a transaction; commits the caller to issuing nothing else on that txCtx
+	caller             callerOptions // the hook toggles the outermost call resolved; survives internal hops
 }
 
 // IncrementInput holds parameters for atomic column increment/decrement.
@@ -43,6 +45,25 @@ func excludeColumns(columns, exclude []string) []string {
 	return result
 }
 
+// nestedChildOptions copies the option fields that cross a table boundary
+// on a nested mutation. FieldOptions, LockMode and AllowInTransaction
+// deliberately do not propagate: the inner calls select nothing, take no row
+// lock, and issue no Stream.
+func nestedChildOptions[FO, PFO any](o *CallOptions[FO], parent CallOptions[PFO]) {
+	o.SkipCache, o.SkipEvents = parent.SkipCache, parent.SkipEvents
+	o.SkipHooks = parent.SkipHooks
+	o.SkipTenancy = parent.SkipTenancy
+	o.Tenant = parent.Tenant
+}
+
+// nestedError attributes a nested-mutation failure to its edge and verb.
+// The wrapped error is untouched, so errors.Is against the
+// sentinels and the *ConstraintError dispatch keep working through it; id is
+// nil when the failure is not id-scoped.
+func nestedError(edge, verb string, id any, err error) error {
+	return &NestedMutationError{Edge: edge, Verb: verb, ID: id, Err: err}
+}
+
 // resolveCallOptions applies option functions and returns the resolved struct. SkipHooks implies SkipCache and SkipEvents because cache and events are implemented as hooks.
 func resolveCallOptions[FO any](opts []func(*CallOptions[FO])) CallOptions[FO] {
 	var options CallOptions[FO]
@@ -53,6 +74,11 @@ func resolveCallOptions[FO any](opts []func(*CallOptions[FO])) CallOptions[FO] {
 	if options.SkipHooks {
 		options.SkipCache = true
 		options.SkipEvents = true
+	}
+	// The first resolution records the caller's toggles; an internal call that
+	// copied these options keeps the record it inherited.
+	if !options.caller.set {
+		options.caller = callerOptions{set: true, skipHooks: options.SkipHooks, skipCache: options.SkipCache, skipEvents: options.SkipEvents}
 	}
 	// Explicit tenant wins over SkipTenancy
 	// — the call runs scoped to the explicit tenant.
@@ -152,4 +178,69 @@ func upsertDedupeKey(row []any, positions []int) (string, bool) {
 		key += fmt.Sprintf("%d:%s", len(s), s)
 	}
 	return key, true
+}
+
+// FilterOption carries the per-call data a filter needs, beyond the dialect,
+// to compile its relationship members into correlated EXISTS subqueries.
+// Generated client methods supply the set; ToConditions threads it through
+// And/Or composition and down into each relationship member.
+type FilterOption func(*filterScope)
+
+// filterScope is a resolved FilterOption set.
+type filterScope struct {
+	depth       int
+	tenant      string
+	applyTenant bool
+}
+
+// resolveFilterScope applies option functions and returns the resolved scope.
+func resolveFilterScope(opts []FilterOption) filterScope {
+	var scope filterScope
+	for _, fn := range opts {
+		fn(&scope)
+	}
+	return scope
+}
+
+// nestFilterScope returns opts with the subquery depth set to depth, for the
+// next level of relationship nesting. The set is copied rather than appended in
+// place so two relationship members compiled from the same filter cannot write
+// through each other's backing array.
+func nestFilterScope(opts []FilterOption, depth int) []FilterOption {
+	nested := make([]FilterOption, len(opts), len(opts)+1)
+	copy(nested, opts)
+	return append(nested, func(s *filterScope) {
+		s.depth = depth
+	})
+}
+
+// filterSubqueryAlias returns the table alias a relationship filter's subquery
+// uses at the given nesting depth. Distinct per level, so an inner subquery
+// never shadows the alias its own correlation reference resolves against.
+func filterSubqueryAlias(prefix string, depth int) string {
+	return prefix + strconv.Itoa(depth)
+}
+
+// WithFilterTenant scopes the relationship subqueries a filter compiles to
+// tenant, so a relationship filter reads the related table under the same
+// tenant predicate the table's own read path applies. Generated read and filter-accepting mutation methods pass it
+// automatically from the resolved tenant; converting a filter without it
+// produces subqueries scoped as if CallOptions.SkipTenancy were set.
+func WithFilterTenant(tenant string) FilterOption {
+	return func(s *filterScope) {
+		s.tenant = tenant
+		s.applyTenant = true
+	}
+}
+
+// callerOptions is the SkipHooks / SkipCache / SkipEvents triple a call's
+// first resolveCallOptions recorded. An internal call that reuses its caller's
+// options and sets SkipHooks to keep the caller's hook chain from firing twice
+// carries this record through unchanged, so the relationship loads that call
+// triggers run under the caller's toggles rather than its own.
+type callerOptions struct {
+	set        bool
+	skipHooks  bool
+	skipCache  bool
+	skipEvents bool
 }

@@ -7,9 +7,8 @@ package tests
 // with conflicts names the first *newly inserted* row, not the batch's first
 // row — so CreateMany's `firstID + i` fabrication (create.go.tmpl) is unsound
 // for an upsert. TestUpsertMany_LastInsertIDAfterMixedBatch_RawIsUnusable
-// proves the server still behaves that way, and
-// TestUpsertMany_DBGeneratedPK_ResolvesExistingIDs proves UpsertMany does not
-// rely on it — a database-generated key is read back by the conflict target.
+// proves the server still behaves that way. UpsertMany does not rely on it: a
+// database-generated key is read back by the conflict target.
 //
 // MySQL is also the accepting side of §6.1: it takes an in-statement duplicate
 // and keeps the last row, where PostgreSQL rejects the statement outright. The
@@ -88,94 +87,6 @@ func TestUpsertMany_LastInsertIDAfterMixedBatch_RawIsUnusable(t *testing.T) {
 	t.Logf("LAST_INSERT_ID=%d, seeded=%d, actual ids=%v", reported, seededID, actual)
 }
 
-// UpsertMany does not consult LAST_INSERT_ID at all: an AUTO_INCREMENT key is
-// read back by the conflict target after each sub-batch, so a conflicting row
-// resolves to the id it already had.
-func TestUpsertMany_DBGeneratedPK_ResolvesExistingIDs(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	t.Cleanup(func() {
-		_, _ = testDB.ExecContext(ctx, `DELETE FROM categories WHERE name LIKE 'GenPKCat-%'`)
-	})
-
-	seeded, err := client.Categories().Create(ctx, &models.CreateCategoryInput{
-		Name:        "GenPKCat-existing",
-		Description: omittable.Set(new("before")),
-	})
-	if err != nil {
-		t.Fatalf("Create seed category: %v", err)
-	}
-
-	got, err := client.Categories().UpsertMany(ctx, []*models.CreateCategoryInput{
-		{Name: "GenPKCat-existing", Description: omittable.Set(new("after"))},
-		{Name: "GenPKCat-new", Description: omittable.Set(new("fresh"))},
-	}, models.CategoryConflictName)
-	if err != nil {
-		t.Fatalf("UpsertMany on an AUTO_INCREMENT key: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("UpsertMany returned %d entities, want 2", len(got))
-	}
-
-	byName := make(map[string]*models.Category, len(got))
-	for _, c := range got {
-		byName[c.Name] = c
-	}
-	existing, ok := byName["GenPKCat-existing"]
-	if !ok {
-		t.Fatalf("result has no GenPKCat-existing; got %v", byName)
-	}
-	if existing.ID != seeded.ID {
-		t.Errorf("conflicting row resolved to id %d, want the existing row's %d", existing.ID, seeded.ID)
-	}
-	if existing.Description == nil || *existing.Description != "after" {
-		t.Errorf("conflicting row description = %v, want %q", existing.Description, "after")
-	}
-	fresh, ok := byName["GenPKCat-new"]
-	if !ok || fresh.ID == 0 {
-		t.Fatalf("newly inserted row missing or carries a zero id: %v", byName)
-	}
-	if fresh.ID == existing.ID {
-		t.Errorf("both rows resolved to id %d — the read-back is not distinguishing them", fresh.ID)
-	}
-}
-
-// --- §6.1: MySQL is the accepting side ---
-
-// MySQL takes the in-statement duplicate PostgreSQL rejects and keeps the last
-// row. UpsertMany dedupes first, so the outcome is the same one spelled the
-// same way on every dialect.
-func TestUpsertMany_DedupesLastWins(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	t.Cleanup(func() {
-		_, _ = testDB.ExecContext(ctx, `DELETE FROM categories WHERE name IN ('DedupeCat', 'OtherCat')`)
-	})
-
-	got, err := client.Categories().UpsertMany(ctx, []*models.CreateCategoryInput{
-		{Name: "DedupeCat", Description: omittable.Set(new("first"))},
-		{Name: "OtherCat", Description: omittable.Set(new("other"))},
-		{Name: "DedupeCat", Description: omittable.Set(new("last"))},
-	}, models.CategoryConflictName)
-	if err != nil {
-		t.Fatalf("UpsertMany with an in-statement duplicate: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("UpsertMany returned %d entities, want 2 (three inputs, one duplicate pair)", len(got))
-	}
-
-	var description *string
-	if err := testDB.QueryRowContext(ctx,
-		`SELECT description FROM categories WHERE name = ?`, "DedupeCat").Scan(&description); err != nil {
-		t.Fatalf("reading DedupeCat: %v", err)
-	}
-	if description == nil || *description != "last" {
-		t.Errorf("DedupeCat description = %v, want %q (last occurrence wins, as MySQL does natively)", description, "last")
-	}
-}
-
 // --- The pure link table ---
 
 // user_categories' key is its whole column set, so the conflict target covers
@@ -235,29 +146,6 @@ func TestUpsertMany_LinkTableIdempotent(t *testing.T) {
 	}
 }
 
-// PRD §9.4c: a nil element is a caller error, not a row to skip.
-func TestUpsertMany_NilElement(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	if _, err := client.Categories().UpsertMany(ctx, []*models.CreateCategoryInput{
-		{Name: "NilElementCat"},
-		nil,
-	}, models.CategoryConflictName); err == nil {
-		_, _ = testDB.ExecContext(ctx, `DELETE FROM categories WHERE name = 'NilElementCat'`)
-		t.Fatal("UpsertMany with a nil element = nil error, want ErrNilInput")
-	}
-
-	var count int
-	if err := testDB.QueryRowContext(ctx,
-		`SELECT count(*) FROM categories WHERE name = ?`, "NilElementCat").Scan(&count); err != nil {
-		t.Fatalf("counting categories: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("UpsertMany rejected for a nil element still wrote %d rows, want 0", count)
-	}
-}
-
 // A conflict target the input cannot supply leaves the written rows unnameable.
 // categories.id is AUTO_INCREMENT and absent from CreateCategoryInput entirely,
 // so ConflictPK names a column no statement here carries; the operation refuses
@@ -298,10 +186,8 @@ func TestUpsertMany_UnsuppliedConflictTargetRefused(t *testing.T) {
 //
 // This is the only runtime coverage of two things at once: the composite
 // read-back (resolveUpsertManyRows returning []UserCategoryPK, generalized for
-// exactly this), and MySQL's own tuple-IN, which degenerates through
-// buildExpandedOR where PostgreSQL and SQLite emit a row constructor. The
-// postgres pin covers a single-column key on a single-column target, so neither
-// of those paths is reached there.
+// exactly this), and MySQL's tuple IN. The postgres pin covers a single-column
+// key on a single-column target, so neither of those paths is reached there.
 //
 // Failing-first: against the pre-fix template this returns 1 entity, not 2.
 func TestUpsertMany_CallerKnownCompositeKey_NonCoveringTargetResolvesExistingKey(t *testing.T) {

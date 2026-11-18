@@ -35,14 +35,12 @@ func (r *mutationResolver) CreateMaskedLabels(ctx context.Context, inputs []*gql
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateMaskedLabel(ctx context.Context, id uuid.UUID, input gqlmodel.UpdateMaskedLabelInput) (*models.MaskedLabel, error) {
-	setIn := translateUpdateMaskedLabelInput(input)
-	hasSet := hasUpdateMaskedLabelSetFields(input)
-	return r.M.UpdateMaskedLabel(ctx, id, setIn, hasSet)
+	return r.M.UpdateMaskedLabel(ctx, id, translateUpdateMaskedLabelRequest(input))
 }
 
 // UpdateMaskedLabels is the resolver for the updateMaskedLabels field.
 func (r *mutationResolver) UpdateMaskedLabels(ctx context.Context, filter gqlmodel.MaskedLabelFilter, input gqlmodel.UpdateMaskedLabelInput) ([]*models.MaskedLabel, error) {
-	return r.M.UpdateMaskedLabels(ctx, translateMaskedLabelFilter(&filter), translateUpdateMaskedLabelInput(input))
+	return r.M.UpdateMaskedLabels(ctx, translateMaskedLabelFilter(&filter), translateUpdateMaskedLabelRequest(input))
 }
 
 // DeleteMaskedLabel is the resolver for the deleteMaskedLabel field.

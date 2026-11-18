@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/cache"
 	"github.com/teandresmith/sqlgen/hook"
 )
@@ -142,14 +144,13 @@ func TestRouteError_ThreeChannelOrdering(t *testing.T) {
 		order = append(order, "on_err")
 	}
 
-	var breakerFired bool
 	br := cache.NewBreaker(cache.BreakerConfig{
 		FailureThreshold:  1,
 		ProbeInterval:     time.Hour,
 		HalfOpenMaxProbes: 1,
 		OnStateChange: func(from, to cache.CircuitState) {
 			if to == cache.StateOpen {
-				breakerFired = true
+				order = append(order, "breaker")
 			}
 		},
 	})
@@ -157,20 +158,11 @@ func TestRouteError_ThreeChannelOrdering(t *testing.T) {
 	boom := errors.New("backend down")
 	cache.RouteError(context.Background(), m, onErr, br, "get", "public", testTable, boom)
 
-	want := []string{"metrics", "on_err"}
-	if len(order) < len(want) {
-		t.Fatalf("RouteError order = %v, want prefix %v", order, want)
-	}
-	for i, step := range want {
-		if order[i] != step {
-			t.Errorf("RouteError order[%d] = %q, want %q", i, order[i], step)
-		}
-	}
-	if !breakerFired {
-		t.Errorf("RouteError() did not call breaker.RecordFailure — breaker remained Closed")
+	if diff := cmp.Diff([]string{"metrics", "on_err", "breaker"}, order); diff != "" {
+		t.Errorf("RouteError order mismatch (-want +got):\n%s", diff)
 	}
 	if len(m.records) != 1 || m.records[0].op != "get" || m.records[0].schema != "public" ||
-		m.records[0].table != testTable || !errors.Is(m.records[0].err, boom) {
+		m.records[0].table != testTable || m.records[0].err != boom { //nolint:errorlint // identity: the recorder gets the backend's own error
 		t.Errorf("metrics record = %+v, want {public, products, get, boom}", m.records)
 	}
 }

@@ -73,19 +73,6 @@ postgres:
 SELECT "category_id", "created_at", "description", "id", "is_active", "metadata", "name", "price", "quantity", "tags", "updated_at" FROM "public"."products" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ProductFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."products" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -110,6 +97,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."products" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ProductFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."products" WHERE <filter>
 ```
 
 ### Paginate
@@ -170,36 +170,6 @@ postgres:
 INSERT INTO "public"."products" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateProductInput`, `target ProductConflictTarget`
-- Returns: `*Product`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."products" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateProductInput`, `target ProductConflictTarget`
-- Returns: `[]*Product`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."products" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateProductInput`
@@ -243,6 +213,36 @@ postgres:
 
 ```sql
 UPDATE "public"."products" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateProductInput`, `target ProductConflictTarget`
+- Returns: `*Product`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."products" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateProductInput`, `target ProductConflictTarget`
+- Returns: `[]*Product`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."products" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment
@@ -328,3 +328,17 @@ Type `ProductFilter`.
 Type `ProductSort`.
 
 Fields: CategoryID, CreatedAt, Description, ID, IsActive, Metadata, Name, Price, Quantity, Tags, UpdatedAt
+
+## Read examples
+
+```go
+row, err := client.Products().Get(ctx, uuid.NewV4())
+rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{Filter: &models.ProductFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "example", Price: 1, CategoryID: uuid.NewV4()})
+updated, err := client.Products().Update(ctx, uuid.NewV4(), &models.UpdateProductInput{Name: omittable.Set("example")})
+```

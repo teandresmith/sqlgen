@@ -621,7 +621,6 @@ func TestValidatePostParse_CursorKeys_ViewExplicitMissing(t *testing.T) {
 	cfg := validConfig()
 	cfg.Views["product_summary"] = config.ViewConfig{
 		StructName: "ProductSummary",
-		SQL:        "views/product_summary.sql",
 		CursorKeys: []string{"nonexistent_col"},
 	}
 
@@ -655,7 +654,6 @@ func TestValidatePostParse_CursorKeys_ViewExplicitPresent(t *testing.T) {
 	cfg := validConfig()
 	cfg.Views["product_summary"] = config.ViewConfig{
 		StructName: "ProductSummary",
-		SQL:        "views/product_summary.sql",
 		CursorKeys: []string{"total"},
 	}
 
@@ -1107,15 +1105,18 @@ func TestValidatePostParse_PrimaryKeyOverride_NoUniqueCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidatePostParse() unexpected error: %v", err)
 	}
+	// The PRD quotes the warning text; the key path in front names the table.
+	const want = "tables.public.counters.primary_key.columns: no UNIQUE constraint covers the declared PK; " +
+		"sqlgen assumes uniqueness — enforce it at the application level if not at the DB level"
 	found := false
 	for _, w := range warnings {
-		if strings.Contains(w.Message, "no UNIQUE constraint covers") {
+		if w.Message == want {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("ValidatePostParse() warnings = %v, want no-UNIQUE-coverage warning", warnings)
+		t.Errorf("ValidatePostParse() warnings = %v, want %q", warnings, want)
 	}
 }
 
@@ -1250,6 +1251,110 @@ func TestValidatePostParse_PrimaryKeyOverride_PKMemberCoverage(t *testing.T) {
 	}
 }
 
+// TestValidatePostParse_ExcludedPrimaryKey covers the PRD §4.13 rule that
+// `exclude_columns` may not remove a member of a table's detected primary key,
+// and the override, all-excluded and exclude_tables cases it does not apply to.
+func TestValidatePostParse_ExcludedPrimaryKey(t *testing.T) {
+	single := config.SchemaTable{
+		Name: "cycles", Schema: "public",
+		Columns: []config.SchemaColumn{
+			{Name: "id", Type: "integer", PrimaryKey: true},
+			{Name: "code", Type: "text", Unique: true},
+			{Name: "name", Type: "text"},
+		},
+	}
+	composite := config.SchemaTable{
+		Name: "memberships", Schema: "public",
+		Columns: []config.SchemaColumn{
+			{Name: "org_id", Type: "integer", PrimaryKey: true},
+			{Name: "user_id", Type: "integer", PrimaryKey: true},
+			{Name: "role", Type: "text"},
+		},
+	}
+	tests := []struct {
+		name    string
+		table   config.SchemaTable
+		mutate  func(*config.RootConfig)
+		wantErr string // "" means no error
+	}{
+		{
+			name:  "table-level exclusion of the only key column",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{ExcludeColumns: []string{"id"}}
+			},
+			wantErr: `tables.public.cycles.exclude_columns removes primary-key column "id" of table public.cycles; keep the column, declare tables.public.cycles.primary_key.columns over columns that remain, or drop the table with exclude_tables`,
+		},
+		{
+			name:  "global exclusion of the only key column",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Generation.ExcludeColumns = []string{"id"}
+			},
+			wantErr: `generation.exclude_columns removes primary-key column "id" of table public.cycles`,
+		},
+		{
+			name:  "one member of a composite key",
+			table: composite,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["public.memberships"] = config.TableConfig{ExcludeColumns: []string{"user_id"}}
+			},
+			wantErr: `tables.public.memberships.exclude_columns removes primary-key column "user_id" of table public.memberships`,
+		},
+		{
+			name:  "override over a surviving column replaces the excluded key",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{
+					ExcludeColumns: []string{"id"},
+					PrimaryKey:     &config.TablePrimaryKeyConfig{Columns: []string{"code"}},
+				}
+			},
+		},
+		{
+			name:  "every column excluded is the exhaustion warning, not this error",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{ExcludeColumns: []string{"id", "code", "name"}}
+			},
+		},
+		{
+			name:  "a table exclude_tables drops is not checked",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.ExcludeTables = []string{"cycles"}
+				c.Generation.ExcludeColumns = []string{"id"}
+			},
+		},
+		{
+			name:  "excluding a non-key column is fine",
+			table: single,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{ExcludeColumns: []string{"name"}}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.mutate(cfg)
+			_, err := config.ValidatePostParse(cfg, []config.SchemaTable{tt.table}, nil)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidatePostParse() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidatePostParse() error = nil, want one containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ValidatePostParse() error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestValidatePostParse_MissingPrimaryKey pins the no-PK skip warning: a
 // table with no auto-detected PK and no override gets a warning directing
 // the user toward either declaring the PK via primary_key.columns or
@@ -1273,8 +1378,8 @@ func TestValidatePostParse_MissingPrimaryKey(t *testing.T) {
 	}
 	found := false
 	for _, w := range warnings {
-		if strings.Contains(w.Message, "skipped from generation") &&
-			strings.Contains(w.Message, "counters") {
+		// The PRD gives the warning text; the remedy follows it.
+		if strings.HasPrefix(w.Message, "table public.counters has no primary key; skipped from generation") {
 			found = true
 			break
 		}
@@ -1371,9 +1476,10 @@ func TestValidatePostParse_CompositePKStrategy(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "db on a schema composite key",
-			pk:      config.TablePrimaryKeyConfig{Strategy: config.PKStrategyDB},
-			wantErr: `tables.public.timeline_events.primary_key.strategy: "db" is not supported on a composite primary key (id, created_at)`,
+			name: "db on a schema composite key",
+			pk:   config.TablePrimaryKeyConfig{Strategy: config.PKStrategyDB},
+			wantErr: `tables.public.timeline_events.primary_key.strategy: "db" is not supported on a composite primary key (id, created_at)` +
+				" — a composite key is always caller-provided (PRD §8.6); remove the override, or declare a single-column key with primary_key.columns",
 		},
 		{
 			name:    "app on a schema composite key",
@@ -1520,12 +1626,6 @@ func TestValidatePreParse_EnumValues(t *testing.T) {
 			wantAllowed: "files, database, both",
 		},
 		{
-			name:        "invalid parse_mode",
-			mutate:      func(c *config.RootConfig) { c.Input.ParseMode = "lenient" },
-			wantErr:     true,
-			wantAllowed: "strict, merge",
-		},
-		{
 			name:        "invalid driver",
 			mutate:      func(c *config.RootConfig) { c.Output.Driver = "PGX" },
 			wantErr:     true,
@@ -1583,7 +1683,7 @@ func TestValidatePreParse_EnumValues(t *testing.T) {
 		},
 		{
 			name:    "empty values skipped (defaults apply)",
-			mutate:  func(c *config.RootConfig) { c.Input.ParseMode = ""; c.Generation.UUIDVersion = "" },
+			mutate:  func(c *config.RootConfig) { c.Generation.UUIDVersion = "" },
 			wantErr: false,
 		},
 	}
@@ -1849,8 +1949,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "duplicate full key (o2o) → error",
 			rels: []config.TableRelationship{
-				{Name: "Primary", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "PrimaryDup", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
+				{Name: "Primary", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "PrimaryDup", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -1858,8 +1958,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "duplicate full key (o2m) → error",
 			rels: []config.TableRelationship{
-				{Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-				{Name: "AttachmentsDup", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
+				{Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+				{Name: "AttachmentsDup", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -1867,8 +1967,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "duplicate full key (m2m) → error",
 			rels: []config.TableRelationship{
-				{Name: "Tags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: "product_id", JunctionReferenceFK: "tag_id"},
-				{Name: "TagsDup", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: "product_id", JunctionReferenceFK: "tag_id"},
+				{Name: "Tags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: config.KeyColumns{"product_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}},
+				{Name: "TagsDup", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: config.KeyColumns{"product_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -1876,33 +1976,33 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "distinct filter on shared prefix (o2m) → allowed",
 			rels: []config.TableRelationship{
-				{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-				{Name: "Invoices", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+				{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+				{Name: "Invoices", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "distinct filter on m2m shared prefix → allowed",
 			rels: []config.TableRelationship{
-				{Name: "ActiveTags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: "product_id", JunctionReferenceFK: "tag_id", Filter: "tags.active = true"},
-				{Name: "ArchivedTags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: "product_id", JunctionReferenceFK: "tag_id", Filter: "tags.active = false"},
+				{Name: "ActiveTags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: config.KeyColumns{"product_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}, Filter: "tags.active = true"},
+				{Name: "ArchivedTags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: config.KeyColumns{"product_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}, Filter: "tags.active = false"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "shared prefix, one empty filter, one set → allowed",
 			rels: []config.TableRelationship{
-				{Name: "AllDocuments", Type: "o2m", Table: "documents", FK: "entity_id"},
-				{Name: "Invoices", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+				{Name: "AllDocuments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}},
+				{Name: "Invoices", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "duplicate name on shared prefix → error (PRD §4.8)",
 			rels: []config.TableRelationship{
-				{Name: "Documents", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "Documents", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
+				{Name: "Documents", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "Documents", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §4.8",
@@ -1910,15 +2010,15 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "single relationship without filter → allowed",
 			rels: []config.TableRelationship{
-				{Name: "Comments", Type: "o2m", Table: "comments", FK: "commentable_id"},
+				{Name: "Comments", Type: "o2m", Table: "comments", FK: config.KeyColumns{"commentable_id"}},
 			},
 			wantErr: false,
 		},
 		{
 			name: "filter strings differing only in whitespace → distinct (byte-equal compare)",
 			rels: []config.TableRelationship{
-				{Name: "A", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type='x'"},
-				{Name: "B", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'x'"},
+				{Name: "A", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type='x'"},
+				{Name: "B", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'x'"},
 			},
 			wantErr: false,
 		},
@@ -1929,8 +2029,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// intentionally not part of the dedup key.
 			name: "duplicate (target, fk, filter) with mixed o2o/o2m → error",
 			rels: []config.TableRelationship{
-				{Name: "Primary", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "PrimaryO2M", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
+				{Name: "Primary", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "PrimaryO2M", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -1942,8 +2042,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// duplicate declarations past validation.
 			name: "duplicate full key across type-synonym variants → error",
 			rels: []config.TableRelationship{
-				{Name: "First", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "Second", Type: "one_to_one", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
+				{Name: "First", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "Second", Type: "one_to_one", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -1956,7 +2056,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// no diagnosis.
 			name: "unknown side value → error",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "chld"},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "chld"},
 			},
 			wantErr:     true,
 			wantSubstr:  "side",
@@ -1965,14 +2065,14 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "explicit side: parent → allowed",
 			rels: []config.TableRelationship{
-				{Name: "Profile", Type: "o2o", Table: "profiles", FK: "profile_id", Side: "parent"},
+				{Name: "Profile", Type: "o2o", Table: "profiles", FK: config.KeyColumns{"profile_id"}, Side: "parent"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "explicit side: child → allowed",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child"},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "child"},
 			},
 			wantErr: false,
 		},
@@ -1980,7 +2080,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// parseRelationshipSide folds case, so the validator does too.
 			name: "upper-case side: CHILD → allowed",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "CHILD"},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "CHILD"},
 			},
 			wantErr: false,
 		},
@@ -1989,7 +2089,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// generate the parent side; it must fail here rather than pass.
 			name: "padded side → error",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: " child "},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: " child "},
 			},
 			wantErr:     true,
 			wantSubstr:  `tables.asset.relationships[0].side: " child " is not a valid value`,
@@ -1998,7 +2098,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "trailing-space side → error",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child "},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "child "},
 			},
 			wantErr:     true,
 			wantSubstr:  `tables.asset.relationships[0].side: "child " is not a valid value`,
@@ -2007,7 +2107,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "omitted side → allowed (defaults to parent)",
 			rels: []config.TableRelationship{
-				{Name: "Profile", Type: "o2o", Table: "profiles", FK: "profile_id"},
+				{Name: "Profile", Type: "o2o", Table: "profiles", FK: config.KeyColumns{"profile_id"}},
 			},
 			wantErr: false,
 		},
@@ -2049,25 +2149,25 @@ func TestValidatePreParse_RelationshipType(t *testing.T) {
 		rel     config.TableRelationship
 		wantErr string // empty means the config validates
 	}{
-		{name: "o2o", rel: config.TableRelationship{Name: "Owner", Type: "o2o", Table: "users", FK: "owner_id"}},
-		{name: "one_to_one", rel: config.TableRelationship{Name: "Owner", Type: "one_to_one", Table: "users", FK: "owner_id"}},
-		{name: "o2m", rel: config.TableRelationship{Name: "Documents", Type: "o2m", Table: "documents", FK: "asset_id"}},
-		{name: "one_to_many", rel: config.TableRelationship{Name: "Documents", Type: "one_to_many", Table: "documents", FK: "asset_id"}},
+		{name: "o2o", rel: config.TableRelationship{Name: "Owner", Type: "o2o", Table: "users", FK: config.KeyColumns{"owner_id"}}},
+		{name: "one_to_one", rel: config.TableRelationship{Name: "Owner", Type: "one_to_one", Table: "users", FK: config.KeyColumns{"owner_id"}}},
+		{name: "o2m", rel: config.TableRelationship{Name: "Documents", Type: "o2m", Table: "documents", FK: config.KeyColumns{"asset_id"}}},
+		{name: "one_to_many", rel: config.TableRelationship{Name: "Documents", Type: "one_to_many", Table: "documents", FK: config.KeyColumns{"asset_id"}}},
 		{name: "m2m", rel: config.TableRelationship{Name: "Tags", Type: "m2m", Table: "tags", Junction: "asset_tags"}},
 		{name: "many_to_many", rel: config.TableRelationship{Name: "Tags", Type: "many_to_many", Table: "tags", Junction: "asset_tags"}},
 		{
 			// parseRelationshipType folds case, so the validator does too.
 			name: "upper-case spelling",
-			rel:  config.TableRelationship{Name: "Owner", Type: "O2O", Table: "users", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Owner", Type: "O2O", Table: "users", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name:    "hyphenated spelling",
-			rel:     config.TableRelationship{Name: "Owner", Type: "one-to-one", Table: "users", FK: "owner_id"},
+			rel:     config.TableRelationship{Name: "Owner", Type: "one-to-one", Table: "users", FK: config.KeyColumns{"owner_id"}},
 			wantErr: `tables.asset.relationships[0].type: "one-to-one" is not a valid value ` + allowed,
 		},
 		{
 			name:    "ratio spelling",
-			rel:     config.TableRelationship{Name: "Documents", Type: "1:n", Table: "documents", FK: "asset_id"},
+			rel:     config.TableRelationship{Name: "Documents", Type: "1:n", Table: "documents", FK: config.KeyColumns{"asset_id"}},
 			wantErr: `tables.asset.relationships[0].type: "1:n" is not a valid value ` + allowed,
 		},
 		{
@@ -2079,13 +2179,13 @@ func TestValidatePreParse_RelationshipType(t *testing.T) {
 			// parseRelationshipType does not trim, so " o2o" would generate an
 			// O2M edge; it must fail here rather than pass.
 			name:    "padded spelling",
-			rel:     config.TableRelationship{Name: "Owner", Type: " o2o", Table: "users", FK: "owner_id"},
+			rel:     config.TableRelationship{Name: "Owner", Type: " o2o", Table: "users", FK: config.KeyColumns{"owner_id"}},
 			wantErr: `tables.asset.relationships[0].type: " o2o" is not a valid value ` + allowed,
 		},
 		{
 			// PRD §4.8 marks `type` required; it no longer defaults to o2m.
 			name:    "missing type",
-			rel:     config.TableRelationship{Name: "Documents", Table: "documents", FK: "asset_id"},
+			rel:     config.TableRelationship{Name: "Documents", Table: "documents", FK: config.KeyColumns{"asset_id"}},
 			wantErr: "tables.asset.relationships[0].type: required " + allowed,
 		},
 	}
@@ -2154,11 +2254,11 @@ func TestValidatePreParse_RelationshipLinkKeyRequired(t *testing.T) {
 		},
 		{
 			name: "o2m with fk",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name: "o2o with fk",
-			rel:  config.TableRelationship{Name: "Profile", Type: "o2o", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Profile", Type: "o2o", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name: "m2m takes no fk",
@@ -2172,7 +2272,7 @@ func TestValidatePreParse_RelationshipLinkKeyRequired(t *testing.T) {
 		{
 			// An fk does not stand in for the junction: m2m never reads it.
 			name: "many_to_many with fk but no junction",
-			rel:  config.TableRelationship{Name: "Tags", Type: "many_to_many", Table: "tags", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Tags", Type: "many_to_many", Table: "tags", FK: config.KeyColumns{"owner_id"}},
 			want: []string{`tables.owners.relationships[0] ("Tags")` + junctionRequired},
 		},
 	}
@@ -2216,12 +2316,12 @@ func TestValidatePreParse_RelationshipNameRequired(t *testing.T) {
 	}{
 		{
 			name: "o2o without name",
-			rel:  config.TableRelationship{Type: "o2o", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Type: "o2o", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 			want: []string{"tables.owners.relationships[0]" + required},
 		},
 		{
 			name: "o2m without name",
-			rel:  config.TableRelationship{Type: "o2m", Table: "owner_profiles", FK: "owner_id", Filter: "bio IS NOT NULL"},
+			rel:  config.TableRelationship{Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}, Filter: "bio IS NOT NULL"},
 			want: []string{"tables.owners.relationships[0]" + required},
 		},
 		{
@@ -2232,12 +2332,12 @@ func TestValidatePreParse_RelationshipNameRequired(t *testing.T) {
 		{
 			// The name rule does not depend on the type, so both are reported.
 			name: "neither name nor type",
-			rel:  config.TableRelationship{Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 			want: []string{"tables.owners.relationships[0]" + required, "tables.owners.relationships[0].type: required"},
 		},
 		{
 			name: "o2m with name",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 	}
 	for _, tt := range tests {
@@ -2293,34 +2393,34 @@ func TestValidatePostParse_RelationshipFKColumn(t *testing.T) {
 	}{
 		{
 			name: "o2m fk on the related table",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name: "o2m fk on this table only",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "name"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"name"}},
 			want: []string{"tables.owners.relationships[0]", `"Profiles"`, `.fk: "name"`, `related table "owner_profiles"`, "PRD §4.8"},
 		},
 		{
 			name: "one_to_many synonym, fk on neither table",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "one_to_many", Table: "owner_profiles", FK: "ghost_id"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "one_to_many", Table: "owner_profiles", FK: config.KeyColumns{"ghost_id"}},
 			want: []string{"tables.owners.relationships[0]", `.fk: "ghost_id"`, `related table "owner_profiles"`},
 		},
 		{
 			name: "o2o has-one, fk on the related table",
-			rel:  config.TableRelationship{Name: "OwnerProfile", Type: "one_to_one", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "OwnerProfile", Type: "one_to_one", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name: "o2o belongs-to, fk on this table",
-			rel:  config.TableRelationship{Name: "Profile", Type: "o2o", Table: "owner_profiles", FK: "profile_id"},
+			rel:  config.TableRelationship{Name: "Profile", Type: "o2o", Table: "owner_profiles", FK: config.KeyColumns{"profile_id"}},
 		},
 		{
 			name: "o2o fk on neither table",
-			rel:  config.TableRelationship{Name: "GhostProfile", Type: "o2o", Table: "owner_profiles", FK: "ghost_id"},
+			rel:  config.TableRelationship{Name: "GhostProfile", Type: "o2o", Table: "owner_profiles", FK: config.KeyColumns{"ghost_id"}},
 			want: []string{"tables.owners.relationships[0]", `"GhostProfile"`, `.fk: "ghost_id"`, `table "owners"`, `related table "owner_profiles"`, "PRD §4.8 / §13.1"},
 		},
 		{
 			name: "m2m fk is not consulted",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "m2m", Table: "owner_profiles", FK: "ghost_id", Junction: "owner_profile_links"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "m2m", Table: "owner_profiles", FK: config.KeyColumns{"ghost_id"}, Junction: "owner_profile_links"},
 		},
 		{
 			name: "empty fk is not this check's",
@@ -2328,7 +2428,7 @@ func TestValidatePostParse_RelationshipFKColumn(t *testing.T) {
 		},
 		{
 			name: "unparsed target is left to resolution",
-			rel:  config.TableRelationship{Name: "Ghosts", Type: "o2m", Table: "ghosts", FK: "ghost_id"},
+			rel:  config.TableRelationship{Name: "Ghosts", Type: "o2m", Table: "ghosts", FK: config.KeyColumns{"ghost_id"}},
 		},
 	}
 	for _, tt := range tests {
@@ -2539,10 +2639,11 @@ func TestValidatePreParse_IgnoredPasswordEnv(t *testing.T) {
 		envURL   string
 		envPW    string
 		wantFrom string // empty: no warning
+		wantHint string // the suggested remedy, when a warning is wanted
 	}{
-		{name: "config url without the reference", input: "  source: database\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret", wantFrom: "input.connection.url"},
+		{name: "config url without the reference", input: "  source: database\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret", wantFrom: "input.connection.url", wantHint: "write ${SQLGEN_DB_PASSWORD} into the url to use it"},
 		{name: "config url with the reference", input: "  source: database\n  connection:\n    url: postgres://app:${SQLGEN_DB_PASSWORD}@db/app\n", envPW: "s3cret"},
-		{name: "env url", input: "  source: both\n  connection:\n    host: db\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL"},
+		{name: "env url", input: "  source: both\n  connection:\n    host: db\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL", wantHint: "put the password in SQLGEN_DB_URL"},
 		{name: "env url replaces a config url with the reference", input: "  source: database\n  connection:\n    url: postgres://app:${SQLGEN_DB_PASSWORD}@db/app\n", envURL: "postgres://app@db/app", envPW: "s3cret", wantFrom: "SQLGEN_DB_URL"},
 		{name: "individual fields", input: "  source: database\n  connection:\n    host: db\n    user: app\n    database: app\n", envPW: "s3cret"},
 		{name: "files source", input: "  source: files\n  connection:\n    url: postgres://app@db/app\n", envPW: "s3cret"},
@@ -2572,6 +2673,8 @@ func TestValidatePreParse_IgnoredPasswordEnv(t *testing.T) {
 				t.Errorf("warnings = %q, want no SQLGEN_DB_PASSWORD warning", got)
 			case tt.wantFrom != "" && (len(got) != 1 || !strings.Contains(got[0], warning+tt.wantFrom)):
 				t.Errorf("warnings = %q, want one containing %q", got, warning+tt.wantFrom)
+			case tt.wantHint != "" && !strings.Contains(got[0], tt.wantHint):
+				t.Errorf("warnings = %q, want the remedy %q", got, tt.wantHint)
 			}
 		})
 	}
@@ -2674,6 +2777,83 @@ func TestValidatePostParse_CursorKeys_Nullable(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.wantWarnings, gotWarnings); diff != "" {
 				t.Errorf("ValidatePostParse() cursor_keys warnings mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestValidatePostParse_CursorKeys_ExplicitReportsEveryBadColumn pins that an
+// explicit cursor_keys list reports each missing or nullable column, one error
+// per column in list order, instead of stopping at the first.
+func TestValidatePostParse_CursorKeys_ExplicitReportsEveryBadColumn(t *testing.T) {
+	tables := []config.SchemaTable{
+		{
+			Name:   "orders",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint", PrimaryKey: true},
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+				{Name: "note", Type: "text", Nullable: true},
+			},
+		},
+	}
+	views := []config.SchemaView{
+		{
+			Name:   "order_totals",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "id", Type: "bigint"},
+				{Name: "shipped_at", Type: "timestamp", Nullable: true},
+			},
+		},
+	}
+	tests := []struct {
+		name      string
+		tableKeys []string
+		viewKeys  []string
+		want      []string
+	}{
+		{
+			name:      "table list with missing and nullable columns",
+			tableKeys: []string{"shipped_at", "nope", "id", "note", "gone"},
+			want: []string{
+				`cursor_keys: column "shipped_at" in table public.orders is nullable; a cursor key must be NOT NULL`,
+				`cursor_keys: column "nope" does not exist in table public.orders`,
+				`cursor_keys: column "note" in table public.orders is nullable; a cursor key must be NOT NULL`,
+				`cursor_keys: column "gone" does not exist in table public.orders`,
+			},
+		},
+		{
+			name:     "view list with missing and nullable columns",
+			viewKeys: []string{"missing", "id", "shipped_at"},
+			want: []string{
+				`cursor_keys: column "missing" does not exist in view public.order_totals`,
+				`cursor_keys: column "shipped_at" in view public.order_totals is nullable; a cursor key must be NOT NULL`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			if tt.tableKeys != nil {
+				cfg.Tables["public.orders"] = config.TableConfig{CursorKeys: tt.tableKeys}
+			}
+			if tt.viewKeys != nil {
+				cfg.Views["public.order_totals"] = config.ViewConfig{CursorKeys: tt.viewKeys}
+			}
+
+			_, err := config.ValidatePostParse(cfg, tables, views)
+			if err == nil {
+				t.Fatal("ValidatePostParse() error = nil, want cursor_keys errors")
+			}
+			var got []string
+			for _, line := range strings.Split(err.Error(), "\n") {
+				if strings.HasPrefix(line, "cursor_keys: column ") {
+					got = append(got, line)
+				}
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ValidatePostParse() cursor_keys errors mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

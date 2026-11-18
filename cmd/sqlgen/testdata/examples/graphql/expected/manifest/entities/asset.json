@@ -35,12 +35,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:asset:{id}",
       "invalidates_on": [
-        "Create",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -125,7 +127,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.attachment'"
     },
@@ -136,7 +143,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.invoice'"
     },
@@ -147,8 +159,22 @@
       "junction": {
         "table": "asset_document_links",
         "schema": "public",
-        "local_fk": "asset_id",
-        "target_fk": "document_id"
+        "local_fk": {
+          "columns": [
+            "asset_id"
+          ],
+          "references": [
+            "id"
+          ]
+        },
+        "target_fk": {
+          "columns": [
+            "document_id"
+          ],
+          "references": [
+            "id"
+          ]
+        }
       },
       "filter": "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
     },
@@ -159,7 +185,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
     },
@@ -170,7 +201,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.primary' AND name LIKE 'site_%'"
     },
@@ -181,7 +217,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.primary'"
     },
@@ -192,8 +233,24 @@
       "junction": {
         "table": "asset_document_links",
         "schema": "public",
-        "local_fk": "asset_id",
-        "target_fk": "document_id"
+        "local_fk": {
+          "columns": [
+            "asset_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "asset_document_links_asset_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "document_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "asset_document_links_document_id_fkey"
+        }
       }
     }
   ],
@@ -231,20 +288,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*AssetFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"assets\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -270,6 +313,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"assets\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"assets\" WHERE <filter>"
         }
       },
       {
@@ -351,50 +408,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateAssetInput"
-          },
-          {
-            "name": "target",
-            "type": "AssetConflictTarget"
-          }
-        ],
-        "returns": "*Asset",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"assets\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateAssetInput"
-          },
-          {
-            "name": "target",
-            "type": "AssetConflictTarget"
-          }
-        ],
-        "returns": "[]*Asset",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"assets\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -459,50 +472,47 @@
         }
       },
       {
-        "name": "HardDelete",
+        "name": "Upsert",
         "params": [
           {
-            "name": "id",
-            "type": "uuid.UUID"
-          }
-        ],
-        "returns": "",
-        "errors": [],
-        "notes": "Idempotent — a primary key that does not exist is not an error.",
-        "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"assets\" WHERE \"id\" = $1"
-        }
-      },
-      {
-        "name": "HardDeleteMany",
-        "params": [
+            "name": "input",
+            "type": "*CreateAssetInput"
+          },
           {
-            "name": "ids",
-            "type": "[]uuid.UUID"
+            "name": "target",
+            "type": "AssetConflictTarget"
           }
         ],
-        "returns": "",
-        "errors": [],
-        "notes": "Idempotent — primary keys that do not exist are not an error.",
-        "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"assets\" WHERE \"id\" IN (<ids>)"
-        }
-      },
-      {
-        "name": "HardDeleteWhere",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*AssetFilter"
-          }
-        ],
-        "returns": "",
+        "returns": "*Asset",
         "errors": [
-          "ErrEmptyFilter"
+          "ErrNilInput",
+          "ErrConstraintViolation"
         ],
-        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "notes": "One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.",
         "sql_bodies": {
-          "postgres": "DELETE FROM \"public\".\"assets\" WHERE <filter> RETURNING \"id\""
+          "postgres": "INSERT INTO \"public\".\"assets\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateAssetInput"
+          },
+          {
+            "name": "target",
+            "type": "AssetConflictTarget"
+          }
+        ],
+        "returns": "[]*Asset",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"assets\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {
@@ -563,6 +573,53 @@
           "ErrConstraintViolation"
         ],
         "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Attachments, Documents, Invoices, PrimaryDocument), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"assets\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]uuid.UUID"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"assets\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*AssetFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"assets\" WHERE <filter> RETURNING \"id\""
+        }
       }
     ]
   },
@@ -609,5 +666,14 @@
       "PrimaryCategory"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Assets().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Assets().GetMany(ctx, &models.GetAssetsInput{Filter: &models.AssetFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Assets().Create(ctx, &models.CreateAssetInput{Name: \"example\"})",
+      "updated, err := client.Assets().Update(ctx, uuid.NewV4(), &models.UpdateAssetInput{Name: omittable.Set(\"example\")})"
+    ]
+  }
 }

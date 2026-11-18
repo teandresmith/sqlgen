@@ -3,6 +3,7 @@ package gen
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -103,6 +104,7 @@ var generatedPackageTypes = []reservedName{
 	{name: "ErrEmptyFilter", owner: "errors_gen.go"},
 	{name: "ErrNestedVerbConflict", owner: "errors_gen.go"},
 	{name: "ErrNilInput", owner: "errors_gen.go"},
+	{name: "ErrTxDone", owner: "errors_gen.go"},
 	{name: "ErrInvalidCursor", owner: "errors_gen.go"},
 	{name: "ErrNotFound", owner: "errors_gen.go"},
 	{name: "NestedMutationError", owner: "errors_gen.go"},
@@ -178,8 +180,21 @@ func reservedGeneratedStems(cfg *config.RootConfig) map[string]string {
 	for _, r := range generatedPackageStems {
 		reserved[r.name] = r.owner
 	}
-	for _, file := range []string{clientFileName(cfg), enumsFileName(cfg), typesFileName(cfg)} {
-		if stem := goFileStem(file); stem != "" {
+	if stem := goFileStem(clientFileName(cfg)); stem != "" {
+		reserved[stem] = clientFileName(cfg)
+	}
+	// The enums and types files claim a stem only when they land in
+	// output.dir, where the per-table files are written. Validation keeps them
+	// there, so the skip applies only to a config that was never validated.
+	var outputDir string
+	if cfg != nil {
+		outputDir = cfg.Output.Dir
+	}
+	for _, file := range []string{enumsFileName(cfg), typesFileName(cfg)} {
+		if !sameDir(filepath.Dir(outputFilePath(outputDir, file)), outputDir) {
+			continue
+		}
+		if stem := goFileStem(filepath.Base(file)); stem != "" {
 			reserved[stem] = file
 		}
 	}
@@ -308,6 +323,7 @@ func collectResolvedNames(ctxs generationContexts) resolvedNames {
 	tables, views, enums, sets, types := ctxs.tables, ctxs.views, ctxs.enums, ctxs.sets, ctxs.types
 
 	var out resolvedNames
+	generated := newTableIndex(tables)
 
 	for _, tc := range tables {
 		ref := tableRef(tc.Schema, tc.TableName)
@@ -318,7 +334,7 @@ func collectResolvedNames(ctxs generationContexts) resolvedNames {
 			claimedName{name: "Create" + tc.StructName + "Input", by: ref},
 			claimedName{name: "Update" + tc.StructName + "Input", by: ref},
 		)
-		for _, n := range nestedSurfaceNames(tc) {
+		for _, n := range nestedSurfaceNames(tc, generated) {
 			nestedBy := nestedSurfaceRef(tc.Schema, tc.TableName)
 			if n.edge != "" {
 				nestedBy = relationshipRef(tc.Schema, tc.TableName, n.edge)

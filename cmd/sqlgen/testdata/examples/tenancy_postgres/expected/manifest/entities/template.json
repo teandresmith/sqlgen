@@ -1,0 +1,619 @@
+{
+  "kind": "table",
+  "name": "Template",
+  "table": "templates",
+  "schema": "public",
+  "file_prefix": "template",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "templates_owner_workspace_id_key",
+      "columns": [
+        "owner_workspace",
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    },
+    {
+      "name": "templates_pkey",
+      "columns": [
+        "id"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "single",
+    "columns": [
+      {
+        "name": "id",
+        "go_field": "ID",
+        "go_type": "int64"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:template:{id}",
+      "invalidates_on": [
+        "Update",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "TemplateCreated",
+        "TemplateDeleted",
+        "TemplateUpdated"
+      ],
+      "payload_shape": "models.TemplateEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "id",
+      "go_field": "ID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "auto": "insert",
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "owner_workspace",
+      "go_field": "OwnerWorkspace",
+      "go_type": "uuid.UUID",
+      "db_type": "uuid",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    },
+    {
+      "name": "name",
+      "go_field": "Name",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": false,
+      "unique": false,
+      "comparator": "comparator.String",
+      "comment": ""
+    }
+  ],
+  "relationships": [
+    {
+      "name": "labels",
+      "kind": "m2m",
+      "target_entity": "Label",
+      "junction": {
+        "table": "template_labels",
+        "schema": "public",
+        "local_fk": {
+          "columns": [
+            "workspace_id",
+            "template_id"
+          ],
+          "references": [
+            "owner_workspace",
+            "id"
+          ],
+          "constraint": "template_labels_workspace_id_template_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "workspace_id",
+            "label_id"
+          ],
+          "references": [
+            "workspace_id",
+            "id"
+          ],
+          "constraint": "template_labels_workspace_id_label_id_fkey"
+        }
+      }
+    },
+    {
+      "name": "stamps",
+      "kind": "m2m",
+      "target_entity": "Stamp",
+      "junction": {
+        "table": "template_stamps",
+        "schema": "public",
+        "local_fk": {
+          "columns": [
+            "workspace_id",
+            "template_id"
+          ],
+          "references": [
+            "owner_workspace",
+            "id"
+          ],
+          "constraint": "template_stamps_workspace_id_template_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "workspace_id",
+            "stamp_id"
+          ],
+          "references": [
+            "owner_workspace",
+            "id"
+          ],
+          "constraint": "template_stamps_workspace_id_stamp_id_fkey"
+        }
+      }
+    },
+    {
+      "name": "template_notes",
+      "kind": "o2m",
+      "target_entity": "TemplateNote",
+      "fk": {
+        "table": "template_notes",
+        "schema": "public",
+        "columns": [
+          "workspace_id",
+          "template_id"
+        ],
+        "references": [
+          "owner_workspace",
+          "id"
+        ],
+        "constraint": "template_notes_workspace_id_template_id_fkey"
+      }
+    },
+    {
+      "name": "template_steps",
+      "kind": "o2m",
+      "target_entity": "TemplateStep",
+      "fk": {
+        "table": "template_steps",
+        "schema": "public",
+        "columns": [
+          "workspace_id",
+          "template_id"
+        ],
+        "references": [
+          "owner_workspace",
+          "id"
+        ],
+        "constraint": "template_steps_workspace_id_template_id_fkey"
+      }
+    }
+  ],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "*Template",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"name\", \"owner_workspace\" FROM \"public\".\"templates\" WHERE \"id\" = $1 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetTemplatesInput"
+          }
+        ],
+        "returns": "[]*Template",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"name\", \"owner_workspace\" FROM \"public\".\"templates\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"templates\" WHERE \"id\" = $1)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*TemplateFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"templates\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*TemplateFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"templates\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[TemplateFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[Template]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[TemplateFilter]"
+          }
+        ],
+        "returns": "*Connection[Template]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamTemplatesInput"
+          }
+        ],
+        "returns": "iter.Seq2[*Template, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"id\", \"name\", \"owner_workspace\" FROM \"public\".\"templates\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateTemplateInput"
+          }
+        ],
+        "returns": "*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"templates\" (<columns>) VALUES (<values>) RETURNING \"id\""
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateTemplateInput"
+          }
+        ],
+        "returns": "[]*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"templates\" (<columns>) VALUES <values> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateTemplateInput"
+          }
+        ],
+        "returns": "*Template",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"templates\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateTemplateItem"
+          }
+        ],
+        "returns": "[]*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"templates\" SET <set> WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*TemplateFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateTemplateInput"
+          }
+        ],
+        "returns": "[]*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"templates\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateTemplateInput"
+          },
+          {
+            "name": "target",
+            "type": "TemplateConflictTarget"
+          }
+        ],
+        "returns": "*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated TemplateConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"templates\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateTemplateInput"
+          },
+          {
+            "name": "target",
+            "type": "TemplateConflictTarget"
+          }
+        ],
+        "returns": "[]*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same TemplateConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"templates\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateTemplateWithRelatedInput"
+          }
+        ],
+        "returns": "*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Labels, Stamps, TemplateNotes, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateTemplateWithRelatedInput"
+          }
+        ],
+        "returns": "*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Labels, Stamps, TemplateNotes, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertTemplateWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "TemplateConflictTarget"
+          }
+        ],
+        "returns": "*Template",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Labels, Stamps, TemplateNotes, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "id",
+            "type": "int64"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"templates\" WHERE \"id\" = $1"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "ids",
+            "type": "[]int64"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"templates\" WHERE \"id\" IN (<ids>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*TemplateFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"templates\" WHERE <filter> RETURNING \"id\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "TemplateFilter",
+    "fields": [
+      {
+        "name": "ID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "Name",
+        "type": "*comparator.String"
+      },
+      {
+        "name": "OwnerWorkspace",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "And",
+        "type": "[]*TemplateFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*TemplateFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "TemplateSort",
+    "fields": [
+      "ID",
+      "Name",
+      "OwnerWorkspace"
+    ]
+  },
+  "examples": {
+    "read": [
+      "row, err := client.Templates().Get(ctx, 1)",
+      "rows, err := client.Templates().GetMany(ctx, &models.GetTemplatesInput{Filter: &models.TemplateFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Templates().Create(ctx, &models.CreateTemplateInput{OwnerWorkspace: uuid.NewV4(), Name: \"example\"})",
+      "updated, err := client.Templates().Update(ctx, 1, &models.UpdateTemplateInput{OwnerWorkspace: omittable.Set(uuid.NewV4())})"
+    ]
+  }
+}

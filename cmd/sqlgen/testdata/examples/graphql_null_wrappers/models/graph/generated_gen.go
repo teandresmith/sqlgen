@@ -5065,7 +5065,7 @@ func (ec *executionContext) unmarshalInputCreateAccountInput(ctx context.Context
 			it.ParentID = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -5130,7 +5130,7 @@ func (ec *executionContext) unmarshalInputCreateEntryInput(ctx context.Context, 
 			it.UpstreamRef = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -5339,7 +5339,7 @@ func (ec *executionContext) unmarshalInputNullableBooleanComparator(ctx context.
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"eq", "neq", "isNull"}
+	fieldsInOrder := [...]string{"eq", "neq", "in", "isNull"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -5360,6 +5360,13 @@ func (ec *executionContext) unmarshalInputNullableBooleanComparator(ctx context.
 				return it, err
 			}
 			it.Neq = data
+		case "in":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("in"))
+			data, err := ec.unmarshalOBoolean2ᚕboolᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.In = data
 		case "isNull":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("isNull"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -6291,21 +6298,21 @@ func (ec *executionContext) unmarshalInputUpdateAccountInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.Nickname = data
+			it.Nickname = graphql.OmittableOf(data)
 		case "flag":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("flag"))
 			data, err := ec.unmarshalONullBool2ᚖdatabaseᚋsqlᚐNullBool(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Flag = data
+			it.Flag = graphql.OmittableOf(data)
 		case "smallCount":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("smallCount"))
 			data, err := ec.unmarshalONullInt162ᚖdatabaseᚋsqlᚐNullInt16(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.SmallCount = data
+			it.SmallCount = graphql.OmittableOf(data)
 		case "smallCount_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("smallCount_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -6326,7 +6333,7 @@ func (ec *executionContext) unmarshalInputUpdateAccountInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.MidCount = data
+			it.MidCount = graphql.OmittableOf(data)
 		case "midCount_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("midCount_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -6347,7 +6354,7 @@ func (ec *executionContext) unmarshalInputUpdateAccountInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.BigCount = data
+			it.BigCount = graphql.OmittableOf(data)
 		case "bigCount_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bigCount_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -6368,7 +6375,7 @@ func (ec *executionContext) unmarshalInputUpdateAccountInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.Ratio = data
+			it.Ratio = graphql.OmittableOf(data)
 		case "ratio_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ratio_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -6389,14 +6396,14 @@ func (ec *executionContext) unmarshalInputUpdateAccountInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.ObservedAt = data
+			it.ObservedAt = graphql.OmittableOf(data)
 		case "balance":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("balance"))
 			data, err := ec.unmarshalONullDecimal2ᚖgithubᚗcomᚋshopspringᚋdecimalᚐNullDecimal(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Balance = data
+			it.Balance = graphql.OmittableOf(data)
 		case "balance_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("balance_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -6417,14 +6424,14 @@ func (ec *executionContext) unmarshalInputUpdateAccountInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.TenantRef = data
+			it.TenantRef = graphql.OmittableOf(data)
 		case "parentID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("parentID"))
 			data, err := ec.unmarshalONullInt642ᚖdatabaseᚋsqlᚐNullInt64(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.ParentID = data
+			it.ParentID = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -6438,7 +6445,7 @@ func (ec *executionContext) unmarshalInputUpdateAccountInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.DeletedAt = data
+			it.DeletedAt = graphql.OmittableOf(data)
 		}
 	}
 	return it, nil
@@ -6475,7 +6482,7 @@ func (ec *executionContext) unmarshalInputUpdateEntryInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.Memo = data
+			it.Memo = graphql.OmittableOf(data)
 		case "amount":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("amount"))
 			data, err := ec.unmarshalODecimal2ᚖgithubᚗcomᚋshopspringᚋdecimalᚐDecimal(ctx, v)
@@ -6503,7 +6510,7 @@ func (ec *executionContext) unmarshalInputUpdateEntryInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.UpstreamRef = data
+			it.UpstreamRef = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -8415,6 +8422,41 @@ func (ec *executionContext) marshalOBoolean2bool(ctx context.Context, sel ast.Se
 	_ = ctx
 	res := graphql.MarshalBoolean(v)
 	return res
+}
+
+func (ec *executionContext) unmarshalOBoolean2ᚕboolᚄ(ctx context.Context, v any) ([]bool, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]bool, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBoolean2bool(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOBoolean2ᚕboolᚄ(ctx context.Context, sel ast.SelectionSet, v []bool) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNBoolean2bool(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) unmarshalOBoolean2ᚖbool(ctx context.Context, v any) (*bool, error) {

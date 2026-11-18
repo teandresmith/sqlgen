@@ -64,19 +64,6 @@ sqlite:
 SELECT "created_at", "entity_id", "entity_type", "id", "name" FROM "documents" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *DocumentFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "documents" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -101,6 +88,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "documents" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *DocumentFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "documents" WHERE <filter>
 ```
 
 ### Paginate
@@ -161,36 +161,6 @@ sqlite:
 INSERT INTO "documents" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateDocumentInput`, `target DocumentConflictTarget`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "documents" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateDocumentInput`, `target DocumentConflictTarget`
-- Returns: `[]*Document`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "documents" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateDocumentInput`
@@ -234,6 +204,36 @@ sqlite:
 
 ```sql
 UPDATE "documents" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateDocumentInput`, `target DocumentConflictTarget`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "documents" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateDocumentInput`, `target DocumentConflictTarget`
+- Returns: `[]*Document`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "documents" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -298,3 +298,17 @@ Type `DocumentFilter`.
 Type `DocumentSort`.
 
 Fields: CreatedAt, EntityID, EntityType, ID, Name
+
+## Read examples
+
+```go
+row, err := client.Documents().Get(ctx, 1)
+rows, err := client.Documents().GetMany(ctx, &models.GetDocumentsInput{Filter: &models.DocumentFilter{EntityType: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Documents().Create(ctx, &models.CreateDocumentInput{EntityID: 1, EntityType: "example", Name: "example"})
+updated, err := client.Documents().Update(ctx, 1, &models.UpdateDocumentInput{EntityID: omittable.Set(int64(1))})
+```

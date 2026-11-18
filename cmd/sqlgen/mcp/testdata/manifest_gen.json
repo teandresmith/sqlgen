@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/v0.42.0/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-05-15T14:22:11Z",
   "generator": {
     "name": "sqlgen",
@@ -248,7 +248,13 @@
           "target_entity": "Post",
           "fk": {
             "table": "posts",
-            "column": "author_id"
+            "columns": [
+              "author_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "posts_author_id_fkey"
           }
         }
       ],

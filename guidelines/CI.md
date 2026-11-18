@@ -41,7 +41,7 @@ GitHub Actions runs three workflows on every pull request and every push to `mai
 ```
 Pull request / push to main
     │
-    ├── Lint              ← golangci-lint × 8 modules, plus refs-check and tracker-check
+    ├── Lint              ← golangci-lint × 8 modules, plus refs-check, tracker-check and req-check
     │
     ├── Test (Unit)       ← go test -short -race × 8 modules (no containers)
     │       │
@@ -62,7 +62,7 @@ The YAML lives in `.github/workflows/`; read it there rather than copying it her
 
 | File | Jobs | Notes |
 |------|------|-------|
-| `lint.yml` | `golangci-lint` per module; `repo-checks` | golangci-lint also runs the gofumpt and goimports formatters. `repo-checks` runs `make refs-check` and `make tracker-check`. |
+| `lint.yml` | `golangci-lint` per module; `repo-checks` | golangci-lint also runs the gofumpt and goimports formatters. `repo-checks` runs `make refs-check`, `make tracker-check` and `make req-check` (the PRD requirement registry, `docs/conformance/`). |
 | `test.yml` | `unit`, then `integration`, per module | `integration` has `needs: unit`. |
 | `examples.yml` | `discover`, then `lint` and `test` per example | `GOWORK: off`, and `paths-ignore` for docs-only changes. |
 | `release-please.yml` | `release-please`, `tag-modules`, then `release` | Calls `release.yml` when a release is created. See [Section 11](#11-automated-release-management). |
@@ -78,7 +78,7 @@ Every workflow sets `permissions: contents: read` at the top and widens it per j
 - Example jobs set `GOWORK: off`. Each example's `go.mod` has `replace github.com/teandresmith/sqlgen => ../../../..`, and the repo-root `go.work` would override it.
 - The examples matrix is wide (12 examples × 2 = 24 runners), and most of them start testcontainers, so docs-only changes skip it.
 - The golangci-lint version is read from `.tool-versions` (see [Section 5](#5-linting)) by a step that runs at the repo root, not from a literal in either YAML. The action's own `version-file:` input cannot be used here: it resolves the path relative to `working-directory`, and every lint leg sets that to a module or example directory.
-- Unit tests use `-short` to skip integration tests (no containers needed). Modules without testcontainer-backed tests (`event/natsbus`, `cache/memory`, `cache/msgpack`, `metrics/otel`) run their full suite in both jobs — redundant but cheap; the alternative is per-module branching that's harder to keep in sync.
+- Unit tests use `-short` to skip integration tests (no containers needed). Modules without testcontainer-backed tests (`event/natsbus`, `cache/memory`, `cache/msgpack`, `metrics/otel`) run in both jobs — redundant but cheap; the alternative is per-module branching that's harder to keep in sync. `event/natsbus`'s JetStream tests skip under `-short`, so only the integration job runs them.
 - Integration tests run without `-short` — testcontainers spins up PostgreSQL, MySQL, and Redis (`cache/redis`). SQLite uses in-memory databases. NATS (`event/natsbus`) uses an in-process server, no container.
 - Both test jobs use `-race` to detect data races.
 - Both test jobs use `-count=1` to disable test caching.
@@ -143,7 +143,7 @@ All eight modules are in the CI matrix and in `make test` / `make lint` / `make 
 | Runtime | SQL builders (all dialects), comparators, omittable, transactions, error mapping, struct scanning, hooks, tenancy, cache abstraction |
 | Parser | DDL parsing per dialect, relationship detection, introspection, multi-file parsing, migration filtering |
 | CLI | Config validation, code generation, template output, golden files, CLI commands, exit codes, GraphQL pipeline |
-| `event/natsbus/` | NATS publisher/subscriber against a `nats:latest` testcontainer |
+| `event/natsbus/` | NATS publisher/subscriber and JetStream against an in-process NATS server (no container) |
 | `cache/memory/` | LRU eviction, TTL, concurrent access |
 | `cache/redis/` | Read-through, breaker behavior against a `redis:7-alpine` testcontainer |
 | `cache/msgpack/` | Serializer round-trip for every supported value shape |
@@ -748,7 +748,8 @@ sqlgen diff
 | `make update-golden` | Regenerate unit-level template golden files |
 | `make test-examples` | Test every E2E example module (real DBs, requires Docker) |
 | `make lint-examples` | Lint every E2E example module |
-| `make check-examples` | `make tools-check` + `make lint-examples` + `make test-examples` |
+| `make build-generated` | Run the CLI unit tests with `SQLGEN_BUILD_GENERATED=1`, so their generated-package `go build` steps run despite `-short` |
+| `make check-examples` | `make tools-check` + `make lint-examples` + `make build-generated` + `make test-examples` |
 | `make update-golden-e2e` | Regenerate the `expected/` tree per example module |
 
 > **Note**: The CI workflows in `.github/workflows/` matrix all 8 modules and run the same commands these targets dispatch locally — `make check` and PR CI should agree on pass/fail.

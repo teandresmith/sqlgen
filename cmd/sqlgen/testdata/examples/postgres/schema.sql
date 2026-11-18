@@ -448,3 +448,84 @@ CREATE TABLE sequence_rows (
     audit_no INTEGER GENERATED ALWAYS AS IDENTITY,
     note TEXT NOT NULL
 );
+
+-- A many-to-many edge keyed on binary and network types. Host.Fingerprints
+-- fetches fingerprints by BYTEA key and Fingerprint.Hosts fetches hosts by
+-- INET key; pgx scans neither type into a string.
+CREATE TABLE hosts (
+    addr INET PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE fingerprints (
+    digest BYTEA PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE host_fingerprints (
+    host_addr INET NOT NULL REFERENCES hosts(addr),
+    fingerprint_digest BYTEA NOT NULL REFERENCES fingerprints(digest),
+    PRIMARY KEY (host_addr, fingerprint_digest)
+);
+
+-- time_keyed / time_keyed_notes: a timestamptz primary key and foreign key
+-- bind as times, not as text PostgreSQL cannot parse.
+CREATE TABLE time_keyed (
+    at TIMESTAMPTZ PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE time_keyed_notes (
+    id BIGSERIAL PRIMARY KEY,
+    keyed_at TIMESTAMPTZ REFERENCES time_keyed (at),
+    note TEXT NOT NULL
+);
+
+-- bool_keyed / bool_keyed_notes: a boolean primary key and foreign key bind as
+-- bools, as on the dialects that store them as integers.
+CREATE TABLE bool_keyed (
+    k BOOLEAN PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE bool_keyed_notes (
+    id BIGSERIAL PRIMARY KEY,
+    keyed_k BOOLEAN REFERENCES bool_keyed (k),
+    note TEXT NOT NULL
+);
+
+-- Foreign keys of another width than the column they reference. PostgreSQL
+-- accepts them, so each loader has to bind a parent key into a column of
+-- another Go type, and a parent too wide for the column has no children.
+CREATE TABLE width_smalls (
+    id INTEGER PRIMARY KEY,
+    scope BIGINT NOT NULL,
+    UNIQUE (scope, id)
+);
+
+CREATE TABLE width_bigs (
+    id BIGINT PRIMARY KEY
+);
+
+CREATE TABLE width_wide_children (
+    id BIGSERIAL PRIMARY KEY,
+    small_id BIGINT REFERENCES width_smalls(id)
+);
+
+CREATE TABLE width_narrow_children (
+    id BIGSERIAL PRIMARY KEY,
+    big_id INTEGER NOT NULL REFERENCES width_bigs(id)
+);
+
+CREATE TABLE width_links (
+    small_id BIGINT NOT NULL REFERENCES width_smalls(id),
+    big_id INTEGER NOT NULL REFERENCES width_bigs(id),
+    PRIMARY KEY (small_id, big_id)
+);
+
+CREATE TABLE width_scoped_children (
+    id BIGSERIAL PRIMARY KEY,
+    scope INTEGER NOT NULL,
+    small_id BIGINT NOT NULL,
+    FOREIGN KEY (scope, small_id) REFERENCES width_smalls(scope, id)
+);

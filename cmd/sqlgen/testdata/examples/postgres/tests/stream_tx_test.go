@@ -255,39 +255,3 @@ func TestStream_OutsideTransactionUnaffectedByTheGuard(t *testing.T) {
 		t.Errorf("Stream outside a transaction issued %d statements, want exactly 1: %v", got, tracer.since(mark))
 	}
 }
-
-// TestStream_RefusedInsideTransactionLeavesTheTxUsable checks the refusal is
-// inert rather than merely early: because it returns before the hook chain is
-// built, nothing has touched the connection, so the very next statement on the
-// same txCtx runs normally. A guard that acquired the reservation and forgot to
-// give it back would hang here instead.
-func TestStream_RefusedInsideTransactionLeavesTheTxUsable(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), streamTxDeadline)
-	defer cancel()
-	client := newClient()
-
-	author := t.Name()
-	seedArticles(t, ctx, client, author, 2)
-
-	authorEq := author
-	if err := client.WithTx(ctx, "stream-refusal-then-read", func(txCtx context.Context) error {
-		for _, err := range client.Articles().Stream(txCtx, &models.StreamArticlesInput{}) {
-			if err == nil {
-				t.Error("Stream inside a transaction was not refused")
-			}
-			break
-		}
-		got, err := client.Articles().GetMany(txCtx, &models.GetArticlesInput{
-			Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-		})
-		if err != nil {
-			return err
-		}
-		if len(got) != 2 {
-			t.Errorf("GetMany after a refused Stream returned %d rows, want 2", len(got))
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("WithTx: %v", err)
-	}
-}

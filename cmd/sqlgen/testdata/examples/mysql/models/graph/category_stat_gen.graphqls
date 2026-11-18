@@ -17,7 +17,7 @@ type CategoryStat {
   "product_names"
   productNames: String
   "product_names_json"
-  productNamesJSON: JSON!
+  productNamesJSON: JSON
 }
 
 type CategoryStatConnection {
@@ -47,7 +47,7 @@ input CategoryStatFilter {
   minPrice: NullableNumericComparator
   maxPrice: NullableNumericComparator
   productNames: NullableStringComparator
-  productNamesJSON: JSONComparator
+  productNamesJSON: NullableJSONComparator
   and: [CategoryStatFilter!]
   or:  [CategoryStatFilter!]
 }

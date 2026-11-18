@@ -58,7 +58,7 @@ input CreateProductInput {
   name: String!
   price: Decimal!
   categoryID: Int!
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateProductInput {
   name: String

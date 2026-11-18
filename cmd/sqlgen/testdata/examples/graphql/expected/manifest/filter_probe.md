@@ -60,19 +60,6 @@ postgres:
 SELECT "created_at", "doc", "flags", "id", "tags", "tags_n", "weights" FROM "public"."filter_probes" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *FilterProbeFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."filter_probes" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -97,6 +84,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."filter_probes" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *FilterProbeFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."filter_probes" WHERE <filter>
 ```
 
 ### Paginate
@@ -157,36 +157,6 @@ postgres:
 INSERT INTO "public"."filter_probes" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateFilterProbeInput`, `target FilterProbeConflictTarget`
-- Returns: `*FilterProbe`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated FilterProbeConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."filter_probes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateFilterProbeInput`, `target FilterProbeConflictTarget`
-- Returns: `[]*FilterProbe`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same FilterProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."filter_probes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateFilterProbeInput`
@@ -230,6 +200,36 @@ postgres:
 
 ```sql
 UPDATE "public"."filter_probes" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateFilterProbeInput`, `target FilterProbeConflictTarget`
+- Returns: `*FilterProbe`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated FilterProbeConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."filter_probes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateFilterProbeInput`, `target FilterProbeConflictTarget`
+- Returns: `[]*FilterProbe`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same FilterProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."filter_probes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -296,3 +296,17 @@ Type `FilterProbeFilter`.
 Type `FilterProbeSort`.
 
 Fields: CreatedAt, Doc, Flags, ID, Tags, TagsN, Weights
+
+## Read examples
+
+```go
+row, err := client.FilterProbes().Get(ctx, uuid.NewV4())
+rows, err := client.FilterProbes().GetMany(ctx, &models.GetFilterProbesInput{Filter: &models.FilterProbeFilter{CreatedAt: &comparator.Time{Eq: new(time.Now())}}})
+```
+
+## Write examples
+
+```go
+created, err := client.FilterProbes().Create(ctx, &models.CreateFilterProbeInput{})
+updated, err := client.FilterProbes().Update(ctx, uuid.NewV4(), &models.UpdateFilterProbeInput{Doc: omittable.Set(types.JSON("{}"))})
+```

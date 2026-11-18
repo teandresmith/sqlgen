@@ -33,13 +33,13 @@ GROUP BY c.name;
 | Name | Go field | Go type | DB type | Null | PK | Unique | Default | Comparator | Comment |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `category_name` | CategoryName | `*string` | `varchar(255)` | yes |  |  |  | `comparator.NullableString` |  |
-| `product_count` | ProductCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |
+| `product_count` | ProductCount | `int32` | `int64` |  |  |  |  | `comparator.Number[int32]` |  |
 | `total_price` | TotalPrice | `*float64` | `decimal(10,2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `avg_price` | AvgPrice | `*float64` | `*float64` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `min_price` | MinPrice | `*float64` | `decimal(10,2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `max_price` | MaxPrice | `*float64` | `decimal(10,2)` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `product_names` | ProductNames | `*string` | `*string` | yes |  |  |  | `comparator.NullableString` |  |
-| `product_names_json` | ProductNamesJSON | `types.JSON` | `types.JSON` |  |  |  |  | `comparator.JSON` |  |
+| `product_names_json` | ProductNamesJSON | `types.JSON` | `types.JSON` | yes |  |  |  | `comparator.NullableJSON` |  |
 
 ## Query methods
 
@@ -87,7 +87,7 @@ Type `CategoryStatFilter`.
 | MinPrice | `*comparator.NullableNumber[float64]` |
 | ProductCount | `*comparator.Number[int32]` |
 | ProductNames | `*comparator.NullableString` |
-| ProductNamesJSON | `*comparator.JSON` |
+| ProductNamesJSON | `*comparator.NullableJSON` |
 | TotalPrice | `*comparator.NullableNumber[float64]` |
 | And | `[]*CategoryStatFilter` |
 | Or | `[]*CategoryStatFilter` |
@@ -97,3 +97,9 @@ Type `CategoryStatFilter`.
 Type `CategoryStatSort`.
 
 Fields: AvgPrice, CategoryName, MaxPrice, MinPrice, ProductCount, ProductNames, ProductNamesJSON, TotalPrice
+
+## Read examples
+
+```go
+rows, err := client.CategoryStat().GetMany(ctx, &models.GetCategoryStatsInput{Filter: &models.CategoryStatFilter{ProductCount: &comparator.Number[int32]{Eq: new(int32(1))}}})
+```

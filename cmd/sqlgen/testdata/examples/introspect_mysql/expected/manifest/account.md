@@ -69,19 +69,6 @@ mysql:
 SELECT `created_at`, `display_name`, `email`, `id`, `is_active`, `locale`, `nickname` FROM `accounts` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *AccountFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `accounts` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uint64`
@@ -106,6 +93,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `accounts` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *AccountFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `accounts` WHERE <filter>
 ```
 
 ### Paginate
@@ -166,36 +166,6 @@ mysql:
 INSERT INTO `accounts` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateAccountInput`, `target AccountConflictTarget`
-- Returns: `*Account`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `accounts` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateAccountInput`, `target AccountConflictTarget`
-- Returns: `[]*Account`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `accounts` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id uint64`, `input *UpdateAccountInput`
@@ -239,6 +209,36 @@ mysql:
 
 ```sql
 UPDATE `accounts` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateAccountInput`, `target AccountConflictTarget`
+- Returns: `*Account`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `accounts` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateAccountInput`, `target AccountConflictTarget`
+- Returns: `[]*Account`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `accounts` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### HardDelete
@@ -305,3 +305,17 @@ Type `AccountFilter`.
 Type `AccountSort`.
 
 Fields: CreatedAt, DisplayName, Email, ID, IsActive, Locale, Nickname
+
+## Read examples
+
+```go
+row, err := client.Accounts().Get(ctx, 1)
+rows, err := client.Accounts().GetMany(ctx, &models.GetAccountsInput{Filter: &models.AccountFilter{DisplayName: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Accounts().Create(ctx, &models.CreateAccountInput{Email: "example", DisplayName: "example"})
+updated, err := client.Accounts().Update(ctx, 1, &models.UpdateAccountInput{Email: omittable.Set("example")})
+```

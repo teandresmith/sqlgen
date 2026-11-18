@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/teandresmith/sqlgen/database"
 	"github.com/teandresmith/sqlgen/omittable"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/tenancy_postgres/models"
@@ -53,6 +54,49 @@ func TestPgxCapture_UpdateManyBatchReturningEvictsPrecisely(t *testing.T) {
 		t.Errorf("titles after batch = (%q, %q), want (r-updated, s-updated) — stale entries survived the pgx batch RETURNING capture", gotR.Title, gotS.Title)
 	}
 	assertHit(t, env.metrics, "Get keep after pgx batch", func() {
+		if _, err := env.clientB.Articles().Get(ctx, keep.ID); err != nil {
+			t.Fatalf("Get keep: %v", err)
+		}
+	})
+	assertNoFallback(t, env.metrics)
+}
+
+// Inside a caller's transaction the querier has no SendBatch, so UpdateMany
+// runs each statement in a savepoint and scans its `RETURNING workspace_id`
+// row by row; each row's own tenant-scoped key is still evicted precisely.
+func TestPgxCapture_UpdateManyInTransactionEvictsPrecisely(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	ctx := context.Background()
+
+	r := mkArticle(t, env.clientA, "r-original")
+	s := mkArticle(t, env.clientB, "s-original")
+	keep := mkArticle(t, env.clientB, "keep-original")
+
+	// Synchronous commit callbacks, so the evictions have run when WithTx
+	// returns.
+	if err := env.clientA.WithTx(ctx, "update_many_capture", func(txCtx context.Context) error {
+		_, err := env.clientA.Articles().UpdateMany(txCtx, []models.UpdateArticleItem{
+			{ID: r.ID, Input: &models.UpdateArticleInput{Title: omittable.Set("r-updated")}},
+			{ID: s.ID, Input: &models.UpdateArticleInput{Title: omittable.Set("s-updated")}},
+		}, func(o *models.CallOptions[models.ArticleFieldOptions]) { o.SkipTenancy = true })
+		return err
+	}, database.TxOptions{CallbackMode: database.CallbackSync}); err != nil {
+		t.Fatalf("SkipTenancy UpdateMany in a transaction: %v", err)
+	}
+
+	gotR, err := env.clientA.Articles().Get(ctx, r.ID)
+	if err != nil {
+		t.Fatalf("re-Get r: %v", err)
+	}
+	gotS, err := env.clientB.Articles().Get(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("re-Get s: %v", err)
+	}
+	if gotR.Title != "r-updated" || gotS.Title != "s-updated" {
+		t.Errorf("titles after the transaction = (%q, %q), want (r-updated, s-updated) — stale entries survived the per-statement RETURNING capture", gotR.Title, gotS.Title)
+	}
+	assertHit(t, env.metrics, "Get keep after the transaction", func() {
 		if _, err := env.clientB.Articles().Get(ctx, keep.ID); err != nil {
 			t.Fatalf("Get keep: %v", err)
 		}

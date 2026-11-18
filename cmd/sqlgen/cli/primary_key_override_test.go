@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,6 +21,41 @@ func overrideConfig(key string, pkCols, excludeCols []string) *config.RootConfig
 		tc.PrimaryKey = &config.TablePrimaryKeyConfig{Columns: pkCols}
 	}
 	return &config.RootConfig{Tables: map[string]config.TableConfig{key: tc}}
+}
+
+// detectRelationships runs relationship detection on a hand-built schema. A
+// parsed schema carries a FOREIGN KEY constraint for every column reference,
+// and detection reads only the constraints, so each reference without one
+// gets one here first.
+func detectRelationships(s *parser.Schema) {
+	for i := range s.Tables {
+		t := &s.Tables[i]
+		for _, col := range t.Columns {
+			ref := col.FKReference
+			if ref == nil || ref.Synthetic || slices.ContainsFunc(t.Constraints, func(c parser.Constraint) bool {
+				return c.Type == parser.ForeignKey && slices.Equal(c.Columns, []string{col.Name})
+			}) {
+				continue
+			}
+			refCol := ref.Column
+			if refCol == "" {
+				refCol = "id"
+			}
+			t.Constraints = append(t.Constraints, parser.Constraint{
+				Type:             parser.ForeignKey,
+				Columns:          []string{col.Name},
+				ReferenceSchema:  ref.Schema,
+				ReferenceTable:   ref.Table,
+				ReferenceColumns: []string{refCol},
+			})
+		}
+	}
+	parser.DetectRelationships(s)
+}
+
+// idTable is a public table keyed on a uuid id.
+func idTable(name string) parser.Table {
+	return parser.Table{Name: name, Schema: "public", Columns: []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}}}
 }
 
 // TestApplyPrimaryKeyOverrides pins that tables.<name>.primary_key.columns is
@@ -138,16 +174,14 @@ func TestApplyPrimaryKeyOverrides(t *testing.T) {
 
 // TestApplyPrimaryKeyOverrides_RelationshipArity is a regression test: an
 // override-declared single-column PK that is also a foreign key must classify
-// as O2O, matching the `caller` strategy gen already derives for it. Before the
-// override reached parser.Column.PrimaryKey, columnUnique saw PrimaryKey ==
-// false and emitted an O2M list on the parent for something that structurally
-// holds at most one row per parent.
+// as O2O, matching the `caller` strategy gen already derives for it. Without the
+// override on parser.Column.PrimaryKey, detection would emit an O2M list on the
+// parent for something that structurally holds at most one row per parent.
 //
 // The reachable shape is narrower than it looks: a post-CREATE UNIQUE
-// constraint or a CREATE UNIQUE INDEX both set Column.Unique, which columnUnique
-// short-circuits on before it ever consults PrimaryKey. The divergence needs an
-// override whose uniqueness is app-enforced only — the case PRD §8.6 warns
-// about rather than rejects.
+// constraint or a CREATE UNIQUE INDEX both make the column unique on their own.
+// The divergence needs an override whose uniqueness is app-enforced only — the
+// case PRD §8.6 warns about rather than rejects.
 func TestApplyPrimaryKeyOverrides_RelationshipArity(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -189,11 +223,11 @@ func TestApplyPrimaryKeyOverrides_RelationshipArity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			schema := &parser.Schema{Tables: []parser.Table{tt.child}}
+			schema := &parser.Schema{Tables: []parser.Table{idTable("users"), idTable("tags"), tt.child}}
 			cfg := overrideConfig("public."+tt.child.Name, tt.pkCols, nil)
 
 			applyPrimaryKeyOverrides(schema, cfg)
-			parser.DetectRelationships(schema)
+			detectRelationships(schema)
 
 			if len(schema.Relationships) == 0 {
 				t.Fatalf("DetectRelationships() produced no edges, want at least one %v", tt.wantType)
@@ -211,14 +245,14 @@ func TestApplyPrimaryKeyOverrides_RelationshipArity(t *testing.T) {
 }
 
 // TestApplyPrimaryKeyOverrides_CompositeIsNotAJunction pins the blast-radius
-// bound of resolving PK overrides: junctionConstraint reads Table.Constraints, never
-// the column flags, so resolving a composite override over two FK columns
-// cannot turn the table into a detected M2M junction. Writing a synthetic
-// PRIMARY KEY constraint instead of (or alongside) the flags would, which is
-// why this pass deliberately does not.
+// bound of resolving PK overrides: junction detection reads the PRIMARY KEY and
+// UNIQUE constraints, never the column flags, so resolving a composite override
+// over two FK columns cannot turn the table into a detected M2M junction.
+// Writing a synthetic PRIMARY KEY constraint instead of (or alongside) the
+// flags would, which is why this pass deliberately does not.
 func TestApplyPrimaryKeyOverrides_CompositeIsNotAJunction(t *testing.T) {
 	schema := &parser.Schema{
-		Tables: []parser.Table{{
+		Tables: []parser.Table{idTable("users"), idTable("tags"), {
 			Name: "user_tags", Schema: "public",
 			Columns: []parser.Column{
 				{Name: "user_id", Type: "uuid", FKReference: &parser.FKReference{Schema: "public", Table: "users", Column: "id"}},
@@ -229,8 +263,11 @@ func TestApplyPrimaryKeyOverrides_CompositeIsNotAJunction(t *testing.T) {
 	cfg := overrideConfig("public.user_tags", []string{"user_id", "tag_id"}, nil)
 
 	applyPrimaryKeyOverrides(schema, cfg)
-	parser.DetectRelationships(schema)
+	detectRelationships(schema)
 
+	if len(schema.Relationships) != 2 {
+		t.Fatalf("DetectRelationships() produced %d edges, want the two O2M edges into user_tags", len(schema.Relationships))
+	}
 	for _, rel := range schema.Relationships {
 		if rel.Type == parser.ManyToMany {
 			t.Errorf("DetectRelationships() classified an override-declared composite PK as M2M (%s -> %s via %s); "+
@@ -249,8 +286,8 @@ func TestApplyPrimaryKeyOverrides_CompositeIsNotAJunction(t *testing.T) {
 // The fixture is the only shape that exercises the O2M-instead-of-O2O arity
 // bug: a single-column override on an FK column whose uniqueness is
 // app-enforced. A post-CREATE UNIQUE or a CREATE UNIQUE INDEX would set
-// Column.Unique, which columnUnique short-circuits on before it ever consults
-// PrimaryKey — so either of those would pass even with the fix reverted.
+// Column.Unique, which makes the edge O2O without consulting PrimaryKey — so
+// either of those would pass even with the fix reverted.
 //
 //   - Resolve BEFORE detect → the edge is O2O (the child holds *User).
 //   - Resolve AFTER post-parse validation → the §8.6 "no UNIQUE constraint

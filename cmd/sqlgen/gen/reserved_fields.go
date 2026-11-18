@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
+	"github.com/teandresmith/sqlgen/parser"
 )
 
 // This file models the identifiers the templates already declare on the
@@ -32,14 +33,19 @@ import (
 type memberScope struct {
 	// IsColumn distinguishes a column field from a relationship field.
 	// Relationships land on the entity struct and on <T>FieldOptions; they
-	// never reach <T>Filter, Update<T>Item or the increment enum.
+	// never reach Update<T>Item or the increment enum.
 	IsColumn bool
+	// ListRelationship reports whether a relationship field is a list edge
+	// (O2M, M2M), which also lands on <T>Filter as a relationship filter
+	// member. A to-one edge never reaches <T>Filter.
+	ListRelationship bool
 	// Filterable reports whether the column gets a <T>Filter field
 	// (columnIsFilterable — a slice of non-comparable elements does not, and
 	// neither does a JSON column on SQLite).
 	Filterable bool
 	// CompositePK reports whether the owning entity has a multi-column PK,
-	// which is what emits <T>Filter.PKs.
+	// which is what emits <T>Filter.PKs. Set for columns and relationships
+	// alike.
 	CompositePK bool
 	// SinglePKColumn reports whether this column is the sole PK column, which
 	// is the one that shares Update<T>Item with the Input field.
@@ -86,26 +92,27 @@ var generatedEntityMembers = []generatedMember{
 		applies: func(memberScope) bool { return true },
 	},
 
-	// <T>Filter carries only the filterable columns.
+	// <T>Filter carries the filterable columns and, as relationship filter
+	// members, the list relationships.
 	{
 		name:    "And",
 		owner:   func(s string) string { return s + "Filter (field And)" },
-		applies: func(sc memberScope) bool { return sc.IsColumn && sc.Filterable },
+		applies: onFilter,
 	},
 	{
 		name:    "Or",
 		owner:   func(s string) string { return s + "Filter (field Or)" },
-		applies: func(sc memberScope) bool { return sc.IsColumn && sc.Filterable },
+		applies: onFilter,
 	},
 	{
 		name:    "ToConditions",
 		owner:   func(s string) string { return s + "Filter (method ToConditions)" },
-		applies: func(sc memberScope) bool { return sc.IsColumn && sc.Filterable },
+		applies: onFilter,
 	},
 	{
 		name:    "PKs",
 		owner:   func(s string) string { return s + "Filter (field PKs)" },
-		applies: func(sc memberScope) bool { return sc.IsColumn && sc.Filterable && sc.CompositePK },
+		applies: func(sc memberScope) bool { return onFilter(sc) && sc.CompositePK },
 	},
 
 	// Update<T>Item pairs the single PK column's field with an Input field.
@@ -123,6 +130,12 @@ var generatedEntityMembers = []generatedMember{
 		owner:   func(s string) string { return s + "IncrementColumn (the increment enum type)" },
 		applies: func(sc memberScope) bool { return sc.IncrementEligible },
 	},
+}
+
+// onFilter reports whether a field in the given scope lands on <T>Filter: a
+// filterable column, or a list relationship's filter member.
+func onFilter(sc memberScope) bool {
+	return (sc.IsColumn && sc.Filterable) || sc.ListRelationship
 }
 
 // reservedMemberFor returns the generated declaration claiming fieldName in
@@ -158,10 +171,14 @@ func viewColumnMemberScope(col ColumnContext, pkColumns []ColumnContext, dialect
 	}
 }
 
-// relationshipMemberScope derives the scope of a relationship field. It lands
-// on the entity struct and on <T>FieldOptions only.
-func relationshipMemberScope() memberScope {
-	return memberScope{}
+// relationshipMemberScope derives the scope of a relationship field. Every
+// relationship lands on the entity struct and on <T>FieldOptions; a list
+// relationship also lands on <T>Filter as a relationship filter member.
+func relationshipMemberScope(rel RelationshipContext, pkColumns []ColumnContext) memberScope {
+	return memberScope{
+		ListRelationship: rel.Type == parser.OneToMany || rel.Type == parser.ManyToMany,
+		CompositePK:      len(pkColumns) > 1,
+	}
 }
 
 // reservedColumnFieldError formats the rejection for a table column, naming
@@ -180,8 +197,8 @@ func reservedColumnFieldError(qualifiedTable, structName string, col ColumnConte
 // reservedRelationshipFieldError formats the rejection for a relationship
 // field. Relationship names are derived, not configurable, so the escape
 // hatch is exclusion rather than a rename.
-func reservedRelationshipFieldError(qualifiedTable, structName string, rel RelationshipContext) error {
-	owner := reservedMemberFor(rel.FieldName, structName, relationshipMemberScope())
+func reservedRelationshipFieldError(qualifiedTable, structName string, rel RelationshipContext, pkColumns []ColumnContext) error {
+	owner := reservedMemberFor(rel.FieldName, structName, relationshipMemberScope(rel, pkColumns))
 	if owner == "" {
 		return nil
 	}

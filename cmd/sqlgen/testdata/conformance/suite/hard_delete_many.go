@@ -1,0 +1,290 @@
+package suite
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/teandresmith/sqlgen/database"
+	"github.com/teandresmith/sqlgen/hook"
+
+	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models"
+)
+
+// hardDeleteMany: HardDeleteMany permanently removes every row whose key is listed.
+func hardDeleteMany(t *testing.T, h *Harness) {
+	ctx := context.Background()
+
+	t.Run("deletes only the listed keys", func(t *testing.T) {
+		h.Reset(t)
+		a, b, c := createProduct(t, h, "a"), createProduct(t, h, "b"), createProduct(t, h, "c")
+		if err := h.Client.Products().HardDeleteMany(ctx, []int64{a.ID, c.ID}); err != nil {
+			t.Fatalf("HardDeleteMany([a, c]) error = %v, want nil", err)
+		}
+		assertProductExists(t, h, a.ID, false)
+		assertProductExists(t, h, b.ID, true)
+		assertProductExists(t, h, c.ID, false)
+	})
+
+	t.Run("nil key list deletes nothing", func(t *testing.T) {
+		h.Reset(t)
+		createProduct(t, h, "a")
+		if err := h.Client.Products().HardDeleteMany(ctx, nil); err != nil {
+			t.Fatalf("HardDeleteMany(nil) error = %v, want nil", err)
+		}
+		assertRowCount(t, h, "products", 1)
+	})
+
+	t.Run("empty key list deletes nothing", func(t *testing.T) {
+		h.Reset(t)
+		createProduct(t, h, "a")
+		if err := h.Client.Products().HardDeleteMany(ctx, []int64{}); err != nil {
+			t.Fatalf("HardDeleteMany([]) error = %v, want nil", err)
+		}
+		assertRowCount(t, h, "products", 1)
+	})
+
+	t.Run("missing keys are not an error", func(t *testing.T) {
+		h.Reset(t)
+		a := createProduct(t, h, "a")
+		missing := a.ID + 1000
+		if err := h.Client.Products().HardDeleteMany(ctx, []int64{a.ID, missing}); err != nil {
+			t.Fatalf("HardDeleteMany([a, missing]) error = %v, want nil", err)
+		}
+		assertProductExists(t, h, a.ID, false)
+		if err := h.Client.Products().HardDeleteMany(ctx, []int64{missing}); err != nil {
+			t.Fatalf("HardDeleteMany([missing]) error = %v, want nil", err)
+		}
+	})
+
+	t.Run("deletes listed rows whether or not they are soft-deleted", func(t *testing.T) {
+		h.Reset(t)
+		live, trashed := createDocument(t, h, "live"), createDocument(t, h, "trashed")
+		createDocument(t, h, "kept")
+		if _, err := h.Client.Documents().SoftDelete(ctx, trashed.ID); err != nil {
+			t.Fatalf("SoftDelete(trashed) error = %v", err)
+		}
+		if err := h.Client.Documents().HardDeleteMany(ctx, []int64{live.ID, trashed.ID}); err != nil {
+			t.Fatalf("HardDeleteMany([live, trashed]) error = %v, want nil", err)
+		}
+		assertRowCount(t, h, "documents", 1)
+	})
+
+	t.Run("deletes inside the caller's transaction", func(t *testing.T) {
+		h.Reset(t)
+		a, b := createProduct(t, h, "a"), createProduct(t, h, "b")
+		err := database.WithTransaction(ctx, h.Querier, "conformance", func(txCtx context.Context) error {
+			h.Querier.ResetCount()
+			if err := h.Client.Products().HardDeleteMany(txCtx, []int64{a.ID}); err != nil {
+				return err
+			}
+			// The counting querier sees only statements that bypass the transaction.
+			if stmts := h.Querier.Statements(); len(stmts) != 0 {
+				t.Errorf("HardDeleteMany inside the transaction sent %q outside it, want nothing", stmts)
+			}
+			n, err := h.Client.Products().Count(txCtx, nil)
+			if err != nil {
+				return err
+			}
+			if n != 1 {
+				t.Errorf("Count inside the transaction = %d, want 1", n)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("WithTransaction error = %v, want nil", err)
+		}
+		assertProductExists(t, h, a.ID, false)
+		assertProductExists(t, h, b.ID, true)
+	})
+
+	t.Run("rolled-back transaction leaves rows", func(t *testing.T) {
+		h.Reset(t)
+		a := createProduct(t, h, "a")
+		errRollback := errors.New("roll back")
+		err := database.WithTransaction(ctx, h.Querier, "conformance", func(txCtx context.Context) error {
+			if err := h.Client.Products().HardDeleteMany(txCtx, []int64{a.ID}); err != nil {
+				return err
+			}
+			// The delete is visible inside the transaction, so the rollback is what undoes it.
+			n, err := h.Client.Products().Count(txCtx, nil)
+			if err != nil {
+				return err
+			}
+			if n != 0 {
+				t.Errorf("Count inside the transaction = %d, want 0", n)
+			}
+			return errRollback
+		})
+		if !errors.Is(err, errRollback) {
+			t.Fatalf("WithTransaction error = %v, want the rollback sentinel", err)
+		}
+		assertProductExists(t, h, a.ID, true)
+	})
+
+	t.Run("fires one hard_delete_many mutation hook", func(t *testing.T) {
+		h.Reset(t)
+		a, b, c := createProduct(t, h, "a"), createProduct(t, h, "b"), createProduct(t, h, "c")
+		client, seen := mutationRecorder(h)
+		if err := client.Products().HardDeleteMany(ctx, []int64{a.ID, c.ID}); err != nil {
+			t.Fatalf("HardDeleteMany([a, c]) error = %v, want nil", err)
+		}
+		if len(seen()) != 1 {
+			t.Fatalf("mutation hook fired %d times, want 1", len(seen()))
+		}
+		m := seen()[0]
+		if m.Op != hook.OpHardDeleteMany || m.Table != models.TableProducts || m.PK != nil {
+			t.Errorf("MutationContext = {Op: %q, Table: %q, PK: %v}, want {Op: %q, Table: %q, PK: nil}",
+				m.Op, m.Table, m.PK, hook.OpHardDeleteMany, models.TableProducts)
+		}
+		bySet := cmpopts.SortSlices(func(x, y any) bool { return x.(int64) < y.(int64) })
+		if diff := cmp.Diff([]any{a.ID, c.ID}, m.AffectedPKs, bySet); diff != "" {
+			t.Errorf("AffectedPKs after the mutation (-want +got):\n%s", diff)
+		}
+		assertProductExists(t, h, b.ID, true)
+	})
+
+	t.Run("records only the keys it wrote as affected", func(t *testing.T) {
+		h.Reset(t)
+		a := createProduct(t, h, "a")
+		missing := a.ID + 1000
+		client, affected := affectedPKsRecorder(h)
+		if err := client.Products().HardDeleteMany(ctx, []int64{missing, a.ID}); err != nil {
+			t.Fatalf("HardDeleteMany([missing, a]) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]any{a.ID}, affected()); diff != "" {
+			t.Errorf("AffectedPKs of HardDeleteMany([missing, a]) (-want +got):\n%s", diff)
+		}
+		if err := client.Products().HardDeleteMany(ctx, []int64{missing, a.ID}); err != nil {
+			t.Fatalf("HardDeleteMany([missing, a]) again error = %v, want nil", err)
+		}
+		if got := affected(); len(got) != 0 {
+			t.Errorf("AffectedPKs of a HardDeleteMany matching no row = %v, want none", got)
+		}
+	})
+
+	t.Run("records only the composite keys it wrote as affected", func(t *testing.T) {
+		h.Reset(t)
+		p := createProduct(t, h, "p")
+		written := models.OrderItemPK{OrderID: 1, ProductID: p.ID}
+		missing := models.OrderItemPK{OrderID: 2, ProductID: p.ID}
+		createOrderItem(t, h, written)
+		client, affected := affectedPKsRecorder(h)
+		if err := client.OrderItems().HardDeleteMany(ctx, []models.OrderItemPK{missing, written}); err != nil {
+			t.Fatalf("HardDeleteMany([missing, written]) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]any{written}, affected()); diff != "" {
+			t.Errorf("AffectedPKs of HardDeleteMany([missing, written]) (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("a hook that aborts deletes nothing", func(t *testing.T) {
+		h.Reset(t)
+		a := createProduct(t, h, "a")
+		errAbort := errors.New("abort")
+		abort := func(hook.MutationHandler) hook.MutationHandler {
+			return func(context.Context, *hook.MutationContext) (any, error) { return nil, errAbort }
+		}
+		client := models.New(h.Base, models.WithMutationHook(abort))
+		if err := client.Products().HardDeleteMany(ctx, []int64{a.ID}); !errors.Is(err, errAbort) {
+			t.Fatalf("HardDeleteMany under an aborting hook error = %v, want the hook's error", err)
+		}
+		assertProductExists(t, h, a.ID, true)
+	})
+
+	t.Run("deleting a referenced row returns a foreign key ConstraintError", func(t *testing.T) {
+		h.Reset(t)
+		p := createProduct(t, h, "p")
+		createOrderItem(t, h, models.OrderItemPK{OrderID: 1, ProductID: p.ID})
+		err := h.Client.Products().HardDeleteMany(ctx, []int64{p.ID})
+		ce, ok := errors.AsType[*models.ConstraintError](err)
+		if !ok {
+			t.Fatalf("HardDeleteMany(referenced) error = %v, want a *ConstraintError", err)
+		}
+		if ce.Type != models.ConstraintForeignKey {
+			t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, models.ConstraintForeignKey)
+		}
+		if !errors.Is(err, models.ErrConstraintViolation) {
+			t.Errorf("errors.Is(err, ErrConstraintViolation) = false for %v", err)
+		}
+		assertProductExists(t, h, p.ID, true)
+	})
+
+	t.Run("composite keys delete only the listed tuples", func(t *testing.T) {
+		h.Reset(t)
+		p, q, r := createProduct(t, h, "p"), createProduct(t, h, "q"), createProduct(t, h, "r")
+		listed := []models.OrderItemPK{{OrderID: 1, ProductID: p.ID}, {OrderID: 2, ProductID: q.ID}}
+		unlisted := []models.OrderItemPK{
+			// These cross the listed keys: each column value is listed, only the pairing is not.
+			{OrderID: 1, ProductID: q.ID},
+			{OrderID: 2, ProductID: p.ID},
+			// These share one column value with a listed key.
+			{OrderID: 1, ProductID: r.ID},
+			{OrderID: 3, ProductID: p.ID},
+		}
+		all := append(append([]models.OrderItemPK{}, listed...), unlisted...)
+		for _, pk := range all {
+			createOrderItem(t, h, pk)
+		}
+		if err := h.Client.OrderItems().HardDeleteMany(ctx, listed); err != nil {
+			t.Fatalf("HardDeleteMany(%+v) error = %v, want nil", listed, err)
+		}
+		for i, pk := range all {
+			got, err := h.Client.OrderItems().Exists(ctx, pk)
+			if err != nil {
+				t.Fatalf("OrderItems().Exists(%+v) error = %v", pk, err)
+			}
+			if want := i >= len(listed); got != want {
+				t.Errorf("OrderItems().Exists(%+v) = %v, want %v", pk, got, want)
+			}
+		}
+	})
+
+	t.Run("splits the keys into sub-batches of the table's batch size", func(t *testing.T) {
+		h.Reset(t)
+		var ids []int64
+		for _, name := range []string{"a", "b", "c", "d", "e"} {
+			ids = append(ids, createProduct(t, h, name).ID)
+		}
+		h.Querier.ResetCount()
+		if err := h.Client.Products().HardDeleteMany(ctx, ids); err != nil {
+			t.Fatalf("HardDeleteMany(5 keys) error = %v, want nil", err)
+		}
+		deletes := statementsWithPrefix(h, "DELETE")
+		// The products table sets batch_size: 2, so 5 keys are ceil(5 / 2) = 3 sub-batches.
+		if len(deletes) != 3 {
+			t.Errorf("HardDeleteMany(5 keys) sent %d DELETE statements, want 3: %q", len(deletes), deletes)
+		}
+		assertRowCount(t, h, "products", 0)
+	})
+
+	t.Run("a failed sub-batch keeps the sub-batches before it", func(t *testing.T) {
+		h.Reset(t)
+		a, b, c := createProduct(t, h, "a"), createProduct(t, h, "b"), createProduct(t, h, "c")
+		createOrderItem(t, h, models.OrderItemPK{OrderID: 1, ProductID: c.ID})
+		// With batch_size: 2, {a, b} is the first sub-batch and {c} the second, which fails.
+		err := h.Client.Products().HardDeleteMany(ctx, []int64{a.ID, b.ID, c.ID})
+		if _, ok := errors.AsType[*models.ConstraintError](err); !ok {
+			t.Fatalf("HardDeleteMany([a, b, referenced c]) error = %v, want a *ConstraintError", err)
+		}
+		assertProductExists(t, h, a.ID, false)
+		assertProductExists(t, h, b.ID, false)
+		assertProductExists(t, h, c.ID, true)
+	})
+
+	t.Run("records a key the database matched case-insensitively as affected", func(t *testing.T) {
+		h.Reset(t)
+		createLabel(t, h, "red")
+		client, affected := affectedPKsRecorder(h)
+		if err := client.Labels().HardDeleteMany(ctx, []string{"RED"}); err != nil {
+			t.Fatalf("HardDeleteMany([RED]) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]any{"RED"}, affected()); diff != "" {
+			t.Errorf("AffectedPKs of HardDeleteMany([RED]) over stored red (-want +got):\n%s", diff)
+		}
+		assertRowCount(t, h, "labels", 0)
+	})
+}

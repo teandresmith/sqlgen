@@ -571,12 +571,16 @@ func TestTxOptionsVariadic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, q := newTestSetup(database.CallbackAsync)
+			ctx := context.Background()
+			q := newBeginRecorder(&mockTxConn{})
 
 			txCtx, err := database.NewTransaction(ctx, q, "test", tt.opts...)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("NewTransaction() expected error with >1 TxOptions, got nil")
+				}
+				if got := q.beginCount(); got != 0 {
+					t.Errorf("NewTransaction() with >1 TxOptions reached Begin %d times, want 0", got)
 				}
 				return
 			}
@@ -643,14 +647,64 @@ func TestSyncCallbackMode(t *testing.T) {
 	})
 
 	err = database.Commit(txCtx)
-	if err == nil {
-		t.Fatal("Commit() error = nil, want callback error")
+	if !errors.Is(err, callbackErr) {
+		t.Fatalf("Commit() error = %v, want it to wrap the callback's error %v", err, callbackErr)
 	}
 
 	// First callback: initial call + retry = 2 calls, then error returned
 	if callCount.Load() != 2 {
 		t.Errorf("callback call count = %d, want 2 (initial + retry)", callCount.Load())
 	}
+}
+
+func TestSyncCallbacksSkipTheRestOnceTheContextIsCancelled(t *testing.T) {
+	t.Run("a callback cancelling the context skips the callbacks after it", func(t *testing.T) {
+		ctx, q := newTestSetup(database.CallbackSync)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		txCtx, err := database.NewTransaction(ctx, q, "test")
+		if err != nil {
+			t.Fatalf("NewTransaction() error = %v", err)
+		}
+		tx := database.FromContext(txCtx)
+		var ran []string
+		tx.OnCommit(func(_ context.Context) error { ran = append(ran, "first"); cancel(); return nil })
+		tx.OnCommit(func(_ context.Context) error { ran = append(ran, "second"); return nil })
+
+		err = database.Commit(txCtx)
+		if diff := cmp.Diff([]string{"first"}, ran); diff != "" {
+			t.Errorf("callbacks run (-want +got):\n%s", diff)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Commit() error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("a context cancelled during the COMMIT skips every callback", func(t *testing.T) {
+		ctx, q := newTestSetup(database.CallbackSync)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		q.conn.commitFn = func(context.Context) error { cancel(); return nil }
+
+		txCtx, err := database.NewTransaction(ctx, q, "test")
+		if err != nil {
+			t.Fatalf("NewTransaction() error = %v", err)
+		}
+		var ran bool
+		database.FromContext(txCtx).OnCommit(func(_ context.Context) error { ran = true; return nil })
+
+		err = database.Commit(txCtx)
+		if ran {
+			t.Error("callback ran on a cancelled context")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Commit() error = %v, want context.Canceled", err)
+		}
+		if !database.FromContext(txCtx).IsClosed() {
+			t.Error("IsClosed() = false; the COMMIT itself succeeded")
+		}
+	})
 }
 
 func TestCallbackRetryOnFailure(t *testing.T) {
@@ -723,16 +777,16 @@ func TestQueryFuncAutoCloseRows(t *testing.T) {
 	rows := &mockRows{}
 	q := &staticQuerier{rows: rows, row: &mockRow{}}
 
-	var called bool
+	var got database.Rows
 	err := database.QueryFunc(context.Background(), q, "SELECT 1", nil, func(r database.Rows) error {
-		called = true
+		got = r
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("QueryFunc() error = %v", err)
 	}
-	if !called {
-		t.Error("callback was not called")
+	if got != database.Rows(rows) {
+		t.Errorf("callback received rows %v, want the rows the querier returned %p", got, rows)
 	}
 	if !rows.closed.Load() {
 		t.Error("rows were not closed after QueryFunc")
@@ -743,16 +797,16 @@ func TestQueryRowFuncSingleRow(t *testing.T) {
 	row := &mockRow{}
 	q := &staticQuerier{rows: &mockRows{}, row: row}
 
-	var called bool
+	var got database.Row
 	err := database.QueryRowFunc(context.Background(), q, "SELECT 1", nil, func(r database.Row) error {
-		called = true
+		got = r
 		return r.Scan()
 	})
 	if err != nil {
 		t.Fatalf("QueryRowFunc() error = %v", err)
 	}
-	if !called {
-		t.Error("callback was not called")
+	if got != database.Row(row) {
+		t.Errorf("callback received row %v, want the row the querier returned %p", got, row)
 	}
 }
 
@@ -1073,6 +1127,35 @@ func TestStatementsDoNotHoldStructMutex(t *testing.T) {
 			},
 		},
 		{
+			name:      "plain query",
+			hook:      "query",
+			wantCalls: 1,
+			drive: func(t *testing.T, txCtx context.Context, _ *mockQuerier) {
+				t.Helper()
+				tx := database.FromContext(txCtx)
+				rows, err := tx.Query(txCtx, "SELECT c FROM t")
+				if err != nil {
+					t.Errorf("Query() error = %v", err)
+					return
+				}
+				if err := rows.Close(); err != nil {
+					t.Errorf("rows.Close() error = %v", err)
+				}
+			},
+		},
+		{
+			name:      "query row",
+			hook:      "query row",
+			wantCalls: 1,
+			drive: func(t *testing.T, txCtx context.Context, _ *mockQuerier) {
+				t.Helper()
+				tx := database.FromContext(txCtx)
+				if err := tx.QueryRow(txCtx, "SELECT c FROM t").Scan(); err != nil {
+					t.Errorf("QueryRow().Scan() error = %v", err)
+				}
+			},
+		},
+		{
 			name:      "root commit",
 			hook:      "commit",
 			wantCalls: 1,
@@ -1109,6 +1192,14 @@ func TestStatementsDoNotHoldStructMutex(t *testing.T) {
 			conn.execFn = func(context.Context, string, ...any) (database.Result, error) {
 				reenter()
 				return &mockResult{}, nil
+			}
+			conn.queryFn = func(context.Context, string, ...any) (database.Rows, error) {
+				reenter()
+				return &mockRows{}, nil
+			}
+			conn.queryRowFn = func(context.Context, string, ...any) database.Row {
+				reenter()
+				return &mockRow{}
 			}
 			conn.commitFn = func(context.Context) error {
 				reenter()
@@ -1302,6 +1393,108 @@ func TestFailedRootTeardownReopensTransaction(t *testing.T) {
 	if got := rollbacks.Load(); got != 1 {
 		t.Errorf("driver rollbacks after a failed COMMIT = %d, want 1: Tx rejected the teardown itself (%v)", got, err)
 	}
+}
+
+func TestTeardownOfATransactionTheDriverEndedClosesIt(t *testing.T) {
+	ended := fmt.Errorf("driver: %w: %w", database.ErrTxDone, context.DeadlineExceeded)
+
+	setup := func(t *testing.T, conn *mockTxConn) (context.Context, *mockQuerier, *atomic.Int64) {
+		t.Helper()
+		q := &mockQuerier{conn: conn, mode: database.CallbackSync}
+		txCtx, err := database.NewTransaction(context.Background(), q, "root")
+		if err != nil {
+			t.Fatalf("NewTransaction() error = %v", err)
+		}
+		var fired atomic.Int64
+		database.FromContext(txCtx).OnCommit(func(context.Context) error {
+			fired.Add(1)
+			return nil
+		})
+		return txCtx, q, &fired
+	}
+	assertClosed := func(t *testing.T, txCtx context.Context, q *mockQuerier, fired *atomic.Int64) {
+		t.Helper()
+		if !database.FromContext(txCtx).IsClosed() {
+			t.Error("IsClosed() = false, want true: the driver has ended the transaction")
+		}
+		if got := database.Conn(txCtx, q); got != database.Querier(q) {
+			t.Errorf("Conn() = %T, want the original querier", got)
+		}
+		if got := fired.Load(); got != 0 {
+			t.Errorf("OnCommit callbacks fired %d times, want 0", got)
+		}
+	}
+
+	t.Run("a rollback closes it and still returns the error", func(t *testing.T) {
+		conn := &mockTxConn{rollbackFn: func(context.Context) error { return ended }}
+		txCtx, q, fired := setup(t, conn)
+
+		if err := database.Rollback(txCtx); !errors.Is(err, database.ErrTxDone) {
+			t.Errorf("Rollback() error = %v, want it to wrap ErrTxDone", err)
+		}
+		assertClosed(t, txCtx, q, fired)
+	})
+
+	t.Run("a commit returns the error and fires no callback", func(t *testing.T) {
+		conn := &mockTxConn{commitFn: func(context.Context) error { return ended }}
+		txCtx, q, fired := setup(t, conn)
+
+		err := database.Commit(txCtx)
+		if !errors.Is(err, database.ErrTxDone) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Commit() error = %v, want it to wrap ErrTxDone and the deadline", err)
+		}
+		assertClosed(t, txCtx, q, fired)
+	})
+
+	t.Run("WithTransaction rolls back after a failed root commit", func(t *testing.T) {
+		commitErr := errors.New("connection reset")
+		var rollbacks atomic.Int64
+		conn := &mockTxConn{
+			commitFn:   func(context.Context) error { return commitErr },
+			rollbackFn: func(context.Context) error { rollbacks.Add(1); return nil },
+		}
+		q := &mockQuerier{conn: conn, mode: database.CallbackSync}
+
+		var txCtx context.Context
+		err := database.WithTransaction(context.Background(), q, "root", func(c context.Context) error {
+			txCtx = c
+			return nil
+		})
+		if !errors.Is(err, commitErr) {
+			t.Errorf("WithTransaction() error = %v, want the commit error", err)
+		}
+		if got := rollbacks.Load(); got != 1 {
+			t.Errorf("driver rollbacks = %d, want 1", got)
+		}
+		if !database.FromContext(txCtx).IsClosed() {
+			t.Error("IsClosed() = false after WithTransaction rolled back the failed commit")
+		}
+	})
+
+	t.Run("WithTransaction leaves a failed savepoint release to the enclosing scope", func(t *testing.T) {
+		releaseErr := errors.New("release failed")
+		conn := &mockTxConn{execFn: func(_ context.Context, sql string, _ ...any) (database.Result, error) {
+			if strings.HasPrefix(sql, "RELEASE SAVEPOINT") {
+				return nil, releaseErr
+			}
+			return &mockResult{}, nil
+		}}
+		q := &mockQuerier{conn: conn, mode: database.CallbackSync}
+
+		txCtx, err := database.NewTransaction(context.Background(), q, "root")
+		if err != nil {
+			t.Fatalf("NewTransaction() error = %v", err)
+		}
+		err = database.WithTransaction(txCtx, q, "nested", func(context.Context) error { return nil })
+		if !errors.Is(err, releaseErr) {
+			t.Errorf("WithTransaction() error = %v, want the release error", err)
+		}
+		for _, sql := range conn.getExecCalls() {
+			if strings.HasPrefix(sql, "ROLLBACK") {
+				t.Errorf("issued %q after a failed release; only a failed root commit is rolled back", sql)
+			}
+		}
+	})
 }
 
 // TestSavepointUnwindSurvivesAnEmptiedStack gates the bounds guard the untangle

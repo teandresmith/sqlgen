@@ -88,16 +88,21 @@ func TestJSONB_Parse_MultipleOperators(t *testing.T) {
 }
 
 func TestNullableJSONB_Parse(t *testing.T) {
-	t.Run("Null true", func(t *testing.T) {
-		comp := comparator.NullableJSONB{Null: new(true)}
-		got := comp.Parse("data", pgDialect)
-		if len(got) != 1 {
-			t.Fatalf("got %d conditions, want 1", len(got))
-		}
-		if got[0].Clause != "data IS NULL" {
-			t.Errorf("clause = %q, want %q", got[0].Clause, "data IS NULL")
-		}
-	})
+	for _, tt := range []struct {
+		name string
+		null bool
+		want sql.Condition
+	}{
+		{"Null true", true, sql.Condition{Clause: "data IS NULL", Column: "data"}},
+		{"Null false", false, sql.Condition{Clause: "data IS NOT NULL", Column: "data"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := comparator.NullableJSONB{Null: new(tt.null)}.Parse("data", pgDialect)
+			if diff := cmp.Diff([]sql.Condition{tt.want}, got); diff != "" {
+				t.Errorf("NullableJSONB{Null: %t}.Parse() mismatch (-want +got):\n%s", tt.null, diff)
+			}
+		})
+	}
 
 	t.Run("inherits JSONB operators", func(t *testing.T) {
 		comp := comparator.NullableJSONB{

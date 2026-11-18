@@ -70,19 +70,6 @@ postgres:
 SELECT "created_at", "id", "name" FROM "public"."assets" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *AssetFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."assets" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -107,6 +94,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."assets" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *AssetFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."assets" WHERE <filter>
 ```
 
 ### Paginate
@@ -167,36 +167,6 @@ postgres:
 INSERT INTO "public"."assets" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateAssetInput`, `target AssetConflictTarget`
-- Returns: `*Asset`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."assets" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateAssetInput`, `target AssetConflictTarget`
-- Returns: `[]*Asset`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."assets" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateAssetInput`
@@ -240,6 +210,36 @@ postgres:
 
 ```sql
 UPDATE "public"."assets" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateAssetInput`, `target AssetConflictTarget`
+- Returns: `*Asset`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated AssetConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."assets" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateAssetInput`, `target AssetConflictTarget`
+- Returns: `[]*Asset`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same AssetConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."assets" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -302,3 +302,17 @@ Type `AssetFilter`.
 Type `AssetSort`.
 
 Fields: CreatedAt, ID, Name
+
+## Read examples
+
+```go
+row, err := client.Assets().Get(ctx, uuid.NewV4())
+rows, err := client.Assets().GetMany(ctx, &models.GetAssetsInput{Filter: &models.AssetFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Assets().Create(ctx, &models.CreateAssetInput{Name: "example"})
+updated, err := client.Assets().Update(ctx, uuid.NewV4(), &models.UpdateAssetInput{Name: omittable.Set("example")})
+```

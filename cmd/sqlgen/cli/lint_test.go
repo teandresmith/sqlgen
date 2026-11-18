@@ -567,7 +567,7 @@ func TestBuildTypeRegistry_IncrementMatchesGenerator(t *testing.T) {
 			},
 			tableCfg: &config.TableConfig{
 				Relationships: []config.TableRelationship{
-					{Name: "Owner", Type: "one_to_many", Table: "probes", FK: "entity_id"},
+					{Name: "Owner", Type: "one_to_many", Table: "probes", FK: config.KeyColumns{"entity_id"}},
 				},
 			},
 			wantIncrement: false,

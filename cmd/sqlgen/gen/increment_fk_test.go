@@ -1,8 +1,10 @@
 package gen_test
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/parser"
 )
@@ -100,4 +102,34 @@ func TestIncrementColumns_ExcludeForeignKeys(t *testing.T) {
 			}
 		}
 	}
+
+	// Membership is read from the FOREIGN KEY constraints, so each member of
+	// a composite key is excluded although neither column has a reference of
+	// its own.
+	t.Run("composite FK member", func(t *testing.T) {
+		schema := parseDDLForTest(t, config.DialectPostgres, `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE tasks (
+	id bigint PRIMARY KEY,
+	workspace_id bigint NOT NULL,
+	cycle_id bigint,
+	points integer NOT NULL,
+	FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);`)
+		contexts, err := gen.BuildTableContextsFromSchema(schema, testInput(schema).Config)
+		if err != nil {
+			t.Fatalf("BuildTableContextsFromSchema: %v", err)
+		}
+		tasks, ok := tableContextByName(contexts, "tasks")
+		if !ok {
+			t.Fatal("BuildTableContextsFromSchema did not build tasks")
+		}
+		got := make([]string, 0, len(tasks.IncrementColumns))
+		for _, c := range tasks.IncrementColumns {
+			got = append(got, c.Name)
+		}
+		if want := []string{"points"}; !slices.Equal(got, want) {
+			t.Errorf("tasks IncrementColumns = %q, want %q", got, want)
+		}
+	})
 }

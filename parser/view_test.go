@@ -92,6 +92,46 @@ CREATE VIEW ...`
 	}
 }
 
+// A @type over a SUM keeps the aggregate, so codegen reports the SQL type the
+// SUM returns, as it does for an unannotated SUM; other aggregates
+// under @type record none.
+func TestBuildView_TypeAnnotationKeepsSumAggregate(t *testing.T) {
+	tables := []parser.Table{{
+		Name:    "order_items",
+		Columns: []parser.Column{{Name: "id", Type: "bigint"}, {Name: "quantity", Type: "positive_int"}},
+	}}
+	parsed := parser.ViewSQL{
+		Name: "order_totals",
+		Columns: []parser.ViewSelectColumn{
+			{Alias: "line_count", Aggregate: "COUNT", SourceTable: "oi", SourceColumn: "id"},
+			{Alias: "total_quantity", Aggregate: "SUM", SourceTable: "oi", SourceColumn: "quantity"},
+			{Alias: "max_quantity", Aggregate: "MAX", SourceTable: "oi", SourceColumn: "quantity"},
+		},
+		TableAliases: map[string]string{"oi": "order_items"},
+	}
+	annotations := &parser.ViewAnnotations{TypeOverrides: map[string]parser.ViewTypeAnnotation{
+		"line_count":     {GoType: "int32"},
+		"total_quantity": {GoType: "int64"},
+		"max_quantity":   {GoType: "int32"},
+	}}
+	view, err := parser.BuildView(parsed, "CREATE VIEW ...", annotations, &parser.Schema{Tables: tables}, parser.SearchPath{})
+	if err != nil {
+		t.Fatalf("BuildView() error: %v", err)
+	}
+	type got struct{ Name, Type, GoTypeLiteral, Aggregate string }
+	want := []got{
+		{"line_count", "int64", "int32", ""},
+		{"total_quantity", "positive_int", "int64", "SUM"},
+		{"max_quantity", "positive_int", "int32", ""},
+	}
+	for i, w := range want {
+		c := view.Columns[i]
+		if g := (got{c.Name, c.Type, c.GoTypeLiteral, c.Aggregate}); g != w {
+			t.Errorf("column[%d] = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
 func TestBuildView_TypeResolution(t *testing.T) {
 	tables := []parser.Table{
 		{
@@ -141,14 +181,15 @@ func TestBuildView_TypeResolution(t *testing.T) {
 	want := []struct {
 		name       string
 		typ        string
+		goType     string
 		nullable   bool
 		primaryKey bool
 	}{
-		{"id", "uuid", false, true},
-		{"name", "text", false, false},
-		{"discount", "numeric(10,2)", true, false},
-		{"avg_rating", "float64", false, false}, // @type override, not nullable
-		{"review_count", "int64", false, false}, // COUNT aggregate
+		{"id", "uuid", "", false, true},
+		{"name", "text", "", false, false},
+		{"discount", "numeric(10,2)", "", true, false},
+		{"avg_rating", "*float64", "float64", false, false}, // @type keeps the AVG inference; not nullable
+		{"review_count", "int64", "int64", false, false},    // COUNT aggregate
 	}
 
 	if len(view.Columns) != len(want) {
@@ -161,6 +202,9 @@ func TestBuildView_TypeResolution(t *testing.T) {
 		}
 		if got.Type != w.typ {
 			t.Errorf("column[%d].Type = %q, want %q", i, got.Type, w.typ)
+		}
+		if got.GoTypeLiteral != w.goType {
+			t.Errorf("column[%d].GoTypeLiteral = %q, want %q", i, got.GoTypeLiteral, w.goType)
 		}
 		if got.Nullable != w.nullable {
 			t.Errorf("column[%d].Nullable = %v, want %v", i, got.Nullable, w.nullable)
@@ -198,12 +242,14 @@ func TestBuildView_AggregateInference(t *testing.T) {
 		{"BOOL_AND", parser.ViewSelectColumn{Alias: "all_active", Aggregate: "BOOL_AND"}, nil, "*bool", true},
 		{"EVERY", parser.ViewSelectColumn{Alias: "all_verified", Aggregate: "EVERY"}, nil, "*bool", true},
 		{"BOOL_OR", parser.ViewSelectColumn{Alias: "any_premium", Aggregate: "BOOL_OR"}, nil, "*bool", true},
-		{"JSON_AGG", parser.ViewSelectColumn{Alias: "all_data", Aggregate: "JSON_AGG"}, nil, "types.JSON", false},
-		{"JSONB_AGG", parser.ViewSelectColumn{Alias: "all_meta", Aggregate: "JSONB_AGG"}, nil, "types.JSON", false},
-		{"JSON_ARRAYAGG", parser.ViewSelectColumn{Alias: "all_info", Aggregate: "JSON_ARRAYAGG"}, nil, "types.JSON", false},
-		{"JSON_OBJECT_AGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSON_OBJECT_AGG"}, nil, "types.JSON", false},
-		{"JSONB_OBJECT_AGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSONB_OBJECT_AGG"}, nil, "types.JSON", false},
-		{"JSON_OBJECTAGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSON_OBJECTAGG"}, nil, "types.JSON", false},
+		// A JSON aggregate over zero rows yields SQL NULL like every aggregate
+		// other than COUNT.
+		{"JSON_AGG", parser.ViewSelectColumn{Alias: "all_data", Aggregate: "JSON_AGG"}, nil, "types.JSON", true},
+		{"JSONB_AGG", parser.ViewSelectColumn{Alias: "all_meta", Aggregate: "JSONB_AGG"}, nil, "types.JSON", true},
+		{"JSON_ARRAYAGG", parser.ViewSelectColumn{Alias: "all_info", Aggregate: "JSON_ARRAYAGG"}, nil, "types.JSON", true},
+		{"JSON_OBJECT_AGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSON_OBJECT_AGG"}, nil, "types.JSON", true},
+		{"JSONB_OBJECT_AGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSONB_OBJECT_AGG"}, nil, "types.JSON", true},
+		{"JSON_OBJECTAGG", parser.ViewSelectColumn{Alias: "kv", Aggregate: "JSON_OBJECTAGG"}, nil, "types.JSON", true},
 	}
 
 	for _, tt := range tests {
@@ -595,8 +641,9 @@ func TestMergeViewAnnotations_AnnotationWins(t *testing.T) {
 	if view.Columns[0].Nullable {
 		t.Error("id Nullable = true, want false (PK)")
 	}
-	if view.Columns[1].Type != "decimal.Decimal" {
-		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "decimal.Decimal")
+	// @type leaves the introspected SQL type in place (PRD §7.1).
+	if view.Columns[1].Type != "numeric" {
+		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "numeric")
 	}
 	// The generator reads a @type override from GoTypeLiteral, as BuildView sets it.
 	if view.Columns[1].GoTypeLiteral != "decimal.Decimal" || view.Columns[1].GoTypeImport != "github.com/shopspring/decimal" {
@@ -827,8 +874,9 @@ func TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered(t *testing.T) {
 	if !view.ConcurrentlyRefreshable {
 		t.Error("ConcurrentlyRefreshable = false, want true (discovered capability preserved)")
 	}
-	if view.Columns[1].Type != "decimal.Decimal" {
-		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "decimal.Decimal")
+	// @type leaves the introspected SQL type in place (PRD §7.1).
+	if view.Columns[1].Type != "numeric" {
+		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "numeric")
 	}
 }
 

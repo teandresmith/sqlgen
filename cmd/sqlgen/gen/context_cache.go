@@ -81,7 +81,8 @@ type CachedView struct {
 }
 
 // CacheContext is the render context for cache.go.tmpl. Produced by
-// BuildCacheContext; nil when caching is globally disabled.
+// BuildCacheContext; nil when caching is globally off and no table or view
+// opts in.
 type CacheContext struct {
 	Package           string
 	ClientName        string
@@ -93,13 +94,21 @@ type CacheContext struct {
 }
 
 // BuildCacheContext builds the cache context from table + view contexts and
-// the resolved root config. Returns nil when the global cache is disabled.
+// the resolved root config. Caching is decided per entity: a table is cached
+// when config.ResolveTableCacheEnabled says so — which a per-table
+// `cache.enabled: true` does even under a global `cache.enabled: false` (PRD
+// §27.2) — and a view only on its own explicit opt-in (§27.11). The global
+// block's defaults (ttl, serializer, key_prefix, hydration, circuit breaker)
+// apply to whatever is cached. Returns nil when nothing is cached and the
+// global flag is off; a global `enabled: true` keeps the cache surface even
+// when every entity opts out.
 func BuildCacheContext(tables []TableContext, views []ViewContext, cfg *config.RootConfig, pkg, clientName string) *CacheContext {
-	if cfg.Cache == nil || !cfg.Cache.Enabled {
-		return nil
+	global := cfg.Cache
+	if global == nil {
+		// LoadConfig materializes the block once an entity opts in; a config
+		// built without it still resolves to the §27.2 defaults.
+		global = config.DefaultCacheConfig()
 	}
-
-	cacheCfg := buildCacheRenderCtx(cfg.Cache)
 
 	cachedTables := make([]CachedTable, 0, len(tables))
 	var typeImports []string
@@ -108,7 +117,7 @@ func BuildCacheContext(tables []TableContext, views []ViewContext, cfg *config.R
 		if !config.ResolveTableCacheEnabled(tc, cfg.Cache) {
 			continue
 		}
-		cachedTables = append(cachedTables, buildCachedTable(t, tc, cfg))
+		cachedTables = append(cachedTables, buildCachedTable(t, tc, cfg, global))
 		typeImports = append(typeImports, cachedTableTypeImports(t)...)
 	}
 
@@ -122,13 +131,18 @@ func BuildCacheContext(tables []TableContext, views []ViewContext, cfg *config.R
 		if !config.ResolveViewCacheEnabled(vc, cfg.Cache) {
 			continue
 		}
-		cachedViews = append(cachedViews, buildCachedView(v, vc, cfg))
+		cachedViews = append(cachedViews, buildCachedView(v, vc, cfg, global))
+	}
+
+	if !global.Enabled && len(cachedTables) == 0 && len(cachedViews) == 0 {
+		return nil
 	}
 
 	slices.SortFunc(cachedViews, func(a, b CachedView) int {
 		return strings.Compare(a.Struct, b.Struct)
 	})
 
+	cacheCfg := buildCacheRenderCtx(global)
 	viewInvalidateMap := buildViewInvalidateMap(cachedViews, tables, cacheCfg.Prefix)
 
 	imports := buildCacheImports(cacheCfg.Serializer, typeImports)
@@ -168,7 +182,7 @@ func buildCacheRenderCtx(c *config.CacheConfig) CacheRenderCtx {
 	return ctx
 }
 
-func buildCachedTable(t TableContext, tc config.TableConfig, cfg *config.RootConfig) CachedTable {
+func buildCachedTable(t TableContext, tc config.TableConfig, cfg *config.RootConfig, global *config.CacheConfig) CachedTable {
 	schema := normalizeCacheSchema(t.Schema, cfg.Input.Dialect)
 
 	pkCols := make([]CachedPKColumn, 0, len(t.PKColumns))
@@ -201,7 +215,7 @@ func buildCachedTable(t TableContext, tc config.TableConfig, cfg *config.RootCon
 		PKColumns:              pkCols,
 		ColumnFieldNames:       columnFields,
 		RelationshipFieldNames: relFields,
-		TTL:                    config.ResolveTableCacheTTL(tc, cfg.Cache),
+		TTL:                    config.ResolveTableCacheTTL(tc, global),
 	}
 	if !t.CompositePK && len(pkCols) == 1 {
 		ct.PKGoType = pkCols[0].GoType
@@ -213,11 +227,11 @@ func buildCachedTable(t TableContext, tc config.TableConfig, cfg *config.RootCon
 		ct.TenantFieldName = t.Tenancy.FieldName
 	}
 
-	ct.Fingerprint = computeFingerprint(t, ct.Schema, cfg.Cache.Serializer, cfg.Cache.Version, ct.Tenanted)
+	ct.Fingerprint = computeFingerprint(t, ct.Schema, global.Serializer, global.Version, ct.Tenanted)
 	return ct
 }
 
-func buildCachedView(v ViewContext, vc config.ViewConfig, cfg *config.RootConfig) CachedView {
+func buildCachedView(v ViewContext, vc config.ViewConfig, cfg *config.RootConfig, global *config.CacheConfig) CachedView {
 	schema := normalizeCacheSchema(v.Schema, cfg.Input.Dialect)
 
 	invalidateOn := append([]string(nil), vc.InvalidateOn...)
@@ -228,9 +242,9 @@ func buildCachedView(v ViewContext, vc config.ViewConfig, cfg *config.RootConfig
 		Struct:            v.StructName,
 		Schema:            schema,
 		TableNameConstant: v.TableNameConstant,
-		TTL:               config.ResolveViewCacheTTL(vc, cfg.Cache),
+		TTL:               config.ResolveViewCacheTTL(vc, global),
 		InvalidateOn:      invalidateOn,
-		Fingerprint:       computeViewFingerprint(v, schema, cfg.Cache.Serializer, cfg.Cache.Version),
+		Fingerprint:       computeViewFingerprint(v, schema, global.Serializer, global.Version),
 	}
 }
 

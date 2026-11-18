@@ -62,7 +62,7 @@ input CreateArticleInput {
   title: String!
   body: String
   author: String!
-  createdAt: DateTime!
+  createdAt: DateTime
   deletedAt: NullDateTime
 }
 input UpdateArticleInput {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/decimal"
@@ -455,6 +456,39 @@ func TestNullableSQLNullTypes(t *testing.T) {
 			got := r.Resolve(tt.sqlType, true, "", nil, nil)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("Resolve(%q, nullable=true, usePointers=false) mismatch (-want +got):\n%s", tt.sqlType, diff)
+			}
+		})
+	}
+}
+
+// TestArrayTypesAreSlicesOnlyOnPostgres pins that nothing outside PostgreSQL
+// resolves to a slice column, which is what keeps the Slice comparator
+// PostgreSQL-only: neither an array-suffixed type nor an override to a Go
+// slice type marks the column as a slice on MySQL or SQLite.
+func TestArrayTypesAreSlicesOnlyOnPostgres(t *testing.T) {
+	tests := []struct {
+		name      string
+		dialect   config.Dialect
+		overrides map[string]config.TypeOverride
+		typeMap   map[string]string
+		tableOver map[string]config.TypeOverride
+		sqlType   string
+		wantSlice bool
+	}{
+		{name: "postgres text[]", dialect: "postgres", sqlType: "text[]", wantSlice: true},
+		{name: "mysql text[]", dialect: "mysql", sqlType: "text[]"},
+		{name: "sqlite text[]", dialect: "sqlite", sqlType: "text[]"},
+		{name: "mysql override to []string", dialect: "mysql", overrides: map[string]config.TypeOverride{"json": {Type: "[]string"}}, sqlType: "json"},
+		{name: "sqlite override to []string", dialect: "sqlite", overrides: map[string]config.TypeOverride{"text": {Type: "[]string"}}, sqlType: "text"},
+		{name: "mysql type_map to []string", dialect: "mysql", typeMap: map[string]string{"c": "[]string"}, sqlType: "json"},
+		{name: "sqlite table override to []string", dialect: "sqlite", tableOver: map[string]config.TypeOverride{"text": {Type: "[]string"}}, sqlType: "text"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver(tt.dialect, true, tt.overrides)
+			got := r.Resolve(tt.sqlType, false, "c", tt.typeMap, tt.tableOver)
+			if got.IsSlice != tt.wantSlice {
+				t.Errorf("Resolve(%q) on %s IsSlice = %v, want %v (resolved %+v)", tt.sqlType, tt.dialect, got.IsSlice, tt.wantSlice, got)
 			}
 		})
 	}
@@ -1071,6 +1105,11 @@ func TestGofrsUUIDIntegration(t *testing.T) {
 	})
 }
 
+// ignoreFKConvert leaves out how a decimal FK is stringified: the PRD
+// promises only that it stringifies correctly, and fmt.Sprint and String()
+// agree on decimal.Decimal.
+var ignoreFKConvert = cmpopts.IgnoreFields(gotype.GoType{}, "FKConvert")
+
 func TestShopspringDecimalIntegration(t *testing.T) {
 	t.Run("numeric non-nullable", func(t *testing.T) {
 		r := gotype.NewResolver("postgres", true, map[string]config.TypeOverride{
@@ -1083,7 +1122,7 @@ func TestShopspringDecimalIntegration(t *testing.T) {
 			ZeroValue: "decimal.Decimal{}",
 			FKConvert: gotype.FKStringSprint,
 		}
-		if diff := cmp.Diff(want, got); diff != "" {
+		if diff := cmp.Diff(want, got, ignoreFKConvert); diff != "" {
 			t.Errorf("decimal numeric non-nullable (-want +got):\n%s", diff)
 		}
 	})
@@ -1100,7 +1139,7 @@ func TestShopspringDecimalIntegration(t *testing.T) {
 			ZeroValue: "decimal.Decimal{}",
 			FKConvert: gotype.FKStringSprint,
 		}
-		if diff := cmp.Diff(want, got); diff != "" {
+		if diff := cmp.Diff(want, got, ignoreFKConvert); diff != "" {
 			t.Errorf("decimal auto-detected from numeric override (-want +got):\n%s", diff)
 		}
 	})
@@ -1117,7 +1156,7 @@ func TestShopspringDecimalIntegration(t *testing.T) {
 				ZeroValue: "decimal.NullDecimal{}",
 				FKConvert: gotype.FKStringSprint,
 			}
-			if diff := cmp.Diff(want, got); diff != "" {
+			if diff := cmp.Diff(want, got, ignoreFKConvert); diff != "" {
 				t.Errorf("decimal nullable (usePointers=%v) (-want +got):\n%s", usePointers, diff)
 			}
 		}
@@ -1905,6 +1944,35 @@ func TestResolveAggregateSumWidening_Domain(t *testing.T) {
 	}
 }
 
+// TestSumResultSQLType pins the SQL type a view's SUM column reports: the
+// widened base where the dialect widens it, through a domain, and the column's
+// own type (modifiers kept) otherwise, matching what the database reports.
+func TestSumResultSQLType(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialect config.Dialect
+		sqlType string
+		want    string
+	}{
+		{"pg integer", "postgres", "integer", "bigint"},
+		{"pg domain over integer", "postgres", "positive_int", "bigint"},
+		{"pg bigint", "postgres", "bigint", "numeric"},
+		{"pg numeric(10,2) unchanged", "postgres", "numeric(10,2)", "numeric(10,2)"},
+		{"mysql int", "mysql", "int", "decimal"},
+		{"mysql decimal(10,2) unchanged", "mysql", "decimal(10,2)", "decimal(10,2)"},
+		{"sqlite integer unchanged", "sqlite", "integer", "integer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver(tt.dialect, true, nil)
+			r.RegisterDomain("", "positive_int", "integer")
+			if got := r.SumResultSQLType(tt.sqlType); got != tt.want {
+				t.Errorf("SumResultSQLType(%q) [%s] = %q, want %q", tt.sqlType, tt.dialect, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestResolveAggregate_NonSumUnchanged confirms only SUM widens: a MIN/MAX
 // routed through ResolveAggregate resolves through the normal chain, and the
 // column type_map still wins over any inference.
@@ -2410,7 +2478,7 @@ func TestDefaultUUIDBinding(t *testing.T) {
 		for _, dialect := range []config.Dialect{config.DialectMySQL, config.DialectSQLite} {
 			r := gotype.NewResolver(dialect, true, nil)
 			got := r.Resolve("uuid", false, "id", nil, nil)
-			want := gotype.GoType{Name: "string", ZeroValue: `""`}
+			want := gotype.GoType{Name: "string", ZeroValue: `""`, UnmappedSQLType: "uuid"}
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Errorf("Resolve(uuid) on %s (-want +got):\n%s", dialect, diff)
 			}

@@ -63,19 +63,6 @@ sqlite:
 SELECT "bio", "id", "owner_id" FROM "owner_profiles" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *OwnerProfileFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "owner_profiles" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -100,6 +87,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "owner_profiles" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *OwnerProfileFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "owner_profiles" WHERE <filter>
 ```
 
 ### Paginate
@@ -160,36 +160,6 @@ sqlite:
 INSERT INTO "owner_profiles" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateOwnerProfileInput`, `target OwnerProfileConflictTarget`
-- Returns: `*OwnerProfile`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated OwnerProfileConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "owner_profiles" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateOwnerProfileInput`, `target OwnerProfileConflictTarget`
-- Returns: `[]*OwnerProfile`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same OwnerProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "owner_profiles" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateOwnerProfileInput`
@@ -233,6 +203,36 @@ sqlite:
 
 ```sql
 UPDATE "owner_profiles" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateOwnerProfileInput`, `target OwnerProfileConflictTarget`
+- Returns: `*OwnerProfile`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated OwnerProfileConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "owner_profiles" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateOwnerProfileInput`, `target OwnerProfileConflictTarget`
+- Returns: `[]*OwnerProfile`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same OwnerProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "owner_profiles" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -295,3 +295,17 @@ Type `OwnerProfileFilter`.
 Type `OwnerProfileSort`.
 
 Fields: Bio, ID, OwnerID
+
+## Read examples
+
+```go
+row, err := client.OwnerProfiles().Get(ctx, 1)
+rows, err := client.OwnerProfiles().GetMany(ctx, &models.GetOwnerProfilesInput{Filter: &models.OwnerProfileFilter{OwnerID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.OwnerProfiles().Create(ctx, &models.CreateOwnerProfileInput{OwnerID: 1})
+updated, err := client.OwnerProfiles().Update(ctx, 1, &models.UpdateOwnerProfileInput{OwnerID: omittable.Set(int64(1))})
+```

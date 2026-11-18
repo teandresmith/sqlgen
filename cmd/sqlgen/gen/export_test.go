@@ -5,6 +5,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
+	"github.com/teandresmith/sqlgen/parser"
 )
 
 // Test-only export surface. Bridges package-internal helpers to the external
@@ -233,6 +234,16 @@ func ObserveImportDriftForTest(t *testing.T, fn func(filename string, added []st
 	t.Cleanup(func() { importDriftObserver = nil })
 }
 
+// ObserveImportFixingForTest installs fn as the import-fixing observer for
+// the duration of the test: fn receives every file name formatted through
+// goimports' import fixing. The observer is package-level state, so a test
+// using it must not run in parallel.
+func ObserveImportFixingForTest(t *testing.T, fn func(filename string)) {
+	t.Helper()
+	importFixObserver = fn
+	t.Cleanup(func() { importFixObserver = nil })
+}
+
 // DiscriminatorContextFor exposes the unexported discriminatorContext so
 // external tests can pin both literal renderings of a `discriminator:` value
 // (PRD §13.4.1) without going through a full context build. The two spellings
@@ -240,4 +251,19 @@ func ObserveImportDriftForTest(t *testing.T, fn func(filename string, added []st
 // so a rendering bug in either is invisible in the other's output.
 func DiscriminatorContextFor(d *config.RelationshipDiscriminator) *DiscriminatorContext {
 	return discriminatorContext(d)
+}
+
+// DeclaredKeyForTest exposes the unexported declaredKey helper so external
+// tests can pin the by-position mapping of a declared key list onto a
+// composite primary key, which the composite-key guard keeps out of the
+// contexts (PRD §13.4).
+func DeclaredKeyForTest(cols config.KeyColumns, pk []string) []parser.KeyPair {
+	return declaredKey(cols, pk)
+}
+
+// ResolvedPrimaryKeyForTest exposes the unexported resolvedPrimaryKey helper
+// so external tests can pin the order a declared key list maps onto
+// (PRD §13.4).
+func ResolvedPrimaryKeyForTest(table *parser.Table, tableCfg config.TableConfig) []string {
+	return resolvedPrimaryKey(table, tableCfg)
 }

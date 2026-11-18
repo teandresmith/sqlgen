@@ -21,7 +21,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update product: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -69,21 +69,35 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		if _, ok := input.UpdatedAt.Get(); !ok {
 			setClauses["updated_at"] = time.Now()
 		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+			Conditions: updateConds,
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update product: %w", err)
+			return nil, err
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update product rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
-		if count == 0 {
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -100,7 +114,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update product: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -116,14 +130,16 @@ type UpdateProductItem struct {
 
 // UpdateMany partially updates multiple products and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductItem, opts ...func(*CallOptions[ProductFieldOptions])) ([]*Product, error) {
 	// UpdateProductItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many products: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -131,7 +147,6 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 		Op: hook.OpUpdateMany, Table: TableProducts, Schema: "public",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -141,56 +156,101 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 			return []*Product{}, nil
 		}
 		var allIDs []uuid.UUID
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateProductItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Name.Get(); ok {
-					setClauses["name"] = v
-				}
-				if v, ok := item.Input.Price.Get(); ok {
-					setClauses["price"] = v
-				}
-				if v, ok := item.Input.SKU.Get(); ok {
-					setClauses["sku"] = v
-				}
-				if v, ok := item.Input.CompanyID.Get(); ok {
-					setClauses["company_id"] = v
-				}
-				if v, ok := item.Input.DeletedAt.Get(); ok {
-					setClauses["deleted_at"] = v
-				}
-				if v, ok := item.Input.UpdatedAt.Get(); ok {
-					setClauses["updated_at"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_product", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+					if v, ok := item.Input.Price.Get(); ok {
+						setClauses["price"] = v
+					}
+					if v, ok := item.Input.SKU.Get(); ok {
+						setClauses["sku"] = v
+					}
+					if v, ok := item.Input.CompanyID.Get(); ok {
+						setClauses["company_id"] = v
+					}
+					if v, ok := item.Input.DeletedAt.Get(); ok {
+						setClauses["deleted_at"] = v
+					}
+					if v, ok := item.Input.UpdatedAt.Get(); ok {
+						setClauses["updated_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					// Auto-set updated_at to current time if not explicitly provided
+					if _, ok := item.Input.UpdatedAt.Get(); !ok {
+						setClauses["updated_at"] = time.Now()
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("item %v: match row: %w", item.ID, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.ID)
-					continue
 				}
-
-				// Auto-set updated_at to current time if not explicitly provided
-				if _, ok := item.Input.UpdatedAt.Get(); !ok {
-					setClauses["updated_at"] = time.Now()
-				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
-				})
-
-				_, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update product %v: %w", item.ID, err)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -213,7 +273,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many products: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -231,7 +291,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update products where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -289,7 +349,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 		// MySQL: must collect IDs before the UPDATE (no RETURNING)
 		ids, err := c.collectAffectedIDs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("update products where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -301,7 +361,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update products where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 
@@ -322,7 +382,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update products where: %w", err)
 	}
 	if result == nil {
 		return nil, nil

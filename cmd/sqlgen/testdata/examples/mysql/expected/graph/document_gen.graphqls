@@ -61,7 +61,7 @@ input CreateDocumentInput {
   entityID: Int!
   entityType: DocumentsEntityTypeEnum!
   name: String!
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateDocumentInput {
   entityID: Int

@@ -1,6 +1,7 @@
 package msgpack_test
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -263,5 +264,21 @@ func TestPooledSerializerIsolatesOptions(t *testing.T) {
 		if len(cBytes) >= len(vBytes) {
 			t.Fatalf("compact = %d bytes, verbose = %d bytes; compact must stay smaller across pool reuse", len(cBytes), len(vBytes))
 		}
+	}
+}
+
+func TestNewEncodesMsgpack(t *testing.T) {
+	note := "n"
+	entity := taggedEntity{ID: 7, Name: "widget", Note: &note}
+	got, err := sqlgenmsgpack.New().Marshal(entity)
+	if err != nil {
+		t.Fatalf("Marshal() err = %v", err)
+	}
+	want, err := vmihailenco.Marshal(entity)
+	if err != nil {
+		t.Fatalf("msgpack.Marshal() err = %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("New().Marshal() = %x, want the msgpack library's encoding %x", got, want)
 	}
 }

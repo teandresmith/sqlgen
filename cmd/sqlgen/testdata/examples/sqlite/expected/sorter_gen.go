@@ -81,6 +81,72 @@ func (s AssetDocumentLinkSorter) DocumentID(direction sql.SortDirection) sql.Sor
 	return sql.Sort{Column: "document_id", Direction: direction}
 }
 
+// BadgeSorter provides type-safe sort helpers for the Badge entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BadgeSorter struct{}
+
+// NewBadgeSorter returns a new BadgeSorter.
+func NewBadgeSorter() BadgeSorter { return BadgeSorter{} }
+
+// Code returns a sort for the code column in the given direction.
+func (s BadgeSorter) Code(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "code", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s BadgeSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// BinSorter provides type-safe sort helpers for the Bin entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BinSorter struct{}
+
+// NewBinSorter returns a new BinSorter.
+func NewBinSorter() BinSorter { return BinSorter{} }
+
+// Aisle returns a sort for the aisle column in the given direction.
+func (s BinSorter) Aisle(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "aisle", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s BinSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// Slot returns a sort for the slot column in the given direction.
+func (s BinSorter) Slot(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "slot", Direction: direction}
+}
+
+// BinItemSorter provides type-safe sort helpers for the BinItem entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BinItemSorter struct{}
+
+// NewBinItemSorter returns a new BinItemSorter.
+func NewBinItemSorter() BinItemSorter { return BinItemSorter{} }
+
+// Aisle returns a sort for the aisle column in the given direction.
+func (s BinItemSorter) Aisle(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "aisle", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s BinItemSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s BinItemSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// Slot returns a sort for the slot column in the given direction.
+func (s BinItemSorter) Slot(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "slot", Direction: direction}
+}
+
 // BinaryKeySorter provides type-safe sort helpers for the BinaryKey entity.
 // Each method returns a sql.Sort for the corresponding column.
 type BinaryKeySorter struct{}
@@ -103,6 +169,23 @@ func (s BinaryKeySorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
 }
 
+// BinaryKeyBadgeSorter provides type-safe sort helpers for the BinaryKeyBadge entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BinaryKeyBadgeSorter struct{}
+
+// NewBinaryKeyBadgeSorter returns a new BinaryKeyBadgeSorter.
+func NewBinaryKeyBadgeSorter() BinaryKeyBadgeSorter { return BinaryKeyBadgeSorter{} }
+
+// BadgeCode returns a sort for the badge_code column in the given direction.
+func (s BinaryKeyBadgeSorter) BadgeCode(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "badge_code", Direction: direction}
+}
+
+// BinaryKeyID returns a sort for the binary_key_id column in the given direction.
+func (s BinaryKeyBadgeSorter) BinaryKeyID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "binary_key_id", Direction: direction}
+}
+
 // BinaryKeyEventSorter provides type-safe sort helpers for the BinaryKeyEvent entity.
 // Each method returns a sql.Sort for the corresponding column.
 type BinaryKeyEventSorter struct{}
@@ -123,6 +206,45 @@ func (s BinaryKeyEventSorter) ID(direction sql.SortDirection) sql.Sort {
 // Label returns a sort for the label column in the given direction.
 func (s BinaryKeyEventSorter) Label(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// BoolKeyedSorter provides type-safe sort helpers for the BoolKeyed entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BoolKeyedSorter struct{}
+
+// NewBoolKeyedSorter returns a new BoolKeyedSorter.
+func NewBoolKeyedSorter() BoolKeyedSorter { return BoolKeyedSorter{} }
+
+// K returns a sort for the k column in the given direction.
+func (s BoolKeyedSorter) K(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "k", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s BoolKeyedSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// BoolKeyedNoteSorter provides type-safe sort helpers for the BoolKeyedNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BoolKeyedNoteSorter struct{}
+
+// NewBoolKeyedNoteSorter returns a new BoolKeyedNoteSorter.
+func NewBoolKeyedNoteSorter() BoolKeyedNoteSorter { return BoolKeyedNoteSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s BoolKeyedNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// KeyedK returns a sort for the keyed_k column in the given direction.
+func (s BoolKeyedNoteSorter) KeyedK(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "keyed_k", Direction: direction}
+}
+
+// Note returns a sort for the note column in the given direction.
+func (s BoolKeyedNoteSorter) Note(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "note", Direction: direction}
 }
 
 // CategorySorter provides type-safe sort helpers for the Category entity.
@@ -209,6 +331,52 @@ func (s DocumentSorter) ID(direction sql.SortDirection) sql.Sort {
 // Name returns a sort for the name column in the given direction.
 func (s DocumentSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// KeyClassChildSorter provides type-safe sort helpers for the KeyClassChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type KeyClassChildSorter struct{}
+
+// NewKeyClassChildSorter returns a new KeyClassChildSorter.
+func NewKeyClassChildSorter() KeyClassChildSorter { return KeyClassChildSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s KeyClassChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// ParentID returns a sort for the parent_id column in the given direction.
+func (s KeyClassChildSorter) ParentID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "parent_id", Direction: direction}
+}
+
+// KeyClassParentSorter provides type-safe sort helpers for the KeyClassParent entity.
+// Each method returns a sql.Sort for the corresponding column.
+type KeyClassParentSorter struct{}
+
+// NewKeyClassParentSorter returns a new KeyClassParentSorter.
+func NewKeyClassParentSorter() KeyClassParentSorter { return KeyClassParentSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s KeyClassParentSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// KeyClassRealChildSorter provides type-safe sort helpers for the KeyClassRealChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type KeyClassRealChildSorter struct{}
+
+// NewKeyClassRealChildSorter returns a new KeyClassRealChildSorter.
+func NewKeyClassRealChildSorter() KeyClassRealChildSorter { return KeyClassRealChildSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s KeyClassRealChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// ParentID returns a sort for the parent_id column in the given direction.
+func (s KeyClassRealChildSorter) ParentID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "parent_id", Direction: direction}
 }
 
 // KeyOnlyRowSorter provides type-safe sort helpers for the KeyOnlyRow entity.
@@ -307,6 +475,23 @@ func (s OwnerSorter) Name(direction sql.SortDirection) sql.Sort {
 // OwnerKey returns a sort for the owner_key column in the given direction.
 func (s OwnerSorter) OwnerKey(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "owner_key", Direction: direction}
+}
+
+// OwnerBadgeSorter provides type-safe sort helpers for the OwnerBadge entity.
+// Each method returns a sql.Sort for the corresponding column.
+type OwnerBadgeSorter struct{}
+
+// NewOwnerBadgeSorter returns a new OwnerBadgeSorter.
+func NewOwnerBadgeSorter() OwnerBadgeSorter { return OwnerBadgeSorter{} }
+
+// BadgeCode returns a sort for the badge_code column in the given direction.
+func (s OwnerBadgeSorter) BadgeCode(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "badge_code", Direction: direction}
+}
+
+// OwnerID returns a sort for the owner_id column in the given direction.
+func (s OwnerBadgeSorter) OwnerID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "owner_id", Direction: direction}
 }
 
 // OwnerProfileSorter provides type-safe sort helpers for the OwnerProfile entity.
@@ -541,6 +726,45 @@ func (s TagSorter) IsDeleted(direction sql.SortDirection) sql.Sort {
 // Name returns a sort for the name column in the given direction.
 func (s TagSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// TimeKeyedSorter provides type-safe sort helpers for the TimeKeyed entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TimeKeyedSorter struct{}
+
+// NewTimeKeyedSorter returns a new TimeKeyedSorter.
+func NewTimeKeyedSorter() TimeKeyedSorter { return TimeKeyedSorter{} }
+
+// At returns a sort for the at column in the given direction.
+func (s TimeKeyedSorter) At(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "at", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s TimeKeyedSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// TimeKeyedNoteSorter provides type-safe sort helpers for the TimeKeyedNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TimeKeyedNoteSorter struct{}
+
+// NewTimeKeyedNoteSorter returns a new TimeKeyedNoteSorter.
+func NewTimeKeyedNoteSorter() TimeKeyedNoteSorter { return TimeKeyedNoteSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s TimeKeyedNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// KeyedAt returns a sort for the keyed_at column in the given direction.
+func (s TimeKeyedNoteSorter) KeyedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "keyed_at", Direction: direction}
+}
+
+// Note returns a sort for the note column in the given direction.
+func (s TimeKeyedNoteSorter) Note(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "note", Direction: direction}
 }
 
 // UserSorter provides type-safe sort helpers for the User entity.

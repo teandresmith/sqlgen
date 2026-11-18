@@ -56,10 +56,12 @@ const (
 func (k RelationshipKind) String() string { return string(k) }
 
 // Document is the top-level manifest envelope. When decoded from the embedded
-// bytes, Entities is always the lightweight index form (Name + Table + Kind +
-// optional File) regardless of disk layout — use the generated
-// Client.ManifestEntity(table) for full entity records. See PRD §30.4 / §30.6.
+// bytes, Entities is always the lightweight index form (Name + Table + Kind,
+// plus Schema and File when present) regardless of disk layout — use the
+// generated Client.ManifestEntity(table) for full entity records. See PRD
+// §30.4 / §30.6.
 type Document struct {
+	SchemaURL        string           `json:"$schema,omitempty"`
 	SchemaVersion    string           `json:"schema_version"`
 	GeneratedAt      string           `json:"generated_at"`
 	Generator        Generator        `json:"generator"`
@@ -168,13 +170,15 @@ type OmittableConvention struct {
 }
 
 // EntityIndex is the lightweight pointer form carried in Document.Entities. Use
-// the generated Client.ManifestEntity(table) for the full record regardless of
-// disk layout. See PRD §30.6.
+// the generated Client.ManifestEntity for the full record regardless of disk
+// layout, naming it Schema.Table when Schema is set and Table otherwise. See
+// PRD §30.6.
 type EntityIndex struct {
-	Name  string     `json:"name"`
-	Table string     `json:"table"`
-	Kind  EntityKind `json:"kind"`
-	File  string     `json:"file,omitempty"` // only in per_entity layout
+	Name   string     `json:"name"`
+	Table  string     `json:"table"`
+	Schema string     `json:"schema,omitempty"`
+	Kind   EntityKind `json:"kind"`
+	File   string     `json:"file,omitempty"` // only in per_entity layout
 }
 
 // Entity is a single generated entity — table or view — in its full form. See
@@ -314,29 +318,45 @@ type Relationship struct {
 	Filter       string           `json:"filter,omitempty"`
 }
 
-// FK names the foreign-key table+column for O2O / O2M / M2O relationships.
-// Table is the table that holds Column: the target for a has-one or has-many
-// edge, the entity's own table for a belongs-to edge.
+// FK names the foreign key behind an O2O / O2M / M2O relationship. Table is
+// the table that holds Columns: the target for a has-one or has-many edge, the
+// entity's own table for a belongs-to edge.
 //
 // Table is the bare name and Schema its schema, split the way Entity splits
 // them (PRD §30.4.2) and omitted when empty, so same-named tables in two
 // schemas stay distinguishable.
+//
+// Columns and References are the key's pairs in the FK's declared order,
+// Columns[i] referencing References[i]. Constraint names the FOREIGN KEY the
+// edge was detected from, and is omitted for a manual relationship.
 type FK struct {
-	Table  string `json:"table"`
-	Schema string `json:"schema,omitempty"`
-	Column string `json:"column"`
+	Table      string   `json:"table"`
+	Schema     string   `json:"schema,omitempty"`
+	Columns    []string `json:"columns"`
+	References []string `json:"references"`
+	Constraint string   `json:"constraint,omitempty"`
 }
 
-// Junction names the M2M junction table and its two FK columns.
+// Junction names the M2M junction table and its two keys: LocalFK into the
+// entity, TargetFK into the target.
 //
 // Table is the bare name and Schema its schema, split the way Entity splits
 // them (PRD §30.4.2) and omitted when empty, so same-named junctions in two
 // schemas stay distinguishable.
 type Junction struct {
-	Table    string `json:"table"`
-	Schema   string `json:"schema,omitempty"`
-	LocalFK  string `json:"local_fk"`
-	TargetFK string `json:"target_fk"`
+	Table    string      `json:"table"`
+	Schema   string      `json:"schema,omitempty"`
+	LocalFK  JunctionKey `json:"local_fk"`
+	TargetFK JunctionKey `json:"target_fk"`
+}
+
+// JunctionKey is one of a junction's two foreign keys, shaped like FK without
+// the table: the junction's columns, the columns they reference, and the
+// constraint, omitted for a manual relationship.
+type JunctionKey struct {
+	Columns    []string `json:"columns"`
+	References []string `json:"references"`
+	Constraint string   `json:"constraint,omitempty"`
 }
 
 // Methods groups generated query and mutation methods on an entity.

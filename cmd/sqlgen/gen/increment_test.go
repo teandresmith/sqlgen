@@ -157,7 +157,7 @@ func TestIncrementTemplate_positiveAmount(t *testing.T) {
 		"query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, []sql.Condition{",
 		`sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)`,
 		"execResult, err := conn.Exec(ctx, query, args...)",
-		`fmt.Errorf("increment product %s: %w", input.Column, err)`,
+		`fmt.Errorf("increment product: %w", err)`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {
@@ -183,9 +183,9 @@ func TestIncrementTemplate_strictUpdatesMissingPK(t *testing.T) {
 	output := executeIncrementTemplate(t, ctx, sql.NewPostgresDialect())
 
 	wantPatterns := []string{
-		"count, err := execResult.RowsAffected()",
-		`fmt.Errorf("increment product rows affected: %w", err)`,
-		"if count == 0 {",
+		"matched, err := execResult.RowsAffected()",
+		`fmt.Errorf("rows affected: %w", err)`,
+		"if matched == 0 {",
 		"return nil, ErrNotFound",
 	}
 	for _, want := range wantPatterns {
@@ -204,16 +204,67 @@ func TestIncrementTemplate_noStrictUpdates(t *testing.T) {
 	ctx := testIncrementContext_noStrictUpdates()
 	output := executeIncrementTemplate(t, ctx, sql.NewPostgresDialect())
 
-	// Should NOT have RowsAffected check
-	if strings.Contains(output, "RowsAffected") {
-		t.Errorf("Increment without strict_updates should not check RowsAffected\n\nfull output:\n%s", output)
-	}
 	if strings.Contains(output, "ErrNotFound") {
 		t.Errorf("Increment without strict_updates should not reference ErrNotFound\n\nfull output:\n%s", output)
 	}
-	// Should suppress execResult
-	if !strings.Contains(output, "_ = execResult") {
-		t.Errorf("Increment without strict_updates should suppress execResult\n\nfull output:\n%s", output)
+	// Counts the matched rows to gate the affected key, not to fail.
+	if !strings.Contains(output, "matched, err := execResult.RowsAffected()") {
+		t.Errorf("Increment without strict_updates should count the matched rows\n\nfull output:\n%s", output)
+	}
+}
+
+// A non-strict Increment whose key matches no row writes nothing. It must
+// record no affected key, so the cache invalidates nothing and the event hook
+// publishes nothing: the one m.AffectedPKs assignment sits behind the
+// matched-row check. A strict Increment returns ErrNotFound before it.
+func TestIncrementTemplate_nonStrictNoOp_recordsNoAffectedPKs(t *testing.T) {
+	nonStrict := func(tc gen.TableContext) gen.TableContext {
+		tc.StrictUpdates = false
+		return tc
+	}
+	onDialect := func(tc gen.TableContext, dialectName config.Dialect, driver config.Driver) gen.TableContext {
+		tc.Dialect = dialectName
+		tc.Driver = driver
+		return tc
+	}
+	tenanted := func(dialectName config.Dialect, driver config.Driver) gen.TableContext {
+		tc := onDialect(tenantedProductContext(), dialectName, driver)
+		tc.IncrementColumns = []gen.ColumnContext{
+			{FieldName: "Stock", GoType: "int32", DBTag: "stock", JSONTag: "stock"},
+		}
+		tc.Operations = gen.ResolvedOperations{Increment: true}
+		return tc
+	}
+	cases := []struct {
+		name    string
+		ctx     gen.TableContext
+		dialect sql.Dialect
+	}{
+		{name: "postgres exec", ctx: nonStrict(testIncrementContext_postgres()), dialect: sql.NewPostgresDialect()},
+		{name: "mysql exec", ctx: nonStrict(onDialect(testIncrementContext_postgres(), "mysql", "stdlib")), dialect: sql.NewMySQLDialect()},
+		{name: "composite pk", ctx: nonStrict(testIncrementContext_compositePK()), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted postgres returning", ctx: nonStrict(tenanted("postgres", "pgx")), dialect: sql.NewPostgresDialect()},
+		{name: "tenanted sqlite returning", ctx: nonStrict(tenanted("sqlite", "stdlib")), dialect: sql.NewSQLiteDialect()},
+		{name: "tenanted mysql pre-read", ctx: nonStrict(tenanted("mysql", "stdlib")), dialect: sql.NewMySQLDialect()},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			body := methodBody(t, executeIncrementTemplate(t, tt.ctx, tt.dialect), "Increment")
+			lines := strings.Split(body, "\n")
+			assignments := 0
+			for i, line := range lines {
+				if !strings.Contains(line, "m.AffectedPKs =") {
+					continue
+				}
+				assignments++
+				if prev := precedingLine(lines, i); prev != "if matched > 0 {" {
+					t.Errorf("m.AffectedPKs assignment not behind the matched-row check; preceding line %q\n\nmethod:\n%s", prev, body)
+				}
+			}
+			if assignments != 1 {
+				t.Errorf("m.AffectedPKs assignments = %d, want 1\n\nmethod:\n%s", assignments, body)
+			}
+		})
 	}
 }
 

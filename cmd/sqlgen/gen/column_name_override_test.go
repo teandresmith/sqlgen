@@ -188,7 +188,7 @@ func TestColumnNameOverride_RelationshipFKFieldName(t *testing.T) {
 				Type:        parser.OneToMany,
 				SourceTable: "users",
 				TargetTable: "orders",
-				FKColumn:    "user_id",
+				Key:         []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -299,7 +299,7 @@ func TestColumnNameOverride_CollidesWithRelationshipField(t *testing.T) {
 				Type:        parser.OneToMany,
 				SourceTable: "users",
 				TargetTable: "orders",
-				FKColumn:    "user_id",
+				Key:         []parser.KeyPair{{Local: "user_id", Referenced: "id"}},
 			},
 		},
 	}

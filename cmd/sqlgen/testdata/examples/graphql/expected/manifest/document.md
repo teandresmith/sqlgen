@@ -64,19 +64,6 @@ postgres:
 SELECT "created_at", "entity_id", "entity_type", "id", "name" FROM "public"."documents" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *DocumentFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."documents" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -101,6 +88,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."documents" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *DocumentFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."documents" WHERE <filter>
 ```
 
 ### Paginate
@@ -161,36 +161,6 @@ postgres:
 INSERT INTO "public"."documents" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateDocumentInput`, `target DocumentConflictTarget`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."documents" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateDocumentInput`, `target DocumentConflictTarget`
-- Returns: `[]*Document`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."documents" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateDocumentInput`
@@ -236,6 +206,57 @@ postgres:
 UPDATE "public"."documents" SET <set> WHERE <filter> RETURNING "id"
 ```
 
+### Upsert
+
+- Params: `input *CreateDocumentInput`, `target DocumentConflictTarget`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated DocumentConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."documents" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateDocumentInput`, `target DocumentConflictTarget`
+- Returns: `[]*Document`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same DocumentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."documents" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateDocumentWithRelatedInput`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id uuid.UUID`, `input *UpdateDocumentWithRelatedInput`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertDocumentWithRelatedInput`, `target DocumentConflictTarget`
+- Returns: `*Document`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
 ### HardDelete
 
 - Params: `id uuid.UUID`
@@ -279,27 +300,6 @@ postgres:
 DELETE FROM "public"."documents" WHERE <filter> RETURNING "id"
 ```
 
-### CreateWithRelated
-
-- Params: `input *CreateDocumentWithRelatedInput`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id uuid.UUID`, `input *UpdateDocumentWithRelatedInput`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertDocumentWithRelatedInput`, `target DocumentConflictTarget`
-- Returns: `*Document`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Assets), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
 ## Filter
 
 Type `DocumentFilter`.
@@ -319,3 +319,17 @@ Type `DocumentFilter`.
 Type `DocumentSort`.
 
 Fields: CreatedAt, EntityID, EntityType, ID, Name
+
+## Read examples
+
+```go
+row, err := client.Documents().Get(ctx, uuid.NewV4())
+rows, err := client.Documents().GetMany(ctx, &models.GetDocumentsInput{Filter: &models.DocumentFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Documents().Create(ctx, &models.CreateDocumentInput{EntityID: uuid.NewV4(), EntityType: models.DocumentEntityTypeEnum("asset.primary"), Name: "example"})
+updated, err := client.Documents().Update(ctx, uuid.NewV4(), &models.UpdateDocumentInput{EntityID: omittable.Set(uuid.NewV4())})
+```

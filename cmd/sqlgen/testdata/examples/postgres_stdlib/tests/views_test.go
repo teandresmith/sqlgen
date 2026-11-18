@@ -432,7 +432,7 @@ func TestCategoryStatsNoPK(t *testing.T) {
 		t.Errorf("HasActiveProduct = %v, want *true", cs.HasActiveProduct)
 	}
 
-	// JSON_AGG(p.name) → json.RawMessage
+	// JSON_AGG(p.name) → types.JSON (nullable)
 	if cs.ProductNamesJSON == nil {
 		t.Error("ProductNamesJSON should not be nil")
 	}

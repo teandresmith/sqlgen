@@ -1,6 +1,9 @@
 package mcp
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // ErrorCode is an error code in the sqlgen-reserved JSON-RPC server range
 // (-32000..-32099) plus the standard -32603 internal code. The loader uses
@@ -34,6 +37,28 @@ const (
 	// named entity. Carries fuzzy suggestions (MCP.md §5.3, -32006).
 	CodeMethodNotFound ErrorCode = -32006
 )
+
+// String returns the code's reserved name (MCP.md §5.3, PRD §31.4), e.g.
+// "MANIFEST_NOT_FOUND" for -32001. An unreserved code renders as its number.
+func (c ErrorCode) String() string {
+	switch c {
+	case CodeInternal:
+		return "INTERNAL_ERROR"
+	case CodeManifestNotFound:
+		return "MANIFEST_NOT_FOUND"
+	case CodeManifestInvalid:
+		return "MANIFEST_INVALID"
+	case CodeEntityNotFound:
+		return "ENTITY_NOT_FOUND"
+	case CodeRelationshipNotFound:
+		return "RELATIONSHIP_NOT_FOUND"
+	case CodeMethodSQLUnavailable:
+		return "METHOD_SQL_UNAVAILABLE"
+	case CodeMethodNotFound:
+		return "METHOD_NOT_FOUND"
+	}
+	return strconv.Itoa(int(c))
+}
 
 // Error is a sqlgen MCP error carrying a JSON-RPC error code alongside a
 // human-readable message and the underlying cause.

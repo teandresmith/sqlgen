@@ -623,3 +623,53 @@ func TestRelationshipFilter_ReachesFilterAcceptingMutations(t *testing.T) {
 		t.Errorf("UpdateWhere touched %v, want exactly the relationship-matched user", userEmails(updated))
 	}
 }
+
+// TestRelationshipFilter_ViewTarget drives the member a declared O2M into a
+// view contributes: workspaces → product_stats. Only the workspace whose view
+// rows match comes back, and the view's tenant predicate inside the subquery
+// keeps the caller from probing another tenant's rows through it.
+func TestRelationshipFilter_ViewTarget(t *testing.T) {
+	resetDB(t)
+	envA := newEnv(t, withResolver(staticResolver(tenantA)))
+	envB := newEnv(t, withResolver(staticResolver(tenantB)))
+	ctx := context.Background()
+
+	for _, w := range []struct {
+		id   uuid.UUID
+		name string
+	}{{tenantA, "A"}, {tenantB, "B"}} {
+		if _, err := envA.client.Workspaces().Create(ctx, &models.CreateWorkspaceInput{ID: w.id, Name: w.name}); err != nil {
+			t.Fatalf("create workspace %s: %v", w.name, err)
+		}
+	}
+	if _, err := envA.client.Products().Create(ctx, &models.CreateProductInput{Name: "widget", SKU: "VW-A", Price: 1}); err != nil {
+		t.Fatalf("create product A: %v", err)
+	}
+	if _, err := envB.client.Products().Create(ctx, &models.CreateProductInput{Name: "gadget", SKU: "VW-B", Price: 1}); err != nil {
+		t.Fatalf("create product B: %v", err)
+	}
+
+	byStat := func(env *testEnv, name string) []*models.Workspace {
+		t.Helper()
+		got, err := env.client.Workspaces().GetMany(ctx, &models.GetWorkspacesInput{
+			Filter: &models.WorkspaceFilter{
+				ProductStats: &models.ProductStatFilter{Name: &comparator.String{Eq: new(name)}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("GetMany by product stat %q: %v", name, err)
+		}
+		return got
+	}
+
+	if got := byStat(envA, "widget"); len(got) != 1 || got[0].ID != tenantA {
+		t.Errorf("tenant A, stat widget = %+v, want workspace A only", got)
+	}
+	// Tenant B's gadget exists, but the subquery is scoped to tenant A.
+	if got := byStat(envA, "gadget"); len(got) != 0 {
+		t.Errorf("tenant A, stat gadget = %+v, want none (the row is tenant B's)", got)
+	}
+	if got := byStat(envB, "gadget"); len(got) != 1 || got[0].ID != tenantB {
+		t.Errorf("tenant B, stat gadget = %+v, want workspace B only", got)
+	}
+}

@@ -97,6 +97,8 @@ gen/
 │   │   ├── resolvers.go.tmpl          # Curated resolver method scaffolding
 │   │   ├── seeds.go.tmpl              # Resolver body seeds (delegations to translators)
 │   │   ├── middleware.go.tmpl         # Per-call options middleware
+│   │   ├── limits.go.tmpl             # Query depth/complexity limits (sqlgenresolver/limits_gen.go)
+│   │   ├── server.go.tmpl             # One-shot graph/server.go bootstrap (written only if missing)
 │   │   ├── errors.go.tmpl             # mapErrorToGQL + GraphQL error types
 │   │   ├── field_options.go.tmpl      # GraphQL field-options translator
 │   │   ├── filter_translate.go.tmpl   # GraphQL filter input → comparator

@@ -58,19 +58,6 @@ postgres:
 SELECT "body", "id", "source_event_id", "user_id" FROM "public"."notes" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *PublicNoteFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."notes" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -95,6 +82,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."notes" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *PublicNoteFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."notes" WHERE <filter>
 ```
 
 ### Paginate
@@ -155,36 +155,6 @@ postgres:
 INSERT INTO "public"."notes" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreatePublicNoteInput`, `target PublicNoteConflictTarget`
-- Returns: `*PublicNote`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated PublicNoteConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."notes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreatePublicNoteInput`, `target PublicNoteConflictTarget`
-- Returns: `[]*PublicNote`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same PublicNoteConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."notes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdatePublicNoteInput`
@@ -228,6 +198,36 @@ postgres:
 
 ```sql
 UPDATE "public"."notes" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreatePublicNoteInput`, `target PublicNoteConflictTarget`
+- Returns: `*PublicNote`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated PublicNoteConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."notes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreatePublicNoteInput`, `target PublicNoteConflictTarget`
+- Returns: `[]*PublicNote`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same PublicNoteConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."notes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -291,3 +291,17 @@ Type `PublicNoteFilter`.
 Type `PublicNoteSort`.
 
 Fields: Body, ID, SourceEventID, UserID
+
+## Read examples
+
+```go
+row, err := client.PublicNotes().Get(ctx, uuid.NewV4())
+rows, err := client.PublicNotes().GetMany(ctx, &models.GetPublicNotesInput{Filter: &models.PublicNoteFilter{Body: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.PublicNotes().Create(ctx, &models.CreatePublicNoteInput{UserID: uuid.NewV4(), Body: "example"})
+updated, err := client.PublicNotes().Update(ctx, uuid.NewV4(), &models.UpdatePublicNoteInput{UserID: omittable.Set(uuid.NewV4())})
+```

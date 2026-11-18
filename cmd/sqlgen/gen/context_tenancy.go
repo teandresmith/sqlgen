@@ -52,10 +52,11 @@ func (e tenantedEntry) label() string {
 // BuildTenancyContext runs the detection + type-resolution + validation pass
 // described in PRD §29.2.3 and §29.2.4. The return map is keyed by
 // schema-qualified name (or bare name when the entity has no schema) and
-// contains one entry per parsed table **and** one per parsed view — detection
-// covers every generated entity, because scoping the tables while leaving a
-// tenant-shaped view reading across tenants is the failure mode tenancy
-// exists to prevent (§29.2.3, §29.2.5).
+// contains one entry per generated table **and** one per parsed view. A table
+// exclude_tables drops or that has no resolved primary key is skipped: it
+// generates nothing to scope. Detection covers every generated entity, because
+// scoping the tables while leaving a tenant-shaped view reading across tenants
+// is the failure mode tenancy exists to prevent (§29.2.3, §29.2.5).
 //
 // Returns a nil map when tenancy is not globally enabled; callers should
 // interpret a nil map as "no entity is tenanted". The returned warnings are
@@ -74,6 +75,16 @@ func BuildTenancyContext(cfg *config.RootConfig, schema *parser.Schema, resolver
 
 	for i := range schema.Tables {
 		table := &schema.Tables[i]
+		// Only generated tables are detected (§29.2.3): an excluded (§6.4) or
+		// PK-less (§9.4b) table emits no client to scope, so it neither fails
+		// the tenancy checks nor counts toward the refusal below. Same
+		// predicates as buildTableContextsPartial.
+		if _, excluded := config.MatchExcludeTablePattern(table.Name, table.Schema, cfg.ExcludeTables); excluded {
+			continue
+		}
+		if !tableHasResolvedPK(cfg, table) {
+			continue
+		}
 		entry, uniformIn, tableErrs := resolveTableTenancy(cfg, table, resolver)
 		result[qualifiedTableName(table.Schema, table.Name)] = entry
 		errs = append(errs, tableErrs...)
@@ -98,6 +109,17 @@ func BuildTenancyContext(cfg *config.RootConfig, schema *parser.Schema, resolver
 	// the remediation the user needs.
 	if err := validateUniformTenantType(tenanted); err != nil {
 		errs = append(errs, err)
+	}
+
+	// The package's one TenantResolver[T] takes T from a tenanted entity's
+	// tenant column (§29.3.1), so with none there is no type to emit. Checked
+	// only when nothing else failed: a per-entity error already explains why
+	// that entity is not tenanted.
+	if len(errs) == 0 && len(tenanted) == 0 {
+		errs = append(errs, fmt.Errorf(
+			"tenancy: tenancy.enabled is true but no table or view is tenanted: no generated table or view carries tenant column %q, or every one that does opts out with tenancy.enabled: false; set tenancy.column to a column the schema has, or turn tenancy.enabled off",
+			cfg.Tenancy.Column,
+		))
 	}
 
 	if len(errs) > 0 {
@@ -382,12 +404,14 @@ func tableOverridesMap(tc config.TableConfig) map[string]config.TypeOverride {
 // `nullable` is only reachable on some paths, which is a property of the
 // surfaces rather than of this function: it cannot apply to a table's tenant
 // column, which is NOT NULL by contract (§29.2.4). A view's may legitimately be
-// nullable (§29.2.5), and that is the one place the variant is consulted.
-func tenantTypeOverrideGoType(override *config.TypeOverride, nullable bool) (gotype.GoType, bool) {
+// nullable (§29.2.5), and that is the one place the variant is consulted —
+// along with usePointers, which picks `sql.Null*` over `*T` for an omitted
+// variant exactly as it does for an `overrides.types` entry.
+func tenantTypeOverrideGoType(override *config.TypeOverride, nullable, usePointers bool) (gotype.GoType, bool) {
 	if override == nil || override.Type == "" {
 		return gotype.GoType{}, false
 	}
-	return gotype.FromOverride(*override, nullable), true
+	return gotype.FromOverride(*override, nullable, usePointers), true
 }
 
 // tableTenantTypeOverride returns the Go type a `tenancy.type` override
@@ -427,7 +451,8 @@ func tableTenantTypeOverride(col *parser.Column, tc config.TableConfig, global *
 	if !tenantColumnMatches(col.Name, config.ResolveTableTenancyEnabled(tc, global), config.ResolveTableTenancyColumn(tc, global)) {
 		return gotype.GoType{}, false
 	}
-	return tenantTypeOverrideGoType(config.ResolveTableTenancyType(tc, global), false)
+	// Not nullable, so use_pointers cannot change the spelling.
+	return tenantTypeOverrideGoType(config.ResolveTableTenancyType(tc, global), false, true)
 }
 
 // viewTenantTypeOverride is the view analogue of tableTenantTypeOverride.
@@ -440,14 +465,14 @@ func tableTenantTypeOverride(col *parser.Column, tc config.TableConfig, global *
 // TenantResolver[T] yields (resolveViewTenantColumnType passes nullable=false
 // for the same reason). Those two facts are not in conflict, and collapsing
 // them would retype a legitimately-nullable view column as non-nullable.
-func viewTenantTypeOverride(col *parser.Column, vc config.ViewConfig, global *config.TenancyConfig) (gotype.GoType, bool) {
+func viewTenantTypeOverride(col *parser.Column, vc config.ViewConfig, global *config.TenancyConfig, usePointers bool) (gotype.GoType, bool) {
 	if !tenancyGloballyOn(global) {
 		return gotype.GoType{}, false
 	}
 	if !tenantColumnMatches(col.Name, config.ResolveViewTenancyEnabled(vc, global), config.ResolveViewTenancyColumn(vc, global)) {
 		return gotype.GoType{}, false
 	}
-	return tenantTypeOverrideGoType(config.ResolveViewTenancyType(vc, global), col.Nullable)
+	return tenantTypeOverrideGoType(config.ResolveViewTenancyType(vc, global), col.Nullable, usePointers)
 }
 
 // tenancyGloballyOn mirrors BuildTenancyContext's own guard, and has to be
@@ -672,6 +697,7 @@ func attachTenancyToTables(tables []TableContext, tenancyMap map[string]TenancyC
 			// table whose only numeric column is the tenant has no Increment.
 			markTenantColumn(tc.Columns, entry.Column)
 			markTenantColumn(tc.PKColumns, entry.Column)
+			retypeTenantFilterField(tc.FilterFields, tc.Columns, entry.Column, tc.Dialect)
 			tc.IncrementColumns = buildIncrementColumns(tc.Columns)
 			tc.Operations.Increment = len(tc.IncrementColumns) > 0
 			// Fold tenant import into the table imports so the
@@ -731,11 +757,12 @@ func attachTenancyToViews(views []ViewContext, tenancyMap map[string]TenancyCont
 			// Read the field name off the view's resolved columns rather than
 			// re-deriving it, matching the table path.
 			ctx.FieldName = columnFieldName(vc.Columns, entry.Column)
-			// A view has no increment surface, so nothing is re-derived here —
-			// the flag is stamped anyway so a ColumnContext means the same
-			// thing whichever entity kind it came off.
+			// A view has no increment surface, so only the filter is
+			// re-derived here; the flag is stamped so a ColumnContext means
+			// the same thing whichever entity kind it came off.
 			markTenantColumn(vc.Columns, entry.Column)
 			markTenantColumn(vc.PKColumns, entry.Column)
+			retypeTenantFilterField(vc.FilterFields, vc.Columns, entry.Column, vc.Dialect)
 			if entry.Import != "" {
 				vc.Imports = UniqueImports(append(vc.Imports, entry.Import))
 			}
@@ -832,7 +859,7 @@ func promoteTenantFieldToOmittable(tc *TableContext, tenantColumn string) {
 // table in a tenancy map. Because §29.2.4 requires uniform tenant Go type
 // across all tenanted tables, any tenanted entry carries the canonical
 // answer. Returns empty strings when tenancyMap is nil, empty, or has no
-// tenanted tables (e.g. tenancy enabled but all tables opted-out).
+// tenanted entry, which BuildTenancyContext refuses for an enabled block.
 func FirstTenantedType(tenancyMap map[string]TenancyContext) (goType, importPath string) {
 	if len(tenancyMap) == 0 {
 		return "", ""

@@ -65,7 +65,7 @@ input CreateProfileInput {
   bio: String
   avatarURL: String
   settings: JSON
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateProfileInput {
   userID: UUID

@@ -237,3 +237,100 @@ func TestModelTemplateImportsCoverRuntimePackages(t *testing.T) {
 		t.Error("models_gen.go imports net/http")
 	}
 }
+
+// TestEveryGeneratedGoFileIsImportFixed asserts that every Go file a GraphQL
+// API generation writes — the client files and the API translator, resolver,
+// walker and middleware files alike — passes through goimports' import fixing,
+// so an unused import is pruned and a missing one resolved rather than shipped
+// as a compile error.
+func TestEveryGeneratedGoFileIsImportFixed(t *testing.T) {
+	// The API resolver and translator files are emitted only when the
+	// consumer's module path resolves, which is read from the working
+	// directory's go.mod.
+	mod := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mod, "go.mod"), []byte("module example.com/probe\n\ngo 1.27\n"), 0o600); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+	t.Chdir(mod)
+
+	body := `version: v1
+input:
+  dialect: postgres
+  paths:
+    - ./schema.sql
+output:
+  driver: pgx
+  dir: ./models
+  package: models
+api:
+  enabled: true
+  graphql:
+    enabled: true
+    schema_dir: ./models/graph
+    resolver_dir: ./models/graph
+    package: graph
+    field_casing: camel_case
+`
+	cfgPath := filepath.Join(t.TempDir(), "sqlgen.yml")
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	fixed := map[string]bool{}
+	gen.ObserveImportFixingForTest(t, func(filename string) {
+		fixed[filepath.Clean(filename)] = true
+	})
+	// The pass must stay cheap: every file still declares its own complete
+	// import set, so goimports prunes but never resolves.
+	var drift []string
+	gen.ObserveImportDriftForTest(t, func(filename string, added []string) {
+		drift = append(drift, filepath.Base(filename)+": "+strings.Join(added, ", "))
+	})
+
+	root := t.TempDir()
+	schema := &sqlparser.Schema{Tables: []sqlparser.Table{{
+		Name: "products", Schema: "public",
+		Columns: []sqlparser.Column{
+			{Name: "id", Type: "uuid", PrimaryKey: true},
+			{Name: "name", Type: "text"},
+			{Name: "stock", Type: "integer"},
+			{Name: "created_at", Type: "timestamptz"},
+		},
+	}}}
+	if _, err := gen.GenerateInto(schema, cfg, "test", root); err != nil {
+		t.Fatalf("GenerateInto() error: %v", err)
+	}
+
+	var skipped, apiFiles []string
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(path) != ".go" {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		if strings.HasPrefix(rel, filepath.Join("models", "graph")) {
+			apiFiles = append(apiFiles, rel)
+		}
+		if !fixed[filepath.Clean(path)] {
+			skipped = append(skipped, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking output: %v", err)
+	}
+	if len(apiFiles) == 0 {
+		t.Fatal("no GraphQL API Go files were generated; the fixture no longer reaches the API emitters")
+	}
+	if len(skipped) > 0 {
+		sort.Strings(skipped)
+		t.Errorf("generated Go files skipped goimports' import fixing:\n  %s", strings.Join(skipped, "\n  "))
+	}
+	if len(drift) > 0 {
+		sort.Strings(drift)
+		t.Errorf("goimports back-filled imports the emitters did not declare:\n  %s", strings.Join(drift, "\n  "))
+	}
+}

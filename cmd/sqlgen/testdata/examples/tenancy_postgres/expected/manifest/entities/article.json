@@ -38,12 +38,20 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:article:{id}",
       "invalidates_on": [
-        "Create",
         "Update",
-        "Delete",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
         "SoftDelete",
+        "SoftDeleteMany",
+        "SoftDeleteWhere",
         "Restore",
-        "Increment"
+        "RestoreMany",
+        "RestoreWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -149,22 +157,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*ArticleFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [
-          "tenancy.ErrMissing"
-        ],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"articles\" WHERE <filter> AND \"deleted_at\" IS NULL"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -194,6 +186,22 @@
         ],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"articles\" WHERE <filter> AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ArticleFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [
+          "tenancy.ErrMissing"
+        ],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"articles\" WHERE <filter> AND \"deleted_at\" IS NULL"
         }
       },
       {
@@ -284,54 +292,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateArticleInput"
-          },
-          {
-            "name": "target",
-            "type": "ArticleConflictTarget"
-          }
-        ],
-        "returns": "*Article",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"articles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateArticleInput"
-          },
-          {
-            "name": "target",
-            "type": "ArticleConflictTarget"
-          }
-        ],
-        "returns": "[]*Article",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation",
-          "tenancy.ErrMissing",
-          "tenancy.ErrMismatch"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"articles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -399,6 +359,54 @@
         "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"articles\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateArticleInput"
+          },
+          {
+            "name": "target",
+            "type": "ArticleConflictTarget"
+          }
+        ],
+        "returns": "*Article",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "One method over the generated ArticleConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"articles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateArticleInput"
+          },
+          {
+            "name": "target",
+            "type": "ArticleConflictTarget"
+          }
+        ],
+        "returns": "[]*Article",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation",
+          "tenancy.ErrMissing",
+          "tenancy.ErrMismatch"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same ArticleConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"articles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {
@@ -597,5 +605,14 @@
       "WorkspaceID"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Articles().Get(ctx, 1)",
+      "rows, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{Filter: &models.ArticleFilter{Title: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: \"example\"})",
+      "updated, err := client.Articles().Update(ctx, 1, &models.UpdateArticleInput{WorkspaceID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

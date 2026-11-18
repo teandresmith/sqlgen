@@ -120,15 +120,11 @@ func pkConditions(d sqlpkg.Dialect, tc gen.TableContext, startPos int) []sqlpkg.
 
 // batchPKCondition mirrors the predicate the *Many methods build for their PK
 // list: sql.Where(pk).In(...) for a single-column PK, and
-// sql.BuildCompositePKBatchCondition — tuple-IN where the dialect supports it,
-// an expanded OR chain where it does not — for a composite one. The list
+// sql.BuildCompositePKBatchCondition's tuple IN for a composite one. The list
 // itself is runtime-length, so it stands as a token.
 func batchPKCondition(d sqlpkg.Dialect, tc gen.TableContext) sqlpkg.Condition {
 	if !tc.CompositePK {
 		return sqlpkg.Condition{Clause: d.QuoteIdentifier(tc.PKColumns[0].Name) + " IN (" + tokenIDs + ")"}
-	}
-	if !d.SupportsTupleIN() {
-		return sqlpkg.Condition{Clause: tokenPKs}
 	}
 	cols := make([]string, 0, len(tc.PKColumns))
 	for _, c := range tc.PKColumns {

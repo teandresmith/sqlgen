@@ -2,11 +2,16 @@ package tests
 
 import (
 	"context"
+	"errors"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/teandresmith/sqlgen/comparator"
+	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 	"github.com/teandresmith/sqlgen/event"
+	"github.com/teandresmith/sqlgen/hook"
 	"github.com/teandresmith/sqlgen/omittable"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/events/models"
@@ -205,6 +210,7 @@ func TestEvent_UpdateWhere(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2 (affected row count)", len(events))
 	}
+	assertEventPKs(t, events, []int64{p1.ID, p2.ID})
 }
 
 func TestEvent_Upsert(t *testing.T) {
@@ -357,6 +363,7 @@ func TestEvent_SoftDeleteWhere(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2 (affected row count)", len(events))
 	}
+	assertEventPKs(t, events, []int64{a1.ID, a2.ID})
 }
 
 func TestEvent_HardDeleteWhere(t *testing.T) {
@@ -380,6 +387,7 @@ func TestEvent_HardDeleteWhere(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2 (affected row count)", len(events))
 	}
+	assertEventPKs(t, events, []int64{p1.ID, p2.ID})
 }
 
 func TestEvent_Restore(t *testing.T) {
@@ -405,6 +413,167 @@ func TestEvent_Restore(t *testing.T) {
 	if events[0].Action != event.Update {
 		t.Errorf("Action = %q, want Update (Restore maps to Update)", events[0].Action)
 	}
+	if events[0].PK != a.ID {
+		t.Errorf("PK = %v, want %v", events[0].PK, a.ID)
+	}
+	if events[0].Input != nil {
+		t.Errorf("Input = %v (%T), want nil (the PK travels on Event.PK)", events[0].Input, events[0].Input)
+	}
+}
+
+// A by-key write whose key matches no row writes nothing, so it publishes
+// nothing, though it still returns no error.
+func TestEvent_MissingKeyPublishesNothing(t *testing.T) {
+	ctx := context.Background()
+	const missing = int64(987654321)
+	cases := []struct {
+		name  string
+		write func(client *models.Client) error
+	}{
+		{name: "soft delete", write: func(client *models.Client) error {
+			_, err := client.Articles().SoftDelete(ctx, missing)
+			return err
+		}},
+		{name: "restore", write: func(client *models.Client) error {
+			_, err := client.Articles().Restore(ctx, missing)
+			return err
+		}},
+		{name: "hard delete", write: func(client *models.Client) error {
+			return client.Products().HardDelete(ctx, missing)
+		}},
+		{name: "soft delete many", write: func(client *models.Client) error {
+			_, err := client.Articles().SoftDeleteMany(ctx, []int64{missing, missing + 1})
+			return err
+		}},
+		{name: "restore many", write: func(client *models.Client) error {
+			_, err := client.Articles().RestoreMany(ctx, []int64{missing, missing + 1})
+			return err
+		}},
+		{name: "hard delete many", write: func(client *models.Client) error {
+			return client.Products().HardDeleteMany(ctx, []int64{missing, missing + 1})
+		}},
+		// articles is non-strict, so this Update returns nil. An empty
+		// FieldOptions skips the re-read, which would report the missing row.
+		{name: "non-strict update", write: func(client *models.Client) error {
+			_, err := client.Articles().Update(ctx, missing, &models.UpdateArticleInput{Title: omittable.Set("gone")},
+				func(o *models.CallOptions[models.ArticleFieldOptions]) {
+					o.FieldOptions = &models.ArticleFieldOptions{}
+				})
+			return err
+		}},
+		{name: "update many", write: func(client *models.Client) error {
+			_, err := client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+				{ID: missing, Input: &models.UpdateProductInput{Name: omittable.Set("gone")}},
+			})
+			return err
+		}},
+		// products is non-strict, so this Increment returns nil.
+		{name: "non-strict increment", write: func(client *models.Client) error {
+			return client.Products().Increment(ctx, missing, models.IncrementInput[models.ProductIncrementColumn]{
+				Column: models.ProductIncrementStock, Amount: 1,
+			})
+		}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			client, bus := newClientWithBus(t)
+			got := subscribe(t, bus, event.SubscribeOptions{})
+			if err := tt.write(client); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if events := got.waitStable(); len(events) != 0 {
+				t.Errorf("got %d events, want 0: %+v", len(events), events)
+			}
+		})
+	}
+}
+
+// A batch write listing one existing key and one missing key publishes one
+// event, for the existing key: the missing key wrote nothing.
+func TestEvent_BatchPublishesOnlyWrittenKeys(t *testing.T) {
+	ctx := context.Background()
+	const missing = int64(987654321)
+	cases := []struct {
+		name string
+		// write creates the existing row, subscribes, and writes the batch
+		// over it and missing, returning the existing row's key.
+		write func(t *testing.T, client *models.Client, subscribeNow func()) int64
+	}{
+		{name: "soft delete many", write: func(t *testing.T, client *models.Client, subscribeNow func()) int64 {
+			a, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: "BW-SD", Author: "bw"})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Articles().HardDelete(ctx, a.ID) })
+			subscribeNow()
+			if _, err := client.Articles().SoftDeleteMany(ctx, []int64{missing, a.ID}); err != nil {
+				t.Fatalf("SoftDeleteMany: %v", err)
+			}
+			return a.ID
+		}},
+		{name: "restore many", write: func(t *testing.T, client *models.Client, subscribeNow func()) int64 {
+			a, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: "BW-RS", Author: "bw"})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Articles().HardDelete(ctx, a.ID) })
+			if _, err := client.Articles().SoftDelete(ctx, a.ID); err != nil {
+				t.Fatalf("SoftDelete: %v", err)
+			}
+			subscribeNow()
+			if _, err := client.Articles().RestoreMany(ctx, []int64{missing, a.ID}); err != nil {
+				t.Fatalf("RestoreMany: %v", err)
+			}
+			return a.ID
+		}},
+		{name: "hard delete many", write: func(t *testing.T, client *models.Client, subscribeNow func()) int64 {
+			p, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "BW-HD", SKU: "EV-BW-HD", Price: 1})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p.ID) })
+			subscribeNow()
+			if err := client.Products().HardDeleteMany(ctx, []int64{missing, p.ID}); err != nil {
+				t.Fatalf("HardDeleteMany: %v", err)
+			}
+			return p.ID
+		}},
+		{name: "update many", write: func(t *testing.T, client *models.Client, subscribeNow func()) int64 {
+			p, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "BW-UM", SKU: "EV-BW-UM", Price: 1})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p.ID) })
+			subscribeNow()
+			if _, err := client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+				{ID: missing, Input: &models.UpdateProductInput{Name: omittable.Set("gone")}},
+				{ID: p.ID, Input: &models.UpdateProductInput{Name: omittable.Set("BW-UMx")}},
+			}); err != nil {
+				t.Fatalf("UpdateMany: %v", err)
+			}
+			return p.ID
+		}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			client, bus := newClientWithBus(t)
+			var c *collector
+			existing := tt.write(t, client, func() {
+				c = subscribe(t, bus, event.SubscribeOptions{})
+			})
+			events := c.waitStable()
+			if len(events) != 1 {
+				t.Fatalf("got %d events, want 1: %+v", len(events), events)
+			}
+			if pk, _ := events[0].PK.(int64); pk != existing {
+				t.Errorf("event PK = %v, want %d", events[0].PK, existing)
+			}
+			// An UpdateMany event carries the item that wrote its row.
+			if item, ok := events[0].Input.(models.UpdateProductItem); ok && item.ID != existing {
+				t.Errorf("event Input item ID = %d, want %d", item.ID, existing)
+			}
+		})
+	}
 }
 
 func TestEvent_RestoreMany(t *testing.T) {
@@ -429,10 +598,19 @@ func TestEvent_RestoreMany(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2", len(events))
 	}
+	var pks []int64
 	for _, e := range events {
 		if e.Action != event.Update {
 			t.Errorf("Action = %q, want Update", e.Action)
 		}
+		if e.Input != nil {
+			t.Errorf("Input = %v (%T), want nil (the PK travels on Event.PK)", e.Input, e.Input)
+		}
+		pk, _ := e.PK.(int64)
+		pks = append(pks, pk)
+	}
+	if !slices.Equal(ids, pks) {
+		t.Errorf("event PKs = %v, want %v", pks, ids)
 	}
 }
 
@@ -462,6 +640,7 @@ func TestEvent_RestoreWhere(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2 (affected row count)", len(events))
 	}
+	assertEventPKs(t, events, []int64{a1.ID, a2.ID})
 }
 
 func TestEvent_Increment(t *testing.T) {
@@ -493,5 +672,149 @@ func TestEvent_Increment(t *testing.T) {
 	}
 	if events[0].PK != p.ID {
 		t.Errorf("PK = %v, want %v", events[0].PK, p.ID)
+	}
+}
+
+// A mutation that fails publishes nothing, even when the write ran and an
+// inner hook fails it afterwards.
+func TestEvent_FailedMutationPublishesNothing(t *testing.T) {
+	ctx := context.Background()
+	hookErr := errors.New("rejected after write")
+	failAfterWrite := func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
+			result, err := next(ctx, mc)
+			if err == nil && mc.Op == hook.OpUpdateMany {
+				return result, hookErr
+			}
+			return result, err
+		}
+	}
+	client, bus := newClientWithBus(t, models.WithMutationHook(failAfterWrite))
+
+	p, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "Dup", SKU: "EV-FAIL-1", Price: 1})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p.ID) })
+
+	got := subscribe(t, bus, event.SubscribeOptions{})
+	// The SKU is unique, so a second Create with it fails.
+	if _, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "Dup2", SKU: "EV-FAIL-1", Price: 1}); err == nil {
+		t.Fatal("duplicate-SKU Create succeeded, want a constraint error")
+	}
+	if events := got.snapshot(); len(events) != 0 {
+		t.Errorf("got %d events after a failed Create, want 0: %+v", len(events), events)
+	}
+
+	// The write runs and records its affected rows; the inner hook then
+	// fails the call.
+	if _, err := client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+		{ID: p.ID, Input: &models.UpdateProductInput{Price: omittable.Set(2.0)}},
+	}); !errors.Is(err, hookErr) {
+		t.Fatalf("UpdateMany err = %v, want %v", err, hookErr)
+	}
+	if events := got.snapshot(); len(events) != 0 {
+		t.Errorf("got %d events after a failed UpdateMany, want 0: %+v", len(events), events)
+	}
+}
+
+// batchRecorder records each PublishBatch call's batch size.
+type batchRecorder struct {
+	mu      sync.Mutex
+	batches []int
+}
+
+func (r *batchRecorder) Publish(context.Context, event.Event) error { return nil }
+func (r *batchRecorder) PublishBatch(_ context.Context, events []event.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.batches = append(r.batches, len(events))
+	return nil
+}
+func (r *batchRecorder) Close() error { return nil }
+
+// A batch mutation hands all of its events to one PublishBatch call.
+func TestEvent_BatchMutationPublishesOneBatch(t *testing.T) {
+	ctx := context.Background()
+	rec := &batchRecorder{}
+	client := models.New(dbstdlib.New(testDB), models.WithEventPublisher(rec))
+
+	created, err := client.Products().CreateMany(ctx, []*models.CreateProductInput{
+		{Name: "B1", SKU: "EV-ONEBATCH-1", Price: 1},
+		{Name: "B2", SKU: "EV-ONEBATCH-2", Price: 1},
+		{Name: "B3", SKU: "EV-ONEBATCH-3", Price: 1},
+	})
+	if err != nil {
+		t.Fatalf("CreateMany: %v", err)
+	}
+	ids := make([]int64, len(created))
+	for i, p := range created {
+		ids[i] = p.ID
+	}
+	if _, err := client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+		{ID: ids[0], Input: &models.UpdateProductInput{Price: omittable.Set(2.0)}},
+		{ID: ids[1], Input: &models.UpdateProductInput{Price: omittable.Set(2.0)}},
+	}); err != nil {
+		t.Fatalf("UpdateMany: %v", err)
+	}
+	if _, err := client.Products().UpdateWhere(ctx,
+		&models.ProductFilter{ID: &comparator.Number[int64]{In: ids}},
+		&models.UpdateProductInput{Price: omittable.Set(3.0)},
+	); err != nil {
+		t.Fatalf("UpdateWhere: %v", err)
+	}
+	if err := client.Products().HardDeleteMany(ctx, ids); err != nil {
+		t.Fatalf("HardDeleteMany: %v", err)
+	}
+	rec.mu.Lock()
+	got := slices.Clone(rec.batches)
+	rec.mu.Unlock()
+	// CreateMany, UpdateMany, UpdateWhere, HardDeleteMany: one call each.
+	if !slices.Equal(got, []int{3, 2, 3, 3}) {
+		t.Errorf("PublishBatch batch sizes = %v, want [3 2 3 3] (one call per mutation, carrying every event)", got)
+	}
+}
+
+// A mutation that affects no row never calls PublishBatch, not even with an
+// empty batch.
+func TestEvent_NoAffectedRowCallsNoPublishBatch(t *testing.T) {
+	ctx := context.Background()
+	rec := &batchRecorder{}
+	client := models.New(dbstdlib.New(testDB), models.WithEventPublisher(rec))
+
+	const missingID int64 = 987_654
+	if err := client.Products().HardDelete(ctx, missingID); err != nil && !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("HardDelete(missing): %v", err)
+	}
+	missing := missingID
+	if _, err := client.Products().UpdateWhere(ctx,
+		&models.ProductFilter{ID: &comparator.Number[int64]{Eq: &missing}},
+		&models.UpdateProductInput{Price: omittable.Set(1.0)},
+	); err != nil {
+		t.Fatalf("UpdateWhere(zero match): %v", err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.batches) != 0 {
+		t.Errorf("PublishBatch calls = %v, want none", rec.batches)
+	}
+}
+
+// assertEventPKs checks that events carry exactly the given int64 PKs, one
+// each, in any order.
+func assertEventPKs(t *testing.T, events []event.Event, want []int64) {
+	t.Helper()
+	got := make([]int64, 0, len(events))
+	for _, e := range events {
+		pk, ok := e.PK.(int64)
+		if !ok {
+			t.Errorf("event PK = %v (%T), want an int64", e.PK, e.PK)
+		}
+		got = append(got, pk)
+	}
+	slices.Sort(got)
+	want = slices.Sorted(slices.Values(want))
+	if !slices.Equal(got, want) {
+		t.Errorf("event PKs = %v, want %v (one event per affected row)", got, want)
 	}
 }

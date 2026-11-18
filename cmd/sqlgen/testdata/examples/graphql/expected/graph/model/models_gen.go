@@ -13,14 +13,15 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/shopspring/decimal"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models"
 	"github.com/teandresmith/sqlgen/types"
 )
 
 type AssetAttachmentsCreateInput struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	Name      string     `json:"name"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type AssetAttachmentsCreateNested struct {
@@ -68,8 +69,8 @@ type AssetFilter struct {
 }
 
 type AssetInvoicesCreateInput struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	Name      string     `json:"name"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type AssetInvoicesCreateNested struct {
@@ -81,8 +82,8 @@ type AssetInvoicesUpdateNested struct {
 }
 
 type AssetPrimaryDocumentCreateInput struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	Name      string     `json:"name"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type AssetPrimaryDocumentCreateNested struct {
@@ -99,8 +100,9 @@ type AssetSort struct {
 }
 
 type BooleanComparator struct {
-	Eq  *bool `json:"eq,omitempty"`
-	Neq *bool `json:"neq,omitempty"`
+	Eq  *bool  `json:"eq,omitempty"`
+	Neq *bool  `json:"neq,omitempty"`
+	In  []bool `json:"in,omitempty"`
 }
 
 type BooleanSliceComparator struct {
@@ -159,8 +161,8 @@ type CategoryProductsCreateInput struct {
 	Name        string          `json:"name"`
 	Description *string         `json:"description,omitempty"`
 	Price       decimal.Decimal `json:"price"`
-	Stock       int             `json:"stock"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	Stock       *int            `json:"stock,omitempty"`
+	CreatedAt   *time.Time      `json:"createdAt,omitempty"`
 	UpdatedAt   *time.Time      `json:"updatedAt,omitempty"`
 	DeletedAt   *time.Time      `json:"deletedAt,omitempty"`
 }
@@ -197,9 +199,9 @@ type CreateAssetDocumentLinkInput struct {
 
 type CreateAssetInput struct {
 	Name               string                          `json:"name"`
-	DeclaredCategories []models.DocumentEntityTypeEnum `json:"declaredCategories"`
+	DeclaredCategories []models.DocumentEntityTypeEnum `json:"declaredCategories,omitempty"`
 	PrimaryCategory    *models.DocumentEntityTypeEnum  `json:"primaryCategory,omitempty"`
-	CreatedAt          time.Time                       `json:"createdAt"`
+	CreatedAt          *time.Time                      `json:"createdAt,omitempty"`
 }
 
 type CreateAssetWithRelatedInput struct {
@@ -211,9 +213,9 @@ type CreateAssetWithRelatedInput struct {
 }
 
 type CreateCategoryInput struct {
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
+	Name        string     `json:"name"`
+	Description *string    `json:"description,omitempty"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
 }
 
 type CreateCategoryWithRelatedInput struct {
@@ -222,11 +224,21 @@ type CreateCategoryWithRelatedInput struct {
 	Users    *CategoryUsersCreateNested    `json:"users,omitempty"`
 }
 
+type CreateCycleInput struct {
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
+	Name        string     `json:"name"`
+}
+
+type CreateCycleWithRelatedInput struct {
+	Cycle *CreateCycleInput       `json:"cycle"`
+	Tasks *CycleTasksCreateNested `json:"tasks,omitempty"`
+}
+
 type CreateDocumentInput struct {
 	EntityID   uuid.UUID                     `json:"entityID"`
 	EntityType models.DocumentEntityTypeEnum `json:"entityType"`
 	Name       string                        `json:"name"`
-	CreatedAt  time.Time                     `json:"createdAt"`
+	CreatedAt  *time.Time                    `json:"createdAt,omitempty"`
 }
 
 type CreateDocumentWithRelatedInput struct {
@@ -258,12 +270,12 @@ type CreateEventInput struct {
 }
 
 type CreateFilterProbeInput struct {
-	Doc       types.JSON `json:"doc"`
-	Tags      []string   `json:"tags"`
+	Doc       types.JSON `json:"doc,omitempty"`
+	Tags      []string   `json:"tags,omitempty"`
 	TagsN     []string   `json:"tagsN,omitempty"`
-	Flags     []bool     `json:"flags"`
-	Weights   []float64  `json:"weights"`
-	CreatedAt time.Time  `json:"createdAt"`
+	Flags     []bool     `json:"flags,omitempty"`
+	Weights   []float64  `json:"weights,omitempty"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type CreateKeyedCodeEntryInput struct {
@@ -276,40 +288,50 @@ type CreateKeyedCodeInput struct {
 	Name string `json:"name"`
 }
 
+type CreateLabelInput struct {
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
+	Name        string     `json:"name"`
+}
+
+type CreateLabelWithRelatedInput struct {
+	Label *CreateLabelInput       `json:"label"`
+	Tasks *LabelTasksCreateNested `json:"tasks,omitempty"`
+}
+
 type CreateMaskedLabelInput struct {
 	Label string `json:"label"`
 }
 
 type CreateNumericWidthInput struct {
-	Small     int       `json:"small"`
-	SmallN    *int      `json:"smallN,omitempty"`
-	Ratio     float64   `json:"ratio"`
-	RatioN    *float64  `json:"ratioN,omitempty"`
-	Smalls    []int16   `json:"smalls"`
-	Scores    []int32   `json:"scores"`
-	Bigs      []int64   `json:"bigs"`
-	Ratios    []float32 `json:"ratios"`
-	ScoresN   []int32   `json:"scoresN,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	Small     int        `json:"small"`
+	SmallN    *int       `json:"smallN,omitempty"`
+	Ratio     float64    `json:"ratio"`
+	RatioN    *float64   `json:"ratioN,omitempty"`
+	Smalls    []int16    `json:"smalls,omitempty"`
+	Scores    []int32    `json:"scores,omitempty"`
+	Bigs      []int64    `json:"bigs,omitempty"`
+	Ratios    []float32  `json:"ratios,omitempty"`
+	ScoresN   []int32    `json:"scoresN,omitempty"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type CreateOrderInput struct {
-	UserID    uuid.UUID       `json:"userID"`
-	Total     decimal.Decimal `json:"total"`
-	Notes     *string         `json:"notes,omitempty"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt *time.Time      `json:"updatedAt,omitempty"`
-	DeletedAt *time.Time      `json:"deletedAt,omitempty"`
+	UserID    uuid.UUID        `json:"userID"`
+	Total     *decimal.Decimal `json:"total,omitempty"`
+	Notes     *string          `json:"notes,omitempty"`
+	CreatedAt *time.Time       `json:"createdAt,omitempty"`
+	UpdatedAt *time.Time       `json:"updatedAt,omitempty"`
+	DeletedAt *time.Time       `json:"deletedAt,omitempty"`
 }
 
 type CreateOrderItemInput struct {
 	OrderID     uuid.UUID       `json:"orderID"`
 	ProductID   uuid.UUID       `json:"productID"`
-	Quantity    int             `json:"quantity"`
+	Quantity    *int            `json:"quantity,omitempty"`
 	UnitPrice   decimal.Decimal `json:"unitPrice"`
 	ExternalRef *string         `json:"externalRef,omitempty"`
 	SourceIP    *netip.Addr     `json:"sourceIP,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	CreatedAt   *time.Time      `json:"createdAt,omitempty"`
 }
 
 type CreateOrderWithRelatedInput struct {
@@ -321,9 +343,9 @@ type CreateProductInput struct {
 	Name        string          `json:"name"`
 	Description *string         `json:"description,omitempty"`
 	Price       decimal.Decimal `json:"price"`
-	Stock       int             `json:"stock"`
+	Stock       *int            `json:"stock,omitempty"`
 	CategoryID  int             `json:"categoryID"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	CreatedAt   *time.Time      `json:"createdAt,omitempty"`
 	UpdatedAt   *time.Time      `json:"updatedAt,omitempty"`
 	DeletedAt   *time.Time      `json:"deletedAt,omitempty"`
 }
@@ -338,7 +360,7 @@ type CreateProfileInput struct {
 	Bio       *string    `json:"bio,omitempty"`
 	AvatarURL *string    `json:"avatarURL,omitempty"`
 	Settings  types.JSON `json:"settings,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type CreateScalarProbeInput struct {
@@ -360,7 +382,30 @@ type CreateScalarProbeInput struct {
 	BigCount   *sql.NullInt64   `json:"bigCount,omitempty"`
 	Ratio      *sql.NullFloat64 `json:"ratio,omitempty"`
 	ObservedAt *sql.NullTime    `json:"observedAt,omitempty"`
-	CreatedAt  time.Time        `json:"createdAt"`
+	CreatedAt  *time.Time       `json:"createdAt,omitempty"`
+}
+
+type CreateTaskInput struct {
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
+	CycleID     *uuid.UUID `json:"cycleID,omitempty"`
+	Title       string     `json:"title"`
+}
+
+type CreateTaskLabelInput struct {
+	WorkspaceID uuid.UUID `json:"workspaceID"`
+	TaskID      uuid.UUID `json:"taskID"`
+	LabelID     uuid.UUID `json:"labelID"`
+}
+
+type CreateTaskReportInput struct {
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
+	TaskID      uuid.UUID  `json:"taskID"`
+	Summary     string     `json:"summary"`
+}
+
+type CreateTaskWithRelatedInput struct {
+	Task   *CreateTaskInput        `json:"task"`
+	Labels *TaskLabelsCreateNested `json:"labels,omitempty"`
 }
 
 type CreateUserBadgeInput struct {
@@ -378,17 +423,17 @@ type CreateUserCredentialInput struct {
 	Provider    string     `json:"provider"`
 	ExternalID  string     `json:"externalID"`
 	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
 }
 
 type CreateUserInput struct {
 	Email       string     `json:"email"`
 	Name        string     `json:"name"`
 	Metadata    types.JSON `json:"metadata,omitempty"`
-	IsActive    bool       `json:"isActive"`
+	IsActive    *bool      `json:"isActive,omitempty"`
 	NewPassword *string    `json:"newPassword,omitempty"`
 	ClientIP    *string    `json:"ipAddr,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
 	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
 	DeletedAt   *time.Time `json:"deletedAt,omitempty"`
 }
@@ -402,13 +447,13 @@ type CreateUserWithRelatedInput struct {
 }
 
 type CreateWorkspaceNoteInput struct {
-	WorkspaceID uuid.UUID                    `json:"workspaceID"`
-	ParentID    *uuid.UUID                   `json:"parentID,omitempty"`
-	Body        string                       `json:"body"`
-	PinnedOrder int                          `json:"pinnedOrder"`
-	Kind        models.WorkspaceNoteKindEnum `json:"kind"`
-	Labels      types.JSON                   `json:"labels"`
-	CreatedAt   time.Time                    `json:"createdAt"`
+	WorkspaceID *uuid.UUID                    `json:"workspaceID,omitempty"`
+	ParentID    *uuid.UUID                    `json:"parentID,omitempty"`
+	Body        string                        `json:"body"`
+	PinnedOrder *int                          `json:"pinnedOrder,omitempty"`
+	Kind        *models.WorkspaceNoteKindEnum `json:"kind,omitempty"`
+	Labels      types.JSON                    `json:"labels,omitempty"`
+	CreatedAt   *time.Time                    `json:"createdAt,omitempty"`
 }
 
 type CreateWorkspaceNoteWithRelatedInput struct {
@@ -418,10 +463,39 @@ type CreateWorkspaceNoteWithRelatedInput struct {
 }
 
 type CreateWorkspaceSettingInput struct {
-	WorkspaceID uuid.UUID `json:"workspaceID"`
-	Key         string    `json:"key"`
-	Value       string    `json:"value"`
-	CreatedAt   time.Time `json:"createdAt"`
+	WorkspaceID uuid.UUID  `json:"workspaceID"`
+	Key         string     `json:"key"`
+	Value       string     `json:"value"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+}
+
+type CycleFilter struct {
+	WorkspaceID *IDComparator     `json:"workspaceID,omitempty"`
+	Name        *StringComparator `json:"name,omitempty"`
+	Tasks       *TaskFilter       `json:"tasks,omitempty"`
+	And         []*CycleFilter    `json:"and,omitempty"`
+	Or          []*CycleFilter    `json:"or,omitempty"`
+}
+
+type CycleSort struct {
+	Field     CycleSortField `json:"field"`
+	Direction SortDirection  `json:"direction"`
+}
+
+type CycleTasksCreateInput struct {
+	Title string `json:"title"`
+}
+
+type CycleTasksCreateNested struct {
+	Create  []*CycleTasksCreateInput `json:"create,omitempty"`
+	Connect []uuid.UUID              `json:"connect,omitempty"`
+}
+
+type CycleTasksUpdateNested struct {
+	Clear      *bool                    `json:"clear,omitempty"`
+	Create     []*CycleTasksCreateInput `json:"create,omitempty"`
+	Connect    []uuid.UUID              `json:"connect,omitempty"`
+	Disconnect []uuid.UUID              `json:"disconnect,omitempty"`
 }
 
 type DecimalComparator struct {
@@ -618,6 +692,31 @@ type KeyedCodeSort struct {
 	Direction SortDirection      `json:"direction"`
 }
 
+type LabelFilter struct {
+	WorkspaceID *IDComparator     `json:"workspaceID,omitempty"`
+	Name        *StringComparator `json:"name,omitempty"`
+	Tasks       *TaskFilter       `json:"tasks,omitempty"`
+	And         []*LabelFilter    `json:"and,omitempty"`
+	Or          []*LabelFilter    `json:"or,omitempty"`
+}
+
+type LabelSort struct {
+	Field     LabelSortField `json:"field"`
+	Direction SortDirection  `json:"direction"`
+}
+
+type LabelTasksCreateNested struct {
+	Create  []*CreateTaskInput `json:"create,omitempty"`
+	Connect []uuid.UUID        `json:"connect,omitempty"`
+}
+
+type LabelTasksUpdateNested struct {
+	Clear      *bool              `json:"clear,omitempty"`
+	Create     []*CreateTaskInput `json:"create,omitempty"`
+	Connect    []uuid.UUID        `json:"connect,omitempty"`
+	Disconnect []uuid.UUID        `json:"disconnect,omitempty"`
+}
+
 type MacAddrComparator struct {
 	Eq  net.HardwareAddr   `json:"eq,omitempty"`
 	Neq net.HardwareAddr   `json:"neq,omitempty"`
@@ -644,9 +743,10 @@ type Mutation struct {
 }
 
 type NullableBooleanComparator struct {
-	Eq     *bool `json:"eq,omitempty"`
-	Neq    *bool `json:"neq,omitempty"`
-	IsNull *bool `json:"isNull,omitempty"`
+	Eq     *bool  `json:"eq,omitempty"`
+	Neq    *bool  `json:"neq,omitempty"`
+	In     []bool `json:"in,omitempty"`
+	IsNull *bool  `json:"isNull,omitempty"`
 }
 
 type NullableBytesComparator struct {
@@ -889,11 +989,11 @@ type OrderItemSort struct {
 
 type OrderOrderItemsCreateInput struct {
 	ProductID   uuid.UUID       `json:"productID"`
-	Quantity    int             `json:"quantity"`
+	Quantity    *int            `json:"quantity,omitempty"`
 	UnitPrice   decimal.Decimal `json:"unitPrice"`
 	ExternalRef *string         `json:"externalRef,omitempty"`
 	SourceIP    *netip.Addr     `json:"sourceIP,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	CreatedAt   *time.Time      `json:"createdAt,omitempty"`
 }
 
 type OrderOrderItemsCreateNested struct {
@@ -925,11 +1025,11 @@ type ProductFilter struct {
 
 type ProductOrderItemsCreateInput struct {
 	OrderID     uuid.UUID       `json:"orderID"`
-	Quantity    int             `json:"quantity"`
+	Quantity    *int            `json:"quantity,omitempty"`
 	UnitPrice   decimal.Decimal `json:"unitPrice"`
 	ExternalRef *string         `json:"externalRef,omitempty"`
 	SourceIP    *netip.Addr     `json:"sourceIP,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	CreatedAt   *time.Time      `json:"createdAt,omitempty"`
 }
 
 type ProductOrderItemsCreateNested struct {
@@ -1015,6 +1115,55 @@ type StringSliceComparator struct {
 	IsEmpty     *bool    `json:"isEmpty,omitempty"`
 }
 
+type TaskFilter struct {
+	WorkspaceID *IDComparator         `json:"workspaceID,omitempty"`
+	CycleID     *NullableIDComparator `json:"cycleID,omitempty"`
+	Title       *StringComparator     `json:"title,omitempty"`
+	Labels      *LabelFilter          `json:"labels,omitempty"`
+	And         []*TaskFilter         `json:"and,omitempty"`
+	Or          []*TaskFilter         `json:"or,omitempty"`
+}
+
+type TaskLabelFilter struct {
+	And []*TaskLabelFilter `json:"and,omitempty"`
+	Or  []*TaskLabelFilter `json:"or,omitempty"`
+}
+
+type TaskLabelSort struct {
+	Field     TaskLabelSortField `json:"field"`
+	Direction SortDirection      `json:"direction"`
+}
+
+type TaskLabelsCreateNested struct {
+	Create  []*CreateLabelInput `json:"create,omitempty"`
+	Connect []uuid.UUID         `json:"connect,omitempty"`
+}
+
+type TaskLabelsUpdateNested struct {
+	Clear      *bool               `json:"clear,omitempty"`
+	Create     []*CreateLabelInput `json:"create,omitempty"`
+	Connect    []uuid.UUID         `json:"connect,omitempty"`
+	Disconnect []uuid.UUID         `json:"disconnect,omitempty"`
+}
+
+type TaskReportFilter struct {
+	WorkspaceID *IDComparator       `json:"workspaceID,omitempty"`
+	TaskID      *IDComparator       `json:"taskID,omitempty"`
+	Summary     *StringComparator   `json:"summary,omitempty"`
+	And         []*TaskReportFilter `json:"and,omitempty"`
+	Or          []*TaskReportFilter `json:"or,omitempty"`
+}
+
+type TaskReportSort struct {
+	Field     TaskReportSortField `json:"field"`
+	Direction SortDirection       `json:"direction"`
+}
+
+type TaskSort struct {
+	Field     TaskSortField `json:"field"`
+	Direction SortDirection `json:"direction"`
+}
+
 type TimeComparator struct {
 	Eq       *time.Time   `json:"eq,omitempty"`
 	Neq      *time.Time   `json:"neq,omitempty"`
@@ -1034,10 +1183,10 @@ type TimeRange struct {
 }
 
 type UpdateAssetInput struct {
-	Name               *string                         `json:"name,omitempty"`
-	DeclaredCategories []models.DocumentEntityTypeEnum `json:"declaredCategories,omitempty"`
-	PrimaryCategory    *models.DocumentEntityTypeEnum  `json:"primaryCategory,omitempty"`
-	CreatedAt          *time.Time                      `json:"createdAt,omitempty"`
+	Name               *string                                           `json:"name,omitempty"`
+	DeclaredCategories []models.DocumentEntityTypeEnum                   `json:"declaredCategories,omitempty"`
+	PrimaryCategory    graphql.Omittable[*models.DocumentEntityTypeEnum] `json:"primaryCategory,omitempty"`
+	CreatedAt          *time.Time                                        `json:"createdAt,omitempty"`
 }
 
 type UpdateAssetWithRelatedInput struct {
@@ -1049,15 +1198,24 @@ type UpdateAssetWithRelatedInput struct {
 }
 
 type UpdateCategoryInput struct {
-	Name        *string    `json:"name,omitempty"`
-	Description *string    `json:"description,omitempty"`
-	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+	Name        *string                    `json:"name,omitempty"`
+	Description graphql.Omittable[*string] `json:"description,omitempty"`
+	CreatedAt   *time.Time                 `json:"createdAt,omitempty"`
 }
 
 type UpdateCategoryWithRelatedInput struct {
 	Category *UpdateCategoryInput          `json:"category,omitempty"`
 	Products *CategoryProductsUpdateNested `json:"products,omitempty"`
 	Users    *CategoryUsersUpdateNested    `json:"users,omitempty"`
+}
+
+type UpdateCycleInput struct {
+	Name *string `json:"name,omitempty"`
+}
+
+type UpdateCycleWithRelatedInput struct {
+	Cycle *UpdateCycleInput       `json:"cycle,omitempty"`
+	Tasks *CycleTasksUpdateNested `json:"tasks,omitempty"`
 }
 
 type UpdateDocumentInput struct {
@@ -1073,43 +1231,43 @@ type UpdateDocumentWithRelatedInput struct {
 }
 
 type UpdateEventInput struct {
-	UserID        *uuid.UUID           `json:"userID,omitempty"`
-	Action        *string              `json:"action,omitempty"`
-	OccurredAt    *types.DateTime      `json:"occurredAt,omitempty"`
-	ProcessedAt   *types.NullDateTime  `json:"processedAt,omitempty"`
-	Adjustment    *decimal.NullDecimal `json:"adjustment,omitempty"`
-	AdjustmentInc *int                 `json:"adjustment_inc,omitempty"`
-	AdjustmentDec *int                 `json:"adjustment_dec,omitempty"`
-	RetryCount    *int                 `json:"retryCount,omitempty"`
-	RetryCountInc *int                 `json:"retryCount_inc,omitempty"`
-	RetryCountDec *int                 `json:"retryCount_dec,omitempty"`
-	Succeeded     *bool                `json:"succeeded,omitempty"`
-	MAC           *string              `json:"mac,omitempty"`
-	OSName        *string              `json:"osName,omitempty"`
-	IOCount       *int                 `json:"ioCount,omitempty"`
-	IOCountInc    *int                 `json:"ioCount_inc,omitempty"`
-	IOCountDec    *int                 `json:"ioCount_dec,omitempty"`
-	PKVal         *string              `json:"pkVal,omitempty"`
-	FKVal         *string              `json:"fkVal,omitempty"`
-	ASCIIArt      *string              `json:"asciiArt,omitempty"`
-	CSVData       *string              `json:"csvData,omitempty"`
-	TCPPort       *int                 `json:"tcpPort,omitempty"`
-	TCPPortInc    *int                 `json:"tcpPort_inc,omitempty"`
-	TCPPortDec    *int                 `json:"tcpPort_dec,omitempty"`
-	Utf8Body      *string              `json:"utf8Body,omitempty"`
-	HTTP2Flag     *bool                `json:"http2Flag,omitempty"`
-	Line2ID       *string              `json:"line2ID,omitempty"`
-	Address2ID    *string              `json:"address2ID,omitempty"`
-	S3URL         *string              `json:"s3URL,omitempty"`
+	UserID        graphql.Omittable[*uuid.UUID]           `json:"userID,omitempty"`
+	Action        *string                                 `json:"action,omitempty"`
+	OccurredAt    *types.DateTime                         `json:"occurredAt,omitempty"`
+	ProcessedAt   graphql.Omittable[*types.NullDateTime]  `json:"processedAt,omitempty"`
+	Adjustment    graphql.Omittable[*decimal.NullDecimal] `json:"adjustment,omitempty"`
+	AdjustmentInc *int                                    `json:"adjustment_inc,omitempty"`
+	AdjustmentDec *int                                    `json:"adjustment_dec,omitempty"`
+	RetryCount    graphql.Omittable[*int]                 `json:"retryCount,omitempty"`
+	RetryCountInc *int                                    `json:"retryCount_inc,omitempty"`
+	RetryCountDec *int                                    `json:"retryCount_dec,omitempty"`
+	Succeeded     graphql.Omittable[*bool]                `json:"succeeded,omitempty"`
+	MAC           graphql.Omittable[*string]              `json:"mac,omitempty"`
+	OSName        graphql.Omittable[*string]              `json:"osName,omitempty"`
+	IOCount       graphql.Omittable[*int]                 `json:"ioCount,omitempty"`
+	IOCountInc    *int                                    `json:"ioCount_inc,omitempty"`
+	IOCountDec    *int                                    `json:"ioCount_dec,omitempty"`
+	PKVal         graphql.Omittable[*string]              `json:"pkVal,omitempty"`
+	FKVal         graphql.Omittable[*string]              `json:"fkVal,omitempty"`
+	ASCIIArt      graphql.Omittable[*string]              `json:"asciiArt,omitempty"`
+	CSVData       graphql.Omittable[*string]              `json:"csvData,omitempty"`
+	TCPPort       graphql.Omittable[*int]                 `json:"tcpPort,omitempty"`
+	TCPPortInc    *int                                    `json:"tcpPort_inc,omitempty"`
+	TCPPortDec    *int                                    `json:"tcpPort_dec,omitempty"`
+	Utf8Body      graphql.Omittable[*string]              `json:"utf8Body,omitempty"`
+	HTTP2Flag     graphql.Omittable[*bool]                `json:"http2Flag,omitempty"`
+	Line2ID       graphql.Omittable[*string]              `json:"line2ID,omitempty"`
+	Address2ID    graphql.Omittable[*string]              `json:"address2ID,omitempty"`
+	S3URL         graphql.Omittable[*string]              `json:"s3URL,omitempty"`
 }
 
 type UpdateFilterProbeInput struct {
-	Doc       types.JSON `json:"doc,omitempty"`
-	Tags      []string   `json:"tags,omitempty"`
-	TagsN     []string   `json:"tagsN,omitempty"`
-	Flags     []bool     `json:"flags,omitempty"`
-	Weights   []float64  `json:"weights,omitempty"`
-	CreatedAt *time.Time `json:"createdAt,omitempty"`
+	Doc       types.JSON                  `json:"doc,omitempty"`
+	Tags      []string                    `json:"tags,omitempty"`
+	TagsN     graphql.Omittable[[]string] `json:"tagsN,omitempty"`
+	Flags     []bool                      `json:"flags,omitempty"`
+	Weights   []float64                   `json:"weights,omitempty"`
+	CreatedAt *time.Time                  `json:"createdAt,omitempty"`
 }
 
 type UpdateKeyedCodeEntryInput struct {
@@ -1117,54 +1275,63 @@ type UpdateKeyedCodeEntryInput struct {
 	Note        *string    `json:"note,omitempty"`
 }
 
+type UpdateLabelInput struct {
+	Name *string `json:"name,omitempty"`
+}
+
+type UpdateLabelWithRelatedInput struct {
+	Label *UpdateLabelInput       `json:"label,omitempty"`
+	Tasks *LabelTasksUpdateNested `json:"tasks,omitempty"`
+}
+
 type UpdateMaskedLabelInput struct {
 	Label *string `json:"label,omitempty"`
 }
 
 type UpdateNumericWidthInput struct {
-	Small     *int       `json:"small,omitempty"`
-	SmallInc  *int       `json:"small_inc,omitempty"`
-	SmallDec  *int       `json:"small_dec,omitempty"`
-	SmallN    *int       `json:"smallN,omitempty"`
-	SmallNInc *int       `json:"smallN_inc,omitempty"`
-	SmallNDec *int       `json:"smallN_dec,omitempty"`
-	Ratio     *float64   `json:"ratio,omitempty"`
-	RatioInc  *int       `json:"ratio_inc,omitempty"`
-	RatioDec  *int       `json:"ratio_dec,omitempty"`
-	RatioN    *float64   `json:"ratioN,omitempty"`
-	RatioNInc *int       `json:"ratioN_inc,omitempty"`
-	RatioNDec *int       `json:"ratioN_dec,omitempty"`
-	Smalls    []int16    `json:"smalls,omitempty"`
-	Scores    []int32    `json:"scores,omitempty"`
-	Bigs      []int64    `json:"bigs,omitempty"`
-	Ratios    []float32  `json:"ratios,omitempty"`
-	ScoresN   []int32    `json:"scoresN,omitempty"`
-	CreatedAt *time.Time `json:"createdAt,omitempty"`
+	Small     *int                        `json:"small,omitempty"`
+	SmallInc  *int                        `json:"small_inc,omitempty"`
+	SmallDec  *int                        `json:"small_dec,omitempty"`
+	SmallN    graphql.Omittable[*int]     `json:"smallN,omitempty"`
+	SmallNInc *int                        `json:"smallN_inc,omitempty"`
+	SmallNDec *int                        `json:"smallN_dec,omitempty"`
+	Ratio     *float64                    `json:"ratio,omitempty"`
+	RatioInc  *int                        `json:"ratio_inc,omitempty"`
+	RatioDec  *int                        `json:"ratio_dec,omitempty"`
+	RatioN    graphql.Omittable[*float64] `json:"ratioN,omitempty"`
+	RatioNInc *int                        `json:"ratioN_inc,omitempty"`
+	RatioNDec *int                        `json:"ratioN_dec,omitempty"`
+	Smalls    []int16                     `json:"smalls,omitempty"`
+	Scores    []int32                     `json:"scores,omitempty"`
+	Bigs      []int64                     `json:"bigs,omitempty"`
+	Ratios    []float32                   `json:"ratios,omitempty"`
+	ScoresN   graphql.Omittable[[]int32]  `json:"scoresN,omitempty"`
+	CreatedAt *time.Time                  `json:"createdAt,omitempty"`
 }
 
 type UpdateOrderInput struct {
-	UserID    *uuid.UUID       `json:"userID,omitempty"`
-	Total     *decimal.Decimal `json:"total,omitempty"`
-	TotalInc  *int             `json:"total_inc,omitempty"`
-	TotalDec  *int             `json:"total_dec,omitempty"`
-	Notes     *string          `json:"notes,omitempty"`
-	CreatedAt *time.Time       `json:"createdAt,omitempty"`
-	UpdatedAt *time.Time       `json:"updatedAt,omitempty"`
-	DeletedAt *time.Time       `json:"deletedAt,omitempty"`
+	UserID    *uuid.UUID                    `json:"userID,omitempty"`
+	Total     *decimal.Decimal              `json:"total,omitempty"`
+	TotalInc  *int                          `json:"total_inc,omitempty"`
+	TotalDec  *int                          `json:"total_dec,omitempty"`
+	Notes     graphql.Omittable[*string]    `json:"notes,omitempty"`
+	CreatedAt *time.Time                    `json:"createdAt,omitempty"`
+	UpdatedAt graphql.Omittable[*time.Time] `json:"updatedAt,omitempty"`
+	DeletedAt graphql.Omittable[*time.Time] `json:"deletedAt,omitempty"`
 }
 
 type UpdateOrderItemInput struct {
-	OrderID      *uuid.UUID       `json:"orderID,omitempty"`
-	ProductID    *uuid.UUID       `json:"productID,omitempty"`
-	Quantity     *int             `json:"quantity,omitempty"`
-	QuantityInc  *int             `json:"quantity_inc,omitempty"`
-	QuantityDec  *int             `json:"quantity_dec,omitempty"`
-	UnitPrice    *decimal.Decimal `json:"unitPrice,omitempty"`
-	UnitPriceInc *int             `json:"unitPrice_inc,omitempty"`
-	UnitPriceDec *int             `json:"unitPrice_dec,omitempty"`
-	ExternalRef  *string          `json:"externalRef,omitempty"`
-	SourceIP     *netip.Addr      `json:"sourceIP,omitempty"`
-	CreatedAt    *time.Time       `json:"createdAt,omitempty"`
+	OrderID      *uuid.UUID                     `json:"orderID,omitempty"`
+	ProductID    *uuid.UUID                     `json:"productID,omitempty"`
+	Quantity     *int                           `json:"quantity,omitempty"`
+	QuantityInc  *int                           `json:"quantity_inc,omitempty"`
+	QuantityDec  *int                           `json:"quantity_dec,omitempty"`
+	UnitPrice    *decimal.Decimal               `json:"unitPrice,omitempty"`
+	UnitPriceInc *int                           `json:"unitPrice_inc,omitempty"`
+	UnitPriceDec *int                           `json:"unitPrice_dec,omitempty"`
+	ExternalRef  graphql.Omittable[*string]     `json:"externalRef,omitempty"`
+	SourceIP     graphql.Omittable[*netip.Addr] `json:"sourceIP,omitempty"`
+	CreatedAt    *time.Time                     `json:"createdAt,omitempty"`
 }
 
 type UpdateOrderWithRelatedInput struct {
@@ -1173,18 +1340,18 @@ type UpdateOrderWithRelatedInput struct {
 }
 
 type UpdateProductInput struct {
-	Name        *string          `json:"name,omitempty"`
-	Description *string          `json:"description,omitempty"`
-	Price       *decimal.Decimal `json:"price,omitempty"`
-	PriceInc    *int             `json:"price_inc,omitempty"`
-	PriceDec    *int             `json:"price_dec,omitempty"`
-	Stock       *int             `json:"stock,omitempty"`
-	StockInc    *int             `json:"stock_inc,omitempty"`
-	StockDec    *int             `json:"stock_dec,omitempty"`
-	CategoryID  *int             `json:"categoryID,omitempty"`
-	CreatedAt   *time.Time       `json:"createdAt,omitempty"`
-	UpdatedAt   *time.Time       `json:"updatedAt,omitempty"`
-	DeletedAt   *time.Time       `json:"deletedAt,omitempty"`
+	Name        *string                       `json:"name,omitempty"`
+	Description graphql.Omittable[*string]    `json:"description,omitempty"`
+	Price       *decimal.Decimal              `json:"price,omitempty"`
+	PriceInc    *int                          `json:"price_inc,omitempty"`
+	PriceDec    *int                          `json:"price_dec,omitempty"`
+	Stock       *int                          `json:"stock,omitempty"`
+	StockInc    *int                          `json:"stock_inc,omitempty"`
+	StockDec    *int                          `json:"stock_dec,omitempty"`
+	CategoryID  *int                          `json:"categoryID,omitempty"`
+	CreatedAt   *time.Time                    `json:"createdAt,omitempty"`
+	UpdatedAt   graphql.Omittable[*time.Time] `json:"updatedAt,omitempty"`
+	DeletedAt   graphql.Omittable[*time.Time] `json:"deletedAt,omitempty"`
 }
 
 type UpdateProductWithRelatedInput struct {
@@ -1193,65 +1360,80 @@ type UpdateProductWithRelatedInput struct {
 }
 
 type UpdateProfileInput struct {
-	UserID    *uuid.UUID `json:"userID,omitempty"`
-	Bio       *string    `json:"bio,omitempty"`
-	AvatarURL *string    `json:"avatarURL,omitempty"`
-	Settings  types.JSON `json:"settings,omitempty"`
-	CreatedAt *time.Time `json:"createdAt,omitempty"`
+	UserID    *uuid.UUID                    `json:"userID,omitempty"`
+	Bio       graphql.Omittable[*string]    `json:"bio,omitempty"`
+	AvatarURL graphql.Omittable[*string]    `json:"avatarURL,omitempty"`
+	Settings  graphql.Omittable[types.JSON] `json:"settings,omitempty"`
+	CreatedAt *time.Time                    `json:"createdAt,omitempty"`
 }
 
 type UpdateScalarProbeInput struct {
-	Label         *string          `json:"label,omitempty"`
-	Payload       []byte           `json:"payload,omitempty"`
-	Signature     []byte           `json:"signature,omitempty"`
-	Dur           *time.Duration   `json:"dur,omitempty"`
-	DurN          *time.Duration   `json:"durN,omitempty"`
-	Addr          net.IP           `json:"addr,omitempty"`
-	AddrN         net.IP           `json:"addrN,omitempty"`
-	NetBlock      *net.IPNet       `json:"netBlock,omitempty"`
-	NetBlockN     *net.IPNet       `json:"netBlockN,omitempty"`
-	MAC           net.HardwareAddr `json:"mac,omitempty"`
-	MACN          net.HardwareAddr `json:"macN,omitempty"`
-	Note          *sql.NullString  `json:"note,omitempty"`
-	Flag          *sql.NullBool    `json:"flag,omitempty"`
-	SmallCount    *sql.NullInt16   `json:"smallCount,omitempty"`
-	SmallCountInc *int             `json:"smallCount_inc,omitempty"`
-	SmallCountDec *int             `json:"smallCount_dec,omitempty"`
-	MidCount      *sql.NullInt32   `json:"midCount,omitempty"`
-	MidCountInc   *int             `json:"midCount_inc,omitempty"`
-	MidCountDec   *int             `json:"midCount_dec,omitempty"`
-	BigCount      *sql.NullInt64   `json:"bigCount,omitempty"`
-	BigCountInc   *int             `json:"bigCount_inc,omitempty"`
-	BigCountDec   *int             `json:"bigCount_dec,omitempty"`
-	Ratio         *sql.NullFloat64 `json:"ratio,omitempty"`
-	RatioInc      *int             `json:"ratio_inc,omitempty"`
-	RatioDec      *int             `json:"ratio_dec,omitempty"`
-	ObservedAt    *sql.NullTime    `json:"observedAt,omitempty"`
-	CreatedAt     *time.Time       `json:"createdAt,omitempty"`
+	Label         *string                             `json:"label,omitempty"`
+	Payload       []byte                              `json:"payload,omitempty"`
+	Signature     graphql.Omittable[[]byte]           `json:"signature,omitempty"`
+	Dur           *time.Duration                      `json:"dur,omitempty"`
+	DurN          graphql.Omittable[*time.Duration]   `json:"durN,omitempty"`
+	Addr          net.IP                              `json:"addr,omitempty"`
+	AddrN         graphql.Omittable[net.IP]           `json:"addrN,omitempty"`
+	NetBlock      *net.IPNet                          `json:"netBlock,omitempty"`
+	NetBlockN     graphql.Omittable[*net.IPNet]       `json:"netBlockN,omitempty"`
+	MAC           net.HardwareAddr                    `json:"mac,omitempty"`
+	MACN          graphql.Omittable[net.HardwareAddr] `json:"macN,omitempty"`
+	Note          graphql.Omittable[*sql.NullString]  `json:"note,omitempty"`
+	Flag          graphql.Omittable[*sql.NullBool]    `json:"flag,omitempty"`
+	SmallCount    graphql.Omittable[*sql.NullInt16]   `json:"smallCount,omitempty"`
+	SmallCountInc *int                                `json:"smallCount_inc,omitempty"`
+	SmallCountDec *int                                `json:"smallCount_dec,omitempty"`
+	MidCount      graphql.Omittable[*sql.NullInt32]   `json:"midCount,omitempty"`
+	MidCountInc   *int                                `json:"midCount_inc,omitempty"`
+	MidCountDec   *int                                `json:"midCount_dec,omitempty"`
+	BigCount      graphql.Omittable[*sql.NullInt64]   `json:"bigCount,omitempty"`
+	BigCountInc   *int                                `json:"bigCount_inc,omitempty"`
+	BigCountDec   *int                                `json:"bigCount_dec,omitempty"`
+	Ratio         graphql.Omittable[*sql.NullFloat64] `json:"ratio,omitempty"`
+	RatioInc      *int                                `json:"ratio_inc,omitempty"`
+	RatioDec      *int                                `json:"ratio_dec,omitempty"`
+	ObservedAt    graphql.Omittable[*sql.NullTime]    `json:"observedAt,omitempty"`
+	CreatedAt     *time.Time                          `json:"createdAt,omitempty"`
+}
+
+type UpdateTaskInput struct {
+	CycleID graphql.Omittable[*uuid.UUID] `json:"cycleID,omitempty"`
+	Title   *string                       `json:"title,omitempty"`
+}
+
+type UpdateTaskReportInput struct {
+	TaskID  *uuid.UUID `json:"taskID,omitempty"`
+	Summary *string    `json:"summary,omitempty"`
+}
+
+type UpdateTaskWithRelatedInput struct {
+	Task   *UpdateTaskInput        `json:"task,omitempty"`
+	Labels *TaskLabelsUpdateNested `json:"labels,omitempty"`
 }
 
 type UpdateUserBadgeInput struct {
-	UserID *uuid.UUID `json:"userID,omitempty"`
-	Label  *string    `json:"label,omitempty"`
+	UserID graphql.Omittable[*uuid.UUID] `json:"userID,omitempty"`
+	Label  *string                       `json:"label,omitempty"`
 }
 
 type UpdateUserCredentialInput struct {
-	Provider    *string    `json:"provider,omitempty"`
-	ExternalID  *string    `json:"externalID,omitempty"`
-	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
-	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+	Provider    *string                       `json:"provider,omitempty"`
+	ExternalID  *string                       `json:"externalID,omitempty"`
+	LastLoginAt graphql.Omittable[*time.Time] `json:"lastLoginAt,omitempty"`
+	CreatedAt   *time.Time                    `json:"createdAt,omitempty"`
 }
 
 type UpdateUserInput struct {
-	Email       *string    `json:"email,omitempty"`
-	Name        *string    `json:"name,omitempty"`
-	Metadata    types.JSON `json:"metadata,omitempty"`
-	IsActive    *bool      `json:"isActive,omitempty"`
-	NewPassword *string    `json:"newPassword,omitempty"`
-	ClientIP    *string    `json:"ipAddr,omitempty"`
-	CreatedAt   *time.Time `json:"createdAt,omitempty"`
-	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
-	DeletedAt   *time.Time `json:"deletedAt,omitempty"`
+	Email       *string                       `json:"email,omitempty"`
+	Name        *string                       `json:"name,omitempty"`
+	Metadata    graphql.Omittable[types.JSON] `json:"metadata,omitempty"`
+	IsActive    *bool                         `json:"isActive,omitempty"`
+	NewPassword graphql.Omittable[*string]    `json:"newPassword,omitempty"`
+	ClientIP    graphql.Omittable[*string]    `json:"ipAddr,omitempty"`
+	CreatedAt   *time.Time                    `json:"createdAt,omitempty"`
+	UpdatedAt   graphql.Omittable[*time.Time] `json:"updatedAt,omitempty"`
+	DeletedAt   graphql.Omittable[*time.Time] `json:"deletedAt,omitempty"`
 }
 
 type UpdateUserWithRelatedInput struct {
@@ -1263,7 +1445,7 @@ type UpdateUserWithRelatedInput struct {
 }
 
 type UpdateWorkspaceNoteInput struct {
-	ParentID       *uuid.UUID                    `json:"parentID,omitempty"`
+	ParentID       graphql.Omittable[*uuid.UUID] `json:"parentID,omitempty"`
 	Body           *string                       `json:"body,omitempty"`
 	PinnedOrder    *int                          `json:"pinnedOrder,omitempty"`
 	PinnedOrderInc *int                          `json:"pinnedOrder_inc,omitempty"`
@@ -1298,6 +1480,11 @@ type UpsertCategoryWithRelatedInput struct {
 	Users    *CategoryUsersUpdateNested    `json:"users,omitempty"`
 }
 
+type UpsertCycleWithRelatedInput struct {
+	Cycle *CreateCycleInput       `json:"cycle"`
+	Tasks *CycleTasksUpdateNested `json:"tasks,omitempty"`
+}
+
 type UpsertDocumentWithRelatedInput struct {
 	Document *CreateDocumentInput        `json:"document"`
 	Assets   *DocumentAssetsUpdateNested `json:"assets,omitempty"`
@@ -1308,6 +1495,11 @@ type UpsertKeyedCodeWithRelatedInput struct {
 	Entries   *KeyedCodeEntriesUpdateNested `json:"entries,omitempty"`
 }
 
+type UpsertLabelWithRelatedInput struct {
+	Label *CreateLabelInput       `json:"label"`
+	Tasks *LabelTasksUpdateNested `json:"tasks,omitempty"`
+}
+
 type UpsertOrderWithRelatedInput struct {
 	Order      *CreateOrderInput            `json:"order"`
 	OrderItems *OrderOrderItemsUpdateNested `json:"orderItems,omitempty"`
@@ -1316,6 +1508,11 @@ type UpsertOrderWithRelatedInput struct {
 type UpsertProductWithRelatedInput struct {
 	Product    *CreateProductInput            `json:"product"`
 	OrderItems *ProductOrderItemsUpdateNested `json:"orderItems,omitempty"`
+}
+
+type UpsertTaskWithRelatedInput struct {
+	Task   *CreateTaskInput        `json:"task"`
+	Labels *TaskLabelsUpdateNested `json:"labels,omitempty"`
 }
 
 type UpsertUserWithRelatedInput struct {
@@ -1448,11 +1645,11 @@ type UserFilter struct {
 }
 
 type UserOrdersCreateInput struct {
-	Total     decimal.Decimal `json:"total"`
-	Notes     *string         `json:"notes,omitempty"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt *time.Time      `json:"updatedAt,omitempty"`
-	DeletedAt *time.Time      `json:"deletedAt,omitempty"`
+	Total     *decimal.Decimal `json:"total,omitempty"`
+	Notes     *string          `json:"notes,omitempty"`
+	CreatedAt *time.Time       `json:"createdAt,omitempty"`
+	UpdatedAt *time.Time       `json:"updatedAt,omitempty"`
+	DeletedAt *time.Time       `json:"deletedAt,omitempty"`
 }
 
 type UserOrdersCreateNested struct {
@@ -1469,12 +1666,12 @@ type UserSort struct {
 }
 
 type WorkspaceNoteChildrenCreateInput struct {
-	WorkspaceID uuid.UUID                    `json:"workspaceID"`
-	Body        string                       `json:"body"`
-	PinnedOrder int                          `json:"pinnedOrder"`
-	Kind        models.WorkspaceNoteKindEnum `json:"kind"`
-	Labels      types.JSON                   `json:"labels"`
-	CreatedAt   time.Time                    `json:"createdAt"`
+	WorkspaceID *uuid.UUID                    `json:"workspaceID,omitempty"`
+	Body        string                        `json:"body"`
+	PinnedOrder *int                          `json:"pinnedOrder,omitempty"`
+	Kind        *models.WorkspaceNoteKindEnum `json:"kind,omitempty"`
+	Labels      types.JSON                    `json:"labels,omitempty"`
+	CreatedAt   *time.Time                    `json:"createdAt,omitempty"`
 }
 
 type WorkspaceNoteChildrenCreateNested struct {
@@ -1490,11 +1687,11 @@ type WorkspaceNoteChildrenUpdateNested struct {
 }
 
 type WorkspaceNoteDraftChildrenCreateInput struct {
-	WorkspaceID uuid.UUID  `json:"workspaceID"`
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
 	Body        string     `json:"body"`
-	PinnedOrder int        `json:"pinnedOrder"`
-	Labels      types.JSON `json:"labels"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	PinnedOrder *int       `json:"pinnedOrder,omitempty"`
+	Labels      types.JSON `json:"labels,omitempty"`
+	CreatedAt   *time.Time `json:"createdAt,omitempty"`
 }
 
 type WorkspaceNoteDraftChildrenCreateNested struct {
@@ -1900,6 +2097,118 @@ func (e *CategorySortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e CategorySortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type CycleConflictTarget string
+
+const (
+	CycleConflictTargetPk            CycleConflictTarget = "PK"
+	CycleConflictTargetWorkspaceIDID CycleConflictTarget = "WORKSPACE_ID_ID"
+)
+
+var AllCycleConflictTarget = []CycleConflictTarget{
+	CycleConflictTargetPk,
+	CycleConflictTargetWorkspaceIDID,
+}
+
+func (e CycleConflictTarget) IsValid() bool {
+	switch e {
+	case CycleConflictTargetPk, CycleConflictTargetWorkspaceIDID:
+		return true
+	}
+	return false
+}
+
+func (e CycleConflictTarget) String() string {
+	return string(e)
+}
+
+func (e *CycleConflictTarget) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = CycleConflictTarget(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid CycleConflictTarget", str)
+	}
+	return nil
+}
+
+func (e CycleConflictTarget) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *CycleConflictTarget) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e CycleConflictTarget) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type CycleSortField string
+
+const (
+	CycleSortFieldID          CycleSortField = "ID"
+	CycleSortFieldWorkspaceID CycleSortField = "WORKSPACE_ID"
+	CycleSortFieldName        CycleSortField = "NAME"
+)
+
+var AllCycleSortField = []CycleSortField{
+	CycleSortFieldID,
+	CycleSortFieldWorkspaceID,
+	CycleSortFieldName,
+}
+
+func (e CycleSortField) IsValid() bool {
+	switch e {
+	case CycleSortFieldID, CycleSortFieldWorkspaceID, CycleSortFieldName:
+		return true
+	}
+	return false
+}
+
+func (e CycleSortField) String() string {
+	return string(e)
+}
+
+func (e *CycleSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = CycleSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid CycleSortField", str)
+	}
+	return nil
+}
+
+func (e CycleSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *CycleSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e CycleSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil
@@ -2339,6 +2648,118 @@ func (e *KeyedCodeSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e KeyedCodeSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type LabelConflictTarget string
+
+const (
+	LabelConflictTargetPk            LabelConflictTarget = "PK"
+	LabelConflictTargetWorkspaceIDID LabelConflictTarget = "WORKSPACE_ID_ID"
+)
+
+var AllLabelConflictTarget = []LabelConflictTarget{
+	LabelConflictTargetPk,
+	LabelConflictTargetWorkspaceIDID,
+}
+
+func (e LabelConflictTarget) IsValid() bool {
+	switch e {
+	case LabelConflictTargetPk, LabelConflictTargetWorkspaceIDID:
+		return true
+	}
+	return false
+}
+
+func (e LabelConflictTarget) String() string {
+	return string(e)
+}
+
+func (e *LabelConflictTarget) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = LabelConflictTarget(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid LabelConflictTarget", str)
+	}
+	return nil
+}
+
+func (e LabelConflictTarget) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *LabelConflictTarget) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e LabelConflictTarget) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type LabelSortField string
+
+const (
+	LabelSortFieldID          LabelSortField = "ID"
+	LabelSortFieldWorkspaceID LabelSortField = "WORKSPACE_ID"
+	LabelSortFieldName        LabelSortField = "NAME"
+)
+
+var AllLabelSortField = []LabelSortField{
+	LabelSortFieldID,
+	LabelSortFieldWorkspaceID,
+	LabelSortFieldName,
+}
+
+func (e LabelSortField) IsValid() bool {
+	switch e {
+	case LabelSortFieldID, LabelSortFieldWorkspaceID, LabelSortFieldName:
+		return true
+	}
+	return false
+}
+
+func (e LabelSortField) String() string {
+	return string(e)
+}
+
+func (e *LabelSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = LabelSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid LabelSortField", str)
+	}
+	return nil
+}
+
+func (e LabelSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *LabelSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e LabelSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil
@@ -2983,6 +3404,236 @@ func (e *SortDirection) UnmarshalJSON(b []byte) error {
 }
 
 func (e SortDirection) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskConflictTarget string
+
+const (
+	TaskConflictTargetPk            TaskConflictTarget = "PK"
+	TaskConflictTargetWorkspaceIDID TaskConflictTarget = "WORKSPACE_ID_ID"
+)
+
+var AllTaskConflictTarget = []TaskConflictTarget{
+	TaskConflictTargetPk,
+	TaskConflictTargetWorkspaceIDID,
+}
+
+func (e TaskConflictTarget) IsValid() bool {
+	switch e {
+	case TaskConflictTargetPk, TaskConflictTargetWorkspaceIDID:
+		return true
+	}
+	return false
+}
+
+func (e TaskConflictTarget) String() string {
+	return string(e)
+}
+
+func (e *TaskConflictTarget) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskConflictTarget(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskConflictTarget", str)
+	}
+	return nil
+}
+
+func (e TaskConflictTarget) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskConflictTarget) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskConflictTarget) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskLabelSortField string
+
+const (
+	TaskLabelSortFieldWorkspaceID TaskLabelSortField = "WORKSPACE_ID"
+	TaskLabelSortFieldTaskID      TaskLabelSortField = "TASK_ID"
+	TaskLabelSortFieldLabelID     TaskLabelSortField = "LABEL_ID"
+)
+
+var AllTaskLabelSortField = []TaskLabelSortField{
+	TaskLabelSortFieldWorkspaceID,
+	TaskLabelSortFieldTaskID,
+	TaskLabelSortFieldLabelID,
+}
+
+func (e TaskLabelSortField) IsValid() bool {
+	switch e {
+	case TaskLabelSortFieldWorkspaceID, TaskLabelSortFieldTaskID, TaskLabelSortFieldLabelID:
+		return true
+	}
+	return false
+}
+
+func (e TaskLabelSortField) String() string {
+	return string(e)
+}
+
+func (e *TaskLabelSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskLabelSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskLabelSortField", str)
+	}
+	return nil
+}
+
+func (e TaskLabelSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskLabelSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskLabelSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskReportSortField string
+
+const (
+	TaskReportSortFieldID          TaskReportSortField = "ID"
+	TaskReportSortFieldWorkspaceID TaskReportSortField = "WORKSPACE_ID"
+	TaskReportSortFieldTaskID      TaskReportSortField = "TASK_ID"
+	TaskReportSortFieldSummary     TaskReportSortField = "SUMMARY"
+)
+
+var AllTaskReportSortField = []TaskReportSortField{
+	TaskReportSortFieldID,
+	TaskReportSortFieldWorkspaceID,
+	TaskReportSortFieldTaskID,
+	TaskReportSortFieldSummary,
+}
+
+func (e TaskReportSortField) IsValid() bool {
+	switch e {
+	case TaskReportSortFieldID, TaskReportSortFieldWorkspaceID, TaskReportSortFieldTaskID, TaskReportSortFieldSummary:
+		return true
+	}
+	return false
+}
+
+func (e TaskReportSortField) String() string {
+	return string(e)
+}
+
+func (e *TaskReportSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskReportSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskReportSortField", str)
+	}
+	return nil
+}
+
+func (e TaskReportSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskReportSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskReportSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskSortField string
+
+const (
+	TaskSortFieldID          TaskSortField = "ID"
+	TaskSortFieldWorkspaceID TaskSortField = "WORKSPACE_ID"
+	TaskSortFieldCycleID     TaskSortField = "CYCLE_ID"
+	TaskSortFieldTitle       TaskSortField = "TITLE"
+)
+
+var AllTaskSortField = []TaskSortField{
+	TaskSortFieldID,
+	TaskSortFieldWorkspaceID,
+	TaskSortFieldCycleID,
+	TaskSortFieldTitle,
+}
+
+func (e TaskSortField) IsValid() bool {
+	switch e {
+	case TaskSortFieldID, TaskSortFieldWorkspaceID, TaskSortFieldCycleID, TaskSortFieldTitle:
+		return true
+	}
+	return false
+}
+
+func (e TaskSortField) String() string {
+	return string(e)
+}
+
+func (e *TaskSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskSortField", str)
+	}
+	return nil
+}
+
+func (e TaskSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

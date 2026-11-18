@@ -1,0 +1,72 @@
+"""
+TimeKeyedNote corresponds to the time_keyed_notes table.
+"""
+type TimeKeyedNote {
+  "id"
+  id: Int!
+  "keyed_at"
+  keyedAt: NullDateTime
+  "note"
+  note: String!
+}
+
+type TimeKeyedNoteConnection {
+  edges:      [TimeKeyedNoteEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type TimeKeyedNoteEdge {
+  node:   TimeKeyedNote!
+  cursor: String!
+}
+
+type TimeKeyedNoteListResult {
+  items:      [TimeKeyedNote!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input TimeKeyedNoteFilter {
+  keyedAt: NullableTimeComparator
+  note: StringComparator
+  and: [TimeKeyedNoteFilter!]
+  or:  [TimeKeyedNoteFilter!]
+}
+
+enum TimeKeyedNoteSortField {
+  ID
+  KEYED_AT
+  NOTE
+}
+
+input TimeKeyedNoteSort {
+  field:     TimeKeyedNoteSortField!
+  direction: SortDirection!
+}
+input CreateTimeKeyedNoteInput {
+  keyedAt: NullDateTime
+  note: String!
+}
+input UpdateTimeKeyedNoteInput {
+  keyedAt: NullDateTime
+  note: String
+}
+
+extend type Query {
+  timeKeyedNote(id: Int!): TimeKeyedNote
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to timeKeyedNoteList instead."
+  timeKeyedNotes(filter: TimeKeyedNoteFilter, first: Int, after: String, last: Int, before: String): TimeKeyedNoteConnection!
+  timeKeyedNoteList(filter: TimeKeyedNoteFilter, sort: [TimeKeyedNoteSort!], limit: Int, offset: Int): TimeKeyedNoteListResult!
+}
+
+extend type Mutation {
+  createTimeKeyedNote(input: CreateTimeKeyedNoteInput!): TimeKeyedNote!
+  createTimeKeyedNotes(inputs: [CreateTimeKeyedNoteInput!]!): [TimeKeyedNote!]!
+  updateTimeKeyedNote(id: Int!, input: UpdateTimeKeyedNoteInput!): TimeKeyedNote!
+  updateTimeKeyedNotes(filter: TimeKeyedNoteFilter!, input: UpdateTimeKeyedNoteInput!): [TimeKeyedNote!]!
+  upsertTimeKeyedNote(input: CreateTimeKeyedNoteInput!): TimeKeyedNote!
+  deleteTimeKeyedNote(id: Int!): Boolean!
+}

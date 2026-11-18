@@ -31,6 +31,2512 @@ _No open fixes._
 
 <!-- fixes:resolved:begin -->
 
+### FIX-387
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 26, cmd/sqlgen/gen
+- **Surfaced by:** FIX-386 auto-review (2026-11-18); ruled by the user 2026-11-18 (reject in validation)
+
+**Issue.** **A nullable variant from another package than its parent, with no `nullable.import`,
+passes validation and inherits the wrong import.**
+`overrides.types.jsonb: {type: pgtype.Text, import: <pgtype>, nullable: {type: types.JSON}}`
+validates, and `FromOverride` gives the nullable column the parent's `pgtype` import, so
+`github.com/teandresmith/sqlgen/types` is imported only if goimports finds it in the module cache
+(the FIX-386 failure, reached through the nullable variant). `nullable: sql.NullString` under a
+`pgtype.Text` parent fails the same way: `database/sql` never enters the import set. PRD §4.7's
+`nullable.import` row says the import is "needed when it differs from the parent type's import".
+
+**Root cause.** `typeOverrideImportErrors` (`cmd/sqlgen/gen/type_override_imports.go:106-121`)
+and `config.validateTenancyTypeOverride` (`cmd/sqlgen/config/validate.go:1723`) check the
+nullable variant only when the parent carries no import; with a parent import they assume the
+variant shares it, without comparing packages.
+
+**Suggested fix.**
+- Add `literal.Qualifier(goType)` (the package qualifier, after any `*` / `[]`).
+- In both validators, reject a package-qualified `nullable.type` with no `nullable.import` whose
+  qualifier differs from the parent `type`'s qualifier, at `<scope>.nullable.type` with the
+  existing message. The `nullable: uuid.NullUUID` shorthand (same qualifier) stays valid.
+- Tests: reject cases (registry literal `types.JSON` and `sql.NullString` under a `pgtype.Text`
+  parent) in `TestTypeOverrideRejectsUnimportableLiteral` and `TestValidatePreParse_TenancyTypeImportAtEachScope`;
+  accept a same-qualifier variant inheriting the parent's explicit import.
+- PRD §4.7 `nullable.import` row: state the error for a variant from a different package.
+
+**References.**
+- PRD §4.7 (`import` and `nullable.import` rows), §29.2.4 (`tenancy.type`).
+- FIX-386 (the registry import in `FromOverride`); `TestTypeOverrideImportsRejectsUninheritableNullWrapper`
+  (the parent-without-import twin of this rule).
+
+**Resolution notes.** New `literal.NullableNeedsOwnImport` compares the package qualifiers of the parent `type` and `nullable.type` (after any `*` / `[]`). `typeOverrideImportErrors` and `config.validateTenancyTypeOverride` now reject a package-qualified `nullable.type` with no `nullable.import` whose package differs from the parent's, only when the parent carries an import, at `<scope>.nullable.type` with the existing message; the tenancy validator no longer returns early when the parent has an import. Same-package variants (`uuid.NullUUID`, `*decimal.Decimal`) and variants with their own import stay valid. Fail first: the two new `TestTypeOverrideRejectsUnimportableLiteral` cases and the three scopes of the new `TestValidatePreParse_TenancyTypeImportAtEachScope` case. PRD §4.7 `nullable.import` row states the error; registry row `config.overrides.types.nullable-import-other-package` added, §4 and §4.7 anchors rehashed. The FIX-387 review caught the gen check firing without a parent import too, which rejected valid shapes such as `{type: json.RawMessage, nullable: types.JSON}` (FIX-386 resolves those); the guard and an accept case for that shape were added. Every example config already complied: `make check` and `make check-examples` pass with no golden churn.
+
+### FIX-386
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** conformance seeding, cmd/sqlgen/gotype
+- **Surfaced by:** CI on PR #4 (`unit (cmd/sqlgen)`, run 44325074798, 2026-11-18)
+
+**Issue.** **An override naming a known non-stdlib literal with no `import` emits no import.**
+`overrides.types: {json: {type: types.JSON}}` passes validation, as PRD §4.7 allows, but
+`models_gen.go` references `types.JSON` without importing
+`github.com/teandresmith/sqlgen/types`. Whether the file compiles depends on goimports finding
+a `types` package in the consumer's GOMODCACHE. `TestGenerate_KnownLiteralOverridesNeedNoImport`
+fails on CI (`config_fields_test.go:739: models_gen.go does not import
+"github.com/teandresmith/sqlgen/types" for types.JSON`) and locally with an empty cache
+(`GOMODCACHE=<empty dir> go test -short -run TestGenerate_KnownLiteralOverridesNeedNoImport
+./gen/` fails the same way). It passes on a machine whose cache holds `sqlgen@v0.1.0`, which is
+why `/close-phase 32` ran green. `json.RawMessage` and `net.IP` are unaffected: goimports fills
+standard-library paths from its built-in table.
+
+**Root cause.** `gotype.FromOverride` (`cmd/sqlgen/gotype/gotype.go:1064`) copies
+`override.Import` and `override.Nullable.Import` verbatim and never consults the
+`gotype/literal` registry, while `FromLiteral` (`gotype.go:1156`) does. Config validation
+(`literal.NeedsExplicitImport`) already treats a registry literal as needing no import, so
+validation and generation disagree. Every override surface goes through `FromOverride`: global and
+per-table `overrides.types` and the built-in integrations (`gotype.go:851-866`), and `tenancy.type`
+(`gen/context_tenancy.go:414`).
+
+**Suggested fix.**
+- In `FromOverride`, when `override.Import` is empty, take `literal.Lookup(override.Type).Import`;
+  when a nullable variant names a registry literal and neither half carries an import, take its
+  registry import the same way.
+- Add a table-driven `gotype` unit test over `FromOverride`: `types.JSON`, `json.RawMessage`,
+  `net.IP`, an explicit import that wins over the registry, and a nullable `types.JSON`.
+- `TestGenerate_KnownLiteralOverridesNeedNoImport` stays as the end-to-end guard.
+
+**References.**
+- PRD §4.7 (`import` is required only when `type` names a package sqlgen does not already know)
+  and §4.8.
+- `cmd/sqlgen/gotype/literal/literal.go` (the registry); `08db661b` moved it there and added the
+  test.
+- `FromLiteral` (`gotype.go:1156-1167`) is the pattern to follow.
+
+**Resolution notes.** `FromOverride` takes a known literal's import from the `gotype/literal` registry when the override names none (new `overrideImport` helper, the rule `FromLiteral` already follows), and a nullable variant naming a registry literal takes its import when neither half carries one; an explicit import still wins. This covers every surface that resolves through `FromOverride`: global and per-table `overrides.types`, the built-in integrations, and `tenancy.type` (`column_map` resolves through `FromLiteral`, already registry-aware). New table-driven `TestFromOverrideKnownLiteralImport` (`cmd/sqlgen/gotype/override_import_test.go`) failed first on five of its eight cases; `TestGenerate_KnownLiteralOverridesNeedNoImport` now passes with an empty GOMODCACHE, the CI condition. Registry: `config.overrides.types.import-omitted-known-literal.others` also lists the new test. No golden churn: `make check`, `make check-examples` and `TestE2EGoldenFiles` pass.
+
+### FIX-385
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 7, parser
+- **Surfaced by:** FIX-384 vet (2026-11-16), filed on the user's yes (2026-11-16)
+- **Vetted:** corrected at `a622760c` (2026-11-17)
+
+**Issue.** **A view column retyped with `@type` over a PostgreSQL array does not compile.** postgres/pgx, schema
+`CREATE TYPE kind AS ENUM ('a','b'); CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[], nn kind[] NOT NULL);`,
+view file `-- @pk: id` / `-- @type kinds: KindSlice` / `CREATE VIEW vrefs AS SELECT id, kinds, nn FROM refs;` →
+`sqlgen generate` exits 0; `go build` → `out/views_gen.go:474:25: KindSlice does not satisfy comparable` (filter
+`Kinds *comparator.Enum[KindSlice]`). Reproduced with and without FIX-384's prototype.
+
+**Root cause.** The parser replaces a `@type` view column's SQL type with the Go literal at two sites:
+`resolveColumnType` (`parser/view.go:351-353`, pre-fix lines, the `BuildView` path every schema-file run takes) returns `ta.GoType` as
+the column's `Type`, and the introspected-view merge (`parser/view.go:1013-1014`) sets `col.Type = ta.GoType`. The Go
+type already travels in `GoTypeLiteral`, which `viewColumnGoType` reads first, so the overwritten `Type` only hides the
+array SQL type from `retypedArrayElemGoType` (and puts a Go type in the manifest's `db_type`).
+
+**Suggested fix.**
+- At both parser sites, leave `col.Type` as the SQL type the column would have without the annotation (the source
+  column's type, the aggregate inference, or `any`; the introspected type on the merge path). `GoTypeLiteral` /
+  `GoTypeImport` keep carrying the `@type`, and a `@type` column stays NOT NULL unless `@nullable` names it. No
+  generator change: FIX-384's `retypedArrayElemGoType` then sees the array SQL type.
+- Add a view `@type` case to FIX-384's `TestGenerate_RetypedArrayColumnKeepsSliceFilter` (with `@nullable: kinds`, so
+  the shared assertions hold). Update the four parser tests that pinned the old `Type`:
+  `TestBuildView_TypeResolution` (`avg_rating` → `*float64`), `TestMergeViewAnnotations_AnnotationWins` and
+  `TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered` (`total` → `numeric`), and sqlite
+  `TestViewFileParsedAsView` (`review_count` → `int64`).
+- Vet correction: the entry named only the merge site (`view.go:1011-1013`), but the reproduction runs through
+  `BuildView`, where `resolveColumnType` does the overwrite; both sites need the change.
+- Pending ruling, now ruled: the change moves the manifest's `db_type` for `@type` view columns from the Go type to the
+  SQL type. The user ruled on 2026-11-17: accept the churn (`db_type` reports the database type, as it already does for
+  unannotated view columns).
+- Prototype results, run at `a622760c` on 2026-11-17: reproduction (new view `@type` case at HEAD) → `views_gen.go has
+  no filter field matching Kinds\s+\*comparator\.NullableSlice\[Kind\]` and `out/views_gen.go:474:25: KindSlice does not
+  satisfy comparable`. Gates: `go test -race -count=1 ./gen/... ./cli/...` ok; parser `go test -count=1 ./...` ok
+  (after the four test updates); parser golangci-lint and gofumpt clean; `make update-golden` no churn; `make
+  update-golden-e2e` PASS. Fail-first: reverting `resolveColumnType` → the view `@type` case fails ("views_gen.go has no
+  filter field matching Kinds…NullableSlice[Kind]"); reverting the merge site →
+  `TestMergeViewAnnotations_AnnotationWins` fails ("total Type = \"decimal.Decimal\", want \"numeric\""); the existing
+  suite without the fix passes. Golden churn (manifest `db_type` only, `models/` mirrors `expected/`): graphql ~4
+  (category_price_total, workspace_note_summary .md/.json), mysql ~3, postgres ~4 (adds order_total.md), sqlite ~3
+  (category_stat.md, manifest_gen.json, product_summary.md). Revert the environmental mysql/sqlite go.sum lines. Patch:
+  `.claude/prototypes/FIX-385.patch` (32 files, +59/-46; source 4 files, +23/-10).
+
+**References.**
+- PRD §7.1, §10 (views, `@type`). FIX-384.
+
+**Resolution notes.** Resolved 2026-11-17. Both parser sites now keep the column's SQL type for a `@type` view column: `resolveColumnType` (`parser/view.go`) returns the type the column would resolve to without the annotation (aggregate inference, source column, or `any`), still NOT NULL unless `@nullable` names it, and `mergeView` no longer overwrites the introspected `Type`. `GoTypeLiteral`/`GoTypeImport` keep carrying the Go type, so `retypedArrayElemGoType` sees the array SQL type and a retyped view array keeps its element filter. Added the view `@type` case to `TestGenerate_RetypedArrayColumnKeepsSliceFilter`; updated `TestBuildView_TypeResolution`, `TestMergeViewAnnotations_AnnotationWins`, `TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered` and sqlite `TestViewFileParsedAsView`. The prototype applied cleanly (fresh at HEAD); inline: `resolveColumnType`'s doc comment no longer lists `@type` in the type resolution chain, and `BuildView`'s comment above the `GoTypeLiteral` assignment no longer says a `@type` column's `Type` is a Go literal; `TestBuildView_TypeResolution` now asserts `GoTypeLiteral` too, since rows `gen.view-types.type-annotation` and `parser.viewfile.type-overrides` cite it for the `@type` Go type, which its `Type` column no longer carried (found by `/verify`). `/verify` doc corrections: `introspect.view.overlay-type` rows reworded (the SQL type stays) and cite `TestMergeViewAnnotations_AnnotationWins`; `gen.view-types.type-annotation` and `comparator.slice.retyped-array` (which now names a view's `@type`) cite the new CLI view `@type` case. Golden churn matches the vet line for line (manifest `db_type` only; graphql 4, mysql 3, postgres 4, sqlite 3, mirrored in `models/`), as ruled 2026-11-17. Fail-first: reverting both sites fails the view `@type` case (`views_gen.go has no filter field matching Kinds…NullableSlice[Kind]` under `-short`; `KindSlice does not satisfy comparable` when built) and the three parser `Type` assertions. Gates: `make check` ok, `make update-golden` no churn, `make update-golden-e2e` PASS, `make check-examples` ok.
+
+Follow-up (2026-11-17, folded into FIX-385 on the user's ruling): the final sweep's `TestE2EDatabaseTwin/postgres` failed after the first commit (`541082e1`): `order_totals.total_quantity` (`SUM(oi.quantity)` over the `positive_int` domain, `@type int64`) reported `db_type` `positive_int` from the SQL files and `bigint` from the database, whose `pg_get_viewdef` casts the domain, so the catalog type stands. Before the fix both sides carried the Go type and matched by accident. Fix: `BuildView` records `Aggregate: SUM` for a `@type` SUM column with a resolved source (the Go type still comes from `GoTypeLiteral`), and `buildViewColumns` sets a SUM column's `SQLType` to new `gotype.Resolver.SumResultSQLType` (the dialect-widened base, through a domain; the source type, modifiers kept, when nothing widens), which also covers an unannotated SUM over an integer. Tests: `TestSumResultSQLType`, `TestBuildView_TypeAnnotationKeepsSumAggregate` (fails with `Aggregate:` empty when the parser change is reverted); new registry row `gen.view-types.sum-sql-type`. Golden churn: postgres `order_total.md` and `manifest_gen.json` (`positive_int` → `bigint`), mirrored in `models/`. Gates: `make check` ok; `make update-golden` no churn; `make update-golden-e2e` PASS; `TestE2EDatabaseTwin` PASS for all 12 examples.
+
+
+### FIX-384
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 11, cmd/sqlgen/gen
+- **Surfaced by:** FIX-377 implementation (2026-11-16), filed on the user's yes (2026-11-16)
+- **Vetted:** ready at `bd76ff03` (2026-11-16)
+
+**Issue.** **A PostgreSQL array column retyped by `type_map` to its own generated slice type gets a filter field that
+does not compile.** `CREATE TYPE kind AS ENUM ('a','b'); CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[]);`
+with `type_map: {kinds: KindSlice}` (pgx) → `sqlgen generate` exits 0; `go build` → `KindSlice does not satisfy
+comparable` on `Kinds *comparator.Enum[KindSlice]` (and `*comparator.NullableEnum[KindSlice]`). With no retype the
+fields are `comparator.Slice[Kind]` / `comparator.NullableSlice[Kind]`. The column need not be a key.
+
+**Root cause.** Filter comparator resolution (`resolveGenericComparator`,
+`cmd/sqlgen/gen/context_table.go:2628`) sees a bare capitalised name and `isEnumLikeType` sends it to `Enum`. The
+element type is lost one level up: every per-column retype goes through `gotype.FromLiteral` (`type_map`,
+`column_map`) or `FromOverride` (`overrides.types`), and both return a GoType with `IsSlice` false. Table and global
+`overrides.types`, `column_map.type`, and global `overrides.types` on a view column all hit it (measured).
+
+**Suggested fix.**
+- Prototyped (option a): new internal `ColumnContext.ArrayElemGoType`, filled by a `retypedArrayElemGoType` helper from
+  `buildColumnContext` and `buildViewColumns`. On PostgreSQL only, for a column whose resolved Go type is not
+  `IsSlice` but whose `BaseSQLType` ends in `[]`, it resolves the element SQL type as the unretyped branch does.
+  `resolveGenericComparator`, `columnIsFilterable` and `sliceElementType` read it, so a retyped array keeps
+  `Slice[elem]` / `NullableSlice[elem]` (and its GraphQL comparator), and a JSON element stays non-filterable.
+  The PostgreSQL guard is required (`TestSliceComparator_dialectGating` fails without it).
+- Tests: `TestGenerate_RetypedArrayColumnKeepsSliceFilter` (`cmd/sqlgen/cli/retyped_array_filter_test.go`, 10 cases,
+  each builds); FIX-377's `TestGenerate_UnkeyableForeignKeyRetypedToItsOwnSliceTypeGivesNoRelationship` now builds.
+- Vet correction: the fix is not confined to `resolveGenericComparator`; the element must be recovered where the
+  ColumnContext is built.
+- Auto-accepted under `/fix`'s rule: an `overrides.types` retype of an array column keeps `Slice[elem]` (gates green; no
+  golden churn against any alternative; no exported identifier or config key added; §7.1 already says "Use
+  `overrides.types` when array semantics matter").
+- Pending the user's ruling: how should a per-column literal retype (`type_map`, `column_map.type`) of a PostgreSQL array
+  filter? PRD §7.1 says a `[]T` literal "is *not* treated as an array column, so it filters through the scalar
+  comparator". (a, recommended, prototyped) every array column keeps `Slice[elem]` whatever its retype; `'[]string'` /
+  `'[]Kind'` literals move from `comparator.String` (text operators on an array) to `Slice[elem]`; amend §7.1. (b) follow
+  §7.1: `[]T` literals keep `String`; named slices need a new `comparator.Opaque[T]` arm (not prototyped, GraphQL
+  projection unmeasured). (c) refuse the retype loudly; conflicts with FIX-377's tests that retype to `KindSlice`.
+- The user ruled on 2026-11-16: option (a). Every PostgreSQL array column keeps `Slice[elem]` whatever its retype
+  (`type_map`, `column_map.type`, `overrides.types`); amend the PRD §7.1 sentence that a `[]T` literal "is *not* treated
+  as an array column".
+- Prototype results, run at `bd76ff03` on 2026-11-16: reproduction with a probe (`generate` + `go build`, pgx and stdlib)
+  → `out/models_gen.go:1847:33: KindSlice does not satisfy comparable` for type_map, table and global overrides.types and
+  column_map; `out/views_gen.go:474:33` for a view under global overrides.types; `Tags does not satisfy comparable` for a
+  local `type Tags []string`; `'[]string'` / `'[]Kind'` literals build with `comparator.String`. Gates: `go test -race
+  -count=1 ./gen/... ./cli/...` ok; golangci-lint 0 issues; `make update-golden` no churn; `make update-golden-e2e` PASS,
+  no churn. Fail-first: table call zeroed → "models_gen.go has no filter field matching Kinds\s+\*comparator\.NullableSlice\[Kind\]"
+  and "KindSlice does not satisfy comparable"; view call zeroed → "out/views_gen.go:474:33: KindSlice does not satisfy
+  comparable"; `resolveGenericComparator`, `sliceElementType` and `columnIsFilterable` arms each fail their cases; dialect
+  guard removed → "mysql: column tags references \"StringSliceComparator\"". The existing suite without the fix passes.
+  Golden churn: none. Patch: `.claude/prototypes/FIX-384.patch` (5 files, +196/-31).
+- Second vet, run at `bd76ff03` on 2026-11-16, on the ruled option (a): code unchanged from the first wave. PRD §7.1's
+  `[]T`-literal sentence replaced (a retype from any of steps 1–4 keeps `comparator.Slice[E]` / `NullableSlice[E]`;
+  json/jsonb arrays stay unfilterable); §11.2 "Array types" row says `T` is the element SQL type's Go type; the 10
+  `gotype.postgres-*-array.column-override` rows in `docs/conformance/cli/gotype.md` reworded; new row
+  `comparator.slice.retyped-array` in `docs/conformance/runtime/sql.md`. New subtest "column_map type to an enum slice
+  literal"; the `'[]string'` / `'[]Kind'` cases assert `Slice[string]` / `Slice[Kind]` and fail with the arms reverted
+  ("models_gen.go has no filter field matching Kinds\s+\*comparator\.NullableSlice\[string\]"). Gates: `make req-rehash
+  SECTIONS=7.1,11.2` (2 anchors); `make req-check` ok (6331 requirements); `make refs-check` ok; `go test -race -count=1
+  ./gen/... ./cli/...` ok. Golden churn: none. Patch: `.claude/prototypes/FIX-384.patch` (8 files, +217/-45).
+
+**References.**
+- PRD §7.1 (type resolution; literal retypes), §11 (comparators), §4.13. FIX-377 (`1c4849fd`).
+
+**Resolution notes.** A PostgreSQL array column retyped by `type_map`, `column_map.type` or `overrides.types` (tables
+and views) keeps `comparator.Slice[elem]` / `NullableSlice[elem]`: new internal `ColumnContext.ArrayElemGoType`, filled
+by `retypedArrayElemGoType` from `buildColumnContext` and `buildViewColumns`, is read by `resolveGenericComparator`,
+`columnIsFilterable` and `sliceElementType`; a json/jsonb element stays non-filterable. PRD §7.1 and §11.2 amended per
+the 2026-11-16 ruling (option a); conformance rows in `docs/conformance/cli/gotype.md` and
+`docs/conformance/runtime/sql.md` updated. Tests: `TestGenerate_RetypedArrayColumnKeepsSliceFilter` (each case builds);
+FIX-377's `TestGenerate_UnkeyableForeignKeyRetypedToItsOwnSliceTypeGivesNoRelationship` now builds the package. The
+prototype's base (`bd76ff03`) was behind HEAD by FIX-380 (`705aa731`), which touched `context_table.go` and the PRD; it
+applied without conflict. Fail-first re-run on the final code (helper disabled → "KindSlice does not satisfy
+comparable"). Gates: `make check` ok, `make check-examples` ok; `make update-golden` / `update-golden-e2e` no churn.
+Verify (reviewer) found the recovered element differed from the unretyped column's when `overrides.types` also maps the
+enum's SQL type (`Slice[string]` vs `Slice[Kind]`): new `gotype.Resolver.ArrayElemGoType` resolves the element as the
+array branch does (enum first, shared `arrayEnumElem`), with the subtest "type_map over an enum element that
+overrides.types also maps" (fails on the old call). Inline doc fixes: `comparator.pg-only.never-selected` now cites
+`TestSliceComparator_dialectGating`; stale line ref and case count in this entry; `ArrayElemGoType` field comment;
+history sentence dropped from the test comment; `TestSliceComparator_dialectGating` comment reworded.
+
+### FIX-380
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-372 re-vet (2026-11-10), filed on the user's yes
+- **Vetted:** ready at `bd76ff03` (2026-11-16)
+
+**Issue.** **A SQLite time key next to an FK of another storage class does not compile, and routing it through
+the tuple loader would load nothing.** A generated SQLite schema of `CREATE TABLE stamps (k DATETIME PRIMARY
+KEY); CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`, then `go build
+-gcflags=-e ./...`, gives `cannot use &comparator.NullableTime{…} (value of type *comparator.NullableTime) as
+*comparator.NullableID value in struct literal`. The reverse pair (TEXT PK with a DATETIME FK) fails the same way
+with the types swapped. Routed through the keyed tuple loader instead (prototyped during the FIX-372 re-vet, not
+landed), it compiles but loads no children in either direction: `parent 2024-01-02 03:04:05 +0000 UTC kids=0` and
+`parent "2024-01-02 03:04:05" kids=0`. Only SQLite accepts the pair; PRD §13.3 states it is not yet supported.
+
+**Root cause.** The two sides spell the same instant differently, and no layer picks one spelling.
+- The DATETIME side is `types.DateTime`. It filters through `comparator.Time` (FIX-371), binds through
+  `DateTime.Value()` in the configured output layout (RFC3339Nano by default, `types/datetime.go:146`), and in a
+  tuple-loader bucket key spells as `fmt.Sprint` (`2024-01-02 03:04:05 +0000 UTC`).
+- The TEXT side is a `string` on `comparator.ID` that holds whatever text was stored (`2024-01-02 03:04:05`).
+- So the plain one-column loader cannot assign one comparator into the other's field, and the tuple loader compares
+  text that never matches. `comparatorsDiffer` (`cmd/sqlgen/gen/context_table.go:256`, the `(family == "Time") !=
+  (refFamily == "Time")` arm) keeps the pair off the tuple loader only for a one-column O2M/has-one key whose
+  referenced column is NOT NULL (auto-accepted in FIX-372: a loud compile error beats a silent empty load). A
+  composite key with a time member, a nullable referenced UNIQUE key, and a DATETIME FK into an INTEGER key reach
+  the tuple loader anyway (`CompositeKey()` / `referencesNullable`), compile, and silently load 0 children; an M2M
+  junction takes the plain list and also loads 0 (measured at `22de66f0`). The arm stays needed after the fix: a
+  nullable SQLite DATETIME FK is `types.NullDateTime`, which `pkComparatorFamily` classifies as "ID", and the arm
+  keeps DATETIME→nullable DATETIME on the plain list.
+
+**Suggested fix.**
+- Pending the user's ruling, before vetting:
+  - (A) Pick a canonical text spelling for a SQLite time key compared against TEXT, for example the layout
+    `types.DateTime` binds (`SetOutputLayout`, RFC3339Nano by default). Convert the time side to it, both when
+    binding the other side's filter and when building the tuple-loader bucket key. Then lift the
+    `comparatorsDiffer` carve-out for the pair. Rows whose TEXT was stored in another spelling would still match
+    no parent, so the limit needs documenting.
+  - (B) Refuse the pair at generation with a diagnostic naming the edge and the two storage classes, instead of
+    leaving a Go compile error. Keep PRD §13.3's "not yet supported" and make it a stated generation error.
+- The user ruled on 2026-11-10: option (B). Refuse the pair at generation with a diagnostic that names the edge,
+  both columns and their storage classes, and suggests declaring both columns with the same storage class. Option
+  (A) was declined: a TEXT value stored in another spelling would still match no parent silently, and the bind
+  layout (`SetOutputLayout`) is a runtime setting the generator cannot see.
+- Either way, add a SQLite example fixture for both directions (DATETIME PK with TEXT FK, TEXT PK with DATETIME FK)
+  and a live load test, or a generation-error test for (B).
+- Recheck the nested-write side for the same pair. FIX-372's `nullWrapperHolds` reads a `types.DateTime` key as
+  `time.Time`; confirm the E1 drop or the conversion matches the option chosen.
+- Verified option (B), from the vet at `22de66f0`:
+  - `validateTimeKeyPairs` (`gen/context_table.go`) runs in `buildTableContextsPartial` right after
+    `wireRelationshipFKMetadata`, so `generate`, `validate` and `graphql gen` all reach it, as a resolution-level
+    error (exit 1). It walks every edge's key (O2M/has-one on the target, belongs-to on the parent, both M2M junction
+    keys) and refuses a pair where only one column holds a time (`isTimeKeyColumn`: strip `*`, unwrap `sql.Null*`
+    and `types.NullDateTime`, then `isTimeKeyGoType`), reporting each column pair once: `tables.stamps.relationships:
+    "stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime), a time column next to a column of another
+    storage class: no loader can compare them, since neither side spells the time as the other stores it. Declare
+    both columns with the same storage class (PRD §4.13 / §13.3)`. Outside SQLite it says "type" instead of
+    "storage class"; it runs on every dialect, since a PG or MySQL schema file can carry the pair.
+  - Tests: new `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused` (both directions, integer key with a
+    datetime FK, composite member, nullable unique, M2M, PG wording, reported once);
+    `TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused` (both directions plus the declared o2o, both
+    `use_pointers` settings, generate and validate, exit 1) replaces FIX-372's
+    `TestGenerate_DeclaredTimeFKIntoIntegerKeyCompiles`; a `TestValidate_ReportsEachGenerationRuleWithTheOthers` row;
+    the `sqlite datetime next to text` case of `TestGetTemplate_keyComparatorFamilies` is removed.
+  - PRD: §13.3 "is not yet supported." → "is a generation error ([4.13]): the one-column loader does not compile for
+    it, and the key-tuple loader matches no row, since neither side spells the time as the other stores it."; a
+    §4.13 row **A relationship key pairing a time column with a column of another type** (Error, resolution-level);
+    the phase-3 list gains the check. Registry: `config.relationship-key-time-next-to-other-type` (+ `.message`,
+    `.severity`, `.together`) and a `× schema` matrix row in config.md; `gen.fk-convert.comparator-mismatch` now
+    reads "is a generation error instead"; `gen.nested.key-of-another-type-ineligible` (gen.md:253) drops the
+    replaced test's citation; `make req-rehash SECTIONS=4,4.13,13.3`.
+  - Nested side: no change. The pair never reaches `ValidateNestedWriteEligibility` / `nullWrapperHolds`, because
+    generation stops first. `nullWrapperHolds`' `types.DateTime`→`time.Time` read is still needed for
+    DATETIME→nullable DATETIME; its `types.NullDateTime`-over-another-type E1 branch is now unreachable from a schema
+    but stays pinned by `TestNestedAssignExpr_NullWrapperValue`.
+  - Scope: the refusal covers every key shape and edge type, not only the one-column O2M, since the composite,
+    nullable-unique, M2M and integer cases have the same root cause at the same fix site and load nothing silently.
+    A SQLite boolean key next to another storage class is outside this check (bool keys take the Bool family since FIX-376).
+- Prototype results, run at `22de66f0` on 2026-11-10: reproduction with a throwaway `cli/zz_probe_fix380_test.go`
+  (sqlite/stdlib, nested on, generate then `go build -gcflags=-e ./...`) → DATETIME PK + TEXT FK: `cannot use
+  &comparator.NullableTime{…} (value of type *comparator.NullableTime) as *comparator.NullableID value in struct
+  literal`; TEXT PK + DATETIME FK: `cannot use &comparator.NullableID{…} … as *comparator.NullableTime` (1 error per
+  direction). Composite, nullable-UNIQUE, M2M and DATETIME→INTEGER build; a live load on modernc sqlite with the same
+  text `'2024-01-02T03:04:05Z'` on both sides gives `parent {A:1 K:2024-01-02 03:04:05 +0000 UTC StampKids:[]}`,
+  `parent {ID:1 K:{… Valid:true} StampKids:[]}`, `parent {ID:1 Profiles:[]}` and `parent {K:… Tags:[]}`. Gates:
+  `go test -race ./gen/` ok; `go test -short ./cli/` (incl. `TestE2EGoldenFiles`) ok; the two new cli tests ok;
+  `go vet` clean; golangci-lint 0 issues; gofumpt clean; `make req-check` ok (6314 requirements); `make refs-check`
+  ok. Fail-first: `validateTimeKeyPairs` call removed → `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused/*`
+  "BuildTableContextsFromSchema() error = nil, want the time-key refusal",
+  `TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused/datetime_key,_text_fk/use_pointers_true/generate` "generate
+  succeeded, want the time-key refusal", and the validate row fails; `types.NullDateTime` unwrap removed →
+  `TestGetTemplate_keyComparatorFamilies/nullable_sqlite_datetime` "pairs stamp_kids.k (datetime) with stamps.k
+  (datetime), a time column next to a column of another storage class". The existing suite without the fix passes.
+  Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
+- Prototype results, re-run at `57e8b91a` on 2026-11-13: the `22de66f0` patch applied with `git apply --3way`; only the
+  `<!-- prd: … sha256 -->` anchors in conformance `config-fields.md` (§4) and `config.md` (§4.13) conflicted (FIX-379
+  changed those sections), kept HEAD's and re-ran `make req-rehash SECTIONS=4,4.13,13.3`. Content unchanged. Reproduction
+  unchanged (`out/models_gen.go:2442:9: cannot use &comparator.NullableTime{…} … as *comparator.NullableID value` and the
+  reverse). Gates: `go test -race ./gen/` ok; `go test -short -count=1 ./cli/` ok; gofumpt clean; golangci-lint 0 issues;
+  `make req-check` ok (6322 requirements); `make refs-check` ok. Fail-first as above; removing the `types.NullDateTime`
+  unwrap now also fails `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused/text_key,_datetime_fk` and
+  `/integer_key,_datetime_fk`. Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
+- Prototype results, re-run at `bd76ff03` on 2026-11-16: the `57e8b91a` patch applied with `git apply --3way`; the four
+  `.go` files applied cleanly over FIX-377. PRD.md conflicted only on the §4.13 phase-3 line (FIX-377 added its Go-map-key
+  clause there): both clauses kept, FIX-380's after the duplicate-relationship-name clause. The §13.3 hunk merged cleanly
+  next to FIX-378's "buckets compare keys as Go sees them" paragraph. The conformance `config-fields.md`, `config.md` and
+  `gen.md` anchors re-hashed with `make req-rehash SECTIONS=4,4.13,13.3`. A combined PG probe (`text[]` PK plus a
+  timestamptz PK with a text FK) gives `validation failed with 2 error(s)`, one from each fix. Reproduction unchanged
+  (`out/models_gen.go:2442:9: cannot use &comparator.NullableTime{…} … as *comparator.NullableID value` and the
+  reverse). Gates: `go test -race -count=1 ./gen/` ok; `go test -short -count=1 ./cli/` ok; vet, gofumpt clean;
+  golangci-lint 0 issues; `make req-check` ok (6334 requirements); `make refs-check` ok; `make update-golden` /
+  `update-golden-e2e` no golden changes. Fail-first as before; removing the `types.NullDateTime` unwrap now also fails
+  `/nullable_unique_key`. Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
+- Auto-accepted the recommended option on 2026-11-16 (`/fix` auto-accept rule): when an override retypes one of two time columns (a PG `timestamptz` FK with `column_map: {k: {type: string}}`), the refusal read "pairs … (timestamptz) with … (timestamptz) … Declare both columns with the same type", a remedy already met → the remedy also says "or, where an override retyped one of them, give both the same Go type", because it was tested with its gates green, causes no golden churn, adds no public surface (error text only), and reverses no ruling or PRD behavior (it adds §4.13 text for an unspecified case).
+
+**References.**
+- PRD §13.3 (FK type conversion; "A time key next to a key of another family, which only SQLite accepts, is not
+  yet supported"), §11.2 (comparator families).
+- FIX-372 (`c88b5c7e`; the carve-out and its auto-accept), FIX-371 (`f36be88e`; time keys on `comparator.Time`),
+  FIX-363 (datetime key terms).
+- `cmd/sqlgen/gen/key_mismatch_test.go`, `TestGetTemplate_keyComparatorFamilies/sqlite_datetime_next_to_text` (pins
+  the carve-out, and must change with either option).
+
+**Resolution notes.** Option (B), as ruled on 2026-11-10. The vetted prototype (`bd76ff03`) applied cleanly with `git apply --3way`. The refusal's remedy also names the override route (auto-accepted, see Suggested fix), pinned by the `retyped fk of the same type names the override` row; PRD §4.13 row and the `.message` registry row updated, `make req-rehash SECTIONS=4,4.13,13.3`. An M2M through an excluded junction is not refused, as in the prototype: the loader types an excluded holder's columns from the columns they reference, so a TEXT junction column into a DATETIME key loads the same as a DATETIME one (reviewer probe, `tags=0`/`tags=1` for both), and the refusal's premise does not hold there. A schema fallback refusing it was tried and reverted. `validateTimeKeyPairs` (`cmd/sqlgen/gen/context_table.go`) runs right after `wireRelationshipFKMetadata` and refuses, as a resolution-level error, any relationship key (O2M/has-one, belongs-to, both M2M junction keys; one-column, composite or nullable-unique) that pairs a time column with a column of another type, naming the edge, both columns and their storage classes ("type" outside SQLite), each column pair once. `comparatorsDiffer`'s comment now says the pair never reaches it. Tests: `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused`, `TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused` (replaces `TestGenerate_DeclaredTimeFKIntoIntegerKeyCompiles`), a `TestValidate_ReportsEachGenerationRuleWithTheOthers` row; the `sqlite datetime next to text` case of `TestGetTemplate_keyComparatorFamilies` is removed. PRD §13.3 and §4.13 (row + phase-3 list) state the generation error; conformance `config.md`, `config-fields.md`, `gen.md` updated and re-hashed. Nested side unchanged (generation stops before `ValidateNestedWriteEligibility`). Gates: `make check` ok; `make update-golden` / `update-golden-e2e` no golden churn; `make check-examples` ok. Inline: the `comparatorsDiffer` line ref in Root cause moved to `:256`; backlog line on the declared `types.NullDateTime` fk into an integer key removed, as this fix closes it.
+
+### FIX-377
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
+- **Vetted:** ready at `57e8b91a` (2026-11-13)
+
+**Issue.** **MySQL SET keys and array keys do not compile.** At `22de66f0` (FIX-370 landed), `sqlgen generate` exits 0 and `go build` fails. A SET or `kind[]` PK fails three ways: `cannot use &comparator.Enum[ThingsSkSet]{…} as *comparator.ID value` (`*comparator.Slice[Kind]` for `kind[]`), `ThingsSkSet does not satisfy comparable`, and `invalid map key type ThingsSkSet`. The generated names are `<Table><Column>Set` (e.g. `ThingsSkSet`) and, for a PG enum array, `KindSlice`. A SET filter field is `comparator.ID`, since `resolveGenericComparator`'s IsSet arm returns "". `text[] PRIMARY KEY` is unchanged: `cannot use &comparator.ID{…} as *comparator.Slice[string] value` (5 sites, pgx and stdlib). The same root cause also breaks `integer[]` PKs, `jsonb` PKs on pgx (`invalid map key type types.JSON`, 4 sites; the PK filter `&comparator.ID{Eq: new(fmt.Sprint(id))}` builds but would compare against the byte dump), composite PKs with an array member, junction PKs with a `text[]` member, and FKs over `text[]`/SET into a UNIQUE key of the same type. `bytea` PKs and UNIQUE array/SET columns with no FK into them build.
+
+**Root cause.** `pkComparatorFamily` cannot identify these from the Go type. On the map-key side, `goTypeComparable` (`cmd/sqlgen/gen/context.go:1941`) catches bare `[]T` but not named slices (`ThingsSkSet`, `KindSlice`) or `types.JSON`, so `KeySetType` emits `map[ThingsSkSet]struct{}` instead of its string/%#v fallback.
+
+**Suggested fix.**
+- Choose between a comparator route and a validation error for keys that cannot be a Go map key; either way the generator must not emit code that fails to build.
+- Add a build test.
+- Pending the user's ruling:
+  - Comparator route or validation error for a PK that cannot key a Go map (SET, arrays incl. `kind[]`, `jsonb`)?
+    - (a, recommended, prototyped) A §4.13 Error naming the column and its Go type, raised by `validate` and `generate`. 4 files, no golden churn, all gates green. It refuses schemas PG and MySQL accept; the way out is `primary_key.columns` on other columns or `exclude_tables`. Needs a new §4.13 row (plus `make req-rehash SECTIONS=4.13`) replacing the prototype's PRD-gap row.
+    - (b) Comparator route. Not prototyped: `comparator.Slice[T]` has no equality or IN operator (`comparator/slice.go:13-18`), so an array key needs a new runtime operator (a §11.2 change with per-dialect SQL) or `comparator.ID` over a text literal; `pkComparatorFamily` must take the column, not the Go type; loader map keys follow §13's `fmt.Sprint`, and `fmt.Sprint([]string{"a b"}) == fmt.Sprint([]string{"a","b"})` would group children wrongly; MySQL per-column SET types need element-wise conversion; GraphQL `id:` args for array keys are unmeasured; it needs live PG and MySQL tests.
+  - Under (a), what happens to a detected FK whose columns are SET/array and reference a non-PK UNIQUE key (`text[] REFERENCES things(tags)`: 1 build error; SET FK into a UNIQUE SET: 3 errors)?
+    - (a, recommended) Detection gives no edge and warns, like §4.13's "foreign key whose referenced columns are not a key" row; a hand-declared relationship over such columns is an error. The fix sites are relationship detection and resolution. Not prototyped.
+    - (b) An error on the FK column itself, raised even when `exclude_relationships` excludes the edge.
+    - (c) Out of scope, as a separate entry.
+    - Measured: the PK-only prototype leaves both FK shapes failing to build.
+- The user ruled on 2026-11-11: (a) a §4.13 validation error for a primary key that cannot key a Go map (replace the PRD-gap row with a §4.13 row), and, for a detected FK over SET/array columns into a non-PK UNIQUE key, (a) detection gives no edge and warns, and a hand-declared relationship over such columns is an error. The FK half is not prototyped yet; re-vet to extend the patch.
+- Prototype results, run at `22de66f0` on 2026-11-10, option (a): reproduction with a probe test in `cmd/sqlgen/cli` (generate + `go build -gcflags=-e`), nested on and off → set PK: 15 errors; set PK + FK: 18 (incl. `cannot convert t.Sk (variable of slice type ThingsSkSet) to type ChildrenSkSet`); `text[]` PK: 5; `kind[]` PK: 14; `jsonb` PK: 4; composite `(a, tags text[])` PK: 1; junction PK with a `text[]` member: 1; `text[]` FK into a UNIQUE `text[]`: 1 (`cannot use &comparator.NullableID{…} as *comparator.NullableSlice[string]`); MySQL SET FK into a UNIQUE SET: 3. Prototype: `checkPrimaryKeyCanKeyAMap` / `keyColumnCanKeyAMap` in `buildSingleTableContext` after `buildTableColumns`, refusing a resolved PK column that is IsSet, IsSlice, or not comparable outside the Opaque family, with `primary-key column "tags" of table public.things has Go type []string, which cannot key a Go map, so the generated package would not compile; key the table on other columns with tables.public.things.primary_key.columns, or drop it with exclude_tables`; `goTypeComparable` gains `types.JSON`; `TestGenerate_UnkeyablePrimaryKeyIsAnError` (`cmd/sqlgen/cli/unkeyable_pk_test.go`) over mysql SET, pg `kind[]`, pg `text[]` (stdlib), pg `jsonb`, a composite member and a `primary_key.columns` override, plus a build half for an `id`-keyed table with a UNIQUE `text[]` and a `bytea` PK table; PRD-gap row `gap.generate.unkeyable-primary-key` (§4.13) in `docs/conformance/cli/commands.md`. Gates: `go test -race ./gen/... ./cli/...` ok; golangci-lint 0 issues; gofumpt clean; `make update-golden-e2e` PASS with no expected/ or models/ churn; `make req-check` and `make refs-check` ok. Fail-first: check call removed → all 12 `TestGenerate_UnkeyablePrimaryKeyIsAnError/*/{validate,generate}` subtests fail "validate succeeded, want an error naming the key column"; `types.JSON` dropped from `goTypeComparable` → `/postgres_jsonb/{validate,generate}` fails the same way; Opaque arm dropped → the build half fails "generate: … primary-key column \"b\" of table public.blobs has Go type []byte, which cannot key a Go map". The existing suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-377.patch` (4 files, +135/-2).
+- The user ruled on 2026-11-11, after the second vet: exempt the unique-FK one-to-one shape. A detected or declared `o2o` edge over these columns is loaded by a `LEFT JOIN` (§13.2), keys no map, builds at HEAD, and keeps its edge with no warning; the FK-side rule covers `o2m` / `m2m` only.
+- Second vet, run at `22de66f0` on 2026-11-11, on the ruled options (PK error plus the narrowed FK rule): PK side unchanged from the first vet. FK detection: `relationshipTargets.columnGoType` resolves a parsed column as `buildColumnContext` does (column_map, type_map, overrides.types, SET flag) through `resolvedKeyColumn`; `unkeyableKeyMember` walks both sides and both M2M junction keys through a shared `inferredKeySides`; `buildRelationshipContexts` omits an O2M/M2M edge with `tables.public.things: foreign key refs_tags_fkey gives no relationship "refs": its column public.refs.tags has Go type []string, which cannot key a Go map, so the generated package would not compile; list "refs" in `exclude_relationships` to silence this (PRD §4.13, §5.3)`. FK resolution: `mergeDeclaredRelationships` calls a new `checkDeclaredLinkColumns` (holding the existing excluded-column error, moved for cyclop, and the new error `tables.<t>.relationships: "Refs" links through public.refs.tags, whose Go type []string cannot key a Go map, so the generated package would not compile; link the relationship through other columns or remove it (PRD §4.13, §13.4)`). `unkeyableKeyMember` and `unkeyableDeclaredMember` answer "" for `parser.OneToOne`. PRD §4.13 gains "A primary-key column whose Go type cannot key a Go map" (Error, resolution-level) and "A to-many relationship's key column whose Go type cannot key a Go map" (Warning FK-inferred / Error declared, with the o2o exemption); the phase-3 list gains "primary-key or to-many relationship key column"; registry `config.unkeyable-primary-key{,.message,.severity,.together}` and `config.unkeyable-relationship-key{,.message,.severity,.together}` plus two N/A `× schema` rows in docs/conformance/cli/config.md replace the PRD-gap row `gap.generate.unkeyable-primary-key`; `make req-rehash SECTIONS=4.13,4`. Tests (`cmd/sqlgen/cli/unkeyable_fk_test.go`): `TestGenerate_UnkeyableForeignKeyGivesNoRelationship` (pg text array on pgx and stdlib and mysql set warn once under validate and generate, then build; pg one-to-one, pg chained one-to-one, mysql set one-to-one and a declared one-to-one keep `Things *Thing` / `Thing *Thing`, warn nothing, and build) and `TestGenerate_UnkeyableDeclaredRelationshipIsAnError` (pg o2m, mysql o2m); two `TestValidate_ReportsEachGenerationRuleWithTheOthers` cases. Reproduction: O2M `text[] REFERENCES things(tags)` → `cannot use &comparator.NullableID{…} … as *comparator.NullableSlice[string] value in struct literal`; MySQL SET FK into a UNIQUE SET → `cannot convert t.Sk (variable of slice type ThingsSkSet) to type RefsSkSet`, `RefsSkSet does not satisfy comparable`; the unique-FK O2O over `text[]`, SET and chained build at HEAD; a declared o2m over `text[]` into an integer PK builds silently. Gates: `go test -race ./gen/... ./cli/...` ok; golangci-lint 0 issues; gofumpt clean; `make req-check` ok (6318 requirements); `make refs-check` ok; `make update-golden-e2e` PASS with no expected/ or models/ churn. Fail-first: O2O exemption removed from `unkeyableKeyMember` → `/postgres one-to-one` and `/mysql set one-to-one` "want no unkeyable-key warning" and "models_gen.go has no \"Things *Thing\", want the one-to-one edge kept", `/postgres chained one-to-one` also `go build: … fo.Refs.Things undefined`; exemption removed from `unkeyableDeclaredMember` → `/declared one-to-one` "validate: validation failed with 1 error(s)"; inferred and declared checks disabled → the O2M cases fail `validate stderr = "", want "Warning: … gives no relationship \"refs\": …" once` plus the build errors, and `TestGenerate_UnkeyableDeclaredRelationshipIsAnError/{postgres o2m,mysql o2m}` "validate succeeded, want an error naming the link column"; PK side as in the first vet. The existing suite without the fix passes. A chained-O2O skip from an intermediate patch is dropped: under the exemption it cannot fire, and the chained case builds without it. Golden churn: none. Patch: `.claude/prototypes/FIX-377.patch` (9 files, +514/-41), replacing the first.
+- Third vet, re-run at `57e8b91a` on 2026-11-13: the `22de66f0` patch applied with `git apply --3way`; only the
+  `<!-- prd: 4 / 4.13 sha256 -->` anchors in conformance `config-fields.md` and `config.md` conflicted (FIX-379 changed
+  those sections), resolved with `make req-rehash SECTIONS=4.13,4`. Content lines byte-identical to the prior patch.
+  Reproduction counts unchanged (set PK 15 errors, `text[]` 5, `kind[]` 14, `jsonb` 4, composite 1; generate exits 0).
+  Gates: `go test -race -count=1 ./gen/... ./cli/...` ok; golangci-lint 0 issues; gofumpt/vet clean; `make req-check` ok
+  (6326 requirements); `make refs-check` ok; `make update-golden-e2e` PASS with no expected/models churn. Fail-first
+  messages match the second vet; the existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-377.patch` (9 files, +514/-41).
+
+- (superseded 2026-11-16) The user ruled on 2026-11-16, during `/fix-loop`: a MySQL SET key is accepted only when `type_map` retypes it to a
+  predeclared or package-qualified type (e.g. `string`); a SET left at its generated type or retyped to a local named
+  slice (`type_map: {sk: ThingsSkSet}`, which built `invalid map key type ThingsSkSet`) is refused, on the PK and FK
+  sides alike.
+
+- (superseded 2026-11-16) The user ruled on 2026-11-16, after the second verify: extend the same rule to PostgreSQL array keys. An array key
+  (SQL type ending in `[]`) is accepted only when it resolves to a predeclared or package-qualified type; one retyped to
+  its own generated type (`type_map: {kinds: KindSlice}`, which built `invalid map key type KindSlice` on the PK side
+  and `slice can only be compared to nil` on the FK side) is refused, on the PK and FK sides alike.
+
+**References.**
+- PRD §11.2, §4.13. FIX-370.
+
+**Resolution notes.** Landed the vetted prototype (third vet at `57e8b91a`; applied clean with `git apply --3way` at `80f371b3`, no conflicts; FIX-378's later edits to `gen/context.go`, PRD and `config.md` do not overlap it). A primary-key column whose Go type cannot key a Go map (MySQL SET, PostgreSQL arrays incl. enum arrays, `types.JSON`) is a §4.13 resolution-level error from `validate` and `generate` (`checkPrimaryKeyCanKeyAMap` in `buildSingleTableContext`; `goTypeComparable` gains `types.JSON`). A detected o2m/m2m FK over such columns gives no edge and warns; a declared one is an error (`unkeyableKeyMember` / `checkDeclaredLinkColumns` in `gen/relationship_targets.go`); o2o edges are exempt per the 2026-11-11 ruling. PRD §4.13 gains two rows; registry rows `config.unkeyable-primary-key*` and `config.unkeyable-relationship-key*` replace the PRD-gap row. Tests: `TestGenerate_UnkeyablePrimaryKeyIsAnError`, `TestGenerate_UnkeyableForeignKeyGivesNoRelationship`, `TestGenerate_UnkeyableDeclaredRelationshipIsAnError`, two `TestValidate_ReportsEachGenerationRuleWithTheOthers` rows. Fail-first re-run on the final code: PK check call removed → all eight refusal subtests of `TestGenerate_UnkeyablePrimaryKeyIsAnError` fail (re-run on the final code). Gates: `make check` ok; `make update-golden-e2e` PASS with no expected/ or models/ churn (matches vet); `make check-examples` ok. Inline from `/verify`: a MySQL SET retyped by `type_map` / `overrides.types` keeps `IsSet` (it follows the SQL type), so the prototype refused a SET retyped to `string`; per the 2026-11-16 ruling, `keyColumnCanKeyAMap` now accepts a SET key only when it resolves to a predeclared or package-qualified type, and refuses it at its generated type or retyped to a local type (`type_map: {sk: ThingsSkSet}`, which an interim `SliceElemType`-based check let through to `invalid map key type ThingsSkSet`), on the PK and FK sides. Pinned by `mysql set retyped to string` (PK build subtest; FK case keeps `Refs []*Ref` and builds) and `mysql set retyped to its own set type` (PK error, FK warning); fail-first: disabling the SET arm fails both own-set-type cases plus `mysql set` / `mysql o2m`; the PRD §4.13 PK row, the `config.unkeyable-primary-key` row and the `pkComparatorFamily` comment say so. Per the later 2026-11-16 ruling the same rule covers PostgreSQL arrays, told by the SQL type (`BaseSQLType` ending in `]`; `resolvedKeyColumn` fills it), since a retype to a bare name such as `KindSlice` drops `IsSlice`: pinned by `postgres enum array retyped to its own slice type` (PK error, declared o2m error); fail-first: dropping the array arm fails both; the inferred-FK case with both sides retyped to `KindSlice` is untested here because of a separate filter-comparator bug (`resolveGenericComparator` picks `comparator.Enum` for an array retyped to a bare local type name), to be filed as its own FIX; arrays retyped to `string` build and are pinned by `postgres text array retyped to string`; added inferred and declared `m2m` cases (`postgres m2m`) and asserted the PK error's remedy text; the PRD §4.13 to-many row and the `unkeyableKeyMember` comment now say what reaches the rule includes a declared PRIMARY KEY that `primary_key.columns` replaced and `m2m` edges; registry citations added; `make req-rehash SECTIONS=4.13,4`. Backlog: view `@pk` keys are outside the rule. 2026-11-16 follow-up: the user replaced both retype rulings — SET, array and JSON key columns never key, whatever the retype; detected FKs are skipped with the warning, declared ones and PKs are errors.
+
+### FIX-378
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** FIX-373 vet (2026-11-06), filed on the user's yes
+- **Vetted:** ready at `57e8b91a` (2026-11-13)
+
+**Issue.** **Relationship loaders silently drop children whose key differs from the parent's only in case.** Measured on MySQL, SQLite NOCASE and PostgreSQL citext: `composite loader Depot.Vans for region EU, child region eu: len=0`; `single loader Team.Players for ABC, child abc: len=0` (`Team.Players` was a throwaway probe table; the conformance schema has no single-column string O2M edge). M2M loaders drop rows the same way on both sides, measured on MySQL: `single-column M2M Van.Permits (target code ABC, junction abc): len=0 err=<nil>`, `Permit.Vans (parent code ABC, junction abc): len=0`, `composite M2M Van.Tools (van EU, junction EU, tool eu): len=0`, `Tool.Vans (tool eu, junction EU): len=0`. `disconnect` finds the same row, so the database treats it as linked. No error is raised. FIX-373's limit (§9.9.6) covers the nested-write split only.
+
+**Root cause.** Loaders fetch by database comparison, then bucket the rows in Go by stringified key (`get.go.tmpl`, the O2M maps and M2M step 3), so a case-differing child matches no parent.
+
+**Suggested fix.**
+- Decide how buckets read equality; Go cannot apply a collation, and `strings.EqualFold` disagrees with the database both ways.
+- Any option changing the loader's statements needs a ruling against PRD §13.2 and §25.1.
+- Add a conformance row with a mixed-case key.
+- Pending the user's ruling:
+  - How should loader buckets read equality when the database compares case-insensitively?
+    - (C, recommended, prototyped) A loud error at the race-free sites (O2M child-to-parent, M2M junction-to-parent): `load depot vans: 1 of 1 child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling`. +0 statements, no SQL change, §13.2 and §25.1 untouched; goldens churn in 13 examples plus conformance. The whole read fails rather than dropping one row. Precedent: UpsertMany's read-back already errors naming the cause (PRD:3862, `upsert_many.go.tmpl:621`). The M2M target side stays a silent, documented limit: a loud check there false-errors under a concurrent link write (measured: `race: ... len=-1 err=... load van permits: a target's key matches no junction row's ...`; with the check removed `len=1 err=<nil>`).
+    - (A) Documented limit only, like FIX-373's §9.9.6: no generated change, no goldens; the silent drop stays on all 7 measured paths.
+    - (B) Bucket by a key the database returns. M2M: the junction read joins the target (and optionally the parent) table, so both keys come back in stored spelling; same statement count, but step 1 changes shape against §13.2's "Query the junction table", and it closes the M2M target-side residual. O2M: GetMany cannot select an extra expression, so it needs a runtime change or a bypass of the child client's hooks, tenancy and cache (FIX-373 option C's objection). Not prototyped.
+    - (D) Refuse or diagnose at generation: the parser keeps no collation, and MySQL's default `utf8mb4_0900_ai_ci` is not in the DDL. Not viable alone.
+    - (E) `strings.EqualFold`: rejected. Measured on MySQL `'cafe'='café' -> 1, 'ABC'='abc' -> 1, general_ci 'ab'='ab ' -> 1` vs `strings.EqualFold` false, true, false; on a case-sensitive column two parents `ABC` and `abc` would share a bucket and get each other's children.
+  - If (C): close the M2M target-side residual with (B)'s junction join on that side only (statement shape changes, +0 statements), or document it as a limit next to the new paragraph? Recommendation: document it now and revisit (B) if it surfaces.
+  - If (C): plain `fmt.Errorf` text (as prototyped, matching the UpsertMany precedent) or a new exported sentinel for `errors.Is` (new public surface in `database/` and `errors_gen`)? Recommendation: plain text.
+- The user ruled on 2026-11-11: (C) a loud error at the race-free sites, as plain `fmt.Errorf` text (no exported sentinel); and close the M2M target-side residual with (B)'s junction join on that side only (the junction read joins the target table so keys come back in stored spelling; +0 statements, §13.2's statement shape changes for that side). The junction join is not prototyped yet; re-vet to extend the patch, and amend §13.2 for the new statement shape.
+- Prototype results, run at `22de66f0` on 2026-11-10, option (C): reproduction on MySQL 8.0 with the conformance/mysql models → `create van region=eu depot(EU) err=<nil>`; `db: vans matching (EU, depot) = 1`; `composite O2M Depot.Vans for region EU, child region eu: len=0 err=<nil>` and the four M2M lines above; SQLite sibling copy with `TEXT COLLATE NOCASE` → `db: players matching ABC = 1`; `single loader Zteam.Zplayers for ABC, child abc: len=0`; PostgreSQL 16 sibling copy with CITEXT, pgx `= ANY` path → `single loader Zteam.Zplayers for ABC, child abc (pgx ANY path): len=0`. Prototype: `get.go.tmpl` O2M single-column and keyed maps and M2M step 3 record which buckets a parent consumed and error on any left unconsumed (a parent with no children is still assigned nil); new conformance subtest `GetMany/a loaded key that differs from its parent's only in case is an error`, gated on CapCaseInsensitiveText (runs on mysql), covering O2M composite, M2M single-column junction and M2M composite junction; registry row `load.key-compared-as-go` under §13.2. The PRD paragraph waits on the ruling. After the prototype, Van.Permits and Van.Tools stay `len=0 err=<nil>` (the residual), and Depot.Vans, Permit.Vans, Tool.Vans and the SQLite/PG Zteam.Zplayers error. Gates: `go test -race ./gen/...` ok; `make update-golden` and `make update-golden-e2e` PASS; conformance mysql, sqlite, postgres and postgres_stdlib `go test -race ./...` ok; `make lint-conformance` 0 issues; `make conformance-fresh` clean; `make req-check` and `make refs-check` ok; the 13 churned examples `go test -race ./...` ok and golangci-lint 0 issues. Fail-first: O2M keyed check off → `GetMany depots with Vans error = <nil>, want one containing "match no parent key byte for byte"`; M2M single-column junction check off → `GetMany permits with Vans error = <nil>, want ...`; M2M keyed junction check off → `GetMany tools with Vans error = <nil>, want ...`; O2M single-column check shown only by the SQLite and PG probes (HEAD `len=0` vs `load zteam zplayers: 1 of 1 child keys match no parent key ...`), with no permanent test since no conformance edge exists. The existing suite without the fix passes. Golden churn: unit `get_products_relationships_gen.go` ~1; sqlite ~23 (file_per_table); graphql, graphql_null_wrappers, graphql_top_level, introspect_mysql, introspect_postgres, introspect_sqlite, mysql, postgres, postgres_stdlib, tenancy, tenancy_mysql and tenancy_postgres ~2 each; conformance models ~1 × 4. Patch: `.claude/prototypes/FIX-378.patch` (55 files, +6060/-394).
+- Second vet, run at `22de66f0` on 2026-11-11, on the ruled option: the first patch plus the target-side junction join. `get.go.tmpl` M2M step 1 (one-column and keyed paths) becomes `sql.BuildSelectJoin(junction j, LEFT JOIN target t ON t.<ref> = j.<junction ref>[ AND …], Columns j.<local key>, t.<referenced cols>)` with `WHERE j.<local> IN (chunk) AND t.<first referenced col> IS NOT NULL` (LEFT JOIN + IS NOT NULL because `BuildSelectJoin` only emits LEFT JOIN; no runtime change). The target key scans into a `target <TargetStruct>` field and is stringified exactly as step 3 reads `t.<Field>`, so both sides of the bucket match by construction. No check on the target side, so the race cannot false-error. PRD: §13.2 M2M step 1 statement shape (the join reads key columns only and applies no target soft-delete, tenancy, `filter:` or consumer Filter; still one statement outside the hook chain), §13.2 map-back bullets (loud error, M2M skip-on-race), both junction example lines (§13.2 Combined Example, §25.1), §25.1's opening and "Why two queries" (why this join is not the rejected JOIN), the §9.8.3 sketch's step 1, §9.9.4 E11 wording, and a new end-of-§13.3 paragraph "The buckets compare keys as Go sees them…"; `make req-rehash SECTIONS=9.8,9.8.3,9.9,13.2,13.3,25.1` (10 anchors). Conformance subtest renamed `GetMany/a loaded key that differs from its parent's only in case is an error, and from its target's loads`, asserting Van.Permits and Van.Tools each load 1 target in exactly 3 statements; registry row `load.m2m-target-key-as-stored` (§13.2) added, `load.key-compared-as-go` renamed, `rel.m2m.loader` and `load.m2m-composite-key` reworded. Unit tests updated to the new SQL shape (`TestGetTemplate_m2mRelationshipLoading`, `TestGetTemplate_m2mJunctionScansTypedKeys`, `TestGetTemplate_m2mCompositeKeyLoading`, `TestGetTemplate_keyWiderThanFKStaysOutOfTheLoad/m2m into a float key`, cli `TestGenerate_CompositeKeyEdgeIsGenerated/tenant junction m2m`). Stale fact in the first vet's results: that patch also broke `cmd/sqlgen/cli` `TestGenerate_EdgeJoinsReferencedColumns/fk to a non-PK unique column` (`models_gen.go is missing "byFK[users[i].Email]"`), fixed in the combined patch, so `go test ./cli/` is a gate; the first patch's `examples/sqlite/go.sum` churn is dropped. Reproduction: first patch alone, MySQL conformance → `GetMany vans with Permits = 1 vans, 0 Permits, <nil>; want 1 van with 1` and `GetMany vans with Tools = 1 vans, 0 Tools, <nil>; want 1 van with 1`. Constraint probes (MySQL): a link written from a target-client hook between step 1 and step 2 → `Van.Permits len=1, Van.Tools len=1 err=<nil>`, next read `len=2, len=2 err=<nil>` (no false error); Tag.Authors with one of two authors soft-deleted → `len=1 err=<nil> statements=3`, step 2 carrying `deleted_at IS NULL`; consumer filter `name=zz` → `len=0 err=<nil>`; tenancy, tenancy_mysql and tenancy_postgres suites pass (step 2 still carries the tenant predicate). Checked against §25.1, §27.7, §29.10 and §21: no conflict. Gates: `go test -race ./gen/...` ok; `go test -race ./cli/` ok (not -short); golangci-lint 0 issues; gofumpt clean; `make update-golden` and `make update-golden-e2e` PASS and stable; conformance mysql, sqlite, postgres and postgres_stdlib `go test -race ./...` ok; `make conformance-fresh` clean; `make lint-conformance` 0 issues ×5; `make req-check` ok (6312 requirements); `make refs-check` ok; the 13 churned examples `go test -race ./...` ok and golangci-lint 0 issues. Fail-first: one-column junction join reverted → "GetMany vans with Permits = 1 vans, 0 Permits, <nil>; want 1 van with 1"; keyed junction join reverted → "GetMany vans with Tools = 1 vans, 0 Tools, <nil>; want 1 van with 1"; option-C sites as in the first vet. Golden churn: the same 13 examples as the first patch, nothing added. Patch: `.claude/prototypes/FIX-378.patch` (61 files, +11337/-2496), replacing the first.
+- Third vet, re-run at `57e8b91a` on 2026-11-13: the `22de66f0` source hunks applied with `git apply --3way`; only the
+  `<!-- prd: 9.9 sha256 -->` anchors in conformance `cli/gen.md` and `client.md` conflicted (FIX-375 changed §9.9); E11
+  re-read and still accurate, `make req-rehash SECTIONS=9.9` (2 anchors). Generated files regenerated. Reproduction on
+  MySQL conformance with the HEAD template: `GetMany depots with Vans error = <nil>, want one containing "match no
+  parent key byte for byte"` (and the permits/tools variants), `GetMany vans with Permits = 1 vans, 0 Permits, <nil>;
+  want 1 van with 1`. Gates: gofumpt clean; `go vet` ok; `go test -race -count=1 ./gen/...` ok; `go test -race
+  -count=1 ./cli/` (non-short, incl. `TestGenerate_EdgeJoinsReferencedColumns`) ok; golangci-lint 0 issues; `make
+  update-golden` ok; `make update-golden-e2e` PASS and stable; conformance mysql/sqlite/postgres/postgres_stdlib ok;
+  `make lint-conformance` 0 issues ×5; `make conformance-fresh` clean; `make req-check` ok (6320 requirements); `make
+  refs-check` ok; the 13 churned examples `go test -race` ok and golangci-lint 0 issues. Fail-first matches the second
+  vet per site (O2M keyed, M2M one-column and keyed junction→parent, both junction joins); the O2M one-column check still
+  has no permanent test (covered by the `22de66f0` probes only). The existing suite without the fix passes. Golden churn:
+  the same 13 examples, nothing added; larger line counts in mysql, postgres, tenancy, tenancy_mysql and
+  tenancy_postgres come from the FIX-375/376 edges, and sqlite adds `bool_keyed_gen.go` (models + expected). Patch:
+  `.claude/prototypes/FIX-378.patch` (63 files, +12069/-2664).
+
+**References.**
+- PRD §13.2, §13.3. FIX-373.
+
+**Resolution notes.** Landed the vetted prototype (third vet, `57e8b91a`): source hunks applied clean with `git apply --3way` at `2e11862d`, generated files regenerated. `get.go.tmpl`: the O2M single-column and keyed maps and the M2M step 3 junction-to-parent maps record which buckets a parent consumed and return a plain `fmt.Errorf` naming the cause when one is left over (`load depot vans: 1 of 1 child keys match no parent key byte for byte, though the database matched them: …`); M2M step 1 (one-column and keyed) joins the target with `sql.BuildSelectJoin` (LEFT JOIN + `t.<ref> IS NOT NULL`, key columns only) so the target key comes back in its stored spelling and the target side loads, +0 statements. PRD §13.2 (M2M step 1 shape, map-back bullets, junction example lines), §13.3 (keys compared as Go sees them), §25.1, §9.8.3, §9.9.4 E11 amended; registry rows `load.key-compared-as-go` and `load.m2m-target-key-as-stored` added, `rel.m2m.loader` and `load.m2m-composite-key` reworded. Tests: conformance `GetMany/a loaded key that differs from its parent's only in case is an error, and from its target's loads` (CapCaseInsensitiveText, runs on mysql); unit and cli tests moved to the new junction SQL shape. Golden churn matches the third vet exactly (the same 13 examples, conformance models ×4, unit `get_products_relationships_gen.go`; 14369 changed lines in both). Gates: `make check` ok; `go test -race ./cli/` (non-short) ok; `make check-examples` ok. Fail-first on the final code: `get.go.tmpl` reverted to HEAD and the MySQL conformance models regenerated → `GetMany depots with Vans error = <nil>, want one containing "match no parent key byte for byte"` (and the permits/tools variants), `GetMany vans with Permits = 1 vans, 0 Permits, <nil>; want 1 van with 1` and the Tools variant. The O2M single-column check has no permanent test (no conformance edge; covered by the `22de66f0` SQLite/PG probes; already in the backlog). `/verify` inline doc fixes: the two M2M Step 1 comments in `get.go.tmpl` shortened (goldens regenerated, same file set), the `JunctionReferenceGoType` and `JunctionColumns` comments in `gen/context.go` now say the loader no longer reads them (the dead wiring stays in the backlog), the `BuildSelectJoin` comment in `sql/builder.go` names the M2M junction read, and `rel.m2m.loader` reads "joined to the target".
+
+### FIX-382
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 12, cmd/sqlgen/gen
+- **Surfaced by:** FIX-375 vet (2026-11-10), filed on the user's yes (2026-11-11)
+- **Vetted:** corrected at `57e8b91a` (2026-11-13)
+
+**Issue.** **The cache key for a time primary key depends on the caller's zone, so an update named in another zone leaves a stale entry.** In tenancy_mysql (and the SQLite `tenancy` example, which keys `Moment` by `types.DateTime`): `Get(at)` (UTC), then `Moments().Update(at.In(IST), OwnerID=…)`, then `Get(at)` → `get=<nil>`, while the database and a SkipCache Get show the new owner. The same flow with a UTC key on the update reads fresh.
+
+**Root cause.** All four runtime key builders in `cache/key.go` (`BuildKey`, `BuildCompositeKey`, `BuildTenantKey`,
+`BuildCompositeTenantKey`) write each PK component with `fmt.Fprintf("%v")`. A `time.Time` (or `types.DateTime`, which
+embeds it) renders its zone and any monotonic reading (`m=+0.001047626`), so the same instant in two zones, or a
+`time.Now()` key against a scanned row, gives two keys. Generated code reaches the builders through the four `keyFor*`
+shapes in `cache.go.tmpl:185-211` and directly from `invalidateAffectedTenanted` (`cache.go.tmpl:640`, `:646`), so the
+composite time member (`MomentTagLinkPK.MomentAt`) is affected too, as is any user-direct caller. Vet correction: the
+original text named only `keyForMoment` and only MySQL.
+
+**Suggested fix.**
+- Normalize once, in the runtime: a `writePK(b, pk)` helper in `cache/key.go` replaces the `%v` write in all four
+  builders. A non-pointer value with `UTC() time.Time` (time.Time, types.DateTime by promotion) is written as `t.UTC()`,
+  which also strips the monotonic reading; a `reflect.Pointer` guard avoids a nil-`*time.Time` panic (pointer PKs stay
+  unsupported per §27.5). The tenant segment is not normalized: it must stay byte-identical to the §29.5 / §28.11 stamp.
+- PRD §27.5: add "A time key is its UTC instant", stating the rule and the tenant-segment exception.
+- Tests: `TestBuildKeyTimePKZoneIndependent` in `cache/key_test.go` (UTC/IST/Local, types.DateTime, monotonic, tenant,
+  composite, composite+tenant); live `TestCacheTimeKeyZones` in tenancy_mysql and tenancy (SQLite): warm a Get in UTC,
+  then a single-PK update and a composite-PK delete keyed in IST, then read back.
+- Changed from the original suggestion ("normalize at every key-builder site" in the generator, as FIX-375 does): one
+  runtime site covers the 4 `keyFor*` shapes, the 2 direct `cache.Build*` calls, the event-driven receive path and
+  user-direct callers (`cache.SetAs`, a custom `InvalidationSource`), with no template change and no golden churn. A
+  generator fix reusing FIX-375's `nestedBucketKey` would touch 6 template sites and still miss user-direct callers.
+- Prototype results, run at `57e8b91a` on 2026-11-13: reproduction with a probe in tenancy_mysql/tests
+  (`GOWORK=off go test -count=1 -run TestZZProbeCacheTimeKey -v ./tests/`) → `single: get=<nil> skipcache=1`;
+  `composite after delete: get=&{1 2026-01-02 03:04:05.123456 +0000 UTC} err=<nil>` (stale hit on a deleted row);
+  SQLite tenancy reproduces both. Gates: `go test -race -count=1 ./cache/... ./types/...` ok; golangci-lint 0 issues;
+  tenancy, tenancy_mysql, tenancy_postgres and postgres `GOWORK=off go test -race -count=1 ./...` ok; tenancy and
+  tenancy_mysql golangci-lint 0 issues; update-golden not run (no template, funcmap or context change). Fail-first:
+  `writePK` reverted → `TestBuildKeyTimePKZoneIndependent` fails 7/8, e.g. single_ist `key =
+  "sqlgen:moments:fingerprint:vfp:pk:2026-01-02 08:34:05.123456 +0530 IST", want "…pk:2026-01-02 03:04:05.123456 +0000
+  UTC"`; tenancy_mysql and tenancy `TestCacheTimeKeyZones` fail "Get after an IST-keyed update: OwnerID = <nil>, want 1
+  (stale cache entry)" and "Get after an IST-keyed delete = (&{1 2026-01-02 03:04:05.123456 +0000 UTC}, <nil>), want
+  ErrNotFound (stale cache entry)". The existing suite without the fix passes. Golden churn: none. Patch:
+  `.claude/prototypes/FIX-382.patch` (5 files, +214/-4).
+- Auto-accepted the recommended option on 2026-11-16 (`/fix` auto-accept rule): the new conformance row's untested "tenant segment is not normalized" clause → drop it from the row and keep the PRD sentence as rationale (no time-typed tenant is a realistic shape; §29.5 byte-identity is pinned by `cache-key.entity.tenanted`), because it was checked with green gates, causes no golden churn, adds no public surface and reverses no ruling or PRD behavior.
+
+**References.**
+- PRD §27 (caching), §27.5 (key format). `cache/key.go`. FIX-375.
+
+**Resolution notes.** Landed the vetted prototype as is (applied clean at `db259c68`). A `writePK` helper in `cache/key.go` replaces the `%v` PK write in `BuildKey`, `BuildCompositeKey`, `BuildTenantKey` and `BuildCompositeTenantKey`: a non-pointer value with `UTC() time.Time` (time.Time, types.DateTime) is written as its UTC instant, which also drops the monotonic reading; the tenant segment is untouched. PRD §27.5 gains "A time key is its UTC instant". Tests: `TestBuildKeyTimePKZoneIndependent` (cache) and live `TestCacheTimeKeyZones` in the tenancy and tenancy_mysql examples. Conformance: new row `cache-key.time-utc-instant` in `docs/conformance/runtime/cache.md`, §27 and §27.5 rehashed. Fail-first: `writePK` normalization reverted → `TestBuildKeyTimePKZoneIndependent` fails 7/8. Golden churn: none (`make update-golden-e2e` changed only the known go.sum lines, reverted). The fail-first count is 7/8 on a host whose local zone is not UTC (6/8 under `TZ=UTC`). `/verify` inline doc fixes: the `BuildKey` and `writePK` comments in `cache/key.go` and the `cache-key.entity.single-pk` row now state the UTC-instant rule.
+
+### FIX-383
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 13, cmd/sqlgen/gen
+- **Surfaced by:** FIX-379 vet (2026-11-10), filed on the user's yes (2026-11-11)
+- **Vetted:** corrected at `57e8b91a` (2026-11-13)
+
+**Issue.** **Tenancy detection runs over tables that do not generate (`exclude_tables`, or no resolved primary key).** With `widgets(id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL)` and `audit_logs(id INTEGER PRIMARY KEY, workspace_id TEXT NOT NULL)`, `tenancy: {enabled: true, column: workspace_id}` and `exclude_tables: [audit_logs]`, `GOWORK=off sqlgen generate` gives `Generation error: building tenancy context: tenancy: tenanted entities must resolve to a uniform tenant Go type across the generate run; found divergent types: int64 (import <stdlib>) used by [widgets]; string (import <stdlib>) used by [audit_logs] — …`, exit 1, though `audit_logs` is not generated. With only `audit_logs` carrying the column and excluded, generation exits 0 and the client emits `TenantResolver[string]` with nothing tenanted, and FIX-379's "no tenanted entity" refusal does not fire (`validate` prints "config and schema are valid"). A non-excluded `audit_logs` with no primary key (skipped from generation per §9.4b) hits the same divergent-type error.
+
+**Root cause.** `BuildTenancyContext` iterates every `schema.Tables` entry (`cmd/sqlgen/gen/context_tenancy.go:75`) rather than the tables that generate, against §29.2.3 "every generated entity". FIX-379 (0bd0ac53) did not change the loop.
+
+**Suggested fix.**
+- In `BuildTenancyContext`, skip a table that `config.MatchExcludeTablePattern(table.Name, table.Schema,
+  cfg.ExcludeTables)` matches or that fails `tableHasResolvedPK(cfg, table)`: the same predicates
+  `buildTableContextsPartial` uses, so detection covers exactly the generated tables. Skipped tables get no tenancy-map
+  entry (every consumer looks up built contexts only). Update the doc comment: the map covers each generated table and
+  each parsed view.
+- Test: table-driven `TestBuildTenancyContext_skipsTablesThatDoNotGenerate` in `context_tenancy_test.go` (excluded
+  divergent type; excluded nullable column via glob `public.audit_*`; no-PK divergent type; excluded only-carrier
+  refused; no-PK only-carrier refused).
+- While there (inline, same site): FIX-379's refusal text "none carries tenant column %q, or every one that does opts
+  out" misdescribes a package whose only carrier was dropped by `exclude_tables` or the no-PK rule; reword to "no
+  generated table or view carries …" or equivalent.
+- Changed from the original suggestion: views are not skipped (`exclude_tables` never drops views: `BuildViewContexts`,
+  `context_view.go:17`, has no exclude filter; PRD §6.4 scopes it to tables); widened under the scope cap to no-PK
+  tables, same root cause and same loop, measured in probe d.
+- Prototype results, run at `57e8b91a` on 2026-11-13: reproduction with sibling copies of the sqlite example
+  (`tenancy: {enabled: true, column: workspace_id}`, `exclude_tables: [audit_logs]`), `GOWORK=off sqlgen generate` →
+  (a) divergent INTEGER/TEXT, excluded: `tenancy: tenanted entities must resolve to a uniform tenant Go type … int64 …
+  used by [widgets]; string … used by [audit_logs]`, exit 1; (b) only carrier excluded: `sqlgen: generated 8 files (1
+  tables, 0 views)`, exit 0, `tenantResolver tenancy.TenantResolver[string]`; (c) excluded nullable carrier: `tenant
+  column "workspace_id" must not be nullable`, exit 1; (d) not excluded, no PK: `Warning: table audit_logs has no primary
+  key; skipped from generation...` then the divergent-type error, exit 1. With the patch a, c, d exit 0 with
+  `TenantResolver[int64]`; b exits 1 with `tenancy.enabled is true but no table or view is tenanted: …`, and `validate`
+  agrees. Gates: `go test -race -count=1 ./...` in cmd/sqlgen ok (incl. E2E goldens); golangci-lint 0 issues; gofumpt
+  clean. Fail-first: exclude skip reverted → 3 subtests fail, e.g. "BuildTenancyContext() err = tenancy: tenanted
+  entities must resolve to a uniform tenant Go type … used by [public.audit_logs] …, want nil"; no-PK skip reverted → 2
+  subtests fail ("a_table_with_no_primary_key_is_not_checked: … found divergent types … want nil"). The existing suite
+  without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-383.patch` (2 files, +112/-4).
+
+**References.**
+- PRD §29.2.3, §6.4 (`exclude_tables`), §9.4b (no-PK tables). FIX-379.
+
+**Resolution notes.** `BuildTenancyContext` (`cmd/sqlgen/gen/context_tenancy.go`) now skips a table that `config.MatchExcludeTablePattern` matches or that fails `tableHasResolvedPK`, the same predicates `buildTableContextsPartial` uses, so detection, the per-table checks, the uniform-type check and the no-tenanted-entity refusal see exactly the generated tables; views are still all detected. Doc comment updated. The refusal text now reads "no generated table or view carries tenant column %q, or every one that does opts out …"; the three assertions quoting it updated (`context_tenancy_test.go`, `context_tenancy_view_test.go`). Regression test `TestBuildTenancyContext_skipsTablesThatDoNotGenerate` (5 subtests), claimed by the new registry row `config.tenancy.detection.generated-tables-only` in `docs/conformance/cli/config-features.md`. Prototype applied clean at `630047d0`. Fail-first on the final code: both skips reverted → all 5 subtests fail. Gates: `make check` ok; `make update-golden-e2e` + `make update-golden`: no golden churn (matches vet); `make check-examples` ok.
+
+### FIX-381
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 27, cmd/sqlgen/gen
+- **Surfaced by:** FIX-375 vet (2026-11-10), filed on the user's yes (2026-11-11)
+- **Vetted:** corrected at `57e8b91a` (2026-11-13)
+
+**Issue.** **A GraphQL nested list `connect` / `disconnect` into a time- or decimal-keyed target does not compile.** `sqlgen generate` on the mysql example plus a `stamps(at DATETIME(6) PRIMARY KEY)` O2M/M2M fixture gives `models/graph/input_translate_gen.go:<line>:16: cannot use in.Connect (variable of type []*"time".Time) as []"time".Time value in assignment` (and the same for `in.Disconnect`). On the sqlite example the element type is `[]*types.DateTime`; a `decimal.Decimal` key gives `cannot use in.Connect (variable of type []*decimal.Decimal) as []decimal.Decimal value`. A has-one (singular) edge compiles, since both sides are `*time.Time`. The schema declares `connect: [Time!]`, but gqlgen binds `[]*time.Time`.
+
+**Root cause.** gqlgen (v0.17.90, `CopyModifiersFromAst`) makes a non-null list element a pointer when its Go type is
+a struct (the rule already recorded on `opaqueComparatorBindings` in `context_api.go`): `time.Time`, `types.DateTime`,
+`decimal.Decimal`, `net.IPNet`. `uuid.UUID` and `ksuid.KSUID` are arrays and unaffected. The translator's identity arm
+(`out.Connect = in.Connect`, `templates/api/input_translate.go.tmpl` "api/nested-id-verb") assigns the gqlgen slice
+directly. The list int arm is `for _, v := range in.Connect { out.Connect = append(out.Connect, int64(v)) }`; the
+`int64(*in.Connect)` unwrap the original text cited is the singular arm. FIX-375 did not change this path: its
+`nestedBucketKey` lives only in the Go executor.
+
+**Suggested fix.**
+- Add `ElemPtr bool` to `APINestedIDVerb`; `projectAPINestedIDVerbs` (`context_api_nested.go`) sets it to
+  `!out.Singular && gqlgenListElemIsPointer(pk.GoType)`, a new helper true for `time.Time`, `types.DateTime`,
+  `decimal.Decimal` and `net.IPNet`.
+- Template: a new `else if .ElemPtr` arm, `for _, v := range in.X { out.X = append(out.X, *v) }` (`Cast(*v)` when a Cast
+  is also set). The singular, Cast and identity arms are unchanged.
+- Test: table-driven `TestAPINestedTemplates_IDVerbElementShapes` in `gen/api_nested_test.go`, from real DDL per dialect
+  (postgres timestamptz, mysql datetime(6), sqlite datetime, mysql decimal override → `*v`; postgres bigint keeps
+  `int64(v)`, postgres uuid keeps the identity assignment).
+- Changed from the original suggestion: (1) no `types.DateTime` conversion on SQLite, just the same `*v`; (2) keyed on
+  gqlgen's struct-element rule, not "time key", so `decimal.Decimal` keys (same root cause and fix site, measured
+  failing) are included; (3) a render test, not a live GraphQL build, because no example carries a struct-keyed nested
+  edge and adding one churns goldens; the live compile was shown with probes. The live GraphQL test for FIX-375's
+  time-key bucketing is not part of this fix.
+- Prototype results, run at `57e8b91a` on 2026-11-13: reproduction with sibling copies `probe_mysql` (mysql example +
+  `stamps(at DATETIME(6) PK, user_id FK)` O2M `Stamps`, M2M `LinkedStamps` via `user_stamp_links`, and
+  `price_points(amount DECIMAL(10,2) PK)` with a decimal override) and `probe_sqlite`, `GOWORK=off sqlgen generate` →
+  `input_translate_gen.go:3165:16: cannot use in.Connect (variable of type []*"time".Time) as []"time".Time value in
+  assignment`, `…:3264:16: cannot use in.Connect (variable of type []*decimal.Decimal) as []decimal.Decimal value in
+  assignment`, sqlite `…:3878:16: cannot use in.Connect (variable of type []*types.DateTime) as []types.DateTime value in
+  assignment` (and the same for Disconnect); with the patch both probes generate, `go build ./...` and `go vet` clean.
+  Gates: `go test -race -count=1 ./gen/...` ok; golangci-lint 0 issues; `make update-golden` no diff; `make
+  update-golden-e2e` PASS, no diff. Fail-first: template arm reverted →
+  `TestAPINestedTemplates_IDVerbElementShapes/{postgres_timestamptz,mysql_datetime,sqlite_datetime,mysql_decimal_override}`
+  fail "output missing \"out.Connect = append(out.Connect, *v)\""; projection forced false → same. The existing suite
+  without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-381.patch` (3 files, +116/-3).
+
+**References.**
+- PRD §26.5.1, §26.5.4, §9.9. FIX-375.
+
+**Resolution notes.** Resolved 2026-11-16 from the vetted prototype (fresh against HEAD `66430434`, applied clean). `APINestedIDVerb` gains `ElemPtr`, set by `projectAPINestedIDVerbs` (`cmd/sqlgen/gen/context_api_nested.go`) to `!Singular && gqlgenListElemIsPointer(pk.GoType)`; the new helper is true for `time.Time`, `types.DateTime`, `decimal.Decimal` and `net.IPNet`, the struct key types gqlgen binds as `[]*T` in a `[Key!]` list. `templates/api/input_translate.go.tmpl` "api/nested-id-verb" gains an `ElemPtr` arm that appends `*v` (or `Cast(*v)`); the singular, Cast and identity arms are unchanged. Test: `TestAPINestedTemplates_IDVerbElementShapes` (postgres timestamptz, mysql datetime(6), sqlite datetime, mysql decimal override dereference; postgres bigint keeps `int64(v)`, uuid keeps the identity assignment); fail-first with the projection forced false fails the four struct-key cases. Beyond the prototype: the test is claimed on conformance row `api.nested.verb-list` (`docs/conformance/cli/api.md`), which `req-check` required. Golden churn: none, matching the vet. Gates: `make check` ok, `make check-examples` ok. Inline after `/verify`: the ElemPtr arm's `Cast(*v)` sub-arm dropped (`gqlgenGoTypeFor` returns the model type for every struct scalar, so `Cast` is always empty there and no fixture rendered it); the `comparator_translate.go.tmpl` deref comment now states gqlgen's struct-element rule rather than "custom scalar"; References corrected from §26.5.5 to §26.5.1 / §26.5.4. The 2026-11-13 backlog line for that comment is removed; the consumer-declared struct-scalar case stays on its existing backlog line.
+
+### FIX-376
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-371 vet (2026-11-06), filed on the user's yes
+- **Vetted:** ready at `22de66f0` (2026-11-11)
+
+**Issue.** **A boolean key on `comparator.ID` fails on MySQL and SQLite.** MySQL, k=true: `create flag: get flag: sqlgen: resource not found`, and the loader returns `kids=0` silently. MySQL, k=false: reads pass, but nested disconnect and clear give `Error 1292 (22007): Truncated incorrect INTEGER value: 'false'`. SQLite, both values: `resource not found`, loader `kids=0`. PostgreSQL passes. Re-measured at `22de66f0` with a 24-step probe (12 steps × both values): postgres 24 ok / 0 ERR, mysql 15 ok / 9 ERR, sqlite 10 ok / 14 ERR (the entry's original step counts came from a 20-step probe). Composite PKs with a bool member fail too: `FlagPairs().Get` emits `Active: &comparator.ID{Eq: new(fmt.Sprint(pk.Active))}`, and SQLite gives `create flag_pair: get flag_pair: sqlgen: resource not found` for both values.
+
+**Root cause.** `resolveSimpleComparator`'s key arm (`cmd/sqlgen/gen/context_table.go:2615`, `(PrimaryKey||FKReference) && FKConvert != FKStringNone`) catches `bool`, whose FKConvert is FKStringSprint (`gotype/gotype.go:79`), ahead of the `bool → Bool` arm. `pkComparatorFamily` (`:2488`) then returns "ID", so `funcFKToString` (`funcmap.go:843`) and the ID fallback in `funcPKFilterExpr` (`:765`) bind `fmt.Sprint`, as text. This deviates from the PRD §11.2 selection-table row "`bool` → `Bool`", as FIX-371's time case did, but `comparator.Bool` has no `In` (PRD §11.2), so it cannot simply follow FIX-371's routing. Unchanged by FIX-371/372, which added only a Time arm.
+
+**Suggested fix.**
+- Decide how a boolean key binds, given `comparator.Bool` has no `In`. Adding `In` changes public surface and needs a ruling.
+- Add a live test on all three dialects.
+- Pending the user's ruling:
+  - How should a boolean key bind?
+    - (A, recommended, prototyped) Route bool keys to `comparator.Bool` and add `Bool.In` (`= ANY($)` on pgx, expanded elsewhere; `NullableBool` inherits it). Fixes all three dialects and composite members, and matches §11.2's `bool → Bool` row, mirroring FIX-371. Public changes: runtime `comparator.Bool.In`. Generated filters change from `*comparator.ID` / `*comparator.NullableID` to `*comparator.Bool` / `*comparator.NullableBool` on bool keys. GraphQL `BooleanComparator` gains `in: [Boolean!]` in every schema, because §26.4 parity forces the projection: 4 graph files churn per tree in graphql, graphql_null_wrappers, mysql and sqlite even without a bool key. PRD §11.2 amended. Sub-question: add `Nin` too? The fix does not need it, and it would add `nin` to GraphQL.
+    - (B) No new runtime surface: render the bool as `"1"`/`"0"` on `comparator.ID` (sqlite3 CLI: `k='1'` matches 1 row, `k='true'` matches 0). Keeps the §11.2 deviation, user filters still need "1"/"0", and MySQL `BIT(1)` keys are unmeasured. Not prototyped.
+    - (B') `Bool` for Eq, with In through `Custom` conditions or a generated helper: `pkFilterInExpr` has no column name and `Custom` gets no `QuoteIdentifier`. Fragile. Not prototyped.
+    - (C) Refuse bool keys at generation: regresses PostgreSQL, which passes today, and must also refuse composite PKs with a bool member and FKs into UNIQUE bool columns.
+- The user ruled on 2026-11-11: option (A), `In` only (no `Nin`). Route bool keys to `comparator.Bool`, add `Bool.In`, project `in` on GraphQL `BooleanComparator`, and amend PRD §11.2, as prototyped. No re-vet needed: the prototype already implements the ruled option with green gates and fail-first shown.
+- Prototype results, run at `22de66f0` on 2026-11-10, option (A): reproduction with sibling copies of the mysql, sqlite and postgres examples (nested on, `flags (k BOOLEAN PRIMARY KEY)` + `flag_kids (flag_k BOOLEAN FK)`), `GOWORK=off go test -count=1 -run TestZZProbeBoolKey ./tests/` → the counts above; generated filter at base `K *comparator.ID`, `FlagK *comparator.NullableID`. Prototype: `comparator/bool.go` `In []bool`; a `bool` arm ahead of the key arm in `resolveSimpleComparator` and a `Bool` family in `pkComparatorFamily`; `Bool` cases in `funcPKFilterExpr` and `pkFilterInExpr`; GraphQL `BooleanComparator.in` plus an `out.In` copy in `comparator_translate.go.tmpl`; PRD §11.2 Bool row and "A boolean key takes `Bool`, not `ID`."; conformance row `comparator.bool-key.binds-as-bool`; tests `gen/bool_key_internal_test.go`, `gen/bool_key_bind_test.go` (`TestGenerate_BoolKeyBindsAsBool`, 3 dialects), `Bool.In` rows in `comparator/bool_test.go` and `operators_per_dialect_test.go`, and a live `bool_keyed` fixture with `tests/bool_key_test.go` in the postgres, mysql and sqlite examples. Gates: `go test -race ./comparator/... ./sql/...` ok; `go test -race ./gen/... ./cli/...` ok; `make update-golden` no unit-golden churn; `make update-golden-e2e` PASS; `make req-rehash SECTIONS=11.2`, `make refs-check req-check` ok; sqlite, graphql, graphql_null_wrappers, mysql and postgres `go test -race ./...` ok and golangci-lint 0 issues; probe rerun → 24 ok, 0 ERR on all three. Fail-first: bool arm off → `resolveComparatorType(mysql) = "*comparator.ID", want "*comparator.Bool"`; `pkComparatorFamily` Bool arm off → `funcPKFilterExpr() = "&comparator.ID{Eq: new(fmt.Sprint(id))}", want "&comparator.Bool{Eq: new(id)}"`; `funcPKFilterExpr` Bool case off → also `TestGenerate_BoolKeyBindsAsBool/postgres` "[build failed]"; `pkFilterInExpr` Bool case off → `"&comparator.Bool[]{In: ids}", want "&comparator.Bool{In: ids}"`; `Bool.Parse` In branch off → `TestBool_Parse/In: Bool.Parse() mismatch`; GraphQL `in` off → "BooleanComparator does not project comparator.Bool.In as \"in\""; translator copy off → "BooleanComparator declares \"in\" but translateBooleanComparator never assigns out.In". The existing suite without the fix passes. Golden churn: fix alone graphql, graphql_null_wrappers, mysql and sqlite ~8 each, postgres none; with the fixture mysql +13/~39, postgres +5/~21, sqlite +17/~37. Patch: `.claude/prototypes/FIX-376.patch` (160 files, +64512/-5129; 12 files, +185/-9 for the fix and its tests).
+
+**References.**
+- PRD §11.2. FIX-371.
+
+**Resolution notes.** Option (A), as ruled: bool keys route to `comparator.Bool`. `resolveSimpleComparator` gains a `bool` arm ahead of its key arm, `pkComparatorFamily` a `Bool` family, and `funcPKFilterExpr` / `pkFilterInExpr` `Bool` cases, so the generated client binds the key's bool value instead of `fmt.Sprint` text; composite members follow. Runtime `comparator.Bool` gains `In` (`NullableBool` inherits it); GraphQL `BooleanComparator` projects `in: [Boolean!]` and `comparator_translate.go.tmpl` copies it. PRD §11.2 Bool row amended and "A boolean key takes `Bool`, not `ID`." added; conformance row `comparator.bool-key.binds-as-bool`. Tests: `gen/bool_key_internal_test.go`, `gen/bool_key_bind_test.go` (3 dialects), `Bool.In` rows in `comparator/bool_test.go` and `operators_per_dialect_test.go`, and a live `bool_keyed` fixture with `tests/bool_key_test.go` in the postgres, mysql and sqlite examples. Prototype from `22de66f0` applied with `--3way` (context_api.go, funcmap.go and PRD.md had moved under FIX-374/375/379; no conflicts); goldens regenerated, churn matches the vet. `make check` and `make check-examples` green. `/verify` doc corrections: PRD §26.4 `BooleanComparator` row and conformance `api.cmp.bool-operators` now list `in`; `comparator.bool-key.binds-as-bool` cites `TestBool_Parse/In` and `TestSetOperators_RenderPerDialect/Bool.In`; Root cause line refs moved to HEAD; mysql bool-key test comments trimmed.
+
+### FIX-375
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** FIX-371 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `22de66f0` (2026-11-11)
+
+**Issue.** **A nested `connect` naming a time key fails unless its zone pointer matches the scanned row's.** Foreign-zone keys fail on all three dialects: `update stamp with related: Notes: connect: 2026-01-02 09:34:05.123456 +0530 IST: sqlgen: resource not found`. The same instant in `time.Local` under TZ=UTC also fails on MySQL and SQLite: `update tag with related: Stamps: connect: 2026-01-02 03:04:05.123456 +0000 UTC: sqlgen: resource not found`. So an ordinary `time.Now()` key in a UTC container hits it. On PostgreSQL the mirror case fails: pgx scans timestamptz in `time.Local`, so a plain UTC key (`time.Now().UTC()`) misses with `connect: 2026-01-02 03:06:05.123456 +0000 UTC: sqlgen: resource not found`, and a `time.Local` key passes. Any key whose zone pointer differs from the driver's scan location fails, on all three dialects. It fails loudly, and a key read back from the database passes. It reproduces at `22de66f0`; FIX-371 and FIX-372 did not move or fix any bucket site.
+
+**Root cause.** The executor buckets rows in `map[time.Time]` and compares keys with `==` (`nested.go.tmpl`), which compares the zone pointer. The construct covers more sites than the visibility read and the two-verb check: two-verb `named` (~:539-566), the E12 self-reference `v == parent.PK` (:516, :523), M2M `targetRows`/`found`/`agrees` (:672-781), link dedupe `seen` (:798), unlink `unlinking` (:837), has-one occupancy `row.PK == *nested.Connect` (:914), O2M `owner`/`nulls` (:1001-1058, :1073) and the adoption dedupe `queued` (:1068-1105).
+
+**Suggested fix.**
+- New funcmap function `nestedBucketKey(goType, expr)`: a time key renders as `expr.UTC()` (`expr.Time.UTC()` for `types.DateTime`, parenthesising `*x`); every other key is unchanged. New `NestedEdgeContext.ConnectBucketGoType`, set by `nestedBucketGoType` in `context_nested.go` at both `ConnectIDGoType` sites (`time.Time` for time keys).
+- In `nested.go.tmpl`, type every bucket map with `ConnectBucketGoType` and route every index, plus the E12 and has-one `==` comparisons, through `nestedBucketKey`. Output for non-time keys is byte-identical.
+- PRD §9.9.4 E8 gains: "A time key buckets by its instant, so a key named in any zone names the row holding that instant."
+- Tests: `gen/nested_bucket_key_internal_test.go` (table test of both functions); `gen/nested_time_bucket_test.go` (a self-referential time-keyed table on 3 dialects, E12 refuses connect/disconnect naming the parent in another zone); a live `TestNestedTimeKeyZones` (O2M connect, M2M connect+disconnect for UTC, IST, `time.Local` and two zones of one instant, plus cross-zone verb conflict) over a `moment_owners`/`moments`/`moment_tags`/`moment_tag_links` fixture in tenancy, tenancy_mysql and tenancy_postgres. The O2M read-back uses SkipCache (see the backlog's cache line).
+- Changed from the original: normalize with `.UTC()`, not `UnixNano`, which is undefined outside 1678-2262; `.UTC()` also strips the monotonic reading. The fix is widened to every bucket and `==` site in the executor (same root cause, same template). The live test covers all three dialects through the tenancy examples, the only nested-enabled examples without GraphQL; GraphQL cannot compile a time-keyed connect today (a candidate FIX from this vet).
+- Pending the user's ruling:
+  - Where does the live regression test live? (a, recommended, prototyped) The three tenancy examples: churns only tenancy (~7 files per tree), tenancy_mysql (~6 per tree) and tenancy_postgres (+8/~10 per tree, incl. manifest entities). (b) The mysql example: blocked until GraphQL compiles a time-keyed connect. (c) Enable nested in the postgres and sqlite examples: much larger churn. Not auto-accepted, because every placement churns goldens.
+- The user ruled on 2026-11-11: the live regression test lives in the three tenancy examples (tenancy, tenancy_mysql, tenancy_postgres), as prototyped. No re-vet needed: the prototype already implements the ruled option with green gates and fail-first shown.
+- Prototype results, run at `22de66f0` on 2026-11-10: reproduction with the moments fixture generated by the base generator, `GOWORK=off go test -count=1 -run TestNestedTimeKeyZones ./tests/` → tenancy (sqlite): `connect: update moment_owner with related: Moments: connect: 2026-01-02 08:35:05.123456 +0530 IST: sqlgen: resource not found`, the same for M2M, for a `time.Local` key (`-0700 MST`) and for two zones of one instant, and cross-zone connect+disconnect `error = <nil>, want ErrNestedVerbConflict` (O2M and M2M); tenancy_mysql: the same 8 failures; tenancy_postgres: IST and UTC keys `resource not found`. Gates: `go test -race ./gen/... ./cli/...` ok; `make update-golden` no unit-golden churn; `make update-golden-e2e` PASS and `TestE2EGoldenFiles` ok; tenancy, tenancy_mysql and tenancy_postgres `go test -race ./...` ok and golangci-lint 0 issues; `TestNestedTimeKeyZones` PASS on all three. Fail-first: `named` reverted → "error = <nil>, want ErrNestedVerbConflict"; O2M `owner` reverted → "connect: ... +0530 IST: sqlgen: resource not found"; O2M `queued` reverted → "connect: update moment_owner with related: Moments: connect: sqlgen: already related to another row"; M2M `found` reverted → "connect: update moment_tag with related: Moments: connect: ... +0530 IST: sqlgen: resource not found"; E12 reverted → `TestGenerate_NestedSelfReferenceTimeKey` "error = Stamps: connect: get many stamps: probe: statement recorded, want ErrNestedVerbConflict"; `nestedBucketGoType` returning goType → `nestedBucketGoType("types.DateTime") = "types.DateTime", want "time.Time"`. Not guarded by behavior: `seen` and `unlinking` (duplicates are absorbed downstream; changed for consistency); `targetRows`, `agrees` and has-one occupancy have no time-keyed fixture (compile and goldens only). The existing suite without the fix passes. Golden churn: tenancy +0/~7, tenancy_mysql +0/~6, tenancy_postgres +8/~10 (per tree, expected/ and models/); every other example none. Patch: `.claude/prototypes/FIX-375.patch` (81 files, +78115/-35; 19 files, +703/-35 without goldens and models).
+
+**References.**
+- PRD §9.9.6. FIX-371.
+
+**Resolution notes.** Applied the vetted prototype (source and tests applied clean against HEAD; goldens and models regenerated, not taken from the patch). New funcmap `nestedBucketKey` and `NestedEdgeContext.ConnectBucketGoType` (set by `nestedBucketGoType` at both `ConnectIDGoType` sites in `context_nested.go`); `nested.go.tmpl` types every bucket map with `ConnectBucketGoType` and keys every index and the E12 and has-one `==` comparisons on the key's UTC instant, so a time key named in any zone names the row holding that instant; non-time keys render byte-identically. PRD §9.9.4 E8 gains the instant sentence. Tests: `TestNestedBucketKey`, `TestGenerate_NestedSelfReferenceTimeKey` (3 dialects), and live `TestNestedTimeKeyZones` in tenancy, tenancy_mysql and tenancy_postgres over a new moments fixture. Added beyond the prototype: conformance rows `gen.nested.e8-time-key-instant` (`docs/conformance/cli/gen.md`) and `nested.time-key-instant` (`docs/conformance/client.md`), and `make req-rehash SECTIONS=9.9`. Golden churn matches the vet: tenancy +0/~7, tenancy_mysql +0/~6, tenancy_postgres +8/~10 per tree; no other example. Verify's reviewer corrections applied inline: the E8 instant sentence moved after the `comparator.Opaque` sentence (it had made "the set that cannot" read as "cannot bucket by instant"), the `gen.nested.e8-time-key-instant` row narrowed to the E12 clause its tests prove, a design label dropped from a test comment, §9.9 rehashed again. One backlog line for the time-key buckets no fixture drives.
+
+
+### FIX-379
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 13, cmd/sqlgen/gen
+- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `22de66f0` (2026-11-11)
+
+**Issue.** **`tenancy.enabled: true` with a `column` no table has crashes generation.** `generating unified client: goimports failed for models/client_gen.go: models/client_gen.go:22:40: expected type argument list (and 1 more errors)`; the raw output shows `tenantResolver tenancy.TenantResolver[]` and `func WithTenantResolver(r tenancy.TenantResolver[]) ClientOption`. Reproduced at `22de66f0` on a plain one-table SQLite schema with no enums. It also crashes when every table carrying the column opts out with `tables.<name>.tenancy.enabled: false`, and when a global `tenancy.type: {type: int64}` is set (that types the tenant column; it does not stand in for one).
+
+**Root cause.** `BuildClientContext` (`cmd/sqlgen/gen/context_client.go:100`) calls `applyClientTenancy` whenever `cfg.Tenancy.Enabled`. That function (`context_client.go:176-180`) sets `TenancyEnabled = true` and takes `TenancyGoType` from `FirstTenantedType(tenancyMap)` (`context_tenancy.go:841`), which returns `""` when no entity is tenanted; `client.go.tmpl:20` and `:72` then emit `TenantResolver[{{ .TenancyGoType }}]` with an empty type. `BuildTenancyContext` (`context_tenancy.go:65`) never checks that at least one entity is tenanted, though `FirstTenantedType`'s comment names the case.
+
+**Suggested fix.**
+- Confirm at base, and refuse this at validation with an error naming the column.
+- Add a config validation test.
+- Pending the user's ruling:
+  - Should a `tenancy.enabled: true` package with no tenanted table or view be refused? §9.6 (~line 3885, "`Tenant` only when the package additionally has a tenanted entity to take its concrete type from") and §29.4.4 ("only for tenancy-enabled packages with at least one tenanted table") read as if such a package is a valid generated shape.
+    - (A, recommended, prototyped) A resolution-level error in `BuildTenancyContext` naming `tenancy.column`, exit 1 (it needs the parsed schema, so it is not load-time config validation): `tenancy: tenancy.enabled is true but no table or view is tenanted: none carries tenant column "workspce_id", or every one that does opts out with tenancy.enabled: false; set tenancy.column to a column the schema has, or turn tenancy.enabled off`. It is skipped when a per-entity error (e.g. rule 5) already explains why nothing is tenanted. No golden churn; 5 test fixtures adjusted. A misspelled column becomes a loud error. Cost: a user who opts every carrier out must also turn the global flag off, and the §9.6/§29.4.4 gating text becomes near-dead. The PRD gets a §29.2.3 paragraph and a §4.13 row. Not auto-accepted, because it plausibly reverses behavior §9.6/§29.4.4 imply.
+    - (B) Generate it: in `applyClientTenancy`, leave `TenancyEnabled` false when `FirstTenantedType` returns "", so `WithTenantResolver` and the `tenantResolver` field are not emitted. Not prototyped; from reading, no golden or fixture churn. A misspelled `tenancy.column` would silently generate a package with no tenant scoping (the §29.2.1 footgun).
+- The user ruled on 2026-11-11: option (A), a resolution-level error in `BuildTenancyContext` naming `tenancy.column`, plus the §29.2.3 paragraph and §4.13 row, as prototyped. No re-vet needed: the prototype already implements the ruled option with green gates and fail-first shown.
+- Prototype results, run at `22de66f0` on 2026-11-10, option (A): reproduction in a sibling example `zz_probe379_min` (sqlite, `CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`, `tenancy: {enabled: true, column: workspace_id}`), `GOWORK=off sqlgen generate` → `Generation error: generating unified client: goimports failed for models/client_gen.go: models/client_gen.go:22:40: expected type argument list (and 1 more errors)`, exit=1; the same with `tenancy.type: {type: int64}` added, and with an `audit_logs(workspace_id)` table opted out. With the prototype, `generate` and `validate` both give the refusal above, exit=1. Prototype: the check in `BuildTenancyContext` after the uniform-type check; the stale `FirstTenantedType` comment updated; `TestBuildTenancyContext_noTenantedEntityErrors` (no carrier; a global `tenancy.type` does not stand in; every table and view carrier opted out; a tenanted view alone is enough; a per-entity error is not joined by the refusal) and a `withTenantAnchor` helper; anchor tables added to `TestBuildTenancyContext_forcedSharedOptOutWinsOverDetection`, `TestBuildTenancyContext_viewDetection`, `TestBuildEntityContexts_TenancyTypeReachesTenantColumn` and `...ViewTenantColumn`; `keyMembersContexts` enables tenancy only when the DDL has `workspace_id` (fixes 7 TestNested* fixtures); PRD §29.2.3 paragraph and §4.13 row. Gates: `go test -race ./...` in cmd/sqlgen ok (root and cli rerun with `-timeout=40m` under vetter load: ok); `TestE2EGoldenFiles` green; gofumpt clean; golangci-lint 0 issues. Fail-first: check disabled → `TestBuildTenancyContext_noTenantedEntityErrors` fails on the three refusal cases, `BuildTenancyContext() err = nil, want error containing "no table or view is tenanted: none carries tenant column \"workspace_id\""`; `len(errs) == 0` guard removed → the per-entity case fails `want it not to contain "no table or view is tenanted: …"`. The existing suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-379.patch` (6 files, +168/-10).
+
+**References.**
+- PRD §29, §4.13.
+
+**Resolution notes.** Resolved 2026-11-11 from the vetted prototype (fresh against HEAD `66473460`, applied clean). `BuildTenancyContext` (`cmd/sqlgen/gen/context_tenancy.go`) now refuses a `tenancy.enabled: true` package with no tenanted table or view, naming `tenancy.column`, when no per-entity tenancy error is already reported; `FirstTenantedType`'s comment updated. Tests: `TestBuildTenancyContext_noTenantedEntityErrors` (no carrier; a global `tenancy.type` does not stand in; every carrier opted out; a tenanted view alone is enough; a per-entity error is not joined by the refusal), anchor tables added to four existing tests, `keyMembersContexts` enables tenancy only for DDL carrying `workspace_id`. Beyond the prototype: a `no tenanted table or view` subtest in `TestValidateGeneration_ReportsViewTenancyErrorsWithTheOthers` pins §4.13's report-together rule for the new error; conformance rows `config.tenancy-none-tenanted{,.message,.severity,.together}` (+ schema N/A) in `docs/conformance/cli/config.md` and `config.tenancy.detection.at-least-one-tenanted` in `config-features.md`; §4, §4.13, §29.2 anchors rehashed after review. Inline after `/verify`: a `the error names the configured tenancy.column` subtest (misspelled `workspce_id`) backs the `.message` row, and `TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn` adds its anchor table only when the view opts out, matching its comment. PRD: §29.2.3 paragraph and §4.13 row, per the 2026-11-11 ruling. Golden churn: none. Gates: `make check` ok, `make check-examples` ok.
+
+### FIX-374
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 16, cmd/sqlgen/gen
+- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `22de66f0` (2026-11-10)
+
+**Issue.** **An enum in a primary key fails to generate with GraphQL on, a composite member included.** `sqlgen generate` on a graphql example copy with an enum-PK table gives `models/graph/sqlgenresolver/resolvers_gen.go:<line>: undefined: ZzKind` (the line varies by schema; six errors for one single and one composite enum PK), then `Error: gqlgen subprocess failed`. The wrong type also reaches the gqlgen seed files (`models/graph/<t>_gen.resolvers.go`, from `api/seeds.go.tmpl`).
+
+**Root cause.** `buildAPIPKArgs` (`cmd/sqlgen/gen/context_api.go:2986`) writes an unqualified `a.GoType` for an enum key. `funcPKGoArgs` (`funcmap.go:314`) only joins `GoType` and is not a fix site.
+
+**Suggested fix.**
+- In `buildAPIPKArgs`, when `isEnumLikeType(modelGoType)`, prefix `binds.modelsPkg + "."` to the model type before `gqlgenGoTypeFor`, so `GoType` and `ModelGoType` are both `models.Kind`. `pkConvert` and the nested id verbs (`context_api_nested.go:487`) then stay on the identity arm and emit no unqualified `Kind(...)` cast.
+- Regression test: `TestEnumKey_ResolverArgsNameTheModelsType` (`cmd/sqlgen/gen/api_enum_comparator_test.go`), a render test over a single enum PK and an enum+int composite PK, checking the resolver signatures, the unconverted `Get(ctx, kind, …)`, `models.PairPK{Kind: kind, Slot: int32(slot)}` and the two seed-file signatures.
+- Changed from the original: FIX-370 has landed (`f245cca6`), so nothing is pending. Both `GoType` and `ModelGoType` are qualified, because qualifying only the argument type leaves an unqualified cast in `pkConvert` and the nested verbs. The test is a render test, since no unit-level GraphQL build test exists and an enum table in `examples/graphql` would churn its goldens.
+- Auto-accepted the recommended option on 2026-11-10 (`/fix` auto-accept rule): regression test form → a gen render test over resolvers and seeds instead of an enum-PK table in `examples/graphql`, because it was prototyped with green gates, causes no golden churn (the example alternative would), adds no public surface, and reverses no ruling or PRD behavior.
+- Prototype results, run at `22de66f0` on 2026-11-10: reproduction on a sibling copy of `examples/graphql` with `zz_things (kind zz_kind PRIMARY KEY, …)` and `zz_pairs (kind zz_kind, slot INTEGER, …, PRIMARY KEY (kind, slot))`, `GOWORK=off sqlgen generate` → "models/graph/sqlgenresolver/resolvers_gen.go:5834:46: undefined: ZzKind" (plus 5 more), then "Error: gqlgen subprocess failed: running gqlgen (go run github.com/99designs/gqlgen): exit status 1". With the fix the copy generated, built, passed `go vet ./models/...`, and a live GraphQL create/get/update/delete/get-after-delete run on Postgres 16 passed for both tables. Gates: `go test -race ./gen/... ./cli/...` ok; `golangci-lint run ./gen/...` 0 issues; gofumpt clean; `make refs-check` ok; `make update-golden` and `make update-golden-e2e` PASS. Fail-first: qualifier reverted → `TestEnumKey_ResolverArgsNameTheModelsType` fails "output missing \"func (q *Q) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)\""; the existing suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-374.patch` (2 files, +46/-0).
+
+**References.**
+- PRD §26. FIX-370.
+
+**Resolution notes.** Resolved 2026-11-11. Applied the vetted prototype clean (fresh at `22de66f0`): `buildAPIPKArgs` (`cmd/sqlgen/gen/context_api.go`) qualifies an enum key's model Go type with the models package, so the resolver and seed PK args read `models.Kind` and `pkConvert` and the nested id verbs stay on the identity arm (no unqualified cast). Regression test `TestEnumKey_ResolverArgsNameTheModelsType` (`cmd/sqlgen/gen/api_enum_comparator_test.go`) renders resolvers and seeds over a single enum PK and an enum+int composite PK; it is claimed by `api.surface.get-backed-by-get` in `docs/conformance/cli/api.md` (req-check needs every gen test claimed). Fail-first: qualifier removed → the test fails "output missing \"func (q *Q) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)\"". `/verify FIX-374` reviewer doc correction applied inline: the `APIPKArg.ModelGoType` field comment now says the type is spelled from the resolver package (`models.Kind` for an enum). Gates: `make check` ok; `make update-golden` and `make update-golden-e2e` PASS with no golden churn, matching the vet; `make check-examples` ok.
+
+### FIX-372
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `f36be88e` (2026-11-10)
+
+**Issue.** **A key whose FK differs in width or family from its referenced column breaks generation or
+loads.** Both directions fail to compile on the plain one-column O2M loader: `parent_id bigint REFERENCES kinded
+(id)` with `id integer` gives `cannot use &comparator.NullableNumber[int32]{…} … as
+*comparator.NullableNumber[int64] value in struct literal`, and narrower gives `cannot use
+&comparator.Number[int64]{…} as *comparator.Number[int32]`. M2M and composite loads compile but fail at runtime on
+a parent key above the FK's range: pgx `unable to encode 4294967301 into binary format for int4 (OID 23)`, lib/pq
+`value "4294967301" is out of range for type integer (22003)`, and one such parent fails the whole load. Under
+`use_pointers: false` nested writers do not compile (re-vet at `f36be88e`: 6 errors, e.g. `cannot use parent.ID
+(variable of type int32) as int64 value in struct literal` and `invalid operation: cur.Int64 == parent.ID
+(mismatched types int64 and int32)`); under the default the edge is dropped by §9.9.4 E1. MySQL 8.0 and 8.4 refuse this DDL (`Error 3780`), so it
+reaches MySQL only as schema-file input. SQLite differs by storage class (TEXT or REAL FK into INTEGER).
+
+**Root cause.** `get.go.tmpl:474` renders `{{ .FKFieldName }}: {{ pkFilterInExprByGoType (or .FKEnumGoType
+.ParentKey.GoType) $keysVar .FKNullable }}` (FIX-370; line 432 converts each parent key to `FKEnumGoType` for MySQL
+per-column enums), so the comparator's type comes from the parent key and the filter field's from the FK column. Composite and
+M2M loaders bind `[]any`, so they compile, and fail at the driver. Relationship filters are SQL-only and correct.
+`nestedAssignExpr` passes `nestedKeyValueExpr(pkGoType, parentExpr)` (FIX-371) into `sql.NullInt32{Int32: …}`
+without checking the type; HEAD also builds `types.NullDateTime{Time: parent.T}` from a string parent key (same
+root cause, same site).
+
+**Suggested fix.**
+- `wireKeyedLoad` routes an edge through the existing keyed loader when `comparatorsDiffer`, on O2M, has-one and
+  both M2M keys. Matching edges are untouched. A mismatched edge chunks at 4000 rather than one `= ANY`.
+- `keyGuard` on the referenced side skips a key the integer FK cannot hold, the rule §13.3 applies to NULL.
+- `keyTuple` buckets an integer member as `fmt.Sprint(float64(v))` when its counterpart is a float: without it a
+  child of parent 1000000 keyed `1e+06` loaded 0 rows, measured on SQLite.
+- `nestedAssignExpr` refuses a `database/sql` Null wrapper over another type, so E1 drops the edge.
+- Tests in `gen/key_mismatch_test.go`, fixtures and runtime tests in postgres, postgres_stdlib and sqlite, two PRD
+  §13.3 sentences, three conformance rows.
+- Corrected from the original: building the comparator from the FK's type fixes one site only, and relationship
+  filters are not a defect site. The guard, float bucketing and nested check are added for measured failures of
+  the same mismatch. Build tests skip MySQL, whose DDL is refused; it has template coverage.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): a parent key an integer FK cannot
+  hold → skip it and load no children, because gates are green, its only golden effect is a shared comment, it adds
+  no public surface, and it extends §13.3's NULL rule. Such a parent has no children, so the result is correct.
+- Corrected at the re-vet on 2026-11-10, because FIX-370 (`f245cca6`) and FIX-371 (`f36be88e`) landed:
+  - `comparatorsDiffer` treats two enums as matching, so FIX-370's `FKEnumGoType` conversion keeps MySQL per-column
+    enums on the plain list. Without it `TestGenerate_EnumKeysCompile/mysql/stdlib` fails: `generated code does not
+    contain "thingIDs[idx] = ChildrenThingKindEnum(t.Kind)"`. Time needs no exemption: its family param is fixed at
+    `time.Time`, so timestamptz/timestamp and date/timestamptz still match (output byte-identical to HEAD).
+  - The nested check is `nullWrapperHolds`: the database/sql wrappers plus `types.NullDateTime`, `uuid.NullUUID` and
+    `decimal.NullDecimal`, reading a `types.DateTime` key as `time.Time`, and never refusing user-declared wrappers.
+  - The PRD sentence and conformance row say enums convert. Conformance and schema hunks keep FIX-371's `time_keyed`
+    fixture and the expanded `gen.nested.e1-target-shape` row.
+- Auto-accepted the recommended option on 2026-11-10 (`/fix` auto-accept rule): a SQLite Time key next to an FK of
+  another storage class (DATETIME PK with TEXT FK, or the reverse) stays off the tuple loader and keeps HEAD's
+  compile error. Gates are green, no fixture has the pair so there is no golden difference, no public surface, and
+  no PRD behavior is reversed. Routing it keyed (prototyped, measured) compiles but loads 0 children in both
+  directions, silently, because the parent keys as `types.DateTime.String()` (`2024-01-02 03:04:05 +0000 UTC`) while
+  the TEXT FK stores `2024-01-02 03:04:05`. Making the pair correct needs a canonical-spelling decision at a
+  different site, so it is a candidate FIX, not part of this one.
+- Prototype results, run at `f36be88e` on 2026-11-10:
+  - Reproduction (throwaway `cli/zz_probe_keymismatch_test.go`, generate then `go build -gcflags=-e ./...`): pg pgx
+    ints 2 errors (`cannot use &comparator.Number[int64]{…} … as *comparator.Number[int32]`, `&comparator.NullableNumber[int32]{…}
+    … as *comparator.NullableNumber[int64]`); pgx `use_pointers: false` 8; pg stdlib 2; mysql file-only 2; sqlite
+    families 3 (`&comparator.ID{…} … as *comparator.Number[int64]`); pg enum PK with a text FK 2
+    (`&comparator.NullableEnum[KindT]{…} … as *comparator.NullableID`); sqlite DATETIME PK with TEXT FK 8. MySQL
+    per-column enum and pg timestamptz/timestamp compile at HEAD. Runtime with the guard removed: postgres `failed
+    to encode args[2]: unable to encode 4294967301 into binary format for int4 (OID 23)`; postgres_stdlib `pq: value
+    "4294967301" is out of range for type integer (22003)`. The MySQL `Error 3780` refusal was not re-measured.
+  - Gates: `go test -race ./gen/` ok (twice); `SQLGEN_BUILD_GENERATED=1 go test -run
+    'TestGenerate_EnumKeysCompile|TestGenerate_TimeFKNestedWritersCompile' ./cli/` ok; `go test -short ./cli/` ok;
+    `TestE2EGoldenFiles` ok; postgres, postgres_stdlib, sqlite `go test -race` ok and `golangci-lint` 0 issues;
+    tenancy, tenancy_mysql, tenancy_postgres, mysql `go vet` clean; `make req-check`, `make refs-check` ok.
+  - Fail-first: O2M route reverted → `TestGetTemplate_fkComparatorDiffersFromParentKey` (`smalls: the key went
+    through the child's filter`); M2M routes → `TestGetTemplate_keyWiderThanFKStaysOutOfTheLoad/m2m` (`missing "if
+    !(int64(int32(b.ID)) == b.ID) {"`); fit guard → o2m, m2m, composite_member and float_parent cases; float
+    bucketing → `float_parent` and sqlite `TestKeyClass_loadsAcrossComparators` (`1000000: {1, -1, +0}`); enum
+    exemption → `TestGetTemplate_keyComparatorFamilies/mysql_per-column_enums` (`tuple loader = true, want false`);
+    Time carve-out → `.../sqlite_datetime_next_to_text`; nested check → `TestNestedAssignExpr_NullWrapperValue`
+    (`nestedAssignExpr("omittable.Value[sql.NullInt32]", "int64") = "omittable.Set(sql.NullInt32{Int32: parent.K,
+    Valid: true})", want ""`) and `TestNestedEligibility_nullWrapperOfAnotherWidth`. The existing suite passes
+    without the fix.
+  - Golden churn: postgres +6/~10, postgres_stdlib +0/~4, sqlite +12/~18 (fixture tables); tenancy, tenancy_mysql and
+    tenancy_postgres +0/~1 each, comment text only; mysql none. No existing edge changed its loader.
+  - Patch: `.claude/prototypes/FIX-372.patch` (121 files, +98744/-2648; 15 source, tests, fixtures and docs, +754/-10;
+    the rest generated, so regenerate). Applies clean at `f36be88e`.
+- Golden churn at implementation, 2026-11-10: the 4 conformance `models_gen.go` files also churn (+156/-104, comment
+  only, 52 sites) from the same `get.go.tmpl` comment; the vet did not regenerate the conformance fixtures. Accepted
+  by the `/fix-loop` orchestrator under the user's no-golden-churn-concern preference.
+
+**References.**
+- PRD §5.3, §11.1, §13.3, §9.9.4 (E1).
+
+**Resolution notes.** Applied the vetted prototype clean at `479b46ae` (fresh: no source change since `f36be88e`), source hunks only, with every generated file regenerated. An FK whose comparator differs in family or type argument from the referenced column's now loads by key tuples on O2M, has-one and both M2M keys (`comparatorsDiffer` in `wireKeyedLoad`; two enums, and a time key next to another family, stay on the old path). `keyGuard` skips a referenced key the integer FK cannot hold, `keyTuple` buckets an integer member against a float counterpart by the float's spelling, and `nestedAssignExpr` refuses a built-in Null wrapper over another type (`nullWrapperHolds`), so E1 drops the edge. PRD §13.3 gains the conversion paragraph, `docs/conformance/cli/gen.md` gains three rows, and §13.3 is rehashed. Tests: `key_mismatch_test.go`, `TestNestedAssignExpr_NullWrapperValue` cases, and the width/class fixtures with `key_width_test.go` (postgres, postgres_stdlib) and `key_class_test.go` (sqlite). Golden churn matches the vet line for line in the examples (the unrelated mysql/sqlite `go.sum` lines were reverted), plus the comment-only conformance-fixture churn recorded above. Also closed the backlog's declared `one_to_one`-with-`types.NullDateTime`-fk case. Measured: it builds now, and with the check disabled it fails with `cur.Time == parent.ID (mismatched types "time".Time and int64)`. Added `TestGenerate_DeclaredTimeFKIntoIntegerKeyCompiles` and removed that backlog line. Gates: `make check` ok, `make check-examples` ok. At `/verify`: the PRD §13.3 paragraph now says a SQLite time key next to another family is not yet supported (§13.3 rehashed); the `comparator-mismatch`, `key-too-wide-skipped` and `key-of-another-type-ineligible` rows were reworded to what landed, with `TestKeyClass_loadsAcrossComparators` cited for float bucketing; a test comment dropped a design label; two backlog lines logged (the declared-edge loudness question, the unexecuted float-parent guard).
+
+
+### FIX-371
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `0d60d3c9` (2026-11-10)
+
+**Issue.** **A time key on `comparator.ID` is bound as `time.Time.String()` text, which fails or silently
+misses on every dialect.**
+- PostgreSQL, in any zone: `invalid input syntax for type timestamp with time zone: "2026-01-02 03:04:05.123456
+  +0000 UTC"` on `Create`, `Get`, `Update`, the O2M loader, the M2M parent loader and nested writes.
+- MySQL reads the wall-clock part and ignores the rest, so a key matches only when its zone equals the driver's
+  `loc`; otherwise `create stamp: get stamp: sqlgen: resource not found`. `timestamp(6)` fails even when they match.
+- SQLite compares text that never matches: `resource not found` on `Create`, a loader returning `got 1 rows` with
+  no kids (silent wrong data), and a nested `connect` fails. (Re-vet at `0d60d3c9`: the false `already related
+  to another row` no longer shows; the parent's update read-back fails first with `update time_keyed with related:
+  update time_keyed: get time_keyed: sqlgen: resource not found`. Same failure, different message.)
+
+**Root cause.** The first arm of `resolveSimpleComparator` (`cmd/sqlgen/gen/context_table.go:2564`, key arm at `:2566`), keyed on
+`FKConvert`, puts a time key on `comparator.ID`. PRD §11.2 says that shape "would misclassify `decimal` and `time`
+columns", and its table gives `time.Time` → `Time`, so the code deviates from the PRD.
+
+**Suggested fix.**
+- Verified fix, option (A), at `0d60d3c9`:
+  - `context_table.go`: `pkComparatorFamily` gains a last arm, `isTimeKeyGoType(base)` → `("Time", "time.Time")`,
+    matching `time.Time` and `types.DateTime` (`sql.NullTime` reaches it through `StdNullUnderlying`). The Time
+    arm in `resolveSimpleComparator` moves ahead of the `FKConvert` key arm.
+  - `funcmap.go`: an explicit `case "Time"` first in `funcPKFilterExpr` (`&comparator.Time{Eq: new(id)}`, or
+    `new(id.Time)` for `types.DateTime`, via FIX-363's `nestedKeyValueExpr`), and an explicit Time branch ahead of
+    the generic one in `pkFilterInExpr` (`&comparator.Time{In: …}`, `&comparator.NullableTime{Time:
+    comparator.Time{In: …}}`, with `dateTimeKeys(…)` for `types.DateTime`).
+  - `context_shared.go`/`orchestrate.go`: `withDateTimeKeys` adds the unexported `dateTimeKeys` helper, gated by
+    `tableHasDateTimeKey`, and keeps the helpers sorted by name.
+  - `context_api.go`: `buildAPIRowKeyMembers(tc, modelsPkg)` gains a `types.DateTime` case that hands GraphQL
+    `time.Time` elements, `.Time` unwraps and `pkFilterInExpr("time.Time", …)`.
+  - PRD §11.2 gains "A time key takes `Time`, not `ID`." Tests: `time_key_internal_test.go`,
+    `time_key_bind_test.go`, and the `time_keyed`/`time_keyed_notes` fixture with `tests/time_key_test.go` in the
+    postgres, mysql and sqlite examples. Composite time members stay supported (a `stamp_tags (stamp_k, tag_id)`
+    probe compiles on all three dialects).
+- Corrected at the re-vet on 2026-11-10 because FIX-370 (`f245cca6`) landed:
+  - Its generic spelling makes a family arm alone emit `&comparator.Time[time.Time]{In: ids}`, which does not
+    compile, since `comparator.Time`/`NullableTime` are plain structs (`comparator/time.go:10`, `:62`). Hence the
+    explicit Time cases.
+  - `buildAPIRowKeyMembers` now derives its filter from `pkFilterInExpr`, so the `types.DateTime` case recomputes
+    it on `time.Time`.
+  - FIX-363's `nestedKeyValueExpr` (`context_nested.go:1811`) is reused instead of a new `timeKeyValueExpr`.
+  - The shared helpers are re-sorted; the old patch's plain append broke the "sorted by name" contract.
+  - The earlier "only the `map[time.Time]` connect failures left" is stale: with the fix, an SQLite connect of an
+    orphan and a re-connect of a held note both give `err=<nil>` in UTC and MST (FIX-363's `.Equal` split).
+    Measured on SQLite only.
+- Prototype results, run at `0d60d3c9` on 2026-11-10:
+  - Reproduction at HEAD, fixture only, `GOWORK=off go test -count=1 -timeout=15m -run TestTimeKeyedRoundTrip
+    ./tests/`: postgres → `iterate time_keyed rows: pgx rows: ERROR: invalid input syntax for type timestamp with
+    time zone: "2026-01-01 20:04:05.123456 -0700 MST" (SQLSTATE 22007)`; mysql and sqlite → `Create: create
+    time_keyed: get time_keyed: sqlgen: resource not found`. A SQLite nested-writes probe: `Get` not found, a
+    loader returning `notes=0` (silent wrong data), `HardDelete` leaving the row, both connects not found.
+  - Gates: `go test -race -count=1 -timeout=30m ./gen/... ./cli/...` ok; gofumpt clean; `make update-golden` no
+    churn; `make update-golden-e2e` PASS (unrelated go.sum lines reverted); postgres, mysql and sqlite examples
+    `go test -race` ok and `golangci-lint` `0 issues.`; live `TestTimeKeyedRoundTrip` ok on all three (MST key).
+  - Fail-first: the `resolveSimpleComparator` arm reverted → `TestTimeKeyComparatorSelection`: `resolveComparatorType()
+    = "*comparator.ID", want "*comparator.Time"`; the `pkComparatorFamily` arm off → `TestTimeKeyFilterExprs`:
+    `funcPKFilterExpr() = "&comparator.ID{Eq: new(id.String())}", want "&comparator.Time{Eq: new(id)}"`; the
+    `pkFilterInExpr` case off → `"&comparator.Time[time.Time]{In: ids}", want "&comparator.Time{In: ids}"`; the
+    `funcPKFilterExpr` case off → `TestGenerate_TimeKeyBindsAsTime`: `cannot use &comparator.ID{…} … as
+    *comparator.Time value`; the DateTime row-key case off → `TestBuildAPIRowKeys_TimeKeys/types.DateTime` fails;
+    `withDateTimeKeys` off → `undefined: dateTimeKeys`; the base generator fails live `TestTimeKeyedRoundTrip` on
+    all three dialects. The existing suite passes without the fix.
+  - Golden churn: the fix alone churns no golden (without the fixture no sqlite table has a datetime key). With
+    the fixture: postgres +2/~10, mysql +6/~17, sqlite +8/~17 in each. The fixture without the fix also changes
+    `graph/comparator_translate_gen.go` and `graph/shared_gen.graphqls` in mysql and sqlite; the fix returns them,
+    which is the GraphQL filter-family change the ruling expected.
+  - Patch: `.claude/prototypes/FIX-371.patch` (134 files, +62658/-3859; the fix is 8 files, +293/-9), applies clean
+    at `0d60d3c9`.
+- The user ruled on 2026-11-06: option (A), which the prototype implements. Time and enum keys stay supported, composite members included. The ruling changes public generated surface:
+  - (A, recommended, prototyped) Route to `comparator.Time`: `StampFilter.K` goes from `*comparator.ID` to
+    `*comparator.Time`, and `KidFilter.StampK` to `*comparator.NullableTime`, with time operands and range
+    operators; the GraphQL filter family changes with it. Fixes all three dialects and every zone pairing, and
+    matches §11.2.
+  - (B) Stay on `comparator.ID` and render a dialect-specific string. No public change, but no text spelling can
+    follow a MySQL `loc` the generator cannot see, so a silent miss remains, and the filter stays string-typed on
+    a time column. Not prototyped; measured by SQL only.
+
+**References.**
+- PRD §11.2. FIX-363, FIX-370 (both patches add an arm to `pkComparatorFamily`).
+
+**Resolution notes.** Applied the vetted option (A) prototype clean at `ad18ad23` (fresh: no source change since `0d60d3c9`). A time key (`time.Time`, `types.DateTime`, nullable forms) now filters through `comparator.Time` / `NullableTime` instead of `comparator.ID`: `resolveSimpleComparator`'s Time arm moved ahead of the `FKConvert` key arm, `pkComparatorFamily` gained a `Time` family, `funcPKFilterExpr` and `pkFilterInExpr` gained explicit non-generic Time spellings (`dateTimeKeys` unwraps `[]types.DateTime`), `withDateTimeKeys` adds that shared helper when a table has a `types.DateTime` key, and `buildAPIRowKeyMembers` hands GraphQL `time.Time` elements for `types.DateTime`. PRD §11.2 gains "A time key takes `Time`, not `ID`."; `docs/conformance/runtime/sql.md` gains `comparator.time-key.binds-as-time` and §11.2 was rehashed. Tests: `time_key_internal_test.go`, `time_key_bind_test.go`, and the `time_keyed` / `time_keyed_notes` fixture with `TestTimeKeyedRoundTrip` in the postgres, mysql and sqlite examples. Golden churn matches the vet file for file and line for line (the unrelated mysql/sqlite `go.sum` lines reverted). Gates: `make check` ok, `make check-examples` ok. At `/verify`: the Golden churn bullet corrected (the fix alone churns no golden), the conformance row reworded to what its tests assert, and the `types.NullDateTime` family drift and a possibly unused `dateTimeKeys` helper logged to `backlog.md`. The reviewer's suggestion to gate `dateTimeKeys` on PK columns only was tried and rejected: `TestGenerate_TimeFKNestedWritersCompile/unique_target` fails with `undefined: dateTimeKeys`, since an FK to a UNIQUE datetime column collects its keys through the helper.
+
+### FIX-373
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** FIX-366 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `e48ece8b` plus FIX-366's patch (2026-11-06)
+
+**Issue.** **On a case-insensitive collation, a nested `connect` through a composite key with a string
+member refuses rows the database treats as matching.** Measured on MySQL's default collation, depot region
+`EU`, vans region `eu`: `create van region=eu depot(EU) err=<nil>`, then `re-connect of the row the depot holds
+err=update depot with related: Vans: connect: 1: sqlgen: already related to another row`, and `connect of
+unparented van region=eu to depot EU err=... Vans: connect: 2: sqlgen: already related to another row`. A
+documented no-op and a valid adoption are both refused, loudly, for `connect`. Measured on MySQL 8.0
+(`utf8mb4_0900_ai_ci`), SQLite `TEXT COLLATE NOCASE` and PostgreSQL 16 `CITEXT` alike: the composite no-op,
+the adoption, an `allow_reparent` move and the single-column no-op are all refused. `disconnect`, which compares
+in the database, works. The `depots` and `vans` tables exist only in FIX-366's patch.
+
+**Root cause.** The three-way split compares stringified members in Go, at `nested.go.tmpl:1085` (pinned
+mismatch), `:1090` (composite no-op) and `:1092` (single-column no-op), and FIX-368's M2M shared-column checks at `:699` (`create`) and `:769` (`connect`), with the split's expressions built by
+`resolveNestedOwnerTuple` (`context_nested.go:1142`). Go cannot apply a database collation.
+
+**Suggested fix.**
+- Prototype results, run at `e48ece8b` on 2026-11-06, option A: PRD §9.9.6 paragraph beside §9.5's "Both halves
+  compare values as Go sees them", new row `nested.connect-key-compared-as-go` (mysql), new subtest gated on a
+  new `CapCaseInsensitiveText`. Gates: conformance/mysql `UpdateWithRelated` ok, sqlite skips by capability, suite
+  lint, `make req-check`, `make refs-check` green. Fail-first: under routing (B) the new test fails with `error =
+  <nil>, want sqlgen: already related to another row`; no true before/after pair exists, since A changes no
+  behavior. Golden churn: none. Cut on top of FIX-366, which must land first. Patch:
+  `.claude/prototypes/FIX-373.patch`. Rejected routing option:
+  `/private/tmp/claude-501/-Users-teandresmith-sqlgen/6bed3e18-93e2-46f9-87c1-05edb218fdd4/scratchpad/FIX-373.option-route.patch`.
+- `strings.EqualFold` is rejected: it disagrees with the database both ways (`cafe`=`café` on MySQL) and would
+  report a false no-op on a case-sensitive column.
+- The user ruled on 2026-11-06: option (A) on question 1 and option (a) on question 2, so the §9.9.6 limit paragraph also covers FIX-368's shared-column check. The patch predates question 2's ruling and needs that sentence, and a sentence that a `connect` naming a target's primary key in another case is `ErrNotFound` (measured: `connect: BLUE: sqlgen: resource not found`, stored `blue`), hand-merged with FIX-368's §9.9.6 anchors. FIX-366 lands first.
+  1. How should the split read equality? (A, recommended) A documented limit: +0 statements, no SQL or generated
+     change, no goldens; the refusals stay, loud, with the row untouched, and the error text misleads for a row
+     this parent holds. (B) Route Go mismatches through the adoption and verify read: every case resolves on all
+     three dialects, the refusal path goes from 2 to 4 statements, ~2 lines in tenancy_postgres, but it
+     contradicts §9.9.6's "before the adoption `UPDATE`" and the call succeeds while the returned relationship
+     omits the adopted row, because the loader drops it. (C) A database-computed `CASE WHEN` in the visibility
+     read: +0 statements, but `GetMany` cannot select an expression, so the runtime changes or hooks and tenancy
+     are bypassed; not prototyped. (D) A follow-up read on Go mismatches: +1 per chunk, a new §9.9.7 row, and the
+     same read-back gap as B; not prototyped.
+  2. FIX-368's shared-column check refuses an M2M `connect` HEAD accepts: `m2m connect van EU to tool eu
+     (database FK accepts it): err=[ErrAlreadyRelated]`, on all three dialects. (a, recommended) Accept it under
+     the limit and extend the §9.9.6 paragraph; M2M then matches O2M. (b) On a Go mismatch, read `id IN … AND
+     shared = parent` before refusing: +1 per chunk and a new §9.9.7 row; not prototyped.
+- The user ruled on 2026-11-10: §9.9.6's limit paragraph also covers the M2M nested `create` shared-column check, which compares in Go (measured on MySQL: `Tools: create: sqlgen: already related to another row` for region `eu` on a van with region `EU`).
+
+**References.**
+- PRD §9.9.3, §9.9.6, §9.9.7. FIX-368.
+
+**Resolution notes.** Documented limit, per the 2026-11-06 ruling (option A, and (a) for FIX-368's shared column). No generated or runtime change. PRD §9.9.6 gains a paragraph beside §9.5's "Both halves compare values as Go sees them": the connect split, the pinned check and the M2M shared-column checks on `connect` and `create` compare keys byte for byte, so a case-insensitive collation's case-differing key is `ErrAlreadyRelated`, and a one-to-many `connect` naming a target's primary key in another spelling is `ErrNotFound`. Both new claims measured on MySQL 8.0 before writing: the M2M case by the new subtest (`Tools: connect` refused, `VanTools().Create` with region `EU` and tool `eu` accepted), and the primary-key case by a throwaway string-PK table in a worktree (`connect: BLUE: sqlgen: resource not found`, stored `blue`; `connect blue` ok). New registry row `nested.connect-key-compared-as-go` (mysql), new conformance subtest `UpdateWithRelated/connect or create through a key that differs only in case is ErrAlreadyRelated` gated on new `CapCaseInsensitiveText` (set on MySQL; SQLite, PostgreSQL and postgres_stdlib skip). The prototype applied with `--3way`: the three suite files clean, PRD and registry conflicts hand-merged keeping FIX-369's paragraph and FIX-366's row text, anchors rehashed with `make req-rehash SECTIONS=9.9,9.9.6`. Golden churn: none, as vetted. The primary-key case has no permanent test: the conformance schema has no string-keyed connect target. Verify corrections applied inline: the paragraph's `disconnect`/`clear` sentence now notes FIX-369's Go comparison of a parent-held tenant column, the `ErrNotFound` sentence covers one-to-many only (the only case measured), and the Root cause line refs were moved to HEAD. Per the 2026-11-10 ruling, the paragraph and the row also cover the M2M `create` refusal, and the subtest asserts it with the created tool rolled back. Fail-first: with the generated `Tools` create check disabled in conformance/mysql models, the subtest fails `error = <nil>, want sqlgen: already related to another row`; restored after.
+
+### FIX-366
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06)
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **The `nested.composite-*` rows apply to `all`, but nested writes through a composite key
+run live on PostgreSQL only.** MySQL and SQLite only compile
+(`TestGenerate_CompositeKeyNestedWritersCompile`). Design §11 item 1 requires a passing test on
+every dialect in Applies-to at phase close, and the phase's "Every dialect" ground rule covers this
+work. Nothing measured is broken there; the unproved paths are MySQL's non-`RETURNING` read-backs
+(`CreateMany` returning `TargetReadFields`, the parent's key columns after a narrowed `Create` or
+`Upsert`) and SQLite's FK enforcement. SQLite writes run through `RETURNING`.
+
+**Root cause.** Every live test is in `tenancy_postgres/tests/nested_composite_test.go`. The
+conformance suite's nested parents are `authors` and `tags` only, and 32.8's task list adds load
+and filter tests to `mysql` and `sqlite`, though its Tests Required says "nested where eligible".
+
+**Suggested fix.**
+- Conformance schema, every dialect: new `depots`, `routes`, `vans`, `tools`, `van_tools`, `permits`,
+  `van_permits`, `bays`, `lockers`. The existing composite tables cannot carry nested writes (`order_items`
+  fails E3 and E1, `shelves` E1, `crates` and `stations` reach composite-PK targets). `region` is a
+  tenant-shaped pinned key with no tenancy; `allow_reparent` on Route.Vans; edges listed by name, except
+  `vans`, since a listed Permits edge cannot carry `disconnect`.
+- New `suite/nested_composite.go`: 14 subtests under `CreateWithRelated`, `UpdateWithRelated` and
+  `UpsertWithRelated`, including narrowed selections, `CreateMany` returning `TargetReadFields`, and a
+  cross-value link as a foreign-key `ConstraintError`, which proves SQLite enforces the composite FK.
+- `tenancy_mysql` and `tenancy`: turn `nested_mutations` on, add composite tenant tables and
+  `tests/nested_composite_test.go`. The two tenancy-specific rows cannot go in the suite, and
+  `tenancy_mysql` alone would leave them unproved on SQLite.
+- Split the `MATCH FULL` half into a new row `nested.composite-match-full-disconnect-nulls-every-member`,
+  applying to `postgres`; the original row stays `all`. Design §10.5's "nested.* (×8)" becomes ×9.
+- Corrected from the original: new tables are needed, the suite alone is not enough, and the design's
+  `all (FULL: postgres)` is not valid Applies-to grammar. 32.8's "nested where eligible" line is met by this.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): split the `MATCH FULL` row or
+  keep one row → split, because gates are green, no golden moves, no public surface changes, and no ruling
+  or PRD behavior is reversed.
+- Prototype results, run at `e48ece8b` on 2026-11-06: gap reproduced by counting composite connect executors:
+  tenancy_postgres 8, every other module 0. **No `nested.composite-*` row fails on MySQL or SQLite.** Gates:
+  conformance on all four legs, `tenancy`, `tenancy_mysql`, their lint, `make lint-conformance`,
+  `TestE2EGoldenFiles`, `TestE2EDatabaseTwin/tenancy*`, `make req-check`, `make refs-check` green. Fail-first:
+  breaking each guarded line failed its subtest on both sqlite and mysql (pinned check, free writes, held
+  and partly NULL cases, the already-ours no-op, disconnect and clear, shared link column, forced parent
+  keys, `TargetReadFields`, the tenant mappings, cross-tenant skip), e.g. `Lockers: connect: sqlgen: already
+  related to another row`; the existing suite passes without the fix. No fail-first: the adoption's `IS NULL`
+  guard, reachable only by a race, and the has-one mapping, unit-only under E3. Golden churn: `tenancy` ~7
+  files (+36061/-8826 in `expected/`, the same in `models/`), which also gains `WithRelated` on `post`, `tag`,
+  `user`; `tenancy_mysql` ~8 files (+30051/-1976, the same in `models/`). With FIX-364: one row conflict in
+  `cli/gen.md` (keep both sides) and 16 generated conformance files, cleared by regenerating. Patch:
+  `.claude/prototypes/FIX-366.patch` (72 files, 19.8 MB).
+- The user ruled on 2026-11-10: extend FIX-366 with a conformance fixture that has two nullable free members and an `allow_reparent` edge, so `nested.composite-connect-held-elsewhere`'s partly-NULL adoption clause is proved on every dialect (FIX-367 added the clause after the vet).
+
+**References.**
+- PRD §9.9, Appendix B. `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §10.1, §11, §12 Q1.
+
+**Resolution notes.** Test and fixture coverage only; no production defect surfaced. The vetted prototype applied with `git apply --3way` over FIX-363/364/365/368/369/370/367, generated dirs excluded and regenerated. `cli/gen.md`, `client.md` and the design doc's registry rows were hand-merged, keeping every landed row and test (FIX-364's surrogate junction, FIX-368's shared-column rows, FIX-369's unlink row, FIX-367's tests) and adding this fix's conformance and example tests; the `MATCH FULL` split is kept. Two post-vet adaptations, both FIX-368 (`7d36c1a7`) meeting the new fixtures: the conformance subtest that expected a cross-region `van_tools` link to fail as a foreign-key `ConstraintError` at `link` now asserts `ErrAlreadyRelated` at `connect`, naming the target, before the link step, and keeps the SQLite composite-FK proof by creating the junction row directly (`ConstraintForeignKey`); its evidence moved from `nested.junction-key-union` to `nested.composite-connect-pinned-mismatch`. `tenancy` and `tenancy_mysql` gain `stamps`/`template_stamps`, as tenancy_postgres did under FIX-368, so `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` still reaches the link step (connect and create), and the old labels case becomes `TestUpdateWithRelated_ConnectUnderSharedParentMismatchIsAlreadyRelated`. The two new example tests the prototype named `TestCreateWithRelated_*` call `UpdateWithRelated`, so they are `TestUpdateWithRelated_TenancySetTenantMismatchIsAlreadyRelated` and `TestUpdateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated`, matching FIX-367's renames. By the 2026-11-10 ruling, every conformance schema gains `slots` (two nullable free members, FK to `bays (region, id)`), with `Bay.Slots` listed with `allow_reparent: true`; the subtest `allow_reparent adopts a target holding a partly NULL key` (region held / id held) proves `nested.composite-connect-held-elsewhere`'s adoption clause on every dialect. Fail-first on sqlite: adding the non-reparent partly-NULL refusal to the generated Slots connect failed both cases with `Slots: connect: 1: sqlgen: already related to another row, want nil`. Conformance models regenerated again (31 tables). Golden churn: the vet's files and examples. Over the vet, `models_gen.go` gains ~5.9k lines in `tenancy` and ~6.1k in `tenancy_mysql`, mostly the two stamps tables' generated surface; before the stamps tables the difference was ~66 lines, all FIX-368's shared-column comparison and FIX-369's unlink tenant guard on the templates/labels edges. `cache_gen`, `event_hooks_gen`, `sorter_gen`, `client_gen` and `tablenames_gen` grow with the stamps tables. Conformance models regenerated on all four legs.
+
+### FIX-367
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06)
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **Several 32.6 branches have no test that reaches them.**
+- The nullable pinned guard (`null[i] || cur[i] != want[i]`) appears in no checked-in `.go` file
+  under `cmd/sqlgen`, so it is neither compiled nor run. A reviewer probe rendered it and it behaved.
+- PRD §9.9.3's "`allow_reparent` adopts" a partly NULL key has no test.
+- `gen.nested.e1-target-shape`: no test asserts the "cannot construct from the parent's key" refusal.
+- `gen.nested.e5-junction`: no test asserts a local or reference key column absent from the junction's create input, and
+  no payload-column case runs on a three-column union.
+- `TestWithRelated_NarrowedSelectionStillWritesTheEdge` covers `UpdateWithRelated` only; the forcing
+  also serves `Create` and `Upsert`.
+- `TestCreateWithRelated_TenancySetTenantMismatchIsAlreadyRelated` and
+  `TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated` call `UpdateWithRelated`, so they
+  are misnamed.
+
+**Root cause.** `tenancy_postgres` has no table with a nullable pinned member, and the fixtures stop
+at the shapes the acceptance criteria name.
+
+**Suggested fix.**
+- tenancy_postgres gains `plots` (allow_reparent, two free members) and `shared_parents`,
+  `shared_guardians`, `shared_kids` (nullable `org` pinned on both edges), appended to `schema.sql`.
+  `sqlgen.yml` lists `zones` (Sites and Plots, since the list is an allowlist) and `shared_guardians`.
+- Example tests: `TestUpdateWithRelated_NullablePinnedMember`, `TestUpdateWithRelated_AllowReparentAdoptsAPartlyNullKey`,
+  and `TestWithRelated_NarrowedSelectionStillWritesTheEdge` split into create, upsert inserts, upsert
+  conflicts and update.
+- Unit tests: `TestNestedEligibility_JunctionKeyColumnOutsideTheCreateInput`,
+  `TestNestedEligibility_PayloadColumnOnThreeColumnUnion`, and three new TargetShape cases for E1.
+- Rename the two misnamed tests in the code, `nested.composite-create-tenant-mismatch`, the design doc and
+  `docs/tracker/phase-32.md` (lines 1177, 1222). Update `gen.nested.e1-target-shape`,
+  `gen.nested.e5-junction` and `nested.parent-write-strips-relationships`, which gains the narrowed-selection
+  test and the referenced parent columns (PRD §9.6).
+- Corrected from the original: the NULL pinned test needs a parent whose `org` is the empty string, since
+  with a non-empty org deleting `null[i] ||` survives; it also runs on an `allow_reparent` edge; `Create` and
+  `Upsert` assert through the rows, since an all-false selection returns nil (PRD §9.6).
+- Prototype results, run at `e48ece8b` on 2026-11-06: no production defect surfaced; every new test passed
+  against unmodified generated code. The gap reproduced: `grep -rnE 'null\[[0-9]+\] \|\|' cmd/sqlgen` found no
+  pinned guard. Gates: `go test -race ./gen/...`, tenancy_postgres suite and lint, `make update-golden`, `make
+  update-golden-e2e`, `TestE2EGoldenFiles`, `sqlgen diff --quiet`, `make refs-check`, `make req-check` green.
+  Fail-first: removing `null[%d] ||` fails `TestUpdateWithRelated_NullablePinnedMember/default_edge/NULL_is_refused`
+  (`error names <nil>, want 1`); making `allow_reparent` refuse a partly NULL key fails
+  `/region_held` and `/id_held`; deleting the `FieldOptions` line in Create and Upsert fails their subtests with
+  a false `ErrAlreadyRelated`; deleting the E1 `expr == ""` block fails the TargetShape cases; deleting each E5
+  refusal fails its subtest; stopping the payload rule at two columns fails all three three-column cases. The
+  optional and sequence refusals were already guarded. Golden churn: tenancy_postgres only, +8/~12 in each of
+  `expected/` and `models/`. Overlap: clean over FIX-365; a hand merge in `client.md` with FIX-368; 18 generated
+  conflicts with FIX-364, cleared by regenerating. Patch: `.claude/prototypes/FIX-367.patch` (49 files).
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E1, E5), §9.9.6, §9.6.
+- Registry: `nested.composite-connect-pinned-mismatch`, `nested.composite-connect-held-elsewhere`.
+
+**Resolution notes.** Test and fixture coverage only; no production defect surfaced. The vetted prototype applied with `git apply --3way` over FIX-363/364/365/368/369/370; `main_test.go`'s reset list, `client.md`, `cli/gen.md` and the design doc's registry rows were hand-merged, keeping the landed rows (`nested.unlink-tenant-mismatch`, `nested.m2m-create-shared-column-mismatch`, the wider pinned-mismatch row) and adding this fix's tests to them. tenancy_postgres gains `plots` and `shared_parents`/`shared_guardians`/`shared_kids`; new example tests `TestUpdateWithRelated_NullablePinnedMember`, `TestUpdateWithRelated_AllowReparentAdoptsAPartlyNullKey`, and `TestWithRelated_NarrowedSelectionStillWritesTheEdge` split into create, upsert inserts, upsert conflicts and update; unit tests `TestNestedEligibility_JunctionKeyColumnOutsideTheCreateInput`, `TestNestedEligibility_PayloadColumnOnThreeColumnUnion` and three E1 TargetShape cases. The two misnamed tests are now `TestUpdateWithRelated_TenancySetTenantMismatchIsAlreadyRelated` and `TestUpdateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated`, in code, the registries, the design doc and `docs/tracker/phase-32.md`. The pinned guard `null[0] || cur[0] != want[0]` is now in checked-in generated code. Generated files regenerated, not merged: tenancy_postgres +8/~12 in each of `expected/` and `models/`, matching the vet (net line counts identical; per-file numstat differs only by diff alignment against the newer base). Gates: `make check`, `make check-examples`.
+
+### FIX-370
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **An enum in a primary key, or a one-column enum FK, generates a package that does not
+compile, with or without nested writes.** `generate` plus `go build`, nested off (PostgreSQL pgx and stdlib, MySQL stdlib; line numbers vary by schema):
+`out/models_gen.go:235:8: cannot use &comparator.ID{…} (value of type *comparator.ID) as
+*comparator.Enum[Kind] value in struct literal`. One-column FK: `out/models_gen.go:436:8: cannot use
+&comparator.NullableID{…} … as *comparator.NullableEnum[Kind] value`. Composite junction PK:
+`out/models_gen.go:2411:15`, the same error.
+
+**Root cause.** `pkComparatorFamily` returns "ID" while the filter field is `comparator.Enum[T]`. Its
+comment (`cmd/sqlgen/gen/context_table.go:2452`) says enum columns are "not routed here", but they are.
+On MySQL each column declares its own enum, so an FK's Go type also differs from its parent key's
+(`ChildrenThingKindEnum` vs `ThingsKindEnum`), and the O2M loader fails separately.
+
+**Suggested fix.**
+- `pkComparatorFamily` gains an `isEnumLikeType` arm returning "Enum", first in the switch to mirror
+  `resolveGenericComparator`. `funcPKFilterExpr` and `pkFilterInExpr` render `comparator.Enum[T]` and
+  `NullableEnum[T]`. `ConnectKeyExpr`, `TargetPKIsString` and the nested paths follow the family unchanged.
+- `buildAPIRowKeyMembers` emits `models.Kind`, with `modelsPkg` threaded through `buildAPIRowKeys`.
+- New `RelationshipContext.FKEnumGoType` and funcmap `pkFilterInExprByGoType`: the O2M loader converts each
+  parent key to the FK's enum when the two types differ.
+- Tests: `TestGenerate_EnumKeysCompile` (`cmd/sqlgen/cli/enum_key_test.go`; pgx, pg stdlib, mysql; enum PK,
+  nullable and NOT NULL one-column FK, enum junction PK, nested on) and `TestEnumKey_FollowsTheFilterField`.
+- Corrected from the original: the family change alone leaves the MySQL per-column enum FK failing (`cannot use
+  &comparator.NullableEnum[ThingsKindEnum]{…} … as *comparator.NullableEnum[ChildrenThingKindEnum]`), and the
+  API row-key caller needs the models qualifier. M2M `clear` on an enum junction has build and text coverage
+  only, since a live test would add tables to an example schema and move goldens.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced on pgx, pg stdlib and mysql with the errors in
+  the Issue. Gates: `go test -race -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make
+  update-golden-e2e`, `golangci-lint`, `make refs-check`, gofumpt green. Live probes, not in the patch: pgx on a
+  graphql example copy (CRUD, loaders both ways, nested verbs, O2M and M2M `clear`, needing a temporary resolver
+  qualifier) and MySQL 8.0 (CRUD and all three loaders) passed. Fail-first: removing the enum arm, the
+  `funcPKFilterExpr` case, the `pkFilterInExpr` form, the models qualifier and the `FKEnumGoType` wiring each
+  fails `TestEnumKey_FollowsTheFilterField` or `TestGenerate_EnumKeysCompile`; the existing suite passes without
+  the fix. Golden churn: none. Its only shared file with FIX-363's earlier snapshot is `context.go`, in separate
+  hunks; the two have not been built together. Patch: `.claude/prototypes/FIX-370.patch` (7 files, +197/-34).
+
+**References.**
+- PRD §11.2. FIX-363.
+
+**Resolution notes.** The prototype applied clean at HEAD over FIX-363, 365, 364, 368 and 369; no hand merge. `pkComparatorFamily` now has an enum arm, first as in `resolveGenericComparator`, so `funcPKFilterExpr`, `pkFilterInExpr` and everything that follows the family render `comparator.Enum[T]` / `NullableEnum[T]` for an enum key. The API row keys qualify the enum with the models package. On MySQL, where each column declares its own enum, `RelationshipContext.FKEnumGoType` makes the O2M loader convert each parent key to the FK's enum, through the new funcmap entry `pkFilterInExprByGoType`. Tests: `TestGenerate_EnumKeysCompile` (pgx, pg stdlib, mysql) and `TestEnumKey_FollowsTheFilterField`, both listed as unclaimed helper and build-smoke tests in `docs/conformance/cli/commands.md` and `docs/conformance/cli/gen.md`. Fail-first on the final code: removing the enum arm fails both. Golden churn: none, as in the vet. From `/verify`: the reviewer found the landed source byte-identical to the prototype and confirmed the fail-first; the `gen.md` note no longer claims the unit test covers the O2M loader, and `applyRelFKFallbacks`'s doc names the `FKEnumGoType` derivation. The MySQL O2M loader conversion and M2M `clear` on an enum junction have build and text coverage only.
+
+### FIX-369
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **A shared parent's tenant mismatch reports differently per verb, and `clear` reports
+success while writing nothing.** Measured on a tenant junction: `link` gives `ErrAlreadyRelated`,
+`disconnect` gives raw `tenancy.ErrMismatch`, and `clear` returns `err=nil` with the row still there.
+The user ruled the asymmetry a bug. A caller told an edge was cleared must be able to rely on that.
+
+**Root cause.** The `tenancy.ErrMismatch` mapping in `nested.go.tmpl` covers `create` and `link` only.
+`disconnect` passes a key holding the parent's tenant value to `HardDeleteMany`, which refuses it
+unmapped. `clear` goes through `HardDeleteWhere`, whose tenant filter and `key = parent` terms
+contradict each other, so it matches no rows and returns nil.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** `disconnect` and `clear` fail loud on this mismatch, with `ErrAlreadyRelated`
+  attributed to the verb, as `create` and `link` do (PRD §9.9.8).
+- Map the error at M2M `disconnect`. M2M `clear` and O2M `disconnect` and `clear` raise nothing to map:
+  each matches zero rows and returns nil, so they need an explicit comparison of the parent's tenant
+  column with the resolved tenant before the statement. The prototype adds a `tenantKeyConflict(verb)`
+  closure and the edge fields `TenantKeyParent` and `TenantKeyClient`, set only when the tenant member
+  comes from a parent column other than the parent's own tenant column.
+- Has-one is unreachable for these verbs, and its executor arm takes the guard without a test.
+- Add the verbs to the PRD §9.9.8 row, and live tests that fail first with the measured outcomes.
+
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): emit the comparison when
+  the key takes the column from the parent's own tenant column → no, skip it, because gates are green, it
+  causes less churn, adds no public surface, and §9.9.6 already says such a mismatch needs a shared parent.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): attribute a missing tenant
+  at the comparison → `tenancy.ErrMissing` through `nestedError`, read through the target's own `required`,
+  because gates are green, there is no churn or public surface, and it is the error the inner statement
+  would give. No live test covers `required: false`, since tenancy_postgres is `required: true`.
+- Prototype results, run at `e48ece8b` on 2026-11-06, recommended options: with a sibling tenancy_postgres
+  copy plus `template_notes`, O2M `disconnect`, O2M `clear` and M2M `clear` by tenant A on a B-owned parent
+  return `err=<nil>` with the row still linked; M2M `disconnect` gives the raw `tenancy: tenant on mutation
+  input does not match resolved tenant`; `SkipTenancy` and an explicit owner tenant unlink correctly; a miss
+  is `err=<nil>`. Gates: `go test -race ./gen/...` (`-run Nested` on the final code), `golangci-lint`,
+  `TestE2EGoldenFiles`, tenancy_postgres suite and lint, `make req-check`, `make refs-check` green. Not run:
+  conformance, graphql and mysql suites, whose goldens are byte-identical. Fail-first: removing the O2M
+  comparison fails `/o2m_disconnect` and `/o2m_disconnect_naming_no_row` (`error = <nil>, want sqlgen: already
+  related to another row`); removing the clear comparison fails `/o2m_clear`, `/m2m_clear` and
+  `TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert`; removing the M2M mapping fails
+  `/m2m_disconnect` with the raw error; the existing suite passes without the fix. Golden churn:
+  tenancy_postgres +2/~12 in `expected/`, mirrored in `models/`, mostly the `template_notes` fixture; no
+  other example moves. `docs/conformance/REPORT.md` needs `make conformance`. Patch:
+  `.claude/prototypes/FIX-369.patch` (38 files), overlapping FIX-364 and FIX-368 in the nested code.
+- The user ruled on 2026-11-06: option (a) on both questions, which the prototype already implements:
+  1. On a tenant mismatch, does an O2M `disconnect` fail loud, given PRD §9.9.6 and §29.4.2a say "a miss is
+     a no-op"? (a, recommended, prototyped) `ErrAlreadyRelated` on every mismatch, even an id on no row, with
+     the carve-out "a tenant mismatch is not a miss"; it reveals nothing about row existence, and a miss
+     with agreeing tenants stays a no-op. (b) Keep the PRD: O2M `disconnect` stays silent with the row still
+     linked, and the verbs stay asymmetric.
+  2. On `UpsertWithRelated`'s insert branch, does the refusal apply, given §9.9.5 says these verbs "match
+     zero rows and are no-ops" on a fresh parent? (a, recommended, prototyped) Refuse on both branches, so
+     the insert rolls back; the executor has no branch detection and §9.9.5 forbids it, and M2M `disconnect`
+     already fails here. (b) Keep the no-op, which needs insert-versus-update detection. Not prototyped.
+
+- Corrected from the original: M2M `clear` and O2M `disconnect` take a comparison rather than a mapping, and
+  the PRD change reaches §9.9.5, §9.9.6, §9.9.10 and §29.4.2a. FIX-368 keeps the link-step mapping, which stays
+  reachable, and rewords the §9.9.8 row, so this entry adds its verbs to that wording. With FIX-368 a
+  shared-parent `connect` reaches `link` only on a shared target. This patch needs a hand merge over FIX-368's.
+
+**References.**
+- PRD §9.9.5, §9.9.6, §9.9.8, §29.4.2a.
+- Registry: `nested.unlink-tenant-mismatch`, `nested.composite-create-tenant-mismatch`.
+- `feedback_loud_errors_over_silence`.
+
+**Resolution notes.** The prototype applied with `git apply --3way` over FIX-364 and FIX-368, hand-merged in `context_nested.go` (FIX-368's `resolveJunctionSharedRead` and this fix's `setJunctionTenantParent` both kept), `tests/main_test.go` (`template_notes` added to FIX-368's reset list), PRD §9.9.8 (this fix's verbs added to the row FIX-368 reworded, no parallel row) and the registry (`nested.unlink-tenant-mismatch` beside FIX-368's rows; anchors rehashed with `make req-rehash SECTIONS=9.9,9.9.6,9.9.8`; the §9.9.5, §29.4 and §29.4.2a anchors came over from the prototype unchanged, since FIX-368 left those sections alone). Each unlink through a key that takes the tenant column from a parent column other than the parent's own tenant column now compares it with the resolved tenant before the statement: O2M `disconnect` and `clear` and M2M `clear` through the `tenantKeyConflict(verb)` closure, M2M `disconnect` by mapping the junction's `tenancy.ErrMismatch`. Each returns `ErrAlreadyRelated` attributed to the verb, on both `UpsertWithRelated` branches. The prototype carries no `Labels: link` test: FIX-368 had already moved `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` to `Template.Stamps`, and it still passes there. Fail-first on the final code, by disabling each piece in the generated `models_gen.go`: without the clear comparison, `/o2m_clear`, `/m2m_clear` and `TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert` give `error = <nil>`; without the O2M disconnect comparison, `/o2m_disconnect` and `/o2m_disconnect_naming_no_row` give `error = <nil>`; without the M2M disconnect mapping, `/m2m_disconnect` gives the raw `tenancy: tenant on mutation input does not match resolved tenant`; without the link mapping, the `Stamps` link test gives the raw error. Golden churn: tenancy_postgres +2/~12 in `expected/`, mirrored in `models/`, the same files as the vet; `models_gen.go` adds the comparison to FIX-368's `Template.Stamps` and `Stamp.Templates` edges too (four closures), so its line count differs from the vet's. The design doc gains the registry row, and the phase-32 Completion Record names `template_notes` and this fix as landed. From `/verify`: the generated `UpsertWithRelated` godoc and its input's godoc said `disconnect` / `clear` are no-ops on a fresh parent; on a table with an edge that takes the comparison they now name the refusal (a template-local flag, so only tenancy_postgres moves), with a render assertion in `TestNestedTemplate_UnlinkComparesAParentHeldTenant`. The References gained §9.9.5, §29.4.2a and the new registry row and dropped §9.9.10, which this fix does not edit. The reviewer's probe found an M2M `disconnect` naming no row refused too; that case is now the subtest `/m2m_disconnect_naming_no_row`, which fails with the raw `tenancy` error without the M2M mapping.
+
+### FIX-368
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **An M2M `connect` under `SkipTenancy` to a target in another workspace is a raw FK
+violation, not `ErrAlreadyRelated`.** Measured on `tenancy_postgres`: `foreign_key constraint
+violation … task_labels_workspace_id_label_id_fkey`, attributed to `link` with no id. PRD §9.9.6's
+pinned rule says "a key with several columns" without limiting itself to O2M, and the user ruled that
+the rule covers a column both junction keys share.
+
+**Root cause.** `junctionLinks` (`cmd/sqlgen/gen/context_nested.go`) gives a shared column the parent's
+value and skips the reference side's pair, so nothing compares the target's own value. The M2M
+visibility read selects only the primary key and `TargetReadFields`.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** read each column the two keys share off the target in the M2M visibility read
+  and refuse a mismatch with `ErrAlreadyRelated` naming the target, attributed to `connect`, before the
+  link step, `allow_reparent` having no bearing.
+- Rewrite the PRD §9.9.6 junction paragraph, which the user accepted on these terms: drop "the
+  junction's own foreign keys refuse a target that disagrees", which this ruling replaces and which is
+  false on SQLite without `PRAGMA foreign_keys=ON`. Update the §9.9.8 row and the Completion Record's
+  M2M note.
+- Add a live test under `SkipTenancy` asserting the sentinel, the attribution, the id and an unchanged
+  junction. It must fail first with the raw FK error.
+
+- The check is not gated on `SkipTenancy`, since the ruled text is unconditional, so it also fires for a
+  shared parent under tenancy. That `connect` moves from `link` with no id to `connect` naming the id, and
+  `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` moves to the new `Template.Stamps` fixture, since
+  on `Template.Labels` neither verb reaches `link` any more. The reverse
+  edges (`Label.Tasks`, `Label.Templates`) get the same check from the same site.
+- PRD §9.9.2 gains one sentence pointing to §9.9.6, since "An M2M edge has no pinned members" is silent on
+  this. Update the 32.6 Completion Record's M2M note (`docs/tracker/phase-32.md:1188-1190`), which still says
+  a raw FK violation and that the pinned rule covers O2M and has-one only.
+- Prototype results, run at `e48ece8b` on 2026-11-06 (the ruled `connect` half only): reproduced on
+  tenancy_postgres, `Labels: link: upsert many task_labels: ... foreign_key constraint violation on constraint
+  task_labels_workspace_id_label_id_fkey` with edge=Labels verb=link id=<nil>. A `sqlite3 :memory:` composite
+  FK with no PRAGMA accepted a dangling row, confirming the PRD claim is false there. Prototype:
+  `resolveJunctionSharedRead` builds `JunctionSharedAgrees` and `JunctionSharedFields`, the visibility read
+  selects them, and the check runs in caller id order, `ErrNotFound` first; a NULL on the target disagrees.
+  Gates: `go test -race ./gen/...`, `golangci-lint`, tenancy_postgres suite and lint, `make update-golden`,
+  `make update-golden-e2e`, `make req-check`, `make refs-check` green. Fail-first: removing the check fails
+  `TestUpdateWithRelated_ConnectSharedJunctionColumnMismatchIsAlreadyRelated` with the raw FK error and
+  `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` with `attribution = Labels link, want Labels
+  connect`; not selecting the field fails with `error names 4, want 5`; dropping it from the template and
+  removing the target-key guard each fail their unit test; the existing suite passes without the fix. Golden
+  churn: tenancy_postgres +0/~2 (36 lines each); other examples none. FIX-364's PRD hunk at `docs/PRD.md:7909`
+  needs a hand merge with this patch, and its conformance hashes clear with `make req-rehash`. Patch:
+  `.claude/prototypes/FIX-368.patch`.
+- The user ruled on 2026-11-06: option (A). A nested M2M `create` whose created target disagrees on a shared
+  column is refused with `ErrAlreadyRelated`, attributed to `create`, no id. This reverses the `link`
+  attribution in PRD §9.9.6 and §9.9.8.
+
+- Ruled-option results, run at `e48ece8b` on 2026-11-06: the M2M `create` selects `JunctionSharedFields` and
+  refuses after `CreateMany` with `ErrAlreadyRelated`, attributed to `create`, no id. **The link step's
+  `tenancy.ErrMismatch` mapping stays reachable and is kept.** Measured live: it fires on three shapes, with the
+  tenant column in the parent's key only on a tenanted target, in the target's key only on a shared target, and
+  shared on a shared parent and shared target that agree against the resolver; each gives `<Edge>: link: sqlgen:
+  already related to another row`. Only the shared column on the target's tenant column (`Template.Labels`) is
+  closed by the new checks. New shared `stamps` and `template_stamps` keep `link` under live test. PRD §9.9.2,
+  §9.9.6, §9.9.8, new row `nested.m2m-create-shared-column-mismatch`, `nested.composite-create-tenant-mismatch`
+  reworded to "key-set tenant column differs from the resolved tenant", design `:775`. Gates: `go test -race
+  ./gen/...`, `TestE2EGoldenFiles`, tenancy_postgres suite and lint, `make update-golden`, `make
+  update-golden-e2e`, `make req-check`, `make refs-check` green. Fail-first: removing the `create` check fails
+  with `attribution = Labels link, want Labels create` and, under `SkipTenancy`, the raw FK error; removing the
+  `create` selection gives a false refusal; removing the link mapping fails with the raw `tenant on mutation
+  input does not match resolved tenant`; removing the `connect` check fails with `error names <nil>, want 6`; the
+  existing suite passes without the fix. Golden churn: tenancy_postgres +4/~12 in `expected/`, mirrored in
+  `models/`; no other example moves. FIX-369 no longer applies cleanly over this: hand-merge `context_nested.go`,
+  `main_test.go`, `nested_composite_test.go`, `PRD.md`, `cli/gen.md` and `client.md`, add its verbs to the
+  reworded §9.9.8 row, and move its `Labels: link` test to Stamps. This supersedes the patch line above. Patch:
+  `.claude/prototypes/FIX-368.patch` (43 files).
+
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): the prototype's NULL guard on a shared column, now unreachable because FIX-365 (`855738ce`) makes both sides' referenced columns NOT NULL under E1 → drop the guard and rewrite its test to the two-bindings half, because the option was prototyped with gates green, no example's generated output differs (the guard renders empty for a NOT NULL column unless a `column_map` type binds it to a pointer, where it would only restate a non-nil value), it touches no public surface, and neither the PRD nor a ruling states the NULL case. The implementer and the `/verify` reviewer recommend it independently; the reviewer probed nullable, wrapper, pointer and excluded columns.
+
+**References.**
+- PRD §9.9.2, §9.9.6, §9.9.8.
+- Registry: `nested.composite-connect-pinned-mismatch`, `nested.junction-key-union`, `nested.m2m-create-shared-column-mismatch`.
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`. `context_nested.go` applied clean; `main_test.go` kept FIX-364's `task_reviewers` and `reviewers`; the `nested.junction-key-union` row kept FIX-364's test; the anchors were rehashed (§9.9, §9.9.6) rather than merged. `connect` and `create` on an M2M edge compare each column both junction keys share against the parent's value before the link step and refuse a difference with `ErrAlreadyRelated`: `connect` names the id, `create` has none and rolls back. The link step's `tenancy.ErrMismatch` mapping stays, under live test on the new `Stamps` edge. One divergence from the prototype, in meaning: FIX-365 landed E1 over the M2M reference key, so a NULL on either side is unreachable; `resolveJunctionSharedRead` drops the guard and `TestNestedTemplate_JunctionSharedColumnGuardsNull` became `TestNestedTemplate_JunctionSharedColumnAcrossBindings` (see the auto-accept above). The comparison runs in Go, so a shared string column differing only in case is refused on the case-insensitive collations where the database's FK would accept it; the user accepted this under FIX-373's limit, and FIX-373's §9.9.6 paragraph carries the sentence. The 32.6 Completion Record's M2M note is updated, `create` included. Fail-first on the final code: without the `connect` check, `attribution = Labels link, want Labels connect` and, under `SkipTenancy`, the raw FK error; without the `create` check, `attribution = Labels link, want Labels create` and the raw FK error. Gates: `make check` ok, `make check-examples` ok, `make req-check` and `make refs-check` ok. Golden churn matches the vet: tenancy_postgres +4/~12 in `expected/`, mirrored in `models/`, no other example. `/verify` doc corrections: the three unit tests of the shared-column check moved from `nested.junction-key-union` to `nested.composite-connect-pinned-mismatch`, §9.9.2 says "compared" rather than "checked as a pinned member is", and the design doc's rows follow the registry.
+
+
+### FIX-364
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe on PostgreSQL
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **On a surrogate-PK junction every M2M link fails, on the first link and not only on a
+re-link.** PRD §9.9.3 makes `create` and `connect` eligible on such a junction, and the generator
+emits both, but the call fails with `upsert many team_labels: conflict target names a column the
+input does not supply, so the written rows cannot be identified`. A verb that is generated and can
+never succeed is the failure E13 exists to prevent. The Completion Record's "It loses `disconnect`
+only" was wrong and is corrected. `TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion/surrogate pk has no disconnect`
+pins `create: true, connect: true` and never checks the link target. Those verbs are right once
+the target is the fixture's `UNIQUE (workspace_id, team_id, label_id)`.
+
+**Root cause.** `resolveNestedM2M` (`cmd/sqlgen/gen/context_nested.go:1223`, the `ct.CoversPK` loop, now `junctionLinkTarget` at `:1386`) took the junction's
+`<Junction>ConflictPK`, here `(id)`, and the link input never supplies `id`. The one-column shape
+fails the same way, so the bug predates 32.6, which extends it to composite tenant junctions.
+`docs/tracker/backlog.md` (2026-10-02, `[reading]`) predicted a re-link failure; the measured
+failure is earlier.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** the link step targets the conflict target whose columns equal the union of
+  both keys, and an edge with no such target is refused under E13.
+- `junctionLinkTarget` in `context_nested.go` selects it by set equality. The rejection reads "the
+  junction table emits no conflict-target constant equal to the union of its two keys for the link
+  step to pass". The early zero-targets check in `resolveNestedJunction` goes, so a no-target junction
+  that also fails E5 now reports E5.
+- Amend PRD E13, E5's wording, §9.9.6 and §9.9.7 (a UNIQUE link target adds one read-back statement per
+  sub-batch). Rewrite `gen.nested.e13-junction-conflict-target`, add `gen.nested.e13-no-union-target-refused`
+  and `update-with-related.surrogate-junction-link`, and add the example test to `nested.junction-key-union`.
+- Tests: `TestNestedEligibility_JunctionLinkTargetIsTheUnionOfItsKeys` (9 rows, listed a hard error and
+  auto-included omitted), a link-target assertion on the surrogate fixture, conformance
+  `UpdateWithRelated/a junction keyed by a surrogate links through its UNIQUE, and a re-link keeps the
+  row` (new `seals`, `crate_seals`), and tenancy_postgres
+  `TestUpdateWithRelated_SurrogateTenantJunctionLinksThroughItsUnique` (new `reviewers`, `task_reviewers`).
+- Remove the 2026-10-02 surrogate-junction line from `docs/tracker/backlog.md` when this lands.
+- Corrected from the original: no verb expectation changes, since the fixture's UNIQUE equals the union;
+  the PRD scope widens to §9.9.7 and E5; the changing registry row is the E13 one, not E5.
+- Outcomes, measured: surrogate plus UNIQUE equal to the union survives with `create`, `connect`, `clear`
+  (`create` and `connect` only with a soft-delete column). A `primary_key.columns` override over the pair
+  with such a UNIQUE is newly admitted, measured at context level only. A PK narrower than the union is
+  newly refused: at HEAD on SQLite the second link silently moved the first (`narrow=1 → narrow=2`).
+  The one other refusal: a surrogate on an application-generated key with no UNIQUE was eligible at HEAD and, by
+  reading, wrote a duplicate on each re-link, so refusing it is right under the ruling.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): does the tenant column count
+  as part of the link row, so `UNIQUE (workspace_id, team_id, label_id)` over single-column foreign keys serves
+  → no, it stays refused, because the ruling reads "equal to the union", the code is gated green, no golden moves,
+  no public surface changes, and the PRD says nothing that it reverses. The reviewer raised the question without
+  recommending a side; the recommendation is the implementer's, and composite tenant foreign keys are the
+  supported route.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced on sqlite, postgres and mysql
+  conformance and tenancy_postgres with `conflict target names a column the input does not supply, so
+  the written rows cannot be identified`, on the first link. Gates: `go test -race ./gen`, `TestE2EGoldenFiles`,
+  conformance on all four legs, tenancy_postgres, `golangci-lint`, `make req-check` and `make refs-check`
+  green. Fail-first: reverting the selection to `ct.CoversPK` fails the surrogate fixture with
+  `teams.Labels link target = "TeamLabelConflictPK", want "TeamLabelConflictWorkspaceIDTeamIDLabelID"` and
+  all 9 new rows; dropping the length check or the membership check each fails its row; the live tests fail
+  under the base CLI with the message above; the existing suite passes without the fix. Golden churn: none
+  from the ruling, which leaves every existing example byte-identical; the new fixtures add
+  tenancy_postgres +4/~12 in each of `expected/` and `models/`, and conformance ~4 per dialect. Not measured:
+  the read-back statement count, since the harness records no statements inside a transaction.
+  `docs/conformance/REPORT.md` needs `make conformance`. Patch: `.claude/prototypes/FIX-364.patch`.
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E5, E13), §9.9.6, §9.9.7.
+- Registry: `nested.junction-key-union`, `gen.nested.e13-junction-conflict-target`,
+  `gen.nested.e13-no-union-target-refused`, `update-with-related.surrogate-junction-link`.
+- FIX-365 touches the same region of `context_nested.go`.
+
+**Resolution notes.** `junctionLinkTarget` in `context_nested.go` selects the conflict target whose
+columns equal the union of both junction keys, by set equality, and an edge with no such target is refused
+under E13. The early zero-targets check in `resolveNestedJunction` is gone, so a no-target junction that
+also fails E5 reports E5. PRD E13, E5, §9.9.6 and §9.9.7 amended; `gen.nested.e13-junction-conflict-target`
+rewritten, `gen.nested.e13-no-union-target-refused` and `update-with-related.surrogate-junction-link` added,
+`nested.junction-key-union` extended. New tests: `TestNestedEligibility_JunctionLinkTargetIsTheUnionOfItsKeys`,
+a link-target assertion on the surrogate fixture, conformance `seals` / `crate_seals` on every leg and
+tenancy_postgres `reviewers` / `task_reviewers`. The prototype applied with `--3way`; only the registry's §9.9
+anchors conflicted, since FIX-365 changed §9.9, and §9.9, §9.9.6 and §9.9.7 were rehashed. Golden churn matches
+the vet. FIX-365's refusal of a NULL target stands on this shape:
+`TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible/reference side, nullable junction column` is
+a surrogate junction with a UNIQUE equal to the union, and E1 refuses it before the link target is read. The
+2026-10-02 surrogate-junction line left `docs/tracker/backlog.md`. `/verify` corrections applied: the MySQL
+`crate_seals` fixture uses table-level foreign keys, since MySQL ignores an inline `REFERENCES`; E13 names the
+application-key outcome; the E13 registry row cites the primary-key case; `docs/tracker/phase-32.md` updated.
+
+### FIX-365
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **E1's nullable-referenced rule is not applied to the M2M reference side.** PRD §9.9.4
+E1 refuses "an edge whose key references a nullable column". With a NOT NULL junction column not shared
+with the local key, the edge is refused with a misleading reason (`the junction's reference FK "tag_code"
+binds to string, which sqlgen cannot construct from the target's key`). With a nullable junction column
+the generator emits `TagCode: omittable.Set(row.Code)` for `tags.code TEXT UNIQUE`, on all three dialects.
+With a nullable `labels.region` shared with the local key, the edge is eligible on a composite-PK junction,
+because `junctionLinks` skips that pair. Today FIX-364 stops every surrogate link. Under FIX-364's ruling a
+target holding NULL fails loud, measured on SQLite: `link: upsert many z_parent_codes: input 0 supplies no
+definite value for every conflict column, so its generated id cannot be resolved`. So the eligible verb
+fails on some rows rather than writing a silent NULL link, as this entry first said. A live NULL link was
+never run.
+
+**Root cause.** `resolveNestedTarget` (`cmd/sqlgen/gen/context_nested.go:435`) checks
+`nestedParentKeys` only, and `junctionLinks` copies a target column without reading its nullability.
+
+**Suggested fix.**
+- Add `nestedReferencedColumns(tc, rel, target)`: the parent keys plus every `rel.JunctionReference`
+  target column, shared ones included. `resolveNestedTarget`'s E1 loop ranges over it, so the reason
+  wording stays the parent side's single literal.
+- Make `TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible` table-driven: parent side, NOT
+  NULL junction column, nullable junction column, shared column. Each asserts reads survive, the auto edge
+  is omitted and the listed edge errors with the E1 reason.
+- PRD §9.9.4 E1 gains: "On an M2M edge the rule covers both junction keys, because a target holding NULL
+  has no key to give a link row."
+- Corrected from the original: the site moved from `junctionLinks` / `resolveNestedM2M` to
+  `resolveNestedTarget`, because the check there exceeds the lint limit (`calculated cyclomatic complexity
+  for function resolveNestedM2M is 18, max is 15 (cyclop)`). It reads `rel.JunctionReference`, not the links,
+  so the shared-column case is refused too.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): should E1's PRD text name
+  the M2M reference side → add one sentence, because gates are green, no goldens move, no public surface
+  changes, and it adds text for an unspecified case without reversing a ruling.
+- Prototype results, run at `e48ece8b` on 2026-11-06: generation measured through a throwaway probe and a
+  sibling `tenancy_postgres` copy (`models_gen.go:65625 TagCode:  omittable.Set(row.Code),`, which builds).
+  Gates: `go test -race ./...` in `cmd/sqlgen` green, root and `./cli` needing `-timeout=30m` (the default 10m
+  was exceeded with other vetters running, no assertion failed); `TestE2EGoldenFiles`, `golangci-lint`, `make
+  req-check`, `make refs-check`, tenancy_postgres, mysql and graphql suites green. Fail-first: reverting the
+  loop to `nestedParentKeys` fails the three reference-side subtests, e.g. `teams nested edges = ["Labels"],
+  want none`; only those fail, so the existing suite passes without the fix. Golden churn: none. Both this
+  patch and FIX-364's change PRD §9.9, so the second to land reruns `make req-rehash SECTIONS=9.9`. Patch:
+  `.claude/prototypes/FIX-365.patch`.
+
+**References.**
+- PRD §9.9.4 (E1).
+- Registry: `gen.nested.e1-nullable-referenced-key`, `gen.nested.e1-target-shape`.
+- FIX-364.
+
+**Resolution notes.** Applied the vetted prototype clean at `1c009361`. `resolveNestedTarget`'s E1 loop now ranges over the new `nestedReferencedColumns`, the parent keys plus every `rel.JunctionReference` target column, shared ones included, so all three reference-side shapes are refused with the E1 reason and keep their reads. `TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible` is table-driven over the four shapes; reverting the loop fails exactly the three reference-side subtests. PRD §9.9.4 E1 gains the M2M sentence and §9.9's anchors are rehashed. Trimmed the prototype's helper comment and dropped a rule label from the test comment. Golden churn: none, matching the vet. Verify added the M2M clause and `TestNestedEligibility_ReferencedNullableMemberIsNotWriteEligible` to registry row `gen.nested.e1-nullable-referenced-key`.
+
+### FIX-363
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe reproduced by the parent
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **A composite key with an enum, timestamp or boolean member generates a package that
+does not compile.** PRD §9.9.3 makes a nullable composite key eligible for `connect`, `disconnect`
+and `clear`, and §9.9.4 E1 only refuses a binding the emitter cannot construct. With
+`kinded_kids (kind kind, parent_id integer, FOREIGN KEY (kind, parent_id) REFERENCES kinded (kind, id))`
+on PostgreSQL / pgx, `sqlgen generate` succeeds and `go build` fails:
+`out/models_gen.go:1864:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`,
+and the same at two more sites. The same error is measured on `*time.Time` and `*bool` on PostgreSQL
+(pgx and stdlib), MySQL and SQLite. SQLite also gives `cannot use parent.K (variable of struct type
+types.DateTime) as "time".Time value in struct literal` at the create and connect assignments. The enum
+failure is PostgreSQL only: a MySQL inline `enum` member compiles. `bytea`, `inet`, `numeric`, `interval`,
+`uuid` and `double precision` compile. Lifting the staging guard is what exposes this:
+a project with `nested_mutations` on and such a key built before 32.6.
+
+**Root cause.** `nestedParentScope` (`cmd/sqlgen/gen/context_nested.go:906`) renders `pidN` through
+`nestedParentKeyExpr` (`:1735`), which picks the stringified form from
+`funcPKIsStringType(goType)`. That test puts these types in the ID family, but the member's filter
+field is `comparator.Enum`, `Time` or `Bool`, whose `Eq` takes the real type. A one-column
+timestamp or boolean key on PostgreSQL lands on `comparator.ID`, which matches; a one-column enum FK fails
+at these sites too, but such a schema already fails without nested writes.
+`TestGenerate_CompositeKeyNestedWritersCompile` has only integer and varchar members, and
+`tenancy_postgres` adds only UUID, bigint and text.
+
+**Suggested fix.**
+- `nestedParentScope` passes `ff.ComparatorType`, and `nestedParentKeyExpr` stringifies only on the ID and
+  String families, otherwise using the column's own value. Add `nestedComparatorFamily`, shared with
+  `nestedEqFilterExpr`.
+- Add `nestedKeyValueExpr`, which unwraps `types.DateTime` to `.Time`, used by the scope term and by
+  `nestedAssignExpr`'s Null-wrapper arm.
+- `TestGenerate_CompositeKeyNestedWritersCompile` gains enum, timestamp and boolean members per dialect.
+  Add `TestNestedParentKeyExpr`, which runs under `-short`, where the build test is skipped.
+- Corrected from the original: the comparator decision alone is not enough, since SQLite needs the
+  `types.DateTime` unwrap at two sites to meet this entry's own test.
+- The owner tuple does not share the root cause: no comparator is involved, and enum, timestamp and bool
+  compile and pass live.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced with a `generate` plus `go build` probe, e.g.
+  `out/models_gen.go:1863:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`.
+  Live `Eq` confirmed through throwaway examples (create, connect, repeat connect, held, wrong-parent
+  disconnect, disconnect, clear, checked with raw SQL): PostgreSQL pgx enum, timestamptz, bool, and pinned
+  enum and timestamp; MySQL 8.0 datetime(6), bool, pinned datetime; SQLite datetime, bool, pinned datetime.
+  Gates: `go test -race -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make update-golden-e2e`,
+  `golangci-lint` and gofumpt green. Fail-first: reverting the comparator decision fails
+  `TestNestedParentKeyExpr/enum` (`= "fmt.Sprint(parent.K)", want "parent.K"`) and the postgres/pgx build
+  (`cannot use new(pid0) (value of type *string) as *Sort value in struct literal`); removing the unwrap from
+  the scope term fails `TestNestedParentKeyExpr/sqlite_datetime` and the sqlite build; removing it from
+  `nestedAssignExpr` fails the sqlite build (`cannot use parent.K ... as "time".Time`); the existing suite
+  passes without the fix. Golden churn: none (`make update-golden-e2e` also adds two unrelated go.sum lines,
+  reverted and not in the patch). An earlier `./cli` run hit the default 10-minute mark while run alongside
+  other jobs; `make check` timing should be watched. Has-one is not exercised: neither probe schema reached
+  the failing term. Patch: `.claude/prototypes/FIX-363.patch`.
+
+- The user ruled on 2026-11-06: widen this entry to the one-column SQLite datetime FK, which has the same
+  `types.DateTime` cause at a different site, the `{{ .FKOwnerKey }} == parent.{{ .ParentKeyField }}` template
+  line. Measured with this patch applied: `out/models_gen.go:2029:34: invalid operation: cur.Time == parent.K
+  (mismatched types "time".Time and types.DateTime)`; a `datetime` PK target fails the same way at `:1890:34`.
+  Nested off builds.
+
+- Fold-in result, run at `e48ece8b` on 2026-11-06: `ParentKeyField` and `FKOwnerKey` go, replaced by
+  `FKOwnerIsParent`, rendered by `nestedOwnerIsParentExpr`; the template line is `case {{ .FKOwnerGuard }} &&
+  {{ .FKOwnerIsParent }}:`. A `types.DateTime` parent renders `cur.Time.Equal(parent.K.Time)`, not `==`, which
+  compiles but compares the zone pointer: a held row stored at `+05:30` gave a false `already related to
+  another row`. A self-reference shape is covered too. Tests: `TestGenerate_SQLiteDatetimeFKNestedWritersCompile`
+  (unique target, PK target, self-reference) and `TestNestedOwnerIsParentExpr`. Gates: `go test -race
+  -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make update-golden-e2e`, `golangci-lint`, gofumpt
+  green; a live SQLite probe with seven stored forms was a no-op for this parent and `ErrAlreadyRelated` for
+  another. Fail-first: removing the branch fails all three build subtests with `mismatched types`; `==` fails
+  `TestNestedOwnerIsParentExpr/sqlite_datetime`; the existing suite passes without it. Golden churn: none. This
+  fixes compilation only: such a key still fails at runtime (FIX-371). Line ref: `nestedParentScope` is at
+  `:888`, `:906` is its `ParentKeyExpr` line. Has-one reaches this line under an explicit `one_to_one` config.
+  Patch: `.claude/prototypes/FIX-363.patch` (5 files, +190/-49).
+
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): does the connect split compare a
+  plain `time.Time` key by instant too → yes, `.Equal` for `time.Time` as for `types.DateTime`, because it was
+  prototyped with gates green, no golden changes, no public surface changes, and it reverses no ruling or PRD
+  statement.
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E1).
+- Registry: `gen.nested.composite-key-free-members`, `gen.nested.e1-target-shape`.
+
+**Resolution notes.** Applied the vetted prototype clean at `8362ac1d` (fresh against `e48ece8b`). `nestedParentKeyExpr` now takes the filter field's comparator and stringifies only on the ID and String families, through the new `nestedComparatorFamily` shared with `nestedEqFilterExpr`. `nestedKeyValueExpr` unwraps `types.DateTime` to `.Time` at the scope term and in `nestedAssignExpr`'s Null-wrapper arm. `ParentKeyField` and `FKOwnerKey` are gone: `FKOwnerIsParent`, rendered by `nestedOwnerIsParentExpr`, carries the connect split's comparison and uses `.Equal` for a `types.DateTime` parent. Tests: `TestGenerate_CompositeKeyNestedWritersCompile` gains enum, timestamp and boolean members per dialect; new `TestGenerate_TimeFKNestedWritersCompile`, `TestNestedParentKeyExpr` and `TestNestedOwnerIsParentExpr`. Beyond the prototype: the three new tests are claimed in `docs/conformance/cli/gen.md`, on `gen.nested.composite-key-free-members` and `rel.o2m.nested-mutation`, because `make req-check` refused them unclaimed. Fail-first re-run on the final code: reverting the comparator decision, either unwrap, or the `.Equal` branch each fails as the entry records. The `/verify` review moved those claims to
+`gen.nested.e1-target-shape`, whose "the emitter can construct from the parent column" is what they prove, and listed
+`TestNestedOwnerIsParentExpr` as Unclaimed. Also inline from that review: `.Equal` now covers a plain `time.Time`
+parent (the auto-accept above; the vet's `TestGenerate_SQLiteDatetimeFKNestedWritersCompile` became `TestGenerate_TimeFKNestedWritersCompile`, which also builds it on PostgreSQL pgx and stdlib and on MySQL), new
+`TestNestedAssignExpr_NullWrapperValue` keeps the `nestedAssignExpr` unwrap covered under `-short`, the
+`nestedNullFilterExpr` comment no longer says every FK lands on the ID, Number or Opaque family, and this entry's line
+refs are current. Golden churn: none. A one-column SQLite datetime key now compiles but still fails at runtime (FIX-371).
+
+### FIX-362
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 8, cmd/sqlgen/gen
+- **Surfaced by:** 32.3 auto-review question, measured 2026-11-05
+- **Vetted:** corrected at `a956661a` (2026-11-05)
+
+**Issue.** **`<Table>PK` and `PKColumns` follow column order, not the `PRIMARY KEY (...)` clause
+order PRD §27.5 states.** For `CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT
+NULL, PRIMARY KEY (id, workspace_id))`, the parsed constraint is `[id workspace_id]` on PostgreSQL,
+MySQL and SQLite, but `TableContext.PKColumns` is `[workspace_id id]` on all three (probe through
+`gen.BuildTableContextsFromSchema`). The `<Table>PK` field order, the composite cache key order
+and `mc.AffectedPKs` therefore disagree with the order §27.5 calls load-bearing. One example has
+this shape: `introspect_sqlite`'s `project_members` declares `PRIMARY KEY (account_id,
+project_id)` with the columns the other way round. Since 32.3, a declared relationship key list
+maps onto the clause order (`gen.resolvedPrimaryKey`, and config's key-length check through an
+inline reorder in `checkRelationshipKeyLength`), so those are the only readers that already
+follow §27.5. The §4.13 cursor-key PK fallback reads `PKColumns` too, so it carries the same
+column order (`introspect_sqlite`: `cursorKeys: []string{"project_id", "account_id"}`).
+
+**Root cause.** (Line refs as of `a956661a`.) With no `primary_key` override, `buildTableColumns`
+(`cmd/sqlgen/gen/context_table.go:360-365`) collects the PK by walking columns and reading
+`PrimaryKey` flags, so it never consults the PRIMARY KEY constraint's `Columns`. Config's
+`resolvedPKColumns` / `pkColumnNames` (`cmd/sqlgen/config/validate.go:1991`, `:2587`) do the same.
+
+**Suggested fix.**
+- Extract the no-override branch of `resolvedPrimaryKey` (`cmd/sqlgen/gen/relationship_targets.go:126`)
+  into `declaredPrimaryKey(table)`: the PRIMARY KEY constraint's `Columns` when they are the
+  flagged set, else the flagged columns in column order. `resolvedPrimaryKey` calls it.
+- In `buildTableColumns`, build `pkColumns` by walking `declaredPrimaryKey(table)` and looking each
+  name up in `columns` (an excluded column is skipped, as before). This also puts the §4.13
+  cursor-key PK fallback in clause order, since `ResolveTableConnection` reads `pkColumns`.
+- Give `config.resolvedPKColumns` the same rule from `SchemaTable.PrimaryKey`, and drop the
+  inline reorder in `checkRelationshipKeyLength`, which now gets it from `resolvedPKColumns`.
+- No parser change: SQLite introspection already sorts by `PRAGMA table_xinfo.pk`
+  (`parser/introspect/sqlite.go:408-414`), `TestSQLiteIntrospect_CompositePKOrder` pins it, and all
+  three `parity_fixtures_test.go` fixtures carry a `PRIMARY KEY (b, a)` table under
+  `assertSchemaParity`, which keeps constraint-column order.
+- Tests: `TestBuildTableContexts_CompositePKFollowsClauseOrder` (parsed DDL, all three dialects)
+  and `TestValidatePostParse_ResolvedPKFollowsClauseOrder` (the composite-strategy error names
+  `(id, workspace_id)`). The `database` source is covered by the parity tests above plus the
+  `introspect_sqlite` goldens.
+- Changed from the original: the SQLite/parity bullet needs no work (already covered); the config
+  change also removes the 32.3 inline reorder rather than adding a second one; and the cursor-key
+  fallback order changes with `PKColumns`, which the original did not name.
+- Prototype results, run at `a956661a` on 2026-11-05: reproduction — a probe through
+  `gen.BuildTableContextsFromSchema` on `CREATE TABLE cycles (workspace_id bigint NOT NULL, id
+  bigint NOT NULL, PRIMARY KEY (id, workspace_id))` printed `postgres: constraint=[id
+  workspace_id] PKColumns=[workspace_id id]`, and the same for `mysql` and `sqlite`; with the
+  prototype, `PKColumns=[id workspace_id]` on all three. Gates — `go test -race -short ./...` in
+  `cmd/sqlgen` → ok; `golangci-lint run ./gen/... ./config/...` → 0 issues; `go test -count=1
+  ./introspect/ -run 'ParityFixture|CompositePKOrder'` in `parser` → ok (at HEAD, no change);
+  `make update-golden` → no unit golden churn; `make update-golden-e2e` → ok; in
+  `introspect_sqlite`, `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off
+  golangci-lint run` → 0 issues. Fail-first — `context_table.go` reverted →
+  `TestBuildTableContexts_CompositePKFollowsClauseOrder` fails on all three dialects:
+  "PKColumns mismatch (-want +got): - "id", + "workspace_id", - "workspace_id", + "id""; `validate.go`
+  reverted → `TestValidatePostParse_ResolvedPKFollowsClauseOrder` fails: "… composite primary key
+  (workspace_id, id) …, want it to name "composite primary key (id, workspace_id)"" (and
+  `…KeyLengthNamesClauseOrder` still passes); the existing `gen` and `config` suites without the
+  fix pass. Golden churn: `introspect_sqlite` only, ~3 files in each of `expected/` and `models/`
+  (`models_gen.go` ±31, `manifest/manifest_gen.json` ±16, `manifest/project_member.md` ±12):
+  `ProjectMemberPK` fields, every composite-PK `WHERE`/`RETURNING` order, `cursorKeys`,
+  `AffectedPKs`, manifest `pk.columns` and the `project_members_pkey` index columns; no cache
+  churn (the example has no cache). `make update-golden-e2e` also added two unrelated
+  testcontainers `go.sum` lines to the `mysql` and `sqlite` examples, left out of the patch.
+  Patch: `.claude/prototypes/FIX-362.patch` (11 files, +181/-139).
+
+**References.**
+- PRD §27.5 "Composite-key ordering invariant" (`docs/PRD.md:13965`); §8.6 `primary_key.columns`
+  "declaration order is load-bearing"; §13.4 (the 32.3 ruling that lists follow the clause order).
+- `docs/design/CACHE.md` §16.
+- `docs/tracker/phase-32.md` 32.3 Completion Record.
+
+**Resolution notes.** With no `primary_key.columns` override, the resolved primary key now
+follows the `PRIMARY KEY (...)` clause in both gen and config. `resolvedPrimaryKey`'s lookup moved
+into `gen.declaredPrimaryKey(table)`: the constraint's columns when they are exactly the flagged
+set, else column order. `buildTableColumns` builds `pkColumns` from it, so `<Table>PK` field
+order, composite cache keys, `AffectedPKs`, composite-PK `WHERE` / `RETURNING` order, the
+§4.13 cursor-key PK fallback and manifest `pk.columns` all follow the clause.
+`config.resolvedPKColumns` applies the same rule from `SchemaTable.PrimaryKey`, and
+`checkRelationshipKeyLength` drops its inline reorder, which is now redundant. No parser change:
+introspection already kept the clause order (see the Suggested fix).
+
+Applied from the vetted prototype at `a956661a` (fresh, applied cleanly). Two changes on top of
+it: the gen test's subtests are now named by a table field, since `req-check` cannot verify
+computed subtest names; and the `resolvedPKColumns` doc comment is shorter. Auto-review
+inline doc fixes: `primaryKeyColumnNames` and config `pkColumnNames` docs now say "column
+order" (not "declaration order") and point at the clause-order helper; the new config test's
+doc comment is shorter; the Root cause line refs are marked as of `a956661a`. `/verify`: added
+`TestCacheTemplate_compositeKeyFollowsClauseOrder` (DDL → table contexts → cache context →
+rendered `keyForCycle`, fails with the fix reverted), so `cache-key.composite-pk-clause-order` is
+pinned at the cache key itself, not only at `PKColumns`; `phase-32.md` and `CACHE.md` §16 wording
+updated; the conflict-target comment order went to the backlog.
+
+Tests. `TestBuildTableContexts_CompositePKFollowsClauseOrder` (postgres / mysql / sqlite) and
+`TestValidatePostParse_ResolvedPKFollowsClauseOrder`; the existing
+`…RelationshipKeyLengthNamesClauseOrder` now runs through `resolvedPKColumns`. Registry: a new
+`cache-key.composite-pk-clause-order` row in `docs/conformance/runtime/cache.md` (§27.5) claims
+the gen test plus `golden: introspect_sqlite`, and `config.composite-pk-strategy.message` in
+`docs/conformance/cli/config.md` now names the clause order and claims the config test. Golden
+churn matches the vetted record: `introspect_sqlite` `expected/` and `models/` only
+(`models_gen.go`, `manifest/manifest_gen.json`, `manifest/project_member.md`); the unrelated
+testcontainers `go.sum` lines `make update-golden-e2e` adds to `mysql` / `sqlite` were discarded
+(backlog). `make check` and `make check-examples` pass.
+
+### FIX-361
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** conformance pilot, cmd/sqlgen/gen
+- **Surfaced by:** `client.md` HardDeleteMany conformance pilot, CONFORMANCE.md §7 step 3.2 (2026-10-23)
+
+**Issue.** `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` ignore
+`generation.batch_size`: each sends one statement over every key instead of
+`ceil(M / batch_size)` sub-batches, so a failing later sub-batch also undoes the
+earlier ones. Measured 2026-10-23 on the conformance suite (Postgres pgx and
+SQLite stdlib) with `tables.products.batch_size: 2`: 5 keys sent one
+`DELETE FROM "public"."products" WHERE "id" IN ($1, $2, $3, $4, $5)`, want 3
+statements; `[a, b, c]` with `c` referenced by an order item failed as one
+statement, so `a` and `b` survived, where the PRD keeps the first sub-batch
+`{a, b}` deleted.
+
+**Root cause.** `cmd/sqlgen/gen/templates/table/delete.go.tmpl` (the
+`HardDeleteMany` body from line 1605, and the `SoftDeleteMany` / `RestoreMany`
+bodies) builds a single `IN` / composite batch condition over the whole slice
+and never reads `c.batchSize`. `CreateMany` (`create.go.tmpl:304`) and
+`UpdateMany` (`update.go.tmpl:369`) chunk with
+`for start := 0; start < len(x); start += c.batchSize`.
+
+**Suggested fix.**
+- Chunk the three methods at `c.batchSize` inside the mutation terminal, one
+  statement per sub-batch, returning on the first failing sub-batch.
+- Cover every branch: plain, composite PK, tenanted with `RETURNING` capture,
+  and the MySQL tenant pre-read; accumulate `tenantByPK` / `AffectedPKs` across
+  sub-batches (decide whether `AffectedPKs` names only the sub-batches that ran
+  when one fails).
+- Regression tests: apply `.claude/prototypes/batch-delete-subtests.patch`,
+  which adds the two held-back conformance subtests "splits the keys into
+  sub-batches of the table's batch size" and "a failed sub-batch keeps the
+  sub-batches before it" to `cmd/sqlgen/testdata/conformance/suite/hard_delete_many.go`.
+  Both fail on current code on both dialects. Claim them in the
+  `hard-delete-many.batch-split` and `hard-delete-many.batch-partial` rows of
+  `docs/conformance/client.md`, which are `untested` until then.
+- `SoftDeleteMany` / `RestoreMany` get the same tests when their conformance
+  rows are seeded, or as example tests in this fix.
+- Regenerate every example and the goldens (`make update-golden update-golden-e2e`).
+
+**References.**
+- PRD §9.5 Batch Failure Semantics: "`CreateMany`, `UpdateMany`,
+  `HardDeleteMany`, and `SoftDeleteMany` split their input into sub-batches of
+  `generation.batch_size`."
+- PRD §19.4: "Regardless of driver, all batch operations split their input into
+  sub-batches of `generation.batch_size`."
+- PRD §25.3: "The total write count for a batch of M items is `ceil(M / batch_size)`."
+- `cmd/sqlgen/gen/templates/table/nested.go.tmpl:754` chunks a junction
+  `HardDeleteMany`-shaped delete at `c.batchSize` already.
+
+**Resolution notes.** `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` now
+send one statement per sub-batch of `c.batchSize` keys (`delete.go.tmpl`) and
+return on the first failing sub-batch, leaving earlier ones applied. The tenant
+scope is resolved once, and the tenant-in-PK verify-match runs over every key
+before any statement. The tenant capture is per sub-batch and accumulates into
+`tenantByPK`: `RETURNING`, or the MySQL pre-read. `AffectedPKs` /
+`AffectedTenants` are set only on full success, matching `CreateMany` /
+`UpdateMany`. An empty key list now sends no statement (it was
+`DELETE … WHERE 1 = 0`); `gap.hard-delete-many.nil-statement` and the
+`TestEmptyBatch_HardDeleteManyUnaffected` comment are updated.
+
+Tests. The two held-back `HardDeleteMany` subtests, plus new
+`SoftDeleteMany` / `RestoreMany` "splits the keys into sub-batches" subtests
+(conformance `documents` now sets `batch_size: 2`). All four failed against the
+pre-fix generated code on Postgres and SQLite and pass now. Rows
+`hard-delete-many.batch-split`, `hard-delete-many.batch-partial`,
+`soft-delete-many.batch-split` (§9.5) and `restore-many.batch-split` (new §19.4
+anchor, rehashed) claim them. Gen pattern tests and goldens are updated, and
+every example is regenerated.
+
+User ruling 2026-10-23: keep `RestoreMany` batched (§19.4 "all batch
+operations"). The unchunked trailing re-fetch went to the backlog.
+
+Review follow-ups applied inline. The PRD's soft-delete query-count table
+gives `SoftDeleteMany` / `RestoreMany` `ceil(M / batch_size)` Exec + GetMany,
+and §29.5's MySQL capture sentence says one pre-read per sub-batch; both had
+described the unbatched shape. The CONFORMANCE.md §7 pilot record is now in
+past tense, and the MySQL `batchTenants` pre-read is pinned in
+`TestTenantCapture_delete_acrossDialects`. Two backlog lines: the nested
+junction unlink double-chunk, and `UpdateMany`'s unchunked MySQL tenant pre-read.
+User ruling 2026-10-24: on a partial failure, `AffectedPKs` stays unset, as in
+`UpdateMany`; the cache and events gap for applied sub-batches is in the backlog.
+
+
+### FIX-360
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 5, cmd/sqlgen/gen
+- **Surfaced by:** FIX-358 vet (2026-10-21), user approved filing
+- **Vetted:** corrected at `02e23d79` (2026-10-21)
+
+**Issue.** **Excluding a table's only primary-key column passes `sqlgen validate` and crashes `sqlgen generate`.**
+Measured at `bd7783ea`, PostgreSQL, `source: files`: schema
+`cycles(id INT PRIMARY KEY, name TEXT NOT NULL)` with
+`tables.cycles.exclude_columns: [id]` and no `primary_key` override.
+`sqlgen validate` → "config and schema are valid"; `sqlgen generate` →
+
+```
+Generation error: generating table/client for table cycles: executing template: template: client.go.tmpl:12:95: executing "table/client" at <index .PKColumns 0>: error calling index: reflect: slice index out of range
+```
+
+(exit 1). A template panic surfaced as a generation error, with no message
+naming the config that caused it. The same crash follows a global
+`generation.exclude_columns: [id]`, and an FK into or out of the table or a
+declared O2O into it does not change it.
+
+Two more cases share the root cause (found by the 2026-10-21 vet):
+
+- **A composite PK with one member excluded generates silently on the wrong
+  key.** `memberships(org_id, user_id, PRIMARY KEY (org_id, user_id))` with
+  `exclude_columns: [user_id]`: `generate` exits 0, `go build` is ok, and the
+  client is `Get/Update/HardDelete(ctx, id int32)`, with `HardDelete` running
+  `sql.Where(QuoteIdentifier("org_id")).Eq(id)`, so one `HardDelete` removes
+  every membership in the org.
+- **`exclude_columns` removing every column** prints PRD §4.13's warning
+  ("exclude_columns removes all columns from table public.cycles; table will
+  be skipped") and then crashes with the same `client.go.tmpl:12:95` error,
+  though §4.13 says the table is skipped.
+
+Already working at HEAD (confirmed): a PK column excluded with
+`primary_key.columns: [code]`, and a composite member excluded with an
+override over the remaining member.
+
+**Root cause.** `tableHasResolvedPK` (`cmd/sqlgen/gen/context_table.go:889-907`)
+decides whether a table generates from the `primary_key` override or the
+parser's `Column.PrimaryKey` flags, and ignores `exclude_columns`. So the table
+is treated as keyed, while `buildTableColumns` (`context_table.go:309-320`)
+drops the excluded PK column and leaves `PKColumns` empty (or a partial key),
+and `client.go.tmpl` indexes `.PKColumns 0`. Post-parse validation checks
+`exclude_columns` exhausting a table's columns (PRD §4.13) but not removing its
+key. Confirmed by the vet; line refs and the quoted error are accurate at
+`02e23d79`.
+
+**Suggested fix.**
+- Decide the PRD behavior (unspecified today); the vet should measure both and
+  bring it as a ruling if the PRD does not settle it:
+  - (a) an error at validation: "`tables.<t>.exclude_columns` removes
+    primary-key column `<c>`; declare `primary_key.columns` or keep the
+    column". Consistent with §4.13's row requiring `primary_key.columns` to
+    exist after `exclude_columns` is applied.
+  - (b) treat the table as having no primary key after exclusion, so it is
+    skipped with §4.13's existing warning (`table %s has no primary key;
+    skipped from generation`, §9.4b).
+- Make `tableHasResolvedPK` and validation agree with `buildTableColumns`, so
+  `validate` reports the case instead of `generate` crashing. Cover a composite
+  PK with one member excluded too.
+- Add a PRD §4.13 row for the chosen behavior.
+- Tests: a config / gen unit test for the single and composite PK cases; a cli
+  test that `validate` and `generate` both report it (no template panic).
+- **Vetted prototype (option (a)):**
+  - `gen/context_table.go`: `tableHasResolvedPK` resolves the key (override,
+    else detected PK flags) and returns false when it is empty or the merged
+    global + table `exclude_columns` removes any member; signature unchanged,
+    same precedence via `resolveTableConfig`. It now agrees with
+    `buildTableColumns`, and the all-columns-excluded table is skipped as
+    §4.13 states (widened: same root cause and fix site, PRD-settled).
+  - `config/validate.go`: `validateExcludedPrimaryKey`, wired into
+    `ValidatePostParse` after `validatePrimaryKeyOverride`, errors once per
+    excluded detected-PK member, naming the source key: `tables.public.cycles.exclude_columns
+    removes primary-key column "id" of table public.cycles; keep the column,
+    declare tables.public.cycles.primary_key.columns over columns that remain,
+    or drop the table with exclude_tables` (or `generation.exclude_columns …`).
+    It skips tables with a `primary_key.columns` override (already validated),
+    tables with every column excluded (the exhaustion warning), and tables in
+    `exclude_tables`. With the gen change alone, `generate` drops the table
+    with no warning at all, so a validator is required under (a) or (b).
+  - PRD §4.13: a new row "`exclude_columns` removes a primary-key column"
+    (Error, schema-level), plus an entry in the schema-level phase list and the
+    edge-case bullets.
+  - Tests: `config.TestValidatePostParse_ExcludedPrimaryKey` (7 cases:
+    table-level, global, composite member, override, all excluded,
+    exclude_tables, non-key column); `gen.TestBuildTableContexts_ExcludedKeyColumn`
+    (6 cases); `cli/excluded_pk_test.go` `TestExcludedPrimaryKeyColumn` (single,
+    global, composite under both `validate` and `generate`, asserting the error
+    and no "executing template") and `TestGenerate_AllColumnsExcludedSkipsTable`.
+- **Pending the user's ruling:**
+  - **Q1.** `exclude_columns` removes a member of a table's detected primary
+    key (no `primary_key.columns` override): error, or skip as a no-PK table?
+    (a) Validation error (prototyped): `validate` exits 2 with the message
+    above, `generate` exits 2 with "Post-parse validation error: …" before gen;
+    a global `exclude_columns: [id]` gives one error per id-keyed table; the
+    composite case errors naming `user_id` instead of generating on `org_id`; a
+    declared edge into the table adds a consequential "generates no entity"
+    error in `validate` only. (b) Skip with the §9.4b warning (measured with a
+    throwaway variant): exit 0 with "table public.cycles has no primary key;
+    skipped from generation …", which misstates the cause (the table has a
+    PK); the table, its client, cache, events and GraphQL type vanish; an
+    FK-inferred edge into it is silently omitted; a declared edge errors with
+    the misleading "has no primary key" cause; a cached view with
+    `invalidate_on: [cycles]` passes and is never invalidated (breaks §27.11
+    unless `validateViewInvalidateOn` is extended); a global `exclude_columns:
+    [id]` silently drops every id-keyed table. No golden churn under either.
+    Vet recommends (a): it matches §4.13's rule that `primary_key.columns` must
+    survive `exclude_columns` and the loud-error preference, and keeps the
+    all-columns case as §4.13's intentional skip. Not auto-accepted: the entry
+    asked for a ruling, and (a) turns the composite config that generates today
+    into an error.
+- **The user ruled on 2026-10-21:** Q1 (a), a validation error. That is the
+  prototyped option, so its gates and fail-first evidence stand; the verdict is
+  `corrected` (widened to the all-columns-excluded crash, and the composite
+  case is a silent wrong key rather than a crash) without a second wave.
+- Prototype results, run at `02e23d79` on 2026-10-21: reproduced with the HEAD
+  CLI on scratch projects (PostgreSQL, `source: files`): single exclude →
+  `validate` "config and schema are valid" (exit 0), `generate` the
+  `client.go.tmpl:12:95` error (exit 1); global exclude, FK into / out of,
+  declared O2O into → same crash; composite member → exit 0 keyed on `org_id`;
+  all columns → the §4.13 warning, then the crash; both override forms → exit
+  0, build ok. Gates: `go test -race -count=1 ./config/... ./gen/... ./cli/...`
+  ok (config 1.7 s, gen 68 s, cli 97 s); `TestE2EGoldenFiles` ok;
+  `golangci-lint run ./config/... ./gen/... ./cli/...` 0 issues; gofumpt clean.
+  Fail-first: `tableHasResolvedPK` reverted →
+  `TestBuildTableContexts_ExcludedKeyColumn` "BuildTableContexts returned 1
+  tables, want cycles skipped" (4 subtests) and
+  `TestGenerate_AllColumnsExcludedSkipsTable` "generate: unexpected error:
+  generating table/client for table cycles: executing template: template:
+  client.go.tmpl:12:95: …"; `validateExcludedPrimaryKey` call removed →
+  `TestValidatePostParse_ExcludedPrimaryKey` "ValidatePostParse() error = nil,
+  want one containing \"tables.public.cycles.exclude_columns removes
+  primary-key column \\\"id\\\" …\"" (3 subtests) and `TestExcludedPrimaryKeyColumn`
+  "validate: want an error, got none" / "generate: want an error, got none".
+  Existing suite without the fix passes. Golden churn: none (no example uses
+  `exclude_columns` at HEAD). **FIX-358 overlap:** no textual conflict in either
+  order (`git apply` one then `--check` the other, both ways, at `02e23d79`);
+  with both applied, `go vet`, `go test -race ./config/... ./gen/... ./cli/...`
+  and `TestE2EGoldenFiles` pass. Land FIX-358 first (ready, carries the golden
+  churn); FIX-360 rebases trivially. From reading: once FIX-360 lands,
+  FIX-358's referenced-side check no longer fires for an excluded target PK
+  (validation rejects it) but still covers an FK to an excluded non-key UNIQUE
+  column. Patch: `.claude/prototypes/FIX-360.patch` (6 files, +389/-18).
+
+**References.**
+- PRD §4.13 (config validation rules: "`primary_key.columns` references
+  non-existent column", "Table has no primary key after override resolution",
+  exclude_columns exhaustion), §9.4b (no-PK tables are skipped).
+- `cmd/sqlgen/gen/context_table.go:885-912` (`tableHasResolvedPK`),
+  `:309-320` (`buildTableColumns`).
+- `cmd/sqlgen/gen/relationship_targets.go` (uses `tableHasResolvedPK` to decide
+  whether a relationship target generates; FIX-358 touches the same file).
+
+**Resolution notes.** Implemented option (a), the user's 2026-10-21 ruling,
+from the vetted prototype (`git apply --3way` at `c875fec9`: every code and
+test hunk applied clean; the PRD phase-list hunk conflicted only because
+FIX-358 rewrote the adjacent phase-3 line, merged by hand keeping FIX-358's
+phase-3 text and adding ", an excluded primary-key column" to phase 2).
+`tableHasResolvedPK` (`cmd/sqlgen/gen/context_table.go`) now resolves the key
+(override via `resolveTableConfig`, else the detected PK flags) and returns
+false when it is empty or merged `exclude_columns` removes any member, so it
+agrees with `buildTableColumns`; the all-columns-excluded table is skipped as
+§4.13 states. `config.validateExcludedPrimaryKey`, wired into
+`ValidatePostParse` after `validatePrimaryKeyOverride`, errors once per
+excluded detected-PK member naming the `exclude_columns` key, column and
+table; it skips override tables, fully excluded tables and `exclude_tables`
+matches. PRD §4.13 gains the "`exclude_columns` removes a primary-key column"
+row, the phase-2 list item and the edge-case bullet. Tests:
+`config.TestValidatePostParse_ExcludedPrimaryKey` (7 cases),
+`gen.TestBuildTableContexts_ExcludedKeyColumn` (6 cases),
+`cli.TestExcludedPrimaryKeyColumn` (single, global, composite under both
+`validate` and `generate`) and `cli.TestGenerate_AllColumnsExcludedSkipsTable`.
+Inline: the prototype's doc and test comments were shortened and its
+`FIX-360` references in test comments removed (refs rule); the
+`BuildTableContexts` doc comment now names every warning or error that
+reports a skipped table; the References line ref was updated to `:885-912`;
+`docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §9.3 marks FIX-358, FIX-359 and
+FIX-360 fixed. Fail-first
+re-run on the final code: validator call removed → the config test (3
+subtests) and `TestExcludedPrimaryKeyColumn` ("validate: want an error, got
+none" / "generate: want an error, got none") fail; `tableHasResolvedPK`
+reverted → `TestBuildTableContexts_ExcludedKeyColumn` ("returned 1 tables,
+want cycles skipped", 4 subtests) and `TestGenerate_AllColumnsExcludedSkipsTable`
+(the `client.go.tmpl:12:95` error) fail. Gates: `make check` ok;
+`make update-golden-e2e` and `make update-golden` produce no churn (matches
+the vet); `make check-examples` ok.
+
+### FIX-358
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** R1 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
+- **Vetted:** ready at `bd7783ea` (2026-10-21)
+
+**Issue.** **An FK column removed by `exclude_columns` still yields its relationship; for an O2M edge the generated code does not compile.**
+Only the O2M shape (inferred or declared `o2m`) fails to build. An O2O
+(`profiles.user_id` excluded) and an M2M junction column (`post_tags.tag_id`
+excluded) generate, build and load correctly at `bd7783ea`: a SQLite runtime
+probe returned `o2o: Users = {ID:1 Name:ann}` and both tags on `Post.Tags`
+(corrected by the 2026-10-21 vet; the entry first implied every shape fails).
+Measured at `bd7783ea`, PostgreSQL, `source: files`, schema
+`CREATE TABLE cycles (id INT PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE
+tasks (id INT PRIMARY KEY, title TEXT NOT NULL, cycle_id INT REFERENCES
+cycles(id));` with `tables: tasks: exclude_columns: [cycle_id]`. `sqlgen
+generate` succeeds and emits `Cycle.Tasks []*Task` plus its O2M loader, then
+`go build` fails:
+
+```
+models/models_gen.go:402:5: unknown field CycleID in struct literal of type TaskFilter
+models/models_gen.go:440:25: r.CycleID undefined (type *Task has no field or method CycleID)
+```
+
+**Root cause.** Column exclusion is applied only when gen builds a table's
+columns (`buildTableColumns`, `cmd/sqlgen/gen/context_table.go:309-320`).
+Relationship detection runs earlier, on the unfiltered schema
+(`parser.DetectRelationships` at `cmd/sqlgen/cli/pipeline.go:65`, also
+`generate.go:66` and `validate.go:80`), so the edge is detected from the FK
+column's `FKReference`. Nothing afterwards checks that the FK column, or the
+referenced column on the other table, survived exclusion before the loader,
+filter member and client wiring are emitted against it.
+
+**Suggested fix.**
+- Drop any inferred relationship whose FK column (O2O / O2M), junction column
+  (M2M), or referenced column is excluded on its table, and emit a warning
+  naming the table, the column and PRD §13.4. The ruling (2026-10-20,
+  `COMPOSITE_FK_RELATIONSHIPS.md` R1) is "every key member must be in the
+  generated model on both sides, else no edge and a warning". Whether that
+  holds for the O2O and M2M shapes, which work today, is pending Q1 below.
+- **Fix site: gen-side, in `cmd/sqlgen/gen/relationship_targets.go`** (vetted).
+  `relationshipTargets` also indexes each table's `exclude_columns` (global and
+  per-table); `excludedKeyMember` checks an inferred edge's FK column or
+  junction columns plus each column's `FKReference.Column` on the referenced
+  table. `buildRelationshipContexts` omits such an edge with the warning (an
+  edge already in `exclude_relationships` is skipped first, silently);
+  `findO2ORelationships` skips it silently so a chained O2O join cannot read a
+  removed field. Chosen by measurement: it covers `generate`, `validate`
+  (`gen.ValidateGeneration` → `BuildTableContexts`) and lint/diff/graphql, and
+  the nested check reads `tc.Relationships`, so `validate` reports "names no
+  relationship". A CLI-side site would need three call-site hooks, would miss
+  direct gen entry and declared edges, and nulling `FKReference` would change
+  its other readers (reading).
+- **Declared relationships** (§13.4): same root cause, same file
+  (`mergeDeclaredRelationships`). `excludedDeclaredMember` checks `fk` (o2m on
+  the related table; o2o on the side `FKOnTarget` names) or a declared m2m's
+  `junction_local_fk` / `junction_reference_fk`, and the prototype returns an
+  **error** naming the column, §4.13 and §13.4, pending Q2.
+- Add a PRD §4.13 row for this case (inferred: warning and omit; declared:
+  error), adding text for an unspecified case. (`COMPOSITE_FK_RELATIONSHIPS.md`
+  §4.3, §4.9 and the §7 R1 evidence were corrected when this vet was recorded:
+  only O2M fails to compile.)
+- Tests (prototyped): gen
+  `TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge` (none, O2M, O2O
+  via `generation.exclude_columns`, M2M junction column with two warnings,
+  referenced column, `exclude_relationships` silence),
+  `TestRelationshipTargets_DeclaredExcludedLinkColumnErrors`, a "fk column
+  excluded" case in `TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped`;
+  cli `TestGenerate_ExcludedFKColumnOmitsEdge` and
+  `TestValidate_NestedMutationOnExcludedFKEdge`; E2E: the entry's schema added
+  to the `postgres_stdlib` example (moved from `sqlite`, where GraphQL made the
+  churn about 5.9k lines).
+- **Pending the user's ruling:**
+  - **Q1.** R1 drops every shape, but its stated premise (does not compile)
+    holds only for O2M. Drop O2O and M2M edges with an excluded member too?
+    (a) Drop all shapes as R1 is worded (prototyped): a config that hides the
+    FK column today and uses a working `Profile.Users` / `Post.Tags` /
+    `Tag.Posts` loses those fields and gets a warning; one rule, shared with the
+    composite design §4.3. (b) Drop only O2M (inferred and declared), the shape
+    that does not compile; O2O and M2M keep working; two arms of
+    `excludedKeyMember` go; the composite design §4.3 / §4.9 / R1 get a
+    per-shape amendment. No golden churn either way. Vet recommends (a).
+  - **Q2.** A declared relationship whose link column `exclude_columns` removes:
+    (a) error naming the relationship and column (prototyped), matching §4.13's
+    rows for a declared edge with no generated entity or a non-column `fk`
+    ("the user declared the edge by name"); with Q1(a) no edge over a hidden FK
+    column can be kept. (b) warning and drop, as the entry first suggested; the
+    build passes silently minus the field. No golden churn either way. Vet
+    recommends (a); not auto-accepted, since it departs from the entry's text.
+- **The user ruled on 2026-10-21:** Q1 (a), drop every shape (O2M, O2O, M2M,
+  referenced column) with the warning; `exclude_columns` means "not in the
+  model", and `access: hidden` (PRD §32) is the tool for hiding a column while
+  keeping the edge. Q2 (a), a declared relationship over an excluded link
+  column is an error. Both are what the prototype implements, so its gates and
+  fail-first evidence below stand and the verdict moves to `ready` without a
+  second wave.
+- Prototype results, run at `bd7783ea` on 2026-10-21: reproduced with the
+  example probe harness (`examples/zz_probe_o2m`, the postgres example's go.mod,
+  `GOWORK=off`): `sqlgen validate` → "config and schema are valid" (exit 0);
+  `sqlgen generate` → "generated 8 files (2 tables, 0 views)"; `go build
+  ./models/...` → the two errors above, byte-identical; a declared `o2m` with
+  `fk: cycle_id` excluded → the same two errors; O2O and M2M build (exit 0).
+  With a `nested_mutations` entry on the edge, HEAD's `validate` already exits
+  2 (`relationship "Tasks" is not write-eligible: the traversed FK column
+  "cycle_id" is absent from the target's create input`); with the fix it
+  reports `"Tasks" names no relationship on this table (PRD §4.8)`. Gates:
+  `go test -race -count=1 ./gen/... ./cli/... ./config/...` ok;
+  `make update-golden` no churn; `make update-golden-e2e` only
+  `postgres_stdlib` (the new fixture); `TestE2EGoldenFiles` ok;
+  `golangci-lint run ./gen/... ./cli/...` 0 issues; `postgres_stdlib`
+  `GOWORK=off go test -race -count=1 ./...` ok (70 tests) and lint 0 issues.
+  Fail-first: inferred drop reverted → `…DropsInferredEdge/o2m_fk_column`
+  "cycles relationships = [\"Tasks\"], want []" (o2o, m2m, referenced_column
+  likewise), `TestGenerate_ExcludedFKColumnOmitsEdge` "Cycle fields mismatch …
+  + \"Tasks\"", `TestValidate_NestedMutationOnExcludedFKEdge` (stderr "is not
+  write-eligible"), `TestE2EGoldenFiles/postgres_stdlib` "file
+  \"client_gen.go\" differs from expected", and `postgres_stdlib` `go build`
+  "models/models_gen.go:9271:5: unknown field CycleID in struct literal of type
+  TaskFilter"; `findO2ORelationships` guard reverted →
+  `…ChainedO2OIntoExcludedTableDropped/fk_column_excluded` "profiles → users
+  chained joins = [\"Account\"], want []"; declared error reverted →
+  `…DeclaredExcludedLinkColumnErrors/o2m_fk_on_the_related_table` and
+  `/m2m_junction_column` "BuildTableContexts() error = <nil>, want it to
+  contain …"; referenced-column arm reverted → `…/referenced_column` fails.
+  Existing suite without the fix passes (`gen` 77s, `cli` 107s). Golden churn:
+  `postgres_stdlib` only, from the new fixture (`client_gen.go` +14,
+  `models_gen.go` +3472, `sorter_gen.go` +34, `tablenames_gen.go` +2, in both
+  `expected/` and `models/`); the fix itself churns no example, since none
+  excludes a column. Patch: `.claude/prototypes/FIX-358.patch` (14 files; source
+  and tests +383/-7, the rest regenerated `postgres_stdlib` goldens).
+
+**References.**
+- PRD §4.6 / §4.13 (`exclude_columns`), §5.3 (relationship detection), §13.4
+  (manual relationships).
+- `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §7 R1 (ruling on missing key
+  members).
+- `cmd/sqlgen/gen/relationship_targets.go:176-179` (`relationshipTargets.generates`,
+  the existing edge drop for tables that generate no entity), called at
+  `context_table.go:1414` (`buildRelationshipContexts`) and `:2680`
+  (`findO2ORelationships`). Corrected from `:84-106`, which only builds the
+  index.
+
+**Resolution notes.** Landed the vetted prototype (2026-10-21). Its source
+files were fresh at `2ae215f8`, so the source and test hunks applied clean;
+the `postgres_stdlib` goldens were regenerated rather than taken from the patch.
+`relationshipTargets` indexes each table's merged `exclude_columns`;
+`excludedKeyMember` drops an FK-inferred O2O / O2M / M2M edge whose FK column,
+junction column or referenced column is excluded, with a warning naming the
+table, edge and column (`buildRelationshipContexts`), and silently in
+`findO2ORelationships`; `excludedDeclaredMember` makes a declared edge over an
+excluded `fk` or junction column an error. Added the PRD §4.13 row
+("`exclude_columns` removes a relationship's link column"), a phase-3 mention
+and an edge-case bullet, none of which the prototype carried. Inline: dropped
+the design-decision label from two comments; from `/verify`, corrected the
+`excludedDeclaredMember` comment (a declared `fk` joins the other side's key),
+made the inferred warning cite PRD §4.13 as well as §13.4, added a has-one
+declared O2O case (the `FKOnTarget` arm; fails with the arm reverted), wrote
+the §4.13 row's escape hatch as `column_map.<col>.access: hidden`, put the
+`COMPOSITE_FK_RELATIONSHIPS.md` §4.3, §4.9, R1 and findings-table sentences
+into the past tense, and refreshed this entry's References line refs. Gates: `make check` ok;
+`make check-examples` ok. Fail-first on the final code: guards reverted →
+the seven `…ExcludedKeyMember…` / `…DeclaredExcluded…` / `…ChainedO2O…/fk_column_excluded`
+subtests and both cli tests fail as the entry records, and `postgres_stdlib`
+`go build` → "models/models_gen.go:9325:6: unknown field CycleID in struct
+literal of type TaskFilter". Golden churn matches the vet: `postgres_stdlib`
+only, from the new fixture (`client_gen.go` +14, `models_gen.go` +3472,
+`sorter_gen.go` +34, `tablenames_gen.go` +2, in `expected/` and `models/`).
+
+### FIX-359
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** R4 probe of `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (2026-10-20), user approved filing
+- **Vetted:** corrected at `02e23d79` (2026-10-21)
+
+**Issue.** **Relationship loaders fail once the parent set exceeds the dialect's bind-parameter limit.**
+Loaders put every parent key into one `IN` list. Measured at `bd7783ea` by
+copying the `postgres`, `sqlite` and `mysql` examples, inserting more
+parents than the limit plus one child, and calling `Categories().GetMany`
+with `Limit: new(0)` and an O2M (`Products`) or M2M (`Users`) selected:
+
+```
+SQLite (modernc), 40000 parents
+  O2M: load category products: get products: query: SQL logic error: too many SQL variables (1)
+  M2M: load category users junction: query: SQL logic error: too many SQL variables (1)
+MySQL 8.0, 70000 parents
+  O2M: load category products: get products: query: Error 1390 (HY000): Prepared statement contains too many placeholders
+  M2M: load category users junction: query: Error 1390 (HY000): ...
+PostgreSQL 17, pgx, 70000 parents
+  O2M: ok (comparator.ID{In} renders = ANY($1), one parameter)
+  M2M: iterate category users junction: pgx rows: extended protocol limited to 65535 parameters
+```
+
+Limits measured: SQLite 32766 (`MAX_VARIABLE_NUMBER`), MySQL 65535 (8.0 and
+8.4, without `interpolateParams`), PostgreSQL 65535 (pgx and lib/pq). The
+error names no table, column or edge beyond the load wrapper.
+
+The M2M target fetch fails separately, on **junction rows** rather than
+parents, because its key list is not deduplicated (one entry per junction row).
+Measured at `bd7783ea` with two parents sharing many targets: MySQL, 2 × 32784
+shared users → `load category users: get users: query: Error 1390 (HY000):
+Prepared statement contains too many placeholders`; SQLite, 2 × 16400 → `load
+category users: get users: query: SQL logic error: too many SQL variables (1)`.
+On pgx it renders `= ANY($1)` and does not fail. (Added by the 2026-10-21 vet.)
+
+**Root cause.** The O2M loader builds one `<Target>Filter` whose FK comparator
+holds every parent key (`cmd/sqlgen/gen/templates/table/get.go.tmpl:419-426`)
+and makes one `GetMany` call (`get.go.tmpl:437-477`). The M2M junction step
+builds one `sql.Where(...).In(...)` over every parent key
+(`get.go.tmpl:513-515`), which expands to one placeholder per key on every
+dialect, pgx included. The M2M target fetch filters on every collected target
+key through the comparators (`get.go.tmpl:583-589`, `GetMany` at `:603`), one
+key per junction row with no dedupe. Nothing splits the key lists, unlike the
+nested-mutation steps, which chunk at `c.batchSize` for exactly this reason
+(`nested.go.tmpl:651`). (Line refs corrected by the vet from `:437-457` and
+`:585`; the target fetch is not the same shape as the junction step.)
+
+**Suggested fix.**
+- Ruled 2026-10-20 (`COMPOSITE_FK_RELATIONSHIPS.md` R4): chunk every loader
+  step at `floor(maxParams / 2 / N)` keys per query, where `N` is the number
+  of key columns (1 here) and `maxParams` is the dialect's limit (SQLite
+  32766, MySQL 65535, PostgreSQL 65535). Half the budget is left for the
+  consumer filter, tenancy, soft-delete and `filter:` parameters.
+- Measured prototype (hand-edited generated SQLite O2M loader, 40000 parents,
+  consumer filter `InStock: Eq(true)`): unchunked fails as above; a chunk of
+  32766 also fails, because the consumer filter adds one parameter; 32765 and
+  16000 return all 40000 parents with the 40 correct child sets in 2 and 3
+  queries. So the headroom is required, not optional.
+- How the limit reaches the templates is pending Q1 below. The prototype uses
+  a generator-side funcmap `loadChunkSize N` (`cmd/sqlgen/gen/funcmap.go`) that
+  returns `floor(limit / 2 / N)` from a per-dialect limit and bakes the literal
+  into the template: 16383 on SQLite, 32767 on PostgreSQL and MySQL. No runtime
+  API change.
+- **O2M:** loop over chunks of parent keys, one `GetMany` per chunk, results
+  appended, mapping unchanged. Chunked uniformly, pgx included (pending Q2).
+- **M2M:** the junction step, target fetch and mapping run once per parent
+  chunk; the junction scan runs in a closure so its `defer Close` is per chunk.
+  The target fetch is corrected (pending Q3): it no longer filters on the
+  collected target keys but matches the target PK against the junction,
+  `sql.Where(q(targetPK)).In(sql.Subquery{"SELECT j.ref FROM <junction> j WHERE
+  " + sql.SubqueryWhere(j.local IN chunk)})`, plus the static `filter:` or
+  discriminator, with `Filter: fo.X.Filter`. The mapping walks only the chunk's
+  parents.
+- **Correction vs. the original suggestion and R4:** chunking the M2M target
+  fetch on target keys (deduplicated or not) silently breaks PRD §13.2's
+  per-parent sort ("walking targets in the target query's order so Sorts order
+  each parent's slice") once a load's distinct targets exceed one chunk.
+  Measured: 2 parents × 16400 users, sort name DESC → each slice starts at
+  "…-16383" and ends at "…-16384". Today that load errors loudly; the target-key
+  chunk would turn it into a silent misorder. Every chunking variant also needs
+  target-key dedupe, or the subquery.
+- If Q3's subquery is accepted, `pkFilterInExprStr` and `fkLoadValue` in the
+  funcmap have no template caller left: delete them. The prototype leaves them.
+- PRD and doc sync, when ruled: §25.1 (one query per step per chunk), §13.2
+  steps 2-3 (the M2M target query shape), PRD line ~13093 ("regardless of
+  result set size"), the generated comment at `api/field_options.go.tmpl:11`
+  (its formula is in the graphql goldens), `guidelines/SQL.md` §8
+  "Implementation" (the M2M target fetch no longer takes the pgx row) and §14.
+  (`COMPOSITE_FK_RELATIONSHIPS.md` §4.4, §4.8 and §6 were updated to the
+  rulings when this vet was recorded.)
+- Tests (prototyped): an integration test per dialect in the `sqlite`,
+  `postgres` and `mysql` examples (`relationship_bind_limit_test.go`):
+  `TestRelationshipLoad_PastBindLimit` checks every child set and order and
+  asserts 3 statements per step through a `statementLog` Querier that counts
+  by outermost FROM; `TestRelationshipLoad_M2MTargetsPastBindLimit` has 2
+  parents sharing chunk+17 targets and checks the full name-DESC order. Parents
+  are seeded server-side at the real limits (32800 SQLite, 65600 PG / MySQL):
+  about 1 s on SQLite, 8 s on PG and MySQL. Plus `TestFuncLoadChunkSize`, and
+  updated `get_test.go` / `discriminator_test.go` patterns. The tenancy
+  `TestM2M_NonTenantedJunctionSQLShape` now classifies statements by outermost
+  FROM, because the tags SELECT names `post_tags` in its subquery (same root
+  cause and site; isolation unchanged, the outer WHERE keeps `workspace_id`).
+- **Pending the user's ruling:**
+  - **Q1. How the limit reaches the templates.** (a) `MaxParams() int` on the
+    exported `sql.Dialect` interface, generated code calls
+    `c.dialect.MaxParams()/2/N`: public API (one interface method, three
+    dialect methods); runtime-reusable for N > 1. (a') the same method, read by
+    the generator's funcmap and baked as a literal: same public API, one source
+    of truth. (b) generator-side per-dialect limit in the funcmap, baked as a
+    literal (prototyped): zero public surface; N > 1 reused per edge at
+    generation time (`loadChunkSize (len .FKColumns)`); the dialect fact lives
+    in `cmd/sqlgen` rather than on `Dialect` (SQL.md §2's "dialect logic on the
+    interface" rule is written for runtime builders). (c) an exported free
+    function `sql.MaxParams(d)`: public API, no interface change. (d) an
+    unexported or `internal/` runtime helper is not viable: measured, an
+    `internal/zzprobe` package compiles from an example module but fails for a
+    consumer (`use of internal package
+    github.com/teandresmith/sqlgen/internal/zzprobe not allowed`). Golden churn
+    is the same file set under every option. Vet recommends (b).
+  - **Q2. The pgx `= ANY($1)` O2M path.** Chunk uniformly (prototyped): PG O2M
+    takes `ceil(P / 32767)` statements, measured 3 for 65600; §25.1 has one
+    rule. Leave pgx unchunked: measured 1 statement for 65600 parents and 134
+    children correct; §25.1 needs a dialect clause that holds only for O2M,
+    since both M2M steps (under Q3) and composite-FK tuple loaders expand on
+    pgx. Vet recommends chunking uniformly.
+  - **Q3. How the M2M target fetch chunks.** (T1) dedupe target keys and chunk
+    on them, as the entry and R4 said: silent per-parent misorder once distinct
+    targets exceed a chunk (measured above); the count depends on distinct
+    targets. (T2) group whole parents so each group's targets fit a chunk:
+    still misorders when one parent alone exceeds a chunk; data-dependent
+    count. (T3, prototyped) per parent chunk, match the target PK against
+    `SELECT j.ref FROM junction j WHERE j.local IN (chunk)`: each parent's
+    targets come from one sorted statement, no dedupe needed, count
+    `ceil(P / chunk)` per step, known from the parent count; costs a PRD §13.2
+    amendment, a second junction read inside the target query, and two dead
+    funcmap helpers. Composite-FK tuple loaders reuse it with tuple IN in the
+    subquery. Vet recommends T3.
+- **The user ruled on 2026-10-21:** Q1 (b), the generator-side literal
+  (`loadChunkSize N`), no runtime API. Q2: **leave the pgx `= ANY($1)` O2M path
+  unchunked** (one query at any size); every other driver chunks O2M, and both
+  M2M steps chunk on every driver. This differs from the first-wave prototype,
+  which chunks uniformly, so a second vet wave reworks that branch; PRD §25.1
+  gets a dialect clause. Q3: T3, the junction subquery. Delete
+  `pkFilterInExprStr` and `fkLoadValue` if no caller remains.
+- Prototype results, run at `bd7783ea` on 2026-10-21: reproduced with the new
+  example tests against HEAD's models: SQLite (32800 parents) `GOWORK=off go test
+  -run BindLimit ./tests/` → "load category users junction: query: SQL logic
+  error: too many SQL variables (1)" (shared-targets test: "load category
+  users: get users: query: SQL logic error: too many SQL variables (1)");
+  PostgreSQL (65600) → "iterate category users junction: pgx rows: extended
+  protocol limited to 65535 parameters"; MySQL (65600) → "load category users
+  junction: query: Error 1390 (HY000): Prepared statement contains too many
+  placeholders" (shared-targets: "load category users: get users: query: Error
+  1390 …"); PG O2M alone at HEAD → "err=<nil> parents=65600 products=134
+  statements on products=1". Gates: `go test -race -count=1 ./gen/...` ok;
+  `golangci-lint run ./gen/...` 0 issues; gofumpt clean; `make update-golden`,
+  `make update-golden-e2e` and `TestE2EGoldenFiles` ok; `GOWORK=off go test
+  -race -count=1 ./...` and `golangci-lint run` ok in sqlite, postgres, mysql,
+  postgres_stdlib, tenancy, graphql, graphql_null_wrappers, graphql_top_level,
+  introspect_sqlite, introspect_postgres, introspect_mysql. Fail-first
+  (SQLite, each site reverted alone): O2M chunk loop →
+  `TestRelationshipLoad_PastBindLimit` "load category products: get products:
+  query: SQL logic error: too many SQL variables (1)"; junction chunk → "load
+  category users junction: query: SQL logic error: too many SQL variables (1)";
+  target-fetch subquery back to an IN on collected keys →
+  `TestRelationshipLoad_M2MTargetsPastBindLimit` "load category users: get
+  users: query: SQL logic error: too many SQL variables (1)" (plus
+  `TestGetTemplate_m2mRelationshipLoading` and
+  `m2mTargetFilterUsesTargetPKField`); target chunked on deduplicated keys (T1)
+  → "category bind-limit-shared-1: 16400 users, want 16400 in name-descending
+  order; first difference at 0" and "statements reading \"users\" = 1, want 3".
+  Gap: reverting only the O2M or only the junction chunking fails no gen unit
+  test (the loop patterns also match the other M2M block); the integration
+  tests are the guard. Existing suite without the fix passes (`go test
+  ./gen/` ok; sqlite `go test -skip BindLimit ./tests/` ok). Golden churn
+  (each example's `expected/` and `models/` identically, no files added): gen
+  unit golden `get_products_relationships_gen.go` (+141/-113); graphql
+  (+998/-788), graphql_null_wrappers (+66/-46), graphql_top_level (+33/-23),
+  introspect_mysql (+132/-92), introspect_postgres (+165/-115),
+  introspect_sqlite (+348/-272), mysql (+860/-680), postgres (+1253/-999),
+  postgres_stdlib (+381/-295), sqlite 9 files (+1357/-1085), tenancy
+  (+510/-418); cache, events, tenancy_mysql, tenancy_postgres unchanged. (First
+  wave; superseded by the second-wave patch below.)
+- Second-wave prototype results, run at `02e23d79` on 2026-10-21 (after the
+  rulings), started from the first-wave patch (applied clean):
+  - **Q2 implemented at generation time.** `TableContext.O2MLoadUnchunked()`
+    (`gen/context.go`) returns `Dialect == postgres && Driver == pgx`;
+    `get.go.tmpl`'s O2M block branches on it, so pgx output is one `GetMany`
+    with `In: <parentIDs>` and no loop; every other dialect/driver keeps the
+    `loadChunkSize` loop; both M2M steps chunk on every driver. A method, not a
+    field, for the reason `NeedsTenantResolver` gives (TEMPLATES.md §6). The
+    driver, not `SupportsArrayParams()`, decides it, because the funcmap's
+    dialect is pgx-mode for both drivers (`resolveDialect`).
+  - **Deleted** `pkFilterInExprStr` and `fkLoadValue` with their funcmap
+    registrations and `funcmap_test` name-list entries (no caller remains).
+  - **Stale premise in the Q2 ruling:** PostgreSQL with `output.driver: stdlib`
+    does **not** expand `IN`. The generated client always builds
+    `sql.NewPostgresDialect()` (pgx mode) whatever the driver
+    (`templates/table/client.go.tmpl:254`, `templates/view/client.go.tmpl:64`),
+    and lib/pq ≥ 1.11 (the runtime requires v1.12.3, root `go.mod:10`) converts
+    the slice to an array. A postgres_stdlib probe logged `SELECT … FROM
+    "public"."products" WHERE "category_id" = ANY($1)`; with stdlib also
+    unchunked, 65600 parents load correctly in 1 statement. The prototype keeps
+    stdlib chunked as ruled; on stdlib that is a precaution today, and it stays
+    correct if generated code ever switches to `NewPostgresStdlibDialect()` to
+    match PRD Appendix A. **The user ruled on 2026-10-21, given this finding:
+    keep stdlib chunked**; only PostgreSQL with `output.driver: pgx` leaves the
+    O2M step unchunked.
+  - **Behavior change:** with 0 parents, every chunked step issues 0
+    statements (HEAD issued 1 per step); the pgx O2M step still issues 1 with
+    an empty array.
+  - **Tests:** `TestGetTemplate_o2mRelationshipLoading` is table-driven over pgx
+    and stdlib, checking wanted and unwanted patterns, and anchors on
+    `var relatedReviews []*Review` + the loop, which only the O2M block emits —
+    this closes the first wave's "reverting only the O2M chunking fails no gen
+    unit test" gap for O2M. The nullable-FK O2M tests are back at HEAD's `In:
+    categoryIDs` / `In: folderIDs` (pgx fixture). postgres
+    `TestRelationshipLoad_PastBindLimit` now expects products 1, junction 3,
+    users 3; new `postgres_stdlib/tests/relationship_bind_limit_test.go` expects
+    3 per step plus the shared-targets test; SQLite and MySQL unchanged.
+  - Gates: `go test -race -count=1 ./gen/...` ok; `golangci-lint run ./gen/...`
+    0 issues; gofumpt clean; `make update-golden`, `make update-golden-e2e`,
+    `TestE2EGoldenFiles` ok (re-run after fail-first restore); `GOWORK=off go
+    test -race -count=1 ./...` and `golangci-lint run` ok / 0 issues in sqlite,
+    postgres, mysql, postgres_stdlib, tenancy, graphql, graphql_null_wrappers,
+    graphql_top_level, introspect_sqlite, introspect_postgres, introspect_mysql.
+  - Fail-first: pgx branch reverted (`O2MLoadUnchunked` forced false) → postgres
+    `TestRelationshipLoad_PastBindLimit` "statements reading
+    \"public\".\"products\" = 3, want 1", and
+    `TestGetTemplate_o2mRelationshipLoading/pgx` "output missing O2M pattern:
+    \"ProductID: &comparator.ID{In: productIDs}\""; driver clause dropped
+    (stdlib unchunked) → postgres_stdlib `TestRelationshipLoad_PastBindLimit`
+    "statements reading \"public\".\"products\" = 1, want 3" (correctness still
+    passes, the stale-premise evidence) and `…/stdlib` "output missing O2M
+    pattern: \"ProductID: &comparator.ID{In: chunk}\"". The junction-chunk,
+    target-subquery and SQLite O2M sites are unchanged from the first wave and
+    its fail-first stands.
+  - Golden churn vs. `02e23d79` (`models/` same as `expected/`, no files
+    added): gen unit golden `get_products_relationships_gen.go` (+122/-99);
+    graphql (+727/-577), graphql_null_wrappers (+28/-18), graphql_top_level
+    (+14/-9), introspect_mysql (+132/-92), introspect_postgres (+70/-45),
+    introspect_sqlite (+348/-272), mysql (+860/-680), postgres (+1030/-831),
+    postgres_stdlib (+381/-295), sqlite 9 files (+1357/-1085), tenancy
+    (+510/-418); cache, events, tenancy_mysql, tenancy_postgres unchanged.
+  - PRD §25.1 wording for `/fix-implement`: each loader step binds parent keys
+    in chunks of `floor(L / 2 / N)` (L = 32766 SQLite, 65535 MySQL and
+    PostgreSQL; 16383 / 32767 for N = 1), half the budget left for the
+    relationship filter, tenancy, soft-delete and `filter:`. With P parents,
+    `C = ceil(P / chunk)` (0 with no parents): `total = 1 + Σ_O2M s + 2·C·count(M2M)`,
+    where `s = 1` on PostgreSQL with `output.driver: pgx` (one array parameter,
+    `= ANY($1)`) and `s = C` everywhere else, PostgreSQL `stdlib` included. The
+    junction step and the target fetch (`target_pk IN (SELECT j.ref FROM
+    junction j WHERE j.local IN (chunk))`) take C each on every driver. For
+    P ≤ chunk it reduces to today's formula; the count stays known at call
+    time. Also update the §25.1 diagram's M2M-entities line, "M2M uses two
+    batched IN clauses", PRD ~13093 and `api/field_options.go.tmpl:11`, and
+    `guidelines/SQL.md` §8.
+  - On landing, drop the 2026-10-20 backlog line about the `int64(refKey)`
+    conversion through `fkLoadValue` (FIX-357 auto-review): T3 removes both.
+  - Patch: `.claude/prototypes/FIX-359.patch` (50 files, +12444/-8967; source and
+    tests 11 files, +1408/-224), applies clean at `02e23d79`.
+
+**References.**
+- PRD §13.2 (loading strategy), §25.1 (query count guarantee), §4.6
+  (`batch_size`).
+- `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §5, §7 R4.
+- `cmd/sqlgen/gen/templates/table/nested.go.tmpl:651` (existing chunking and
+  its rationale).
+- Related: FIX-357 (typed M2M junction keys, same loader).
+
+**Resolution notes.** Resolved 2026-10-21 from the second-wave prototype
+(fresh at `56b381b2`: no source file changed since `02e23d79`; the source and
+test hunks applied clean, generated files regenerated rather than taken from the
+patch). Root cause as recorded: every loader step bound all parent keys (and the
+M2M target fetch one key per junction row) in a single statement.
+- `get.go.tmpl`: the O2M step loops over chunks of `loadChunkSize 1` parent keys
+  (one `GetMany` per chunk, results appended) except on PostgreSQL with
+  `output.driver: pgx`, which keeps one `GetMany` with `= ANY($1)`
+  (`TableContext.O2MLoadUnchunked()`, `gen/context.go`). The M2M junction read,
+  target fetch and mapping run once per parent chunk on every driver; the
+  junction scan runs in a closure so its `defer Close` is per chunk. The target
+  fetch matches the target PK against `SELECT j.ref FROM <junction> j WHERE
+  j.local IN (chunk)` (`sql.Subquery` + `sql.SubqueryWhere`) with the consumer
+  filter ANDed into an empty `<Target>Filter`, and the mapping walks only the
+  chunk's parents. Divergence from the prototype, which passed the consumer
+  filter as the input `Filter`: that let a soft-delete comparator in it
+  replace the target's default `deleted_at IS NULL` (`GetMany` checks only the
+  top-level field), where HEAD and the O2M fetch AND it in. The landed code
+  keeps HEAD's semantics; `TestGetTemplate_m2mRelationshipLoading` pins it
+  (fails with `output missing M2M pattern: "Filter:     filter,"` when
+  reverted). Found by the /verify reviewer.
+- `funcmap.go`: `loadChunkSize N` returns `floor(L / 2 / N)` from a per-dialect
+  `bindParamLimit` (SQLite 32766, PostgreSQL/MySQL 65535), baked as a literal
+  (16383 / 32767). `pkFilterInExprStr` and `fkLoadValue` deleted with their
+  registrations (no caller left).
+- Tests: `relationship_bind_limit_test.go` in the `sqlite`, `postgres`, `mysql`
+  and `postgres_stdlib` examples (`TestRelationshipLoad_PastBindLimit`,
+  `TestRelationshipLoad_M2MTargetsPastBindLimit`, statements counted by
+  outermost FROM; pgx expects 1 O2M statement, every other driver 3);
+  `TestFuncLoadChunkSize`; `TestGetTemplate_o2mRelationshipLoading` table-driven
+  over pgx and stdlib; updated `get_test.go` / `discriminator_test.go` patterns;
+  the tenancy `TestM2M_NonTenantedJunctionSQLShape` classifies by outermost FROM.
+- Docs: PRD §9.8.3's sample `loadRelationships` (M2M block chunked with the
+  junction-subquery target fetch; O2M marked as the pgx shape), §13.2 steps 2-3
+  and combined example (chunked steps, the M2M target
+  query shape), §25.1 rewritten with the chunk formula and the pgx dialect clause
+  (diagram's M2M-entities line, "two batched IN clauses" sentence), §26.5 intro
+  and §26.5.7's "Documented contract" (was "regardless of result set
+  size"); `api/field_options.go.tmpl` generated comment; `guidelines/SQL.md` §8
+  "Implementation" (the M2M target fetch now expands through the junction
+  subquery) and §14 (M2M SQL shape, new "Chunking at the bind-parameter limit").
+  Dropped the 2026-10-20 backlog line about `int64(refKey)` through
+  `fkLoadValue` (both removed). /verify reviewer corrections applied: the
+  `O2MLoadUnchunked` comment and SQL.md §8 no longer claim generated stdlib
+  clients expand `IN` (they build the pgx-mode dialect; backlog line of
+  2026-10-21 tracks it); §25.1 says the target fetch takes at most `C` (a chunk
+  with no junction rows skips it) and the reduced formula needs `0 < P`; PRD
+  §13.7.3's m2m `filter:` row and the template comment no longer say "after the
+  junction resolves target IDs"; dropped the 2026-10-21 backlog line on
+  block-scoped loop patterns (the O2M test is now anchored, and the reviewer
+  measured a junction-only revert failing
+  `TestGetTemplate_goldenFile_withRelationships`).
+- Behavior change: with 0 parents a chunked step issues 0 statements (was 1);
+  the pgx O2M step still issues 1.
+- Golden churn: the same file set as the second-wave record (gen unit golden;
+  per-example `expected/` and `models/` identical, no files added), plus
+  `graph/sqlgenresolver/field_options_gen.go` in graphql,
+  graphql_null_wrappers, graphql_top_level, mysql and sqlite (comment-only,
+  +4/-2 each) from the `api/field_options.go.tmpl` sync. Before the M2M filter
+  correction the numstats matched the record exactly; after it: unit golden
+  +129/-98, graphql +771/-579, graphql_null_wrappers +32/-20,
+  graphql_top_level +18/-11, introspect_mysql +132/-92, introspect_postgres
+  +70/-45, introspect_sqlite +362/-270, mysql +904/-682, postgres +1094/-831,
+  postgres_stdlib +395/-293, sqlite +1424/-1078, tenancy +538/-414 (field
+  options included).
+- Gates (re-run after the M2M filter correction, both green): `make check` ok; `make update-golden`, `make update-golden-e2e` ok; `make check-examples` ok (sqlite, postgres, mysql, postgres_stdlib bind-limit tests included). Fail-first on the final code: SQLite O2M chunk bound to all keys → "load category products: get products: query: SQL logic error: too many SQL variables (1)"; junction step on all keys → "load category users junction: query: …too many SQL variables (1)"; target-fetch subquery on all keys → "load category users: get users: query: …too many SQL variables (1)"; `O2MLoadUnchunked` forced false → postgres "statements reading \"public\".\"products\" = 3, want 1"; driver clause dropped → postgres_stdlib "statements reading \"public\".\"products\" = 1, want 3".
+
+### FIX-357
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** FIX-356 implementation (2026-10-20), user approved filing
+- **Vetted:** ready at `02303463` (2026-10-20)
+
+**Issue.** **M2M loader cannot fetch a target keyed on a binary or network type; the generated code does not compile.**
+An M2M relationship whose target table's primary key resolves to the
+`comparator.Opaque` family (`[]byte`, `net.IP`, `net.IPNet`,
+`net.HardwareAddr`) generates a `GetMany` loader that does not compile.
+Measured at `c5c3862d`, PostgreSQL, `source: files`, schema
+`posts(id bigint PK)`, `tags(id <type> PK)`,
+`post_tags(post_id → posts, tag_id → tags, PK (post_id, tag_id))`:
+`sqlgen generate` exits 0, then `go build ./models/` fails with
+`models/models_gen.go:2122:28: cannot convert v (variable of type int64) to type []byte` (bytea),
+`models/models_gen.go:2123:28: cannot convert v (variable of type int64) to type net.IP` (inet) and
+`models/models_gen.go:2123:38: cannot convert v (variable of type int64) to type net.HardwareAddr` (macaddr).
+The key's column name does not matter; it fails the same way on `main`
+before FIX-356. Any dialect whose binary column is a target PK (bytea, blob,
+varbinary) is affected.
+
+**Root cause.** The M2M loader in `cmd/sqlgen/gen/templates/table/get.go.tmpl`
+carries target keys as strings: it scans both junction columns into
+`[]string` (`:543`), then rebuilds typed keys for the target fetch. It has
+two branches, `pkIsStringType .FKGoType` (the `comparator.ID` family) and an
+else branch that assumes an integer: `strconv.ParseInt(s, 10, 64)` then
+`{{ .FKGoType }}(v)` (`:570-573`). `pkComparatorFamily`
+(`cmd/sqlgen/gen/context_table.go:2125-2139`) sends the Opaque family to that
+else branch, where the conversion does not compile. Beyond compiling
+(measured at `02303463`): the string scan cannot carry these keys at all. On
+SQLite (modernc) a BLOB key scans into the string `"\x01\xffA"` while the
+map-back's `fkToStringByGoType` (`:635`) renders the same key as
+`fmt.Sprint` → `"[1 255 65]"`, so no key ever matches. pgx refuses the scan
+outright: `cannot scan bytea (OID 17) in binary format into *string`, and the
+same for `inet` (OID 869) and `cidr` (OID 650); `macaddr` scans. The parent
+side has the same root cause at the same site: an M2M whose *parent* key is
+binary or network compiles (only the target direction fails to build), but on
+pgx its junction scan fails at runtime and on SQLite its parent keys never
+match.
+
+**Suggested fix.**
+- Pending the user's ruling (or `/fix-vet`): support the Opaque family in the M2M loader, or refuse the edge loudly.
+  - Support: scan the junction's target column into the key's own Go type rather than `string`, build `targetPKs` from those values with `pkFilterInExprStr` (it already renders `&comparator.Opaque[T]{In: …}`), and key both maps with a conversion that round-trips (`string(b)` for `[]byte`, `.String()` for the `net` types on both sides). Needs an example M2M keyed on a blob or inet column with a load test.
+  - Refuse: treat an Opaque-keyed M2M target as a generation error (or drop the edge with a warning), stated in PRD §13, as §9.9's E8 rule already does for nested writes on such edges.
+- Regression: a gen template test per Opaque type, and an example case that compiles under `check-examples`.
+- The user ruled on 2026-10-20: support, with the typed junction scan on every M2M loader (the recommended option). The prototype below implements exactly that option, so the verdict moved to `ready` without a second wave.
+- Options as presented for the ruling:
+  - Support or refuse binary/network keys in the M2M loader, and if supported, on which path?
+    - **Support with a typed junction scan on every M2M loader (recommended; prototyped).** Each junction column scans into its own Go type (`FKColumnGoType` and a new context field `JunctionReferenceGoType`), both map sides stringify typed values with `fkLoadKey` (as the O2M loader does), and the target fetch builds `targetPKs` from the typed values. It removes the `strconv.ParseInt` round trip for every key family. Consequence: golden churn in every example with an M2M edge (one model file and its `expected/` copy in graphql, introspect_sqlite, mysql, postgres_stdlib and tenancy; more in postgres and sqlite, which gain the example tables). All seven suites pass with race and lint.
+    - **Support with the typed scan only for the Opaque family.** No churn in existing loaders, but the loader keeps two junction paths, and other families keep the string round trip.
+    - **Refuse.** Generation error (or dropped edge with a warning) for an M2M whose target or parent key is in the Opaque family, stated in PRD §13 beside §9.9.4 E8. No churn; such edges lose loading entirely, including the parent-side case, which compiles today but fails at runtime.
+- Prototype results, run at `02303463` on 2026-10-20 (recommended option):
+  - Reproduction: the Issue's schema at `c5c3862d` (Issue); driver probes as quoted under Root cause.
+  - Prototype: `JunctionReferenceGoType` on `RelationshipContext`, wired in `wireRelFKMetadata` from the junction's reference column (fallback `FKGoType`); a `fkLoadValue` funcmap helper (the unwrapped value `fkLoadKey` stringifies); `get.go.tmpl` scans the junction into `var localKey <FKColumnGoType>` / `var refKey <JunctionReferenceGoType>`, skips rows failing `fkLoadGuard`, keys both maps with `fkLoadKey`, and appends `<FKGoType>(fkLoadValue refKey)` to `targetPKs` (the ID family keeps `allTargetIDs []string`). Examples: postgres gains `hosts(addr INET PK)`, `fingerprints(digest BYTEA PK)` and `host_fingerprints`, with `tests/m2m_opaque_key_test.go`; sqlite gains `binary_key_badges` (BLOB parent ↔ text target), with `tests/m2m_binary_key_test.go`. Tests: `TestGetTemplate_m2mJunctionScansTypedKeys` (binary, network, integer, nullable junction column), `TestRelationshipTargets_M2MJunctionReferenceGoType` (a nullable reference column resolves to `*string`, not the target's `string`).
+  - Generated-code probe (pgx module from the CLI): bytea, inet, cidr, macaddr, text, bigint and uuid target keys all `go vet` clean; a load run against PostgreSQL 17 returns `post 1 blobs=[b1 b2] hosts=[h1]`, `blob b2 posts=[1 2]`, `host h1 posts=[1 2]` (binary and network keys on both sides).
+  - Gates: `go test -race ./gen/...` ok; `TestE2EGoldenFiles` ok; `GOWORK=off go test -race -count=1 ./...` and `GOWORK=off golangci-lint run` ok in graphql, introspect_sqlite, mysql, postgres, postgres_stdlib, sqlite and tenancy.
+  - Fail-first: template reverted → `TestGetTemplate_m2mJunctionScansTypedKeys` fails (output missing `"var refKey []byte"`, and the network case likewise), and the updated examples generated with the `HEAD` CLI fail `go vet`: postgres `models/models_gen.go:25021:28: cannot convert v (variable of type int64) to type net.IP`, sqlite `models/badge_gen.go:458:28: cannot convert v (variable of type int64) to type []byte` (sqlite `generate` exits 1 at the chained gqlgen step). Wiring line removed → `users.Tags FKGoType = "string", JunctionReferenceGoType = "string"; want "string", "*string"`. `fkLoadValue` returning the raw variable → the nullable case fails (output missing `"targetPKs = append(targetPKs, int64(refKey.Int64))"`). Existing suite without the fix: `make check` green at `c5c3862d`.
+  - Golden churn: graphql ~2, introspect_sqlite ~2, mysql ~2, postgres_stdlib ~2, tenancy ~2 (the loader only); postgres +7 ~21 and sqlite +9 ~53 (the loader plus the new example tables); unit golden `get_products_relationships_gen.go`.
+  - Patch: `.claude/prototypes/FIX-357.patch` (108 files; 11 source and test files, +418/-32).
+
+**References.**
+- PRD §13.1, §13.2 (M2M batched loading); §11.2 (the `Opaque[T]` family); §9.9.4 E8 (M2M nested writes into an Opaque-keyed table are already not eligible, a generator limitation).
+- FIX-356 (the literal `ID:` filter field in the same loader; its resolution notes record this as a separate root cause).
+- `cmd/sqlgen/gen/funcmap.go:662-704` (`pkFilterInExprStr`, `pkIsStringType`); `cmd/sqlgen/gotype/gotype.go:1075-1091` (`DeriveFKMethod`).
+
+**Resolution notes.** Implemented the ruled option: every M2M loader scans its junction into the keys' own Go types. Started from the vetted prototype (fresh at `02303463`, source hunks applied clean; generated files regenerated rather than applied). `RelationshipContext` gains `JunctionReferenceGoType`, wired in `wireRelFKMetadata` from the junction's reference column (fallback `FKGoType`); a `fkLoadValue` funcmap helper renders the unwrapped value `fkLoadKey` stringifies; `get.go.tmpl` scans into `localKey` / `refKey`, skips rows that fail `fkLoadGuard`, keys both maps with `fkLoadKey`, and builds `targetPKs` from the typed values, so the `strconv.ParseInt` round trip is gone. The only change from the prototype is a shorter template comment. Regression coverage: `TestGetTemplate_m2mJunctionScansTypedKeys` (binary, network, integer, nullable junction column), `TestRelationshipTargets_M2MJunctionReferenceGoType`, and example load tests over real drivers: postgres `tests/m2m_opaque_key_test.go` (`hosts` INET ↔ `fingerprints` BYTEA through `host_fingerprints`) and sqlite `tests/m2m_binary_key_test.go` (`binary_key_badges`: BLOB parent ↔ text target). Fail-first re-run on the final code: template reverted → all four template cases fail; wiring line removed → `users.Tags FKGoType = "string", JunctionReferenceGoType = "string"; want "string", "*string"`; `fkLoadValue` returning the raw variable → output missing `"targetPKs = append(targetPKs, int64(refKey.Int64))"`. Golden churn matches the vet: graphql, introspect_sqlite, mysql, postgres_stdlib and tenancy ~2 each; postgres +7 ~21 and sqlite +9 ~53; unit golden `get_products_relationships_gen.go`. Gates: `make check`, `make update-golden`, `make update-golden-e2e`, `TestE2EGoldenFiles` and `make check-examples`, all green. Auto-review follow-ups applied inline: (1) a regression this change introduced: with the junction outside the generated set (`exclude_tables`, or a junction with no PK), `FKColumnGoType` fell back to `FKGoType`, which for M2M is the *target* key type, so the loader declared `var localKey` with the wrong type and a uuid parent over a bigint target could not scan. The fallback now uses the parent's PK type for an M2M local column; `TestRelationshipTargets_QualifiedJunctionReadsOnlyItsSchema` asserts both junction key types and failed before the fix with `users.AuditTags FKColumnGoType = "string", JunctionReferenceGoType = "string"; want "uuid.UUID", "string"`. A pgx probe (uuid `users` ↔ bigint `tags`, junction excluded) renders `var localKey uuid.UUID` / `var refKey int64` and loads `u1 [t7 t8]`. The fallbacks moved into `applyRelFKFallbacks`, since the extra branch put `wireRelFKMetadata` over the cyclop limit. (2) Doc fixes: `funcFKLoadValue` moved below `funcFKLoadKey` so each keeps its own doc comment; the `wireRelFKMetadata` comment names `JunctionReferenceGoType`; the doc comments of `TestGetTemplate_m2mJunctionScansTypedKeys` and both example tests state the behavior instead of the old failure. Backlog: one `[reading]` line (a junction column overridden to another comparator family than the target key). Gates re-run after the follow-ups: `make check`, `make update-golden-e2e` (same file set) and `make check-examples`, all green.
+
+### FIX-356
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** Composite-FK relationship probe (design/tenant-composite-fk-relationships, 2026-10-16), user approved filing
+
+**Issue.** **M2M loader filters the target by a literal `ID` field, so a target PK not named `id` does not compile.**
+The M2M relationship loader in `GetMany` builds its target filter with a
+hard-coded `ID:` field, so a many-to-many whose target table's primary key is
+not named `id` generates code that does not compile. Measured at `e38ded5a`
+with `posts(id bigint PK)`, `tags(code <type> PK)`,
+`post_tags(post_id → posts, tag_code → tags, PK (post_id, tag_code))`,
+PostgreSQL, `source: files`: `sqlgen generate` exits 0, then
+`go build ./models/` fails with
+`models/models_gen.go:2120:5: unknown field ID in struct literal of type TagFilter`
+(text PK; `TagFilter` has `Code *comparator.ID`) and
+`models/models_gen.go:2125:5: unknown field ID in struct literal of type TagFilter`
+(bigint PK; `Code *comparator.Number[int64]`). Every dialect and source shares
+the template.
+
+**Root cause.** `cmd/sqlgen/gen/templates/table/get.go.tmpl:566`
+(`ID: &comparator.ID{In: allTargetIDs}`) and `:575`
+(`ID: {{ pkFilterInExprStr .FKGoType "targetPKs" false }}`) name the filter
+field literally. `wireRelFKMetadata` (`cmd/sqlgen/gen/context_table.go:156-165`)
+already resolves `TargetPKFieldName` from the target's PK for M2M, and
+`nested.go.tmpl:667,889` uses `{{ .TargetPKFieldName }}: {{ .ConnectFilterExpr }}`
+for the same target filter, but the loader never adopted it.
+
+**Suggested fix.**
+- Use `{{ .TargetPKFieldName }}` for the filter field in both branches at `get.go.tmpl:566,575`.
+- Check the comparator expression against the target PK's filter type (the string branch assumes `comparator.ID`, the other branch derives it from `.FKGoType`); reuse whatever `ConnectFilterExpr` resolves from, or the target PK column's own type, rather than the junction FK's type.
+- Check the integer branch's `strconv.ParseInt` conversion against the target PK's Go type.
+- Regression: a gen unit/golden case with an M2M target whose PK is `code` (text) and one with a non-`id` integer PK, asserting `Code:` in the loader's filter literal; the generated package must compile (an example or a compile-checked golden).
+
+**References.**
+- PRD §13.1 (M2M relationship type), §13.2 (loading strategy: batched IN per relationship), §5.3 (M2M detection).
+- `cmd/sqlgen/gen/templates/table/nested.go.tmpl:633-695` — the connect path that already uses `TargetPKFieldName`.
+- `cmd/sqlgen/gen/context_table.go:130-190` — `wireRelFKMetadata`.
+
+**Resolution notes.** The M2M loader's target filter now names the target's PK field (`{{ .TargetPKFieldName }}`) in both branches of `get.go.tmpl`, instead of a literal `ID`. No other change was needed: `FKGoType` is already the target PK's Go type for M2M (`resolveFKGoType`), so the comparator family was right, and the map-back already keyed on `TargetPKFieldName`. Regression test: `TestGetTemplate_m2mTargetFilterUsesTargetPKField` (string and integer keys named `Code`); it fails on both cases with the old template. Re-ran the Issue's probe with the fixed CLI: text, bigint and uuid `tags.code` keys all `go build` (exit 0). A bytea key still fails, on a different line (`cannot convert v (variable of type int64) to type []byte`): the loader carries keys as strings, and the Opaque comparator family never round-trips through that. It fails the same way on `main` with a key named `id`, so it is a separate root cause, reported as a candidate FIX rather than widened into this one. Compile and runtime coverage (the auto-review flagged that no gate compiled the shape, since every example's M2M target was keyed on `id`): the `sqlite` example gains `badges(code TEXT PK)` and the junction `owner_badges(owner_id → owners.owner_key, badge_code → badges.code)`, so `Owner.Badges` exercises the string branch (`Code: &comparator.ID{…}`) and `Badge.Owners` the integer branch (`OwnerKey: &comparator.Number[int64]{…}`); `tests/m2m_non_id_key_test.go` loads both directions over overlapping memberships. Fail-first on the example: generated with the CLI built from `HEAD`, `sqlgen generate` exits 1 at the chained gqlgen step, and `go vet ./models/...` reports `models/badge_gen.go:453:5: unknown field ID in struct literal of type OwnerFilter` and `models/owner_gen.go:483:5: unknown field ID in struct literal of type BadgeFilter`. Golden churn: the `sqlite` example only (new badge and owner_badge files, plus the owner, client, sorter, table-name, GraphQL and manifest files the new tables touch). Auto-review doc fix applied inline: the `TargetPKFieldName` comment in `cmd/sqlgen/gen/context.go` now says the loader filters the target fetch on the field. Gates: `make check`, `make update-golden`, `make update-golden-e2e`, `TestE2EGoldenFiles` and `make check-examples`, all green.
+
 ### FIX-355
 
 - **Status:** Resolved

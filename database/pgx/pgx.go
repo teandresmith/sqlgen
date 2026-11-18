@@ -3,6 +3,7 @@ package pgx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -28,7 +29,7 @@ func New(pool *pgxpool.Pool) database.Querier {
 func (a *pgxAdapter) Exec(ctx context.Context, sql string, arguments ...any) (database.Result, error) {
 	tag, err := a.pool.Exec(ctx, sql, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("exec: %w", err)
@@ -40,7 +41,7 @@ func (a *pgxAdapter) Exec(ctx context.Context, sql string, arguments ...any) (da
 func (a *pgxAdapter) Query(ctx context.Context, sql string, args ...any) (database.Rows, error) {
 	r, err := a.pool.Query(ctx, sql, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("query: %w", err)
@@ -69,6 +70,9 @@ func (a *pgxAdapter) Begin(ctx context.Context, name string, opts ...database.Tx
 
 	tx, err := a.pool.BeginTx(ctx, pgxOpts)
 	if err != nil {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
+			err = mapped
+		}
 		return nil, fmt.Errorf("beginning pgx transaction: %w", err)
 	}
 
@@ -77,8 +81,65 @@ func (a *pgxAdapter) Begin(ctx context.Context, name string, opts ...database.Tx
 
 // SendBatch sends a batch of queries to PostgreSQL in a single round-trip.
 // This is used by UpdateMany to pipeline multiple statements efficiently.
+// Errors read from the results are mapped like Exec's and Query's.
 func (a *pgxAdapter) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
-	return a.pool.SendBatch(ctx, batch)
+	return &batchResults{br: a.pool.SendBatch(ctx, batch)}
+}
+
+// mapBatchError maps err like Exec does, or returns it unchanged when it is
+// not a driver error MapError recognises.
+func mapBatchError(err error) error {
+	if ok, mapped := MapError(err); ok {
+		return mapped
+	}
+	return err
+}
+
+// batchResults maps the errors of a pgx.BatchResults.
+type batchResults struct {
+	br pgx.BatchResults
+}
+
+// Exec reads the next query's result, mapping its error.
+func (b *batchResults) Exec() (pgconn.CommandTag, error) {
+	tag, err := b.br.Exec()
+	return tag, mapBatchError(err)
+}
+
+// Query reads the next query's rows, mapping its error and the rows' Err.
+func (b *batchResults) Query() (pgx.Rows, error) {
+	r, err := b.br.Query()
+	return &batchRows{Rows: r}, mapBatchError(err)
+}
+
+// QueryRow reads the next query's row, mapping the error Scan reports.
+func (b *batchResults) QueryRow() pgx.Row {
+	return batchRow{r: b.br.QueryRow()}
+}
+
+// Close closes the batch, mapping its error.
+func (b *batchResults) Close() error {
+	return mapBatchError(b.br.Close())
+}
+
+// batchRows maps the error a batch query's rows report.
+type batchRows struct {
+	pgx.Rows
+}
+
+// Err maps the error the rows report.
+func (r *batchRows) Err() error {
+	return mapBatchError(r.Rows.Err())
+}
+
+// batchRow maps the error a batch QueryRow's Scan reports.
+type batchRow struct {
+	r pgx.Row
+}
+
+// Scan scans the row, mapping its error.
+func (r batchRow) Scan(dest ...any) error {
+	return mapBatchError(r.r.Scan(dest...))
 }
 
 // translateTxOptions converts database.TxOptions into pgx.TxOptions.
@@ -122,7 +183,7 @@ type txConn struct {
 func (c *txConn) Exec(ctx context.Context, sql string, arguments ...any) (database.Result, error) {
 	tag, err := c.tx.Exec(ctx, sql, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("tx exec: %w", err)
@@ -134,7 +195,7 @@ func (c *txConn) Exec(ctx context.Context, sql string, arguments ...any) (databa
 func (c *txConn) Query(ctx context.Context, sql string, args ...any) (database.Rows, error) {
 	r, err := c.tx.Query(ctx, sql, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("tx query: %w", err)
@@ -152,7 +213,10 @@ func (c *txConn) QueryRow(ctx context.Context, sql string, args ...any) database
 // violation is reported by COMMIT, not by the statement that caused it.
 func (c *txConn) Commit(ctx context.Context) error {
 	if err := c.tx.Commit(ctx); err != nil {
-		if ok, mapped := MapError(err); ok {
+		if errors.Is(err, pgx.ErrTxClosed) {
+			return fmt.Errorf("pgx commit: %w: %w", database.ErrTxDone, err)
+		}
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return mapped
 		}
 		return fmt.Errorf("pgx commit: %w", err)
@@ -160,10 +224,18 @@ func (c *txConn) Commit(ctx context.Context) error {
 	return nil
 }
 
-// Rollback rolls back the underlying pgx transaction.
+// Rollback rolls back the underlying pgx transaction. pgx closes its
+// transaction whether or not the ROLLBACK succeeds, and on a failure drops the
+// connection, which ends the transaction on the server. A transaction pgx had
+// already closed, or a ROLLBACK that failed only because ctx has ended, is
+// rolled back, so it reports success; any other failure is still reported,
+// wrapped as database.ErrTxDone so the Tx closes.
 func (c *txConn) Rollback(ctx context.Context) error {
 	if err := c.tx.Rollback(ctx); err != nil {
-		return fmt.Errorf("pgx rollback: %w", err)
+		if errors.Is(err, pgx.ErrTxClosed) || ctx.Err() != nil {
+			return nil //nolint:nilerr // the transaction is rolled back, which is what Rollback reports
+		}
+		return fmt.Errorf("pgx rollback: %w: %w", database.ErrTxDone, err)
 	}
 	return nil
 }

@@ -6,7 +6,10 @@ import "testing"
 // errors-import gating: the Get resolver branch collapses ErrNotFound → (nil, nil)
 // via errors.Is, so a config that enables Get without any delete-class
 // operation still needs the `errors` import in the rendered file's preamble.
-// A gate keyed solely on HardDelete / SoftDelete / Restore would make a
+// HardDelete is the exception among delete-class operations: the client's
+// HardDelete is idempotent, so its resolver has no ErrNotFound branch and a
+// hard-delete-only file importing `errors` would not compile.
+// A gate keyed solely on SoftDelete / Restore would make a
 // Get-only-no-delete config emit `errors.Is(err, models.ErrNotFound)`
 // against an import block missing "errors" — unparseable Go.
 func TestComputeResolverFileFeatures_GetOnlyTriggersErrorsImport(t *testing.T) {
@@ -21,9 +24,9 @@ func TestComputeResolverFileFeatures_GetOnlyTriggersErrorsImport(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "hard-delete-only still needs errors",
+			name: "hard-delete-only does not need errors",
 			ops:  ResolvedOperations{HardDelete: true},
-			want: true,
+			want: false,
 		},
 		{
 			name: "soft-delete-only still needs errors",

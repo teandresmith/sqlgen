@@ -43,12 +43,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:profile:{id}",
       "invalidates_on": [
-        "Create",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -142,7 +144,13 @@
       "fk": {
         "table": "profiles",
         "schema": "public",
-        "column": "user_id"
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "profiles_user_id_fkey"
       }
     }
   ],
@@ -180,20 +188,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*ProfileFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"profiles\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -219,6 +213,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"profiles\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ProfileFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"profiles\" WHERE <filter>"
         }
       },
       {
@@ -300,50 +308,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateProfileInput"
-          },
-          {
-            "name": "target",
-            "type": "ProfileConflictTarget"
-          }
-        ],
-        "returns": "*Profile",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated ProfileConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"profiles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateProfileInput"
-          },
-          {
-            "name": "target",
-            "type": "ProfileConflictTarget"
-          }
-        ],
-        "returns": "[]*Profile",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same ProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"profiles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -405,6 +369,50 @@
         "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"profiles\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateProfileInput"
+          },
+          {
+            "name": "target",
+            "type": "ProfileConflictTarget"
+          }
+        ],
+        "returns": "*Profile",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated ProfileConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"profiles\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateProfileInput"
+          },
+          {
+            "name": "target",
+            "type": "ProfileConflictTarget"
+          }
+        ],
+        "returns": "[]*Profile",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same ProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"profiles\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {
@@ -504,5 +512,14 @@
       "UserID"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Profiles().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Profiles().GetMany(ctx, &models.GetProfilesInput{Filter: &models.ProfileFilter{CreatedAt: &comparator.Time{Eq: new(time.Now())}}})"
+    ],
+    "write": [
+      "created, err := client.Profiles().Create(ctx, &models.CreateProfileInput{UserID: uuid.NewV4()})",
+      "updated, err := client.Profiles().Update(ctx, uuid.NewV4(), &models.UpdateProfileInput{UserID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

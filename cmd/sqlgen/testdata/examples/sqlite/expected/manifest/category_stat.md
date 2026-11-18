@@ -32,7 +32,7 @@ GROUP BY c.name;
 | Name | Go field | Go type | DB type | Null | PK | Unique | Default | Comparator | Comment |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `category_name` | CategoryName | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
-| `product_count` | ProductCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |
+| `product_count` | ProductCount | `int32` | `int64` |  |  |  |  | `comparator.Number[int32]` |  |
 | `total_price` | TotalPrice | `*float64` | `real` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `avg_price` | AvgPrice | `*float64` | `*float64` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
 | `min_price` | MinPrice | `*float64` | `real` | yes |  |  |  | `comparator.NullableNumber[float64]` |  |
@@ -94,3 +94,9 @@ Type `CategoryStatFilter`.
 Type `CategoryStatSort`.
 
 Fields: AvgPrice, CategoryName, MaxPrice, MinPrice, ProductCount, ProductNames, TotalPrice
+
+## Read examples
+
+```go
+rows, err := client.CategoryStat().GetMany(ctx, &models.GetCategoryStatsInput{Filter: &models.CategoryStatFilter{ProductCount: &comparator.Number[int32]{Eq: new(int32(1))}}})
+```

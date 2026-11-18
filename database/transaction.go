@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -158,7 +159,9 @@ func NewTx(conn TxConn, name string, mode CallbackMode) *Tx {
 // It reports the *completed* teardown, not one in flight: for the length of a
 // root COMMIT or ROLLBACK's round trip it still returns false, and flips only
 // once the driver has accepted it. A teardown the driver rejects leaves the
-// transaction open and IsClosed reporting false, which is what it is.
+// transaction open and IsClosed reporting false, which is what it is. One whose
+// error wraps ErrTxDone found the transaction already ended by the driver, and
+// closes it.
 //
 // That matters because of what reads it. PRD §18.6 makes side effects defer on
 // `tx != nil && !tx.IsClosed()`, so reporting true early would fire a cache
@@ -200,7 +203,8 @@ func (tx *Tx) stateErrLocked() error {
 // fresh context.Background(), so request-scoped metadata (tracing spans,
 // deadlines, auth identity) must not be read from the ctx parameter — close
 // over any needed data at registration time. CallbackSync propagates the
-// original commit ctx at the cost of blocking the commit return.
+// original commit ctx at the cost of blocking the commit return; once that ctx
+// is done, the callbacks not yet run are skipped and Commit returns its error.
 //
 // Failure handling: a failed callback is retried once before the mode-specific
 // fallback (sync returns the error; async logs and continues to the next
@@ -504,10 +508,21 @@ func Commit(ctx context.Context) error {
 	tx.mu.Lock()
 	tx.tearingDown = false
 	if err != nil {
+		if errors.Is(err, ErrTxDone) {
+			// The driver ended the transaction without committing it, so it is
+			// closed and its callbacks never fire.
+			cancel := tx.closeLocked()
+			tx.mu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
+			return fmt.Errorf("committing transaction %s: %w", tx.name, err)
+		}
 		// The transaction is still open and still the caller's to roll back,
 		// so nothing is claimed. Whether the driver still accepts a rollback is
 		// the adapter's business: database/sql marks its Tx done before calling
-		// out, and pgx returns ErrTxClosed.
+		// out, and pgx returns ErrTxClosed; both adapters report that rollback
+		// as a success.
 		tx.mu.Unlock()
 		return fmt.Errorf("committing transaction %s: %w", tx.name, err)
 	}
@@ -528,6 +543,15 @@ func Commit(ctx context.Context) error {
 	}
 
 	return callbackErr
+}
+
+// closeLocked marks the transaction closed for a teardown that did not commit;
+// its callbacks are never read again, so they are discarded. It must be called
+// with tx.mu held, and returns the Timeout's cancel func for the caller to run
+// once the mutex is released.
+func (tx *Tx) closeLocked() context.CancelFunc {
+	tx.closed = true
+	return tx.cancel
 }
 
 // teardownStateErrLocked reports why a teardown cannot proceed. It must be
@@ -599,18 +623,22 @@ func Rollback(ctx context.Context) error {
 
 	tx.mu.Lock()
 	tx.tearingDown = false
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrTxDone) {
 		tx.mu.Unlock()
 		return fmt.Errorf("rolling back transaction %s: %w", tx.name, err)
 	}
-	tx.closed = true
-	cancel := tx.cancel
+	// A ROLLBACK that failed but ended the transaction anyway closes it and
+	// still reports the failure.
+	cancel := tx.closeLocked()
 	tx.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
 
+	if err != nil {
+		return fmt.Errorf("rolling back transaction %s: %w", tx.name, err)
+	}
 	return nil
 }
 
@@ -618,6 +646,7 @@ func Rollback(ctx context.Context) error {
 // is committed. If fn returns an error, the transaction is rolled back.
 // Nesting is transparent — inner calls create savepoints automatically.
 func WithTransaction(ctx context.Context, querier Querier, name string, fn func(context.Context) error, opts ...TxOptions) error {
+	root := !InTransaction(ctx)
 	txCtx, err := NewTransaction(ctx, querier, name, opts...)
 	if err != nil {
 		return err
@@ -630,7 +659,17 @@ func WithTransaction(ctx context.Context, querier Querier, name string, fn func(
 		return err
 	}
 
-	return Commit(txCtx)
+	err = Commit(txCtx)
+	// A failed root COMMIT leaves the transaction the caller's to roll back,
+	// and the caller here is WithTransaction. Both drivers have usually ended
+	// it already, as when its context expired, and the rollback then closes the
+	// Tx instead of leaving Conn to hand it out.
+	if err != nil && root && !FromContext(txCtx).IsClosed() {
+		if rbErr := Rollback(txCtx); rbErr != nil {
+			return fmt.Errorf("%w (rollback after the failed commit: %w)", err, rbErr)
+		}
+	}
+	return err
 }
 
 // Conn returns the active transaction from the context if one exists and is not closed.
@@ -719,8 +758,14 @@ func fireCallbacksAsync(callbacks []func(ctx context.Context) error) {
 	}()
 }
 
+// fireCallbacksSync runs the callbacks in order on the caller's ctx. A
+// cancelled ctx skips the callbacks not yet run and is returned, so the caller
+// learns that side effects of a committed transaction were dropped.
 func fireCallbacksSync(ctx context.Context, callbacks []func(ctx context.Context) error) error {
 	for _, fn := range callbacks {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("skipping commit callbacks: %w", err)
+		}
 		if err := fn(ctx); err != nil {
 			// Retry once
 			if retryErr := fn(ctx); retryErr != nil {

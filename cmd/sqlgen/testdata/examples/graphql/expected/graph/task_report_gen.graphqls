@@ -1,0 +1,79 @@
+"""
+TaskReport corresponds to the task_reports table.
+"""
+type TaskReport {
+  "id"
+  id: UUID!
+  "workspace_id"
+  workspaceID: UUID!
+  "task_id"
+  taskID: UUID!
+  "summary"
+  summary: String!
+  "one-to-one relationship with the tasks table."
+  tasks: Task
+}
+
+type TaskReportConnection {
+  edges:      [TaskReportEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type TaskReportEdge {
+  node:   TaskReport!
+  cursor: String!
+}
+
+type TaskReportListResult {
+  items:      [TaskReport!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input TaskReportFilter {
+  workspaceID: IDComparator
+  taskID: IDComparator
+  summary: StringComparator
+  and: [TaskReportFilter!]
+  or:  [TaskReportFilter!]
+}
+
+enum TaskReportSortField {
+  ID
+  WORKSPACE_ID
+  TASK_ID
+  SUMMARY
+}
+
+input TaskReportSort {
+  field:     TaskReportSortField!
+  direction: SortDirection!
+}
+input CreateTaskReportInput {
+  workspaceID: UUID
+  taskID: UUID!
+  summary: String!
+}
+input UpdateTaskReportInput {
+  taskID: UUID
+  summary: String
+}
+
+extend type Query {
+  taskReport(id: UUID!): TaskReport
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to taskReportList instead."
+  taskReports(filter: TaskReportFilter, first: Int, after: String, last: Int, before: String): TaskReportConnection!
+  taskReportList(filter: TaskReportFilter, sort: [TaskReportSort!], limit: Int, offset: Int): TaskReportListResult!
+}
+
+extend type Mutation {
+  createTaskReport(input: CreateTaskReportInput!): TaskReport!
+  createTaskReports(inputs: [CreateTaskReportInput!]!): [TaskReport!]!
+  updateTaskReport(id: UUID!, input: UpdateTaskReportInput!): TaskReport!
+  updateTaskReports(filter: TaskReportFilter!, input: UpdateTaskReportInput!): [TaskReport!]!
+  upsertTaskReport(input: CreateTaskReportInput!): TaskReport!
+  deleteTaskReport(id: UUID!): Boolean!
+}

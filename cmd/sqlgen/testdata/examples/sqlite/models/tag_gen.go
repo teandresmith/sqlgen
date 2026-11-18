@@ -247,6 +247,11 @@ func (c *tagClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[TagFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -269,7 +274,7 @@ func (c *tagClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions
 		return tags[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -289,7 +294,7 @@ func (c *tagClient) GetMany(ctx context.Context, input *GetTagsInput, opts ...fu
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get tags: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many tags: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableTags, Schema: "",
@@ -359,7 +364,7 @@ func (c *tagClient) GetMany(ctx context.Context, input *GetTagsInput, opts ...fu
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get tags: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -371,7 +376,7 @@ func (c *tagClient) GetMany(ctx context.Context, input *GetTagsInput, opts ...fu
 		return tags, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -387,7 +392,7 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create tag: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -406,7 +411,7 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create tag: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -415,14 +420,30 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -438,7 +459,7 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many tags: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -476,7 +497,7 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create tags batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -489,7 +510,8 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 		}
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -499,7 +521,7 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -558,7 +580,7 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update tag: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -583,11 +605,27 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// IsDeleted comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetTagsInput{
+				Filter: &TagFilter{
+					ID:        &comparator.Number[int64]{Eq: new(id)},
+					IsDeleted: &comparator.Bool{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[TagFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				return nil, ErrNotFound
+			}
+			return written[0], nil
 		}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -597,13 +635,13 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update tag: %w", err)
+			return nil, err
 		}
-		count, err := execResult.RowsAffected()
+		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update tag rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
-		if count == 0 {
+		if matched == 0 {
 			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
@@ -613,14 +651,30 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -636,14 +690,16 @@ type UpdateTagItem struct {
 
 // UpdateMany partially updates multiple tags and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts ...func(*CallOptions[TagFieldOptions])) ([]*Tag, error) {
 	// UpdateTagItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many tags: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -651,7 +707,6 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 		Op: hook.OpUpdateMany, Table: TableTags, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -661,39 +716,70 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 			return []*Tag{}, nil
 		}
 		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateTagItem
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Name.Get(); ok {
-					setClauses["name"] = v
-				}
-				if v, ok := item.Input.IsDeleted.Get(); ok {
-					setClauses["is_deleted"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_tag", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+					if v, ok := item.Input.IsDeleted.Get(); ok {
+						setClauses["is_deleted"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.ID)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
-				})
-
-				_, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update tag %v: %w", item.ID, err)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
-		m.AffectedPKs = toAnySlice(allIDs)
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -701,7 +787,8 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 		}
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -711,7 +798,7 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -729,7 +816,7 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update tags where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -757,8 +844,17 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the IsDeleted comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.IsDeleted == nil {
+				scoped := *filter
+				scoped.IsDeleted = &comparator.Bool{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetTagsInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[TagFieldOptions]) {
 				*o = options
@@ -776,7 +872,7 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update tags where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -803,7 +899,8 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 		// Fetch affected entities with FieldOptions
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: ids},
+				ID:        &comparator.Number[int64]{In: ids},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -813,7 +910,7 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update tags where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -838,11 +935,19 @@ func (c *tagClient) SoftDelete(ctx context.Context, id int64, opts ...func(*Call
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete tag: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -871,7 +976,7 @@ func (c *tagClient) SoftDelete(ctx context.Context, id int64, opts ...func(*Call
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -895,17 +1000,54 @@ func (c *tagClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ...fun
 		if len(ids) == 0 {
 			return []*Tag{}, nil
 		}
-		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
-			Column:     "is_deleted",
-			Type:       sql.SoftDeleteBool,
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)},
-		})
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("soft delete tags: %w", err)
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:           "is_deleted",
+				Type:             sql.SoftDeleteBool,
+				Conditions:       delConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan soft deleted tag key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -925,7 +1067,7 @@ func (c *tagClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ...fun
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -943,6 +1085,13 @@ func (c *tagClient) SoftDeleteWhere(ctx context.Context, filter *TagFilter, opts
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the IsDeleted
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.IsDeleted != nil {
+			scoped := *filter
+			scoped.IsDeleted = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -964,7 +1113,7 @@ func (c *tagClient) SoftDeleteWhere(ctx context.Context, filter *TagFilter, opts
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete tags where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1001,7 +1150,7 @@ func (c *tagClient) SoftDeleteWhere(ctx context.Context, filter *TagFilter, opts
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete tags where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1025,25 +1174,45 @@ func (c *tagClient) Restore(ctx context.Context, id int64, opts ...func(*CallOpt
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore tag: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{ID: &comparator.Number[int64]{Eq: new(id)}},
+			Limit:  new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1067,16 +1236,53 @@ func (c *tagClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(*
 		if len(ids) == 0 {
 			return []*Tag{}, nil
 		}
-		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-			SetClauses: map[string]any{"is_deleted": false},
-			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...)},
-		})
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("restore tags: %w", err)
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses:       map[string]any{"is_deleted": false},
+				Conditions:       restoreConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan restored tag key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 
 		// Empty FieldOptions — skip fetch
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
@@ -1095,7 +1301,7 @@ func (c *tagClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(*
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1104,8 +1310,8 @@ func (c *tagClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(*
 }
 
 // RestoreWhere restores all soft-deleted tags matching the filter and returns them.
-// Always scoped to deleted rows — only soft-deleted entities are restored.
-// Returns empty slice when no rows match.
+// Always scoped to deleted rows — the IsDeleted comparator
+// on the filter is ignored. Returns empty slice when no rows match.
 func (c *tagClient) RestoreWhere(ctx context.Context, filter *TagFilter, opts ...func(*CallOptions[TagFieldOptions])) ([]*Tag, error) {
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1113,6 +1319,13 @@ func (c *tagClient) RestoreWhere(ctx context.Context, filter *TagFilter, opts ..
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the IsDeleted
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.IsDeleted != nil {
+			scoped := *filter
+			scoped.IsDeleted = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -1133,7 +1346,7 @@ func (c *tagClient) RestoreWhere(ctx context.Context, filter *TagFilter, opts ..
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore tags where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1168,7 +1381,7 @@ func (c *tagClient) RestoreWhere(ctx context.Context, filter *TagFilter, opts ..
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore tags where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1189,14 +1402,25 @@ func (c *tagClient) HardDelete(ctx context.Context, id int64, opts ...func(*Call
 			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
 		})
 
-		_, err := conn.Exec(ctx, query, args...)
+		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete tag: %w", err)
+			return nil, err
 		}
-		m.AffectedPKs = []any{id}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete tag: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple tags from the database.
@@ -1208,20 +1432,57 @@ func (c *tagClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fun
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 
-		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
-			Conditions: []sql.Condition{
-				sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids)...),
-			},
-		})
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
 
-		_, err := conn.Exec(ctx, query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("hard delete tags: %w", err)
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted tag key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
 		}
-		m.AffectedPKs = toAnySlice(ids)
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many tags: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all tags matching the filter.
@@ -1248,7 +1509,7 @@ func (c *tagClient) HardDeleteWhere(ctx context.Context, filter *TagFilter, opts
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete tags where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1265,7 +1526,36 @@ func (c *tagClient) HardDeleteWhere(ctx context.Context, filter *TagFilter, opts
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete tags where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *tagClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
 }
 
 // TagConflictTarget identifies a unique constraint for upsert conflict detection.
@@ -1296,7 +1586,7 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert tag: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1321,7 +1611,7 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert tag: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -1330,14 +1620,30 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1395,9 +1701,9 @@ func (c *tagClient) insertUpsertAndResolveID(ctx context.Context, conn database.
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -1473,7 +1779,7 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many tags: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1504,7 +1810,7 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert tags: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -1539,7 +1845,7 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert tags: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -1571,12 +1877,12 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert tags batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert tags batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -1588,9 +1894,10 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetTagsInput{
+		written, err := c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
+				ID:        &comparator.Number[int64]{In: rowIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -1598,9 +1905,20 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1625,8 +1943,8 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -1746,12 +2064,12 @@ func (c *tagClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpti
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists tag: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists tag: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1780,12 +2098,12 @@ func (c *tagClient) ExistsWhere(ctx context.Context, filter *TagFilter, opts ...
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists tag where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists tags where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1815,12 +2133,12 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count tags: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count tags: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1830,6 +2148,10 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 // A nil filter paginates all non-deleted tags.
 func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter], opts ...func(*CallOptions[TagFieldOptions])) (*PaginateResult[Tag], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate tags: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTags, Schema: "",
 		Input: input, CallOptions: options,
@@ -1843,7 +2165,7 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate tags count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1854,7 +2176,7 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate tags: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Tag]{
@@ -1862,11 +2184,11 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate tags: %w", err)
 	}
 	return result.(*PaginateResult[Tag]), nil
 }
@@ -1899,7 +2221,7 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection tags count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1943,7 +2265,7 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection tags: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1982,7 +2304,7 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 		return &Connection[Tag]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection tags: %w", err)
 	}
 	return result.(*Connection[Tag]), nil
 }
@@ -2145,9 +2467,13 @@ func (c *tagClient) Stream(ctx context.Context, input *StreamTagsInput, opts ...
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Tag, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream tags: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -2190,7 +2516,7 @@ func (c *tagClient) Stream(ctx context.Context, input *StreamTagsInput, opts ...
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream tags: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -2213,7 +2539,7 @@ func (c *tagClient) Stream(ctx context.Context, input *StreamTagsInput, opts ...
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream tags: %w", err))
 		}
 	}
 }

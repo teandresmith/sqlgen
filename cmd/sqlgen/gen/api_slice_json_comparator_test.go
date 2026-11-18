@@ -233,9 +233,9 @@ func TestJSONComparator_sqliteModelSideNonFilterable(t *testing.T) {
 
 // TestSliceComparator_dialectGating pins the other half of §26.4's dialect
 // rule. A slice family is PostgreSQL-only and stays that way structurally,
-// with no dialect switch in the projection: only the gotype resolver's
-// PostgreSQL array branch sets IsSlice, so `text[]` resolves to a plain
-// `string` on MySQL / SQLite and the column filters as ordinary text.
+// with no dialect switch in the projection: only a PostgreSQL array column
+// resolves to comparator.Slice, so `text[]` resolves to a plain `string` on
+// MySQL / SQLite and the column filters as ordinary text.
 func TestSliceComparator_dialectGating(t *testing.T) {
 	schema := probeSchema(
 		parserpkg.Column{Name: "tags", Type: "text[]"},

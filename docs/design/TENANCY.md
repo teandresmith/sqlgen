@@ -144,10 +144,10 @@ How does the tenant filter propagate across relationships (§13)? Depends on the
 
 ### Q4. `SkipTenancy` and soft delete composition — **RESOLVED**
 
-`SkipTenancy: true` + `IncludeDeleted: true` → "give me all rows including soft-deleted across all tenants." Admin tooling needs this shape; most app code does not.
+`SkipTenancy: true` + the soft-delete comparator (`DeletedAt: &comparator.NullableTime{}`) → "give me all rows including soft-deleted across all tenants." Admin tooling needs this shape; most app code does not.
 
-- **Decision:** **both flags compose orthogonally. No special casing, no artificial combined-flag guard.** `SkipTenancy` toggles the tenant filter; `IncludeDeleted` toggles the soft-delete filter. Each is independent in intent and independent in effect.
-- **Rationale:** the library sets safe defaults (tenant auto-scope on, soft-deleted rows hidden) and provides explicit, named opt-outs for each. How a caller chooses to combine those opt-outs is their call — the library should not make value judgments about which escape-hatch combinations are "allowed." Disallowing `SkipTenancy: true && IncludeDeleted: true` would complicate the API for a scenario (admin / audit tooling) that genuinely needs both, and users who want one without the other can already express that.
+- **Decision:** **both flags compose orthogonally. No special casing, no artificial combined-flag guard.** `SkipTenancy` toggles the tenant filter; the soft-delete comparator toggles the soft-delete filter. Each is independent in intent and independent in effect.
+- **Rationale:** the library sets safe defaults (tenant auto-scope on, soft-deleted rows hidden) and provides explicit, named opt-outs for each. How a caller chooses to combine those opt-outs is their call — the library should not make value judgments about which escape-hatch combinations are "allowed." Disallowing `SkipTenancy: true` together with the soft-delete comparator would complicate the API for a scenario (admin / audit tooling) that genuinely needs both, and users who want one without the other can already express that.
 - **Operator guidance (doc-surface, not code-surface):** projects that want to restrict who can call `SkipTenancy` (e.g., only admin-role handlers) implement the guard at their own boundary — typically a thin wrapper that checks an auth-role ctx marker before passing `CallOptions{SkipTenancy: true}` down. The library does not ship a role mechanism and does not gate escape hatches by role; that's an app-layer concern. Same pattern applies to any `SkipXxx`-shaped flag: the library gives you the knob, your middleware decides who can turn it.
 
 ### Q5. Cache key grammar when PKs are globally unique — **RESOLVED**
@@ -321,7 +321,7 @@ conds = append(conds, input.conditions...)
 if !options.SkipTenancy {
     workspaceID, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("get products: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "get many products: "
     }
     conds = append(conds, sql.Where("workspace_id").Eq(workspaceID))
 }
@@ -336,7 +336,7 @@ query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
 })
 ```
 
-Error wrapping follows the project convention `"{op} {table-plural-or-singular}: %w"` — `GetMany` uses plural (`"get products: %w"`); `Get` would use singular if it resolved its own SQL, but it delegates, so the wrap happens once in `GetMany`.
+Error wrapping follows PRD §22.3: `GetMany` prefixes its errors `get many products:`, and `Get`, which reads through `GetMany`, puts its own `get product:` in front (`get product: get many products: …`).
 
 ### 10.4 Write Operations — `Create`, `Update`, `Upsert`
 
@@ -348,7 +348,7 @@ var workspaceID string // [tenancy] concrete T at codegen
 if !options.SkipTenancy {
     resolved, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("create product: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "create product: "
     }
     // [tenancy] Mismatch check (Q1): caller-set tenant must match the resolver.
     if v, ok := input.WorkspaceID.Get(); ok && v != resolved {
@@ -383,7 +383,7 @@ var workspaceID string
 if !options.SkipTenancy {
     resolved, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("update product: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "update product: "
     }
     if v, ok := input.WorkspaceID.Get(); ok && v != resolved {
         return nil, tenancy.ErrMismatch
@@ -433,7 +433,7 @@ if len(conds) == 0 {
 if !options.SkipTenancy {
     resolved, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("update products where: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "update products where: "
     }
     if v, ok := input.WorkspaceID.Get(); ok && v != resolved {
         return nil, tenancy.ErrMismatch
@@ -460,7 +460,7 @@ conds := input.Filter.ToConditions(c.dialect)
 if !options.SkipTenancy {
     workspaceID, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("get products: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "get many products: "
     }
     // [tenancy] Parent-side tenant filter (always present on tenanted parents).
     conds = append(conds, sql.Where("p.workspace_id").Eq(workspaceID))

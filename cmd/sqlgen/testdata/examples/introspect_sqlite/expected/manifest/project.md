@@ -67,19 +67,6 @@ sqlite:
 SELECT "account_id", "archived", "id", "name", "slug" FROM "projects" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ProjectFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "projects" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -104,6 +91,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "projects" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ProjectFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "projects" WHERE <filter>
 ```
 
 ### Paginate
@@ -164,36 +164,6 @@ sqlite:
 INSERT INTO "projects" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateProjectInput`, `target ProjectConflictTarget`
-- Returns: `*Project`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "projects" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateProjectInput`, `target ProjectConflictTarget`
-- Returns: `[]*Project`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "projects" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateProjectInput`
@@ -237,6 +207,36 @@ sqlite:
 
 ```sql
 UPDATE "projects" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateProjectInput`, `target ProjectConflictTarget`
+- Returns: `*Project`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "projects" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateProjectInput`, `target ProjectConflictTarget`
+- Returns: `[]*Project`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "projects" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment
@@ -316,3 +316,17 @@ Type `ProjectFilter`.
 Type `ProjectSort`.
 
 Fields: AccountID, Archived, ID, Name, Slug
+
+## Read examples
+
+```go
+row, err := client.Projects().Get(ctx, 1)
+rows, err := client.Projects().GetMany(ctx, &models.GetProjectsInput{Filter: &models.ProjectFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Projects().Create(ctx, &models.CreateProjectInput{AccountID: 1, Name: "example", Slug: "example"})
+updated, err := client.Projects().Update(ctx, 1, &models.UpdateProjectInput{AccountID: omittable.Set(int64(1))})
+```

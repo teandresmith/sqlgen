@@ -28,13 +28,9 @@ import (
 // applyPrimaryKeyOverrides — see that function for why the order is
 // load-bearing in both directions.
 func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*config.RootConfig, *parser.Schema, error) {
-	cfg, err := config.LoadConfig(flags.config)
+	cfg, err := loadConfig(flags, errOut)
 	if err != nil {
-		_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
-		if flags.config == "" {
-			_, _ = fmt.Fprintln(errOut, "Hint: run 'sqlgen init' to create a config file")
-		}
-		return nil, nil, &exitError{code: ExitConfig, err: err}
+		return nil, nil, err
 	}
 
 	warnings, err := config.ValidatePreParse(cfg)
@@ -62,9 +58,25 @@ func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*c
 	printWarnings(errOut, postWarnings, flags.quiet)
 
 	applyPrimaryKeyOverrides(schema, cfg)
-	parser.DetectRelationships(schema)
+	printManifestWarnings(errOut, parser.DetectRelationships(schema), flags.quiet)
 
 	return cfg, schema, nil
+}
+
+// loadConfig loads the config file named by --config, or the discovered one.
+// On failure it prints the error to errOut — plus a hint to run `sqlgen init`
+// when the file was discovered rather than named — and returns an *exitError
+// with ExitConfig.
+func loadConfig(flags *cliFlags, errOut io.Writer) (*config.RootConfig, error) {
+	cfg, err := config.LoadConfig(flags.config)
+	if err != nil {
+		_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
+		if flags.config == "" {
+			_, _ = fmt.Fprintln(errOut, "Hint: run 'sqlgen init' to create a config file")
+		}
+		return nil, &exitError{code: ExitConfig, err: err}
+	}
+	return cfg, nil
 }
 
 // applyPrimaryKeyOverrides resolves every tables.<name>.primary_key.columns
@@ -322,6 +334,9 @@ func parseViewFiles(dialect config.Dialect, defaultSchema string, viewPaths []st
 		if err != nil {
 			return nil, nil, fmt.Errorf("parsing annotations in %s: %w", file, err)
 		}
+		for _, directive := range annotations.Unrecognized {
+			schema.Warnings = append(schema.Warnings, fmt.Sprintf("%s: unrecognized annotation directive %s ignored", file, directive))
+		}
 
 		parsed, err := parseSQL(data)
 		if qe, ok := errors.AsType[*parser.ViewQueryError](err); ok && inDatabase[viewKey(qe.Schema, qe.Name)] {
@@ -409,8 +424,14 @@ func toSchemaTables(schema *parser.Schema) []config.SchemaTable {
 		// uses UniqueGroups to assert PK-coverage and similar invariants that
 		// require unconditional uniqueness — a predicate-gated index can't
 		// satisfy them.
-		var uniqueGroups [][]string
+		var (
+			uniqueGroups [][]string
+			primaryKey   []string
+		)
 		for _, ct := range t.Constraints {
+			if ct.Type == parser.PrimaryKey {
+				primaryKey = slices.Clone(ct.Columns)
+			}
 			if ct.Type == parser.Unique || ct.Type == parser.PrimaryKey {
 				if ct.Type == parser.Unique && ct.Where != "" {
 					continue
@@ -427,6 +448,7 @@ func toSchemaTables(schema *parser.Schema) []config.SchemaTable {
 			Schema:       t.Schema,
 			Columns:      cols,
 			UniqueGroups: uniqueGroups,
+			PrimaryKey:   primaryKey,
 		})
 	}
 	return tables

@@ -43,7 +43,7 @@
       "name": "product_count",
       "go_field": "ProductCount",
       "go_type": "int32",
-      "db_type": "int32",
+      "db_type": "int64",
       "nullable": false,
       "pk": false,
       "unique": false,
@@ -209,6 +209,12 @@
       "MaxPrice",
       "ProductCount",
       "TotalPrice"
+    ]
+  },
+  "examples": {
+    "read": [
+      "row, err := client.CategoryPriceTotal().Get(ctx, 1)",
+      "rows, err := client.CategoryPriceTotal().GetMany(ctx, &models.GetCategoryPriceTotalsInput{Filter: &models.CategoryPriceTotalFilter{ProductCount: &comparator.Number[int32]{Eq: new(int32(1))}}})"
     ]
   }
 }

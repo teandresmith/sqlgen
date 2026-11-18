@@ -168,6 +168,7 @@ func TestComparatorFamily_TimeAndBooleanAndUUID(t *testing.T) {
 			// Boolean family: `active` non-null boolean — only base is needed.
 			mustContain(t, out, "func translateBooleanComparator(in *BooleanComparator) *comparator.Bool {")
 			mustContain(t, out, "out := &comparator.Bool{}")
+			mustContain(t, out, "out.In = append([]bool(nil), in.In...)")
 			if strings.Contains(out, "func translateNullableBooleanComparator(") {
 				t.Errorf("nullable boolean translator emitted without a nullable bool column\n%s", out)
 			}

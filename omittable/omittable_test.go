@@ -300,6 +300,18 @@ func TestJSONUnmarshalNull(t *testing.T) {
 		}
 	})
 
+	t.Run("null sets the zero value for a non-pointer type", func(t *testing.T) {
+		var got struct {
+			N omittable.Value[int] `json:"n,omitzero"`
+		}
+		if err := json.Unmarshal([]byte(`{"n":null}`), &got); err != nil {
+			t.Fatalf("json.Unmarshal() error: %v", err)
+		}
+		if v, ok := got.N.Get(); v != 0 || !ok {
+			t.Errorf("N.Get() = %d, %t, want 0, true", v, ok)
+		}
+	})
+
 	t.Run("present value sets pointer", func(t *testing.T) {
 		var got wrapper
 		if err := json.Unmarshal([]byte(`{"ptr":"hello"}`), &got); err != nil {
@@ -314,6 +326,31 @@ func TestJSONUnmarshalNull(t *testing.T) {
 		}
 		if *v != "hello" {
 			t.Errorf("*Ptr.MustGet() = %q, want %q", *v, "hello")
+		}
+	})
+
+	t.Run("null overwrites a previous value", func(t *testing.T) {
+		v := omittable.Set(5)
+		if err := json.Unmarshal([]byte(`null`), &v); err != nil {
+			t.Fatalf("json.Unmarshal() error: %v", err)
+		}
+		if got, ok := v.Get(); got != 0 || !ok {
+			t.Errorf("Get() after null = %d, %t, want 0, true", got, ok)
+		}
+		s := "old"
+		p := omittable.Set(&s)
+		if err := json.Unmarshal([]byte(`null`), &p); err != nil {
+			t.Fatalf("json.Unmarshal() error: %v", err)
+		}
+		if got, ok := p.Get(); got != nil || !ok {
+			t.Errorf("pointer Get() after null = %v, %t, want nil, true", got, ok)
+		}
+		r := omittable.Set(json.RawMessage(`{"a":1}`))
+		if err := json.Unmarshal([]byte(`null`), &r); err != nil {
+			t.Fatalf("json.Unmarshal() error: %v", err)
+		}
+		if got, ok := r.Get(); got != nil || !ok {
+			t.Errorf("json.RawMessage Get() after null = %q, %t, want nil, true", got, ok)
 		}
 	})
 
@@ -461,6 +498,50 @@ func TestJSONRoundTrip(t *testing.T) {
 		}
 		if diff := cmp.Diff([]byte("binary data"), decoded.V.MustGet()); diff != "" {
 			t.Errorf("MustGet() mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("set zero value round-trips as set", func(t *testing.T) {
+		type w struct {
+			S omittable.Value[string] `json:"s,omitzero"`
+			N omittable.Value[int]    `json:"n,omitzero"`
+		}
+		data, err := json.Marshal(w{S: omittable.Set(""), N: omittable.Set(0)})
+		if err != nil {
+			t.Fatalf("Marshal error: %v", err)
+		}
+		if string(data) != `{"s":"","n":0}` {
+			t.Errorf("Marshal(set zero values) = %s, want {\"s\":\"\",\"n\":0}", data)
+		}
+		var decoded w
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("Unmarshal error: %v", err)
+		}
+		if s, ok := decoded.S.Get(); !ok || s != "" {
+			t.Errorf("round-tripped S.Get() = %q, %v, want \"\", true", s, ok)
+		}
+		if n, ok := decoded.N.Get(); !ok || n != 0 {
+			t.Errorf("round-tripped N.Get() = %d, %v, want 0, true", n, ok)
+		}
+	})
+
+	t.Run("set nil pointer round-trips as set nil", func(t *testing.T) {
+		type w struct {
+			V omittable.Value[*string] `json:"v,omitzero"`
+		}
+		data, err := json.Marshal(w{V: omittable.Set[*string](nil)})
+		if err != nil {
+			t.Fatalf("Marshal error: %v", err)
+		}
+		if string(data) != `{"v":null}` {
+			t.Errorf("Marshal(Set[*string](nil)) = %s, want {\"v\":null}", data)
+		}
+		var decoded w
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("Unmarshal error: %v", err)
+		}
+		if v, ok := decoded.V.Get(); !ok || v != nil {
+			t.Errorf("round-tripped V.Get() = %v, %v, want nil, true", v, ok)
 		}
 	})
 

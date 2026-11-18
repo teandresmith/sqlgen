@@ -34,6 +34,22 @@ type AssetDocumentLinkConnection = Connection[AssetDocumentLink]
 type AssetDocumentLinkEdge = Edge[AssetDocumentLink]
 type AssetDocumentLinkListResult = PaginateResult[AssetDocumentLink]
 
+type BinConnection = Connection[Bin]
+type BinEdge = Edge[Bin]
+type BinListResult = PaginateResult[Bin]
+
+type BinItemConnection = Connection[BinItem]
+type BinItemEdge = Edge[BinItem]
+type BinItemListResult = PaginateResult[BinItem]
+
+type BoolKeyedConnection = Connection[BoolKeyed]
+type BoolKeyedEdge = Edge[BoolKeyed]
+type BoolKeyedListResult = PaginateResult[BoolKeyed]
+
+type BoolKeyedNoteConnection = Connection[BoolKeyedNote]
+type BoolKeyedNoteEdge = Edge[BoolKeyedNote]
+type BoolKeyedNoteListResult = PaginateResult[BoolKeyedNote]
+
 type CategoryConnection = Connection[Category]
 type CategoryEdge = Edge[Category]
 type CategoryListResult = PaginateResult[Category]
@@ -85,6 +101,14 @@ type SluggedRowListResult = PaginateResult[SluggedRow]
 type TagConnection = Connection[Tag]
 type TagEdge = Edge[Tag]
 type TagListResult = PaginateResult[Tag]
+
+type TimeKeyedConnection = Connection[TimeKeyed]
+type TimeKeyedEdge = Edge[TimeKeyed]
+type TimeKeyedListResult = PaginateResult[TimeKeyed]
+
+type TimeKeyedNoteConnection = Connection[TimeKeyedNote]
+type TimeKeyedNoteEdge = Edge[TimeKeyedNote]
+type TimeKeyedNoteListResult = PaginateResult[TimeKeyedNote]
 
 type UserConnection = Connection[User]
 type UserEdge = Edge[User]

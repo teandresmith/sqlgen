@@ -83,6 +83,9 @@ func TestBuildEntityContexts_TenancyTypeReachesTenantColumn(t *testing.T) {
 		// wantNoTenancyCtx expects no TableTenancyContext at all, which is what
 		// a globally-disabled block produces.
 		wantNoTenancyCtx bool
+		// anchor adds a second, tenanted table: with the fixture's only table
+		// shared, the package would have no tenant type and be refused.
+		anchor bool
 	}{
 		{
 			name:         "global tenancy.type types the tenant column",
@@ -165,6 +168,7 @@ func TestBuildEntityContexts_TenancyTypeReachesTenantColumn(t *testing.T) {
 			wantGoType:   "uuid.UUID",
 			wantImport:   "github.com/google/uuid",
 			wantTenanted: false,
+			anchor:       true,
 		},
 	}
 
@@ -176,13 +180,18 @@ func TestBuildEntityContexts_TenancyTypeReachesTenantColumn(t *testing.T) {
 			cfg.Tenancy.Enabled = !tt.globalOff
 			cfg.Tables["public.projects"] = tt.tableCfg
 			schema := tenantTypeSchema()
+			wantTables := 1
+			if tt.anchor {
+				withTenantAnchor(schema)
+				wantTables++
+			}
 
 			tables, _, err := gen.BuildEntityContextsFromSchema(schema, cfg)
 			if err != nil {
 				t.Fatalf("BuildEntityContextsFromSchema() error = %v, want nil", err)
 			}
-			if len(tables) != 1 {
-				t.Fatalf("BuildEntityContextsFromSchema() built %d tables, want 1", len(tables))
+			if len(tables) != wantTables {
+				t.Fatalf("BuildEntityContextsFromSchema() built %d tables, want %d", len(tables), wantTables)
 			}
 
 			tenant := tenantColumnOf(t, tables[0].Columns, "workspace_id")
@@ -251,6 +260,8 @@ func TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn(t *testing.T) {
 	tests := []struct {
 		name           string
 		nullable       bool
+		noPointers     bool
+		sqlType        string
 		viewCfg        *config.ViewConfig
 		wantGoType     string
 		wantImport     string
@@ -280,6 +291,18 @@ func TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn(t *testing.T) {
 			wantContextTyp: "WorkspaceID",
 		},
 		{
+			// An omitted `nullable:` follows use_pointers, as it does for an
+			// overrides.types entry: string has sql.NullString to take.
+			name:           "nullable view tenant column takes the sql null wrapper without pointers",
+			nullable:       true,
+			noPointers:     true,
+			sqlType:        "text",
+			viewCfg:        &config.ViewConfig{Tenancy: &config.TableTenancyConfig{Type: &config.TypeOverride{Type: "string"}}},
+			wantGoType:     "sql.NullString",
+			wantImport:     "database/sql",
+			wantContextTyp: "string",
+		},
+		{
 			name:           "per-view opt-out declines the override",
 			viewCfg:        &config.ViewConfig{Tenancy: &config.TableTenancyConfig{Enabled: new(false)}},
 			wantGoType:     "uuid.UUID",
@@ -293,14 +316,26 @@ func TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn(t *testing.T) {
 			cfg := tenancyTestConfig()
 			cfg.Overrides.Types["uuid"] = uuidGoogle
 			cfg.Tenancy.Type = &workspaceID
+			if tt.noPointers {
+				cfg.Overrides.UsePointers = new(false)
+			}
 			cfg.Views = make(map[string]config.ViewConfig)
 			if tt.viewCfg != nil {
 				cfg.Views["order_stats"] = *tt.viewCfg
 			}
+			sqlType := "uuid"
+			if tt.sqlType != "" {
+				sqlType = tt.sqlType
+			}
 			schema := viewSchema("order_stats",
 				viewCol("id", "uuid", false),
-				viewCol("workspace_id", "uuid", tt.nullable),
+				viewCol("workspace_id", sqlType, tt.nullable),
 			)
+			if tt.viewCfg != nil && tt.viewCfg.Tenancy != nil && tt.viewCfg.Tenancy.Enabled != nil && !*tt.viewCfg.Tenancy.Enabled {
+				// The view opts out, so the package needs another tenanted
+				// entity to take its tenant type from.
+				withTenantAnchor(schema)
+			}
 
 			_, views, err := gen.BuildEntityContextsFromSchema(schema, cfg)
 			if err != nil {
@@ -553,4 +588,91 @@ func TestBuildEntityContexts_TenancyTypeHonorsFullOverrideShape(t *testing.T) {
 			t.Errorf("tenancy context GoType = %q, want the plain value type %q", got, "uuid.UUID")
 		}
 	})
+}
+
+// filterComparatorOf returns the comparator type of the named column's filter
+// field, failing the test when the entity has no such field.
+func filterComparatorOf(t *testing.T, fields []gen.FilterFieldContext, column string) string {
+	t.Helper()
+	for _, f := range fields {
+		if f.ColumnName == column {
+			return f.ComparatorType
+		}
+	}
+	t.Fatalf("no filter field for column %q", column)
+	return ""
+}
+
+// TestBuildEntityContexts_TenancyTypeReachesTenantFilter pins `tenancy.type`
+// reaching the filter as well as the row struct: the tenant column's filter
+// comparator follows the resolved tenant Go type, as a native `uuid` column's
+// does, not the SQL type the override replaced. A SQLite `blob`
+// tenant column typed uuid.UUID filters through comparator.ID, on tables and
+// on tenanted views alike, while the `text` columns beside it keep
+// comparator.String.
+func TestBuildEntityContexts_TenancyTypeReachesTenantFilter(t *testing.T) {
+	tests := []struct {
+		name string
+		// tenantType is the `tenancy.type` block, nil for none.
+		tenantType *config.TypeOverride
+		// blobType is an `overrides.types.blob` entry, nil for none.
+		blobType *config.TypeOverride
+	}{
+		{name: "tenancy.type uuid.UUID filters as an identifier", tenantType: &uuidGoogle},
+		{name: "overrides.types uuid.UUID on the tenant column filters as an identifier", blobType: &uuidGoogle},
+	}
+	const wantTenant = "*comparator.ID"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tenancyTestConfig()
+			cfg.Input.Dialect = config.DialectSQLite
+			cfg.Tenancy.Type = tt.tenantType
+			if tt.blobType != nil {
+				cfg.Overrides.Types["blob"] = *tt.blobType
+			}
+			schema := &parser.Schema{
+				Tables: []parser.Table{{
+					Name:   "projects",
+					Schema: "public",
+					Columns: []parser.Column{
+						tableCol("id", "integer", false, true),
+						tableCol("workspace_id", "blob", false, false),
+						tableCol("owner_name", "text", false, false),
+					},
+				}},
+				Views: []parser.View{{
+					Name:   "project_stats",
+					Schema: "public",
+					Columns: []parser.Column{
+						viewCol("workspace_id", "blob", false),
+						viewCol("label", "text", false),
+					},
+				}},
+			}
+
+			tables, views, err := gen.BuildEntityContextsFromSchema(schema, cfg)
+			if err != nil {
+				t.Fatalf("BuildEntityContextsFromSchema() error = %v, want nil", err)
+			}
+			if len(tables) != 1 || len(views) != 1 {
+				t.Fatalf("built %d tables and %d views, want 1 and 1", len(tables), len(views))
+			}
+			if views[0].Tenancy == nil || !views[0].Tenancy.Tenanted {
+				t.Fatalf("view Tenancy = %+v, want it tenanted", views[0].Tenancy)
+			}
+
+			if got := filterComparatorOf(t, tables[0].FilterFields, "workspace_id"); got != wantTenant {
+				t.Errorf("table filter workspace_id = %q, want %q", got, wantTenant)
+			}
+			if got := filterComparatorOf(t, views[0].FilterFields, "workspace_id"); got != wantTenant {
+				t.Errorf("view filter workspace_id = %q, want %q", got, wantTenant)
+			}
+			if got := filterComparatorOf(t, tables[0].FilterFields, "owner_name"); got != "*comparator.String" {
+				t.Errorf("table filter owner_name = %q, want %q", got, "*comparator.String")
+			}
+			if got := filterComparatorOf(t, views[0].FilterFields, "label"); got != "*comparator.String" {
+				t.Errorf("view filter label = %q, want %q", got, "*comparator.String")
+			}
+		})
+	}
 }

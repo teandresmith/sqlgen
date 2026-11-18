@@ -157,16 +157,28 @@ func validateResolvedViewFieldNames(qualifiedView, structName string, columns, p
 // on its own resolution while the tenancy context carried the override, and a
 // view's two spellings of one column disagreed exactly as a table's did.
 func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.ViewConfig) []ColumnContext {
-	accessRole, accessCaps := resolveAccess("")
+	accessRole, accessCaps := config.AccessPublic, roleCapabilityTable[config.AccessPublic]
 
 	columns := make([]ColumnContext, 0, len(view.Columns))
 	for _, col := range view.Columns {
 		// §29.2.4 order: the tenant column's `tenancy.type` first, then the
 		// column's own resolution (step 3, which for a view is the @type
 		// literal / aggregate / resolver cascade).
-		gt, tenantTyped := viewTenantTypeOverride(&col, viewCfg, input.Config.Tenancy)
+		gt, tenantTyped := viewTenantTypeOverride(&col, viewCfg, input.Config.Tenancy, input.Resolver.UsePointers())
+		resolver := input.Resolver.ForSchema(view.Schema)
 		if !tenantTyped {
-			gt = viewColumnGoType(input.Resolver.ForSchema(view.Schema), &col, col.Nullable)
+			gt = viewColumnGoType(resolver, &col, col.Nullable)
+		}
+		arrayElemGoType := retypedArrayElemGoType(input.Config.Input.Dialect, resolver, col.Type, gt, nil)
+		if gt.UnmappedSQLType != "" {
+			input.Warnings = append(input.Warnings, unmappedSQLTypeWarning("view column", qualifiedViewOrName(view), col.Name, col.Type, gt))
+		}
+		// A SUM column's SQL type is the type the database returns for it, so
+		// a view described from its SQL files and from the database agree
+		// (PRD §16.2).
+		sqlType := col.Type
+		if col.Aggregate == "SUM" {
+			sqlType = resolver.SumResultSQLType(col.Type)
 		}
 		columns = append(columns, ColumnContext{
 			Name:       col.Name,
@@ -174,7 +186,7 @@ func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.Vi
 			GoType:     gt.Name,
 			Import:     gt.Import,
 			ZeroValue:  gt.ZeroValue,
-			SQLType:    col.Type,
+			SQLType:    sqlType,
 			Nullable:   col.Nullable,
 			PrimaryKey: col.PrimaryKey,
 			DBTag:      col.Name,
@@ -185,7 +197,8 @@ func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.Vi
 			// instantiates comparator.Slice[UserRole] rather than the
 			// non-comparable slice type, and so the scan shape leaves the
 			// named slice's own Scan/Value alone instead of wrapping pq.Array.
-			SliceElemType: gt.SliceElemType,
+			SliceElemType:   gt.SliceElemType,
+			ArrayElemGoType: arrayElemGoType,
 			// Plumb the FK-stringification method (as tables do) so a PK column
 			// whose Go type is a stringifiable identifier (e.g. uuid.UUID via a
 			// type override) resolves to comparator.ID in the generated filter —

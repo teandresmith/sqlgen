@@ -8,6 +8,7 @@ package gen
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
@@ -201,12 +202,21 @@ type ColumnContext struct {
 	// arrays (e.g., "UserRole") and MySQL SETs (e.g., "UsersPermissionsSetValue").
 	// Empty for bare slices like []string or []uuid.UUID.
 	SliceElemType string
+	// ArrayElemGoType is the element Go type of a PostgreSQL array column
+	// that a column_map, type_map or overrides.types retype left without the
+	// slice flag, so its filter keeps comparator.Slice of what the column
+	// holds. Empty otherwise.
+	ArrayElemGoType string
 	// IsSet indicates MySQL SET types (named []ValueType slices).
 	IsSet bool
 	// FKConvert indicates how to convert the value to string for FK comparisons.
 	FKConvert gotype.FKStringMethod
 	// FKReference points to the referenced table/column, or nil.
 	FKReference *FKReferenceContext
+	// InForeignKey reports that the column is a member of a FOREIGN KEY
+	// constraint on its table, a composite one included. FKReference is set
+	// for a single-column key only, since it types the column's comparator.
+	InForeignKey bool
 	// Unique indicates a single-column UNIQUE constraint.
 	Unique bool
 	// Tenant reports that this column is the entity's resolved tenant column
@@ -296,6 +306,39 @@ type RelationshipContext struct {
 	TargetStructName string
 	// FKColumn is the foreign key column name (O2O/O2M).
 	FKColumn string
+	// Constraints names the FOREIGN KEY constraints a detected edge comes
+	// from: its own for O2O / O2M, the junction's two for M2M. Empty for a
+	// declared edge.
+	Constraints []string
+	// Key is an O2O / O2M edge's pairs in the FK's declared order, each an FK
+	// column and the column it references: the FK's referenced columns for a
+	// detected edge, the referenced table's primary key for a declared one
+	// (PRD §13.4). JunctionLocal / JunctionReference are an M2M junction's
+	// keys into the parent and the target.
+	Key               []parser.KeyPair
+	JunctionLocal     []parser.KeyPair
+	JunctionReference []parser.KeyPair
+	// SharedMembers are the O2O / O2M key's columns that another FOREIGN KEY
+	// on the holding table also holds, which pins them (PRD §9.9.2). Match is
+	// the MATCH type of the edge's own FOREIGN KEY, SIMPLE when it has none.
+	SharedMembers []string
+	Match         parser.MatchType
+	// LoadKey is what a keyed loader reads: the O2M or has-one key, or an M2M
+	// junction's key into this table. LoadReferenceKey is the M2M junction's
+	// key into the target. Empty when KeyedLoad is false.
+	LoadKey          []KeyMemberContext
+	LoadReferenceKey []KeyMemberContext
+	// JunctionColumns are the junction columns of an M2M edge's two keys,
+	// each once: a tenant junction's two keys share the tenant column. The
+	// keyed loader scans the LoadKey columns only.
+	JunctionColumns []JunctionColumnContext
+	// ParentKey is the column on this table that the edge's key references:
+	// the parent side of an O2M, has-one or M2M edge, which the loaders
+	// collect off each row and the nested writers copy into the key. It is
+	// the primary key unless the key references a UNIQUE column or the
+	// declared key under a primary_key override (PRD §13.1). Unset on a
+	// belongs-to edge, whose referenced column is on the target.
+	ParentKey ColumnContext
 	// FKFieldName is the Go field name for the FK column (e.g., "ProductID").
 	// The FK column lives on the *target* table for O2M edges, so this is
 	// resolved cross-table in wireRelationshipFKMetadata rather than derived
@@ -305,7 +348,7 @@ type RelationshipContext struct {
 	// Which column it names follows the same table the rest of the FK
 	// metadata is read from: the target table's FKColumn for O2M/O2O, and
 	// the junction's JunctionLocalFK for M2M — where FKColumn is empty on
-	// every auto-detected edge (parser.addM2M sets only the junction FKs),
+	// every auto-detected edge (detection sets only the junction keys),
 	// so there was nothing to derive from before. Only get.go.tmpl's O2M
 	// loader consumes this today.
 	FKFieldName string
@@ -359,8 +402,8 @@ type RelationshipContext struct {
 	// JSONTag is the json struct tag value (snake_case relationship name).
 	JSONTag string
 	// FKGoType is the Go type of the FK column (e.g., "int64", "string").
-	// For O2M: the FK column on the child table (matches parent PK type).
-	// For M2M: the target table's PK type.
+	// For O2M: the type of the parent column the key references.
+	// For M2M: the type of the target column the junction references.
 	// Used by templates to generate the correct comparator type for FK/PK filtering.
 	FKGoType string
 	// FKNullable indicates whether the FK column is nullable.
@@ -377,15 +420,24 @@ type RelationshipContext struct {
 	// guard + unwrap expression when stringifying a FK for bucket lookup.
 	// For M2M: the local junction FK's Go type.
 	FKColumnGoType string
-	// TargetPKFieldName is the Go field name of the target table's first PK
-	// column (e.g. "ID"), and TargetPKColumn is that column's SQL name (e.g.
-	// "id"). Only M2M consumes them: the loader maps loaded targets back to
-	// their parents through a map keyed on the field, and declares the column
-	// on the target fetch's requiredColumns so a narrowed projection cannot
-	// leave the key at its zero value. Filled cross-table by
-	// wireRelationshipFKMetadata; the field name falls back to the parent's PK
-	// spelling when the target is outside the generated set (unit fixtures,
-	// bare tables).
+	// FKEnumGoType names the FK column's enum when it is not the parent key's,
+	// and is empty otherwise. MySQL declares an enum per column, so the O2M
+	// loader converts each parent key to the type the FK's comparator takes.
+	FKEnumGoType string
+	// JunctionReferenceGoType is the resolved Go type of the junction's
+	// reference FK column (M2M only). The loader does not read it: the
+	// junction read takes the target key from the joined target.
+	JunctionReferenceGoType string
+	// TargetPKFieldName is the Go field name of the target column the M2M
+	// junction's reference key references (e.g. "ID"), the target's PK unless
+	// it references a UNIQUE column, and TargetPKColumn is that column's SQL
+	// name (e.g. "id"). Only M2M consumes them: the loader filters the target
+	// fetch on the field, maps loaded targets back to their parents through a
+	// map keyed on it, and declares the column on the fetch's requiredColumns
+	// so a narrowed projection cannot leave the key at its zero value. Filled
+	// cross-table by wireRelationshipFKMetadata; the field name falls back to
+	// the parent's PK spelling when the target is outside the generated set
+	// (unit fixtures, bare tables).
 	TargetPKFieldName string
 	TargetPKColumn    string
 }
@@ -485,13 +537,15 @@ type RelationshipFilterContext struct {
 	// TargetStructName is the target's Go struct name (e.g. "Post"), which
 	// also spells the member's type: *PostFilter.
 	TargetStructName string
-	// TargetTable / TargetSchema name the related table.
+	// TargetTable / TargetSchema name the related table, or the related view
+	// on a declared relationship into one.
 	TargetTable  string
 	TargetSchema string
 	// HelperName is the generated compile function (e.g. "userPostsFilterExists").
 	HelperName string
 	// CorrelationColumn is the parent-side column the subquery correlates on —
-	// the parent's single PK column. Emitted without a qualifier: the builder
+	// the column the edge's key references, the parent's PK unless it
+	// references a UNIQUE column. Emitted without a qualifier: the builder
 	// resolves it per read path (PRD §11.5).
 	CorrelationColumn string
 	// FKColumn is the target-side FK for an O2M edge. Empty for M2M.
@@ -505,9 +559,17 @@ type RelationshipFilterContext struct {
 	JunctionSchema      string
 	JunctionLocalFK     string
 	JunctionReferenceFK string
-	// TargetPKColumn is the target's single PK column, joined to
-	// JunctionReferenceFK. Only set for M2M.
+	// TargetPKColumn is the target column JunctionReferenceFK references and
+	// is joined to, the target's PK unless it references a UNIQUE column.
+	// Only set for M2M.
 	TargetPKColumn string
+	// CorrelationColumns and CorrelationKey are a composite key's pairs, the
+	// parent's columns and the child's or junction's columns equal to them.
+	// TargetJoin is an M2M junction's key into the target. CompositeKey says
+	// when they replace the one-column fields above.
+	CorrelationColumns []string
+	CorrelationKey     []string
+	TargetJoin         []parser.KeyPair
 	// Discriminator is the relationship's config `discriminator:` predicate
 	// (PRD §13.4.1), or nil. Mutually exclusive with StaticFilterExpr.
 	//
@@ -649,6 +711,10 @@ type ResolvedOperations struct {
 // *target's* primary key, access projection and tenancy, so every table
 // context has to exist and the attach passes have to have run first.
 type NestedContext struct {
+	// ParentKeyFields are the parent columns beyond its primary key that an
+	// edge's key references. The parent write selects them whatever the caller
+	// selected, since every statement below it reads them (PRD §9.6).
+	ParentKeyFields []string
 	// CreateInputName is `Create<Parent>WithRelatedInput`, UpdateInputName
 	// `Update<Parent>WithRelatedInput` and UpsertInputName
 	// `Upsert<Parent>WithRelatedInput` (PRD §9.9.5). All three are claimed by
@@ -769,6 +835,43 @@ type NestedEdgeContext struct {
 	// and ConnectKeyExpr below are the rendered form of that decision.
 	TargetPKIsString bool
 
+	// --- traversed key ---
+
+	// PinnedMembers / FreeMembers split the traversed key's columns on the
+	// target, in key order (PRD §9.9.2). A member is pinned when it is the
+	// target's tenant column, a member of its primary key or a member of
+	// another of its FOREIGN KEYs; the rewrite verbs write only the free ones.
+	// Both are empty on M2M, whose verbs never rewrite a member.
+	PinnedMembers []string
+	FreeMembers   []string
+	// ParentKeyFields are the parent's Go fields for every column the key
+	// references, which the executor reads off the parent write's result.
+	ParentKeyFields []string
+	// KeyMembers is every member of the traversed key, in key order. Empty on
+	// M2M, where the key lives in the junction row.
+	KeyMembers []NestedKeyMemberContext
+	// CompositeKey reports a key of several columns, and LoadKey is that key
+	// as the loaders read it, which `connect` compares by tuple.
+	CompositeKey bool
+	LoadKey      []KeyMemberContext
+	// TenantKeyMember reports that the key holds the tenant column of the row
+	// the edge writes, the target's or on M2M the junction's. Tenancy sets it
+	// too, so `create` and the link step can find the two disagreeing
+	// (PRD §9.9.6).
+	TenantKeyMember bool
+	// TenantKeyParent spells the parent column that member takes, and
+	// TenantKeyClient the client whose tenant filter the unlink verbs run under.
+	// Both are empty when the column is the parent's own tenant column, which
+	// the parent write has already checked, or the member comes off the target:
+	// only a parent-held value can contradict the tenant filter.
+	TenantKeyParent string
+	TenantKeyClient string
+	// ParentScope is the `fk = parent` filter, one term per member: on the
+	// target for a shape-2 or shape-3 edge, on the junction's local key for
+	// M2M. Every statement scoped to this parent carries all of it, and it is
+	// empty when any term cannot render.
+	ParentScope []NestedScopeTerm
+
 	// --- create verb ---
 
 	HasCreate bool
@@ -779,11 +882,6 @@ type NestedEdgeContext struct {
 	// nested child input — every field except the traversed FK and the edge's
 	// discriminator column (PRD §9.9.5). Empty on M2M.
 	ChildFields []InputFieldContext
-	// FKFieldName is the traversed FK's Go field on the target's create input,
-	// and FKAssignExpr the right-hand side that sets it from the parent's key
-	// (PRD §9.9.6). Empty on M2M, where the link lives in the junction row.
-	FKFieldName  string
-	FKAssignExpr string
 	// DiscFieldName / DiscAssignExpr set the edge's discriminator column on
 	// every nested create. Empty when the edge declares none.
 	DiscFieldName  string
@@ -802,6 +900,10 @@ type NestedEdgeContext struct {
 	// ConnectIDGoType is the Go type of one entry in the `connect` list — the
 	// target's PK type.
 	ConnectIDGoType string
+	// ConnectBucketGoType is the map key type the executor buckets target ids
+	// on: `time.Time` for a time key, which buckets as its UTC instant
+	// (nestedBucketKey), and ConnectIDGoType for every other key.
+	ConnectBucketGoType string
 	// ConnectKeyGoType is the element type the target's PK comparator takes:
 	// `string` for the comparator.ID family, the key's own Go type for
 	// comparator.Number and comparator.Opaque (PRD §11.2). ConnectKeyExpr
@@ -820,52 +922,28 @@ type NestedEdgeContext struct {
 	// (PRD §4.8 / §9.9.6). O2M and has-one only; an M2M connect adds a link
 	// rather than moving one.
 	AllowReparent bool
-	// FKFilterField / FKFilterNullExpr compile the adoption UPDATE's `IS NULL`
-	// guard — the target's FK filter member and the term that makes the
-	// adoption atomic against a concurrent connect. FKFilterNullExpr is empty
-	// under AllowReparent, which deliberately adopts without the guard
-	// (PRD §9.9.6); FKFilterField is not, because the unlink verbs and the
-	// adoption's verify read filter on the same member with ParentFilterExpr.
-	// Both are empty on M2M.
-	FKFilterField    string
-	FKFilterNullExpr string
-	// FKOwnerGoType / FKOwnerGuard / FKOwnerKey read the FK back off a
-	// visibility-read row: the model column's Go type, the non-null guard, and
-	// the unwrapped value to compare against the parent's key. A nullable FK
-	// is always a pointer or a Null wrapper, so the guard is never empty.
-	FKOwnerGoType string
-	FKOwnerGuard  string
-	FKOwnerKey    string
-	// FKUpdateAssignExpr sets the FK to the parent's key through the target's
-	// update input.
-	FKUpdateAssignExpr string
+	// FKOwnerGoType / FKOwnerGuard / FKOwnerIsParent read a one-column FK back
+	// off a visibility-read row: the model column's Go type, the non-null guard,
+	// and the condition that the row names this parent's key. A nullable FK is
+	// always a pointer or a Null wrapper, so the guard is never empty.
+	FKOwnerGoType   string
+	FKOwnerGuard    string
+	FKOwnerIsParent string
+	// OwnerMembers read a composite key back off a visibility-read row into its
+	// `[N]string` tuple. Stringifying keeps a binary or network key comparable.
+	//
+	// The three conditions are over the locals `cur`, `null` and `want`:
+	// OwnerPinnedMismatch is empty when no member is pinned, OwnerAllHeld is
+	// true when every free member holds a value, OwnerAnyHeld when one does.
+	OwnerMembers        []NestedOwnerMember
+	OwnerPinnedMismatch string
+	OwnerAllHeld        string
+	OwnerAnyHeld        string
 
 	// --- disconnect and clear verbs ---
 
 	HasDisconnect bool
 	HasClear      bool
-	// ParentKeyExpr converts the parent's primary key into the element type
-	// the parent-scoped filter term takes — a string on the comparator.ID
-	// family, the key's own Go type on comparator.Number / comparator.Opaque
-	// (PRD §11.2). The emitted executor binds it to a local named `pid`, which
-	// ParentFilterExpr then reads.
-	ParentKeyExpr string
-	// ParentFilterExpr is the `fk = parent` term both unlink verbs carry: it
-	// is what makes a `disconnect` structurally incapable of touching another
-	// parent's rows, and on `clear` it is the entire filter (PRD §9.9.6).
-	// The `connect` adoption's verify read carries it too, which is how that
-	// read counts only the rows now parented here. On M2M it filters the
-	// junction's local FK instead, and the junction client is the one that
-	// runs the statement.
-	ParentFilterExpr string
-	// FKUnlinkAssignExpr SETs the traversed FK to NULL through the target's
-	// update input. It must be the `omittable.Set[*T](nil)` spelling, never
-	// the zero `omittable.Value`: on a nullable FK bound to a pointer
-	// type both compile in this position, and the second omits the column from
-	// the SET list — matching its rows, reporting success and unlinking
-	// nothing. Empty on M2M, where the link is a junction row rather than a
-	// column.
-	FKUnlinkAssignExpr string
 	// DiscFilterField / DiscFilterExpr scope the two unlink verbs to the edge's
 	// own discriminator value — the same scoping a nested `create` sets and the
 	// `connect` visibility read checks. Without them a `clear` on one
@@ -887,30 +965,98 @@ type NestedEdgeContext struct {
 	// --- m2m link ---
 
 	// JunctionStructName / JunctionClientField / JunctionConflictTarget name
-	// the junction the link rows go through, and JunctionLocalField /
-	// JunctionReferenceField its two FK members on the junction's create
-	// input. JunctionLocalAssignExpr sets the local one from the parent's key.
-	JunctionStructName      string
-	JunctionClientField     string
-	JunctionConflictTarget  string
-	JunctionLocalField      string
-	JunctionReferenceField  string
-	JunctionLocalAssignExpr string
-	// JunctionReferenceAssignExpr sets the junction's reference FK from one
-	// target id, spelled `tid`.
-	JunctionReferenceAssignExpr string
-	// JunctionPKStructName and its two members spell the `<Junction>PK` values
+	// the junction the link rows go through. JunctionLinkFields set the union
+	// of its two keys on its create input: a column in the local key from the
+	// parent, any other from the target, spelled `tid` for the target's primary
+	// key and `row` for a column TargetReadFields reads.
+	JunctionStructName     string
+	JunctionClientField    string
+	JunctionConflictTarget string
+	JunctionLinkFields     []NestedFieldAssign
+	// TargetReadFields are the target's fields the link step needs beyond its
+	// primary key, so `create` and `connect` read them back.
+	TargetReadFields []string
+	// JunctionSharedAgrees is the condition that a `row` read back by `connect`
+	// or `create` holds the parent's value in every column both junction keys
+	// share, empty when the keys share none. JunctionSharedFields are the fields
+	// it reads beyond the target's primary key (PRD §9.9.6).
+	JunctionSharedAgrees string
+	JunctionSharedFields []string
+	// JunctionPKStructName and JunctionPKFields spell the `<Junction>PK` values
 	// an M2M `disconnect` hands HardDeleteMany (PRD §9.9.6). The junction's
-	// key has to be exactly the two foreign keys for the pair to be
-	// expressible, so a junction with a surrogate key carries no `disconnect`.
-	JunctionPKStructName          string
-	JunctionPKLocalField          string
-	JunctionPKReferenceField      string
-	JunctionPKLocalAssignExpr     string
-	JunctionPKReferenceAssignExpr string
-	// JunctionLocalFilterField is the junction filter member an M2M `clear`
-	// filters on; ParentFilterExpr above is the term it takes.
-	JunctionLocalFilterField string
+	// primary key has to be exactly the union of its two keys for the value to
+	// be expressible, so a junction with a surrogate key carries no `disconnect`.
+	JunctionPKStructName string
+	JunctionPKFields     []NestedFieldAssign
+}
+
+// NestedKeyMemberContext is one member of the key a shape-2 or shape-3 edge
+// traverses.
+type NestedKeyMemberContext struct {
+	// Column is the member on the target, and FieldName its Go field there.
+	Column    string
+	FieldName string
+	// Pinned reports a member no verb rewrites (PRD §9.9.2).
+	Pinned bool
+	// AssignExpr sets the member from the parent's referenced column through
+	// the target's create input (PRD §9.9.6).
+	AssignExpr string
+	// UpdateAssignExpr sets a free member the same way through the update
+	// input, for the `connect` adoption.
+	UpdateAssignExpr string
+	// UnlinkAssignExpr SETs a free member to NULL through the update input. It
+	// must be the `omittable.Set[*T](nil)` spelling, never the zero
+	// `omittable.Value`: on a nullable FK bound to a pointer type both compile
+	// in this position, and the second omits the column from the SET list —
+	// matching its rows, reporting success and unlinking nothing.
+	UnlinkAssignExpr string
+	// FilterField / NullFilterExpr compile the adoption UPDATE's `IS NULL`
+	// guard on a free member, the term that makes the adoption atomic against a
+	// concurrent connect. NullFilterExpr is empty under AllowReparent, which
+	// deliberately adopts without the guard (PRD §9.9.6).
+	FilterField    string
+	NullFilterExpr string
+}
+
+// NestedScopeTerm is one term of an edge's `fk = parent` filter. It is what
+// makes a `disconnect` structurally incapable of touching another parent's
+// rows, and on `clear` it is the entire filter (PRD §9.9.6). The `connect`
+// adoption's verify read carries it too, which is how that read counts only the
+// rows now parented here.
+type NestedScopeTerm struct {
+	FilterField string
+	// ParentVar is the local the executor binds ParentKeyExpr to: the parent's
+	// referenced column in the comparator's element type, a string on
+	// comparator.ID and comparator.String, the key's own value on every other
+	// family (PRD §11.2). FilterExpr reads that local.
+	ParentVar     string
+	ParentKeyExpr string
+	FilterExpr    string
+}
+
+// NestedOwnerMember reads one member of a composite key off the row `row` into
+// slot Index of its tuple. Guard is empty when the member cannot be NULL.
+type NestedOwnerMember struct {
+	Index int
+	Guard string
+	Key   string
+}
+
+// NestedFieldAssign is one field of a struct literal the executor builds.
+type NestedFieldAssign struct {
+	FieldName  string
+	AssignExpr string
+}
+
+// FreeKeyMembers returns the members the rewrite verbs write.
+func (e NestedEdgeContext) FreeKeyMembers() []NestedKeyMemberContext {
+	free := make([]NestedKeyMemberContext, 0, len(e.KeyMembers))
+	for _, m := range e.KeyMembers {
+		if !m.Pinned {
+			free = append(free, m)
+		}
+	}
+	return free
 }
 
 // TableTenancyContext holds per-table tenancy metadata threaded into the
@@ -1069,6 +1215,10 @@ type TableContext struct {
 	HasO2ORelationships bool
 	// HasO2MRelationships indicates whether the table has any O2M or M2M relationships.
 	HasO2MRelationships bool
+	// LoadKeyColumns are the columns of this table its O2M and M2M loaders
+	// read off each row, each edge's ParentKey once, in edge order. GetMany
+	// keeps them in a narrowed projection that selects an edge.
+	LoadKeyColumns []ColumnContext
 	// O2ORelationships holds only the O2O relationships, sorted by name.
 	O2ORelationships []RelationshipContext
 	// O2MRelationships holds only the O2M relationships, sorted by name.
@@ -1417,6 +1567,8 @@ type O2OJoinDetail struct {
 	// OnRemote is the target-side column: the target's first PK, or the FK on
 	// the target when FKOnTarget (has-one).
 	OnRemote string
+	// ExtraOn are the key's further pairs, each ANDed onto the ON clause.
+	ExtraOn []O2OOnPair
 	// Filter is the polymorphic filter expression (empty if none).
 	Filter string
 
@@ -1655,4 +1807,149 @@ func (t TableContext) NeedsTenantResolver() bool {
 func (t TableContext) resolvesTenantDirectly() bool {
 	return (t.Tenancy != nil && t.Tenancy.Tenanted) ||
 		t.HasTenantedO2OChild || t.HasTenantedRelationshipFilter
+}
+
+// CompositeKey reports that the EXISTS correlates or joins on several columns.
+func (f RelationshipFilterContext) CompositeKey() bool {
+	return len(f.CorrelationKey) > 1 || len(f.TargetJoin) > 1
+}
+
+// O2OOnPair is one further equality of an O2O join's ON clause.
+type O2OOnPair struct {
+	Local  string
+	Remote string
+}
+
+// KeyMemberContext is one pair of a composite key as the loaders read it.
+type KeyMemberContext struct {
+	// Column, FieldName and GoType describe the column holding the key: the
+	// child's FK column, or the junction's. A junction member has no Go field.
+	Column    string
+	FieldName string
+	GoType    string
+	// Var is the local an M2M load scans a junction column into.
+	Var string
+	// Referenced is the column it references on the parent or the target.
+	Referenced ColumnContext
+}
+
+// JunctionColumnContext is one column an M2M load scans off the junction.
+type JunctionColumnContext struct {
+	Name   string
+	GoType string
+	Var    string
+}
+
+// KeyedLoad reports that the edge loads by key tuples: its key has several
+// columns on some side, a referenced column that can hold a NULL, which the
+// one-column loader's plain list cannot skip, or an FK column whose comparator
+// differs from the referenced column's, which that list cannot fill. Every
+// other edge keeps that loader.
+func (r RelationshipContext) KeyedLoad() bool {
+	return len(r.LoadKey) > 0
+}
+
+// CompositeKey reports that the edge's key has several columns on some side.
+func (r RelationshipContext) CompositeKey() bool {
+	return len(r.Key) > 1 || len(r.JunctionLocal) > 1 || len(r.JunctionReference) > 1
+}
+
+// O2MLoadUnchunked reports that the plain O2M loader (KeyedLoad false) fetches every parent's
+// children in one statement instead of one per chunk of parent keys (PRD §25.1). On
+// PostgreSQL with pgx the FK filter's comparator binds the whole key list as
+// one array parameter (= ANY($1), PRD Appendix A), so the parent count never
+// reaches the bind-parameter limit. Every other dialect and driver chunks,
+// stdlib included, which Appendix A specifies as the expanded form.
+// The M2M steps chunk on every driver: they expand one parameter per key.
+//
+// A method rather than a field for the reason NeedsTenantResolver gives: it
+// reads two plain facts every fixture already sets.
+func (t TableContext) O2MLoadUnchunked() bool {
+	return t.Dialect == config.DialectPostgres && t.Driver == config.DriverPgx
+}
+
+// KeySetType is the Go map key type of a set of this table's primary keys:
+// the key type itself, or string when a key column's Go type is not
+// comparable ([]byte, net.IP and the like) and so cannot key a map. A batch
+// write collects the keys its statements wrote into such a set.
+//
+// A method rather than a field for the reason NeedsTenantResolver gives: it
+// reads only the PK columns, and a fixture that forgot a field would emit a
+// map keyed by a slice, which does not compile.
+func (t TableContext) KeySetType() string {
+	if !t.pkComparable() {
+		return "string"
+	}
+	if t.CompositePK {
+		return t.CompositePKStructName
+	}
+	return t.PKColumns[0].GoType
+}
+
+// KeySetKey is the expression that keys expr — a primary-key value — into a
+// set typed by KeySetType: expr itself, or its Go-syntax %#v rendering when
+// the key is not comparable. %#v quotes strings and spells out every byte, so
+// two distinct keys never render alike.
+func (t TableContext) KeySetKey(expr string) string {
+	if !t.pkComparable() {
+		return `fmt.Sprintf("%#v", ` + expr + `)`
+	}
+	return expr
+}
+
+// KeyScanColumn is one column of a key pre-read: the column it selects and
+// the scan target its value lands in.
+type KeyScanColumn struct {
+	Name   string
+	Target string
+}
+
+// KeyScanColumns lists the columns a key pre-read (collectAffectedIDs,
+// collectAffectedPKs) selects, sorted by name, each with its scan target:
+// &pk.<Field> for a composite key, &id for a single-column one, and
+// &rowTenant for the tenant column when withTenant is set. sql.BuildSelect
+// emits its column list sorted, so a helper that ranges this list for both
+// its Columns and its Scan binds every value to its own column.
+//
+// A method rather than a field for the reason KeySetType gives: it reads
+// only the PK columns and the tenancy column.
+func (t TableContext) KeyScanColumns(withTenant bool) []KeyScanColumn {
+	cols := make([]KeyScanColumn, 0, len(t.PKColumns)+1)
+	for _, col := range t.PKColumns {
+		target := "&id"
+		if t.CompositePK {
+			target = "&pk." + col.FieldName
+		}
+		cols = append(cols, KeyScanColumn{Name: col.Name, Target: target})
+	}
+	if withTenant && t.Tenancy != nil {
+		cols = append(cols, KeyScanColumn{Name: t.Tenancy.Column, Target: "&rowTenant"})
+	}
+	slices.SortFunc(cols, func(a, b KeyScanColumn) int { return strings.Compare(a.Name, b.Name) })
+	return cols
+}
+
+// pkComparable reports whether every primary-key column's Go type is
+// comparable, so the key (or the composite key struct) can key a map.
+func (t TableContext) pkComparable() bool {
+	for _, col := range t.PKColumns {
+		if !goTypeComparable(col.GoType) {
+			return false
+		}
+	}
+	return true
+}
+
+// goTypeComparable reports whether a resolved Go type expression is
+// comparable: not a slice, a map or a func, and not one of the standard
+// library's named slice-backed types a key column resolves to.
+func goTypeComparable(goType string) bool {
+	if strings.HasPrefix(goType, "[]") || strings.HasPrefix(goType, "map[") || strings.HasPrefix(goType, "func(") {
+		return false
+	}
+	switch goType {
+	case "net.IP", "net.IPNet", "net.HardwareAddr", "json.RawMessage", "types.JSON":
+		return false
+	}
+	return true
 }

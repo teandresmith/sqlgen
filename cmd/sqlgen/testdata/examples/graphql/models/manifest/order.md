@@ -66,19 +66,6 @@ postgres:
 SELECT "created_at", "deleted_at", "id", "notes", "total", "updated_at", "user_id" FROM "public"."orders" WHERE <filter> AND "deleted_at" IS NULL ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *OrderFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."orders" WHERE <filter> AND "deleted_at" IS NULL
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -103,6 +90,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."orders" WHERE <filter> AND "deleted_at" IS NULL)
+```
+
+### Count
+
+- Params: `filter *OrderFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."orders" WHERE <filter> AND "deleted_at" IS NULL
 ```
 
 ### Paginate
@@ -163,36 +163,6 @@ postgres:
 INSERT INTO "public"."orders" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateOrderInput`, `target OrderConflictTarget`
-- Returns: `*Order`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated OrderConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."orders" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateOrderInput`, `target OrderConflictTarget`
-- Returns: `[]*Order`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same OrderConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."orders" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateOrderInput`
@@ -237,6 +207,57 @@ postgres:
 ```sql
 UPDATE "public"."orders" SET <set> WHERE <filter> RETURNING "id"
 ```
+
+### Upsert
+
+- Params: `input *CreateOrderInput`, `target OrderConflictTarget`
+- Returns: `*Order`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated OrderConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."orders" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateOrderInput`, `target OrderConflictTarget`
+- Returns: `[]*Order`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same OrderConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."orders" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### CreateWithRelated
+
+- Params: `input *CreateOrderWithRelatedInput`
+- Returns: `*Order`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpdateWithRelated
+
+- Params: `id uuid.UUID`, `input *UpdateOrderWithRelatedInput`
+- Returns: `*Order`, `error`
+- Errors: `ErrNilInput`, `ErrNotFound`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+
+### UpsertWithRelated
+
+- Params: `input *UpsertOrderWithRelatedInput`, `target OrderConflictTarget`
+- Returns: `*Order`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ### Increment
 
@@ -382,27 +403,6 @@ postgres:
 DELETE FROM "public"."orders" WHERE <filter> RETURNING "id"
 ```
 
-### CreateWithRelated
-
-- Params: `input *CreateOrderWithRelatedInput`
-- Returns: `*Order`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpdateWithRelated
-
-- Params: `id uuid.UUID`, `input *UpdateOrderWithRelatedInput`
-- Returns: `*Order`, `error`
-- Errors: `ErrNilInput`, `ErrNotFound`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
-### UpsertWithRelated
-
-- Params: `input *UpsertOrderWithRelatedInput`, `target OrderConflictTarget`
-- Returns: `*Order`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (OrderItems), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
-
 ## Filter
 
 Type `OrderFilter`.
@@ -424,3 +424,17 @@ Type `OrderFilter`.
 Type `OrderSort`.
 
 Fields: CreatedAt, DeletedAt, ID, Notes, Total, UpdatedAt, UserID
+
+## Read examples
+
+```go
+row, err := client.Orders().Get(ctx, uuid.NewV4())
+rows, err := client.Orders().GetMany(ctx, &models.GetOrdersInput{Filter: &models.OrderFilter{Total: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Orders().Create(ctx, &models.CreateOrderInput{UserID: uuid.NewV4()})
+updated, err := client.Orders().Update(ctx, uuid.NewV4(), &models.UpdateOrderInput{UserID: omittable.Set(uuid.NewV4())})
+```

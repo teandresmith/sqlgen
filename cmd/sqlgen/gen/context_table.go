@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
+	gotypeliteral "github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/literal"
 	"github.com/teandresmith/sqlgen/parser"
 )
 
@@ -19,13 +21,25 @@ import (
 // silently before table-context build. The filter applies to file inputs
 // and introspected schemas alike.
 //
-// Tables that have no primary key after override resolution are skipped
-// entirely (PRD §9.4b). The corresponding warning is emitted earlier from
-// config.ValidatePostParse::validateMissingPrimaryKey; no client, model,
-// cache entry, or event hook is generated. Users can either declare a PK
-// via tables.<name>.primary_key.columns or drop the table via the
-// top-level exclude_tables filter to silence the warning.
+// Tables with no primary key after override resolution and exclude_columns
+// are skipped entirely (PRD §9.4b): no client, model, cache entry, or event
+// hook is generated. config.ValidatePostParse reports each one first, as the
+// missing-PK or exclude_columns-exhaustion warning or as an error.
 func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]TableContext, error) {
+	contexts, _, err := buildTableContextsPartial(input, collisions)
+	if err != nil {
+		return nil, err
+	}
+	return contexts, nil
+}
+
+// buildTableContextsPartial is BuildTableContexts that also returns the
+// contexts of the tables that did build when others fail, and the keys
+// (qualifiedOrBare) of the ones that failed. Generation stops on the error;
+// ValidateGeneration keeps going, so the package-wide and cross-table rules
+// still report on those tables in the same run (PRD §4.13: all validation
+// errors are reported together).
+func buildTableContextsPartial(input *GenerateInput, collisions map[string]bool) ([]TableContext, map[string]bool, error) {
 	applyConfigDeclaredFKs(input.Schema, input.Config)
 	input.relTargets = newRelationshipTargets(input, collisions)
 	excludePatterns := input.Config.ExcludeTables
@@ -34,6 +48,7 @@ func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]Tab
 	// `sqlgen validate` reaches this path and reports every problem
 	// in one pass, and `generate` gains the same batch report for free.
 	var errs []error
+	failed := map[string]bool{}
 	for _, table := range input.Schema.Tables {
 		if _, matched := config.MatchExcludeTablePattern(table.Name, table.Schema, excludePatterns); matched {
 			continue
@@ -44,14 +59,11 @@ func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]Tab
 		tc, err := buildSingleTableContext(input, &table, collisions)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("building context for table %s: %w", table.Name, err))
+			failed[qualifiedOrBare(table.Schema, table.Name)] = true
 			continue
 		}
 		contexts = append(contexts, tc)
 	}
-	if err := errors.Join(errs...); err != nil {
-		return nil, err
-	}
-
 	slices.SortFunc(contexts, func(a, b TableContext) int {
 		if c := strings.Compare(a.Schema, b.Schema); c != 0 {
 			return c
@@ -62,6 +74,9 @@ func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]Tab
 	// Second pass: wire FK Go types and FK column nullability into relationships
 	// using cross-table information (PK and column metadata).
 	wireRelationshipFKMetadata(contexts)
+	if err := validateTimeKeyPairs(input, contexts); err != nil {
+		errs = append(errs, err)
+	}
 
 	// Third pass: resolve the junction clients and the nested-surface flag the
 	// entity clients carry for nested mutations (PRD §9.9). Cross-table for the
@@ -69,14 +84,16 @@ func BuildTableContexts(input *GenerateInput, collisions map[string]bool) ([]Tab
 	// the junction's own context.
 	wireNestedMutationSurface(contexts)
 
-	return contexts, nil
+	return contexts, failed, errors.Join(errs...)
 }
 
 // wireRelationshipFKMetadata resolves the FKGoType, FKNullable, FKColumnGoType
 // and FKFieldName fields on each relationship by looking up cross-table data
 // from the built contexts.
 //
-// FKGoType comes from the parent/target table's PK Go type. FKNullable comes
+// ParentKey is the parent column the edge's key references, and FKGoType its
+// Go type (for M2M, the type of the target column the junction references;
+// for a belongs-to O2O, the parent's PK type). FKNullable comes
 // from the FK column on the target table (O2M/O2O) or the junction's local FK
 // column (M2M); it is the nullability the *target* table's filter struct will
 // expect for the FK field, which determines whether relationship loaders must
@@ -118,7 +135,28 @@ func wireRelationshipFKMetadata(contexts []TableContext) {
 		wireRelListFKMetadata(tc.M2MRelationships, tc, pkColumns, colsByTable)
 		wireRelListFKMetadata(tc.O2ORelationships, tc, pkColumns, colsByTable)
 		wireRelListFKMetadata(tc.Relationships, tc, pkColumns, colsByTable)
+		tc.LoadKeyColumns = loadKeyColumns(tc)
 	}
+}
+
+// loadKeyColumns returns every parent column the O2M and M2M edges' keys
+// reference, once, in edge order.
+func loadKeyColumns(tc *TableContext) []ColumnContext {
+	var cols []ColumnContext
+	add := func(col ColumnContext) {
+		if col.Name != "" && !slices.ContainsFunc(cols, func(c ColumnContext) bool { return c.Name == col.Name }) {
+			cols = append(cols, col)
+		}
+	}
+	for _, rels := range [][]RelationshipContext{tc.O2MRelationships, tc.M2MRelationships} {
+		for _, r := range rels {
+			add(r.ParentKey)
+			for _, m := range r.LoadKey {
+				add(m.Referenced)
+			}
+		}
+	}
+	return cols
 }
 
 func wireRelListFKMetadata(rels []RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) {
@@ -127,25 +165,29 @@ func wireRelListFKMetadata(rels []RelationshipContext, parent *TableContext, pkC
 	}
 }
 
-// wireRelFKMetadata fills FKGoType, FKNullable, FKColumnGoType, FKFieldName
-// and TargetPKFieldName on a single relationship by consulting the cross-table
-// lookup. Split out to keep the per-relationship-type branching readable.
+// wireRelFKMetadata fills FKGoType, FKNullable, FKColumnGoType,
+// JunctionReferenceGoType, FKFieldName and TargetPKFieldName on a single
+// relationship by consulting the cross-table lookup. Split out to keep the
+// per-relationship-type branching readable.
 func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) {
+	if r.Type == parser.ManyToMany || r.Type == parser.OneToMany || r.FKOnTarget {
+		r.ParentKey, _ = parentKeyColumn(*r, parent)
+	}
 	if r.FKGoType == "" {
-		r.FKGoType = resolveFKGoType(r, parent, pkColumns)
+		r.FKGoType = resolveFKGoType(r, parent, pkColumns, colsByTable)
 	}
 
 	fkCol := r.FKColumn
 	switch r.Type {
 	case parser.OneToMany:
 		// O2M: the FK column lives on the target (many) table for both
-		// auto-detected (addO2M) and config edges. This is the only path that
+		// auto-detected and config edges. This is the only path that
 		// actually consumes FKNullable today (the get.go.tmpl relationship
 		// loader picks a nullable comparator off it).
 		wireRelFKFromTable(r, fkCol, r.TargetSchema, r.TargetTable, colsByTable)
 	case parser.OneToOne:
 		// O2O FK placement depends on the edge's origin: auto-detected
-		// (addO2O) edges carry the FK on the *source*/parent table, while
+		// edges carry the FK on the *source*/parent table, while
 		// config edges (e.g. `fk: entity_id` referencing the target) carry it
 		// on the *target*. Resolve against whichever table actually holds the
 		// column so FKNullable / FKColumnGoType are correct for both shapes —
@@ -156,16 +198,212 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 	case parser.ManyToMany:
 		fkCol = r.JunctionLocalFK
 		wireRelFKFromTable(r, fkCol, r.JunctionSchema, r.JunctionTable, colsByTable)
-		// The M2M loader keys its target-to-parent map on the *target's* PK
-		// field and declares that column on the target fetch, so both
-		// spellings have to come from the target table rather than the parent's
-		// PK.
-		if pk, ok := lookupPKColumn(pkColumns, r.TargetSchema, r.TargetTable); ok {
-			r.TargetPKFieldName = pk.FieldName
-			r.TargetPKColumn = pk.Name
+		if col, ok := lookupTableCols(colsByTable, r.JunctionSchema, r.JunctionTable)[r.JunctionReferenceFK]; ok {
+			r.JunctionReferenceGoType = col.GoType
+		}
+		// The M2M loader keys its target-to-parent map on the target column
+		// the junction references and declares that column on the target
+		// fetch, so both spellings have to come from the target table rather
+		// than the parent's PK.
+		if key, ok := targetKeyColumn(r, pkColumns, colsByTable); ok {
+			r.TargetPKFieldName = key.FieldName
+			r.TargetPKColumn = key.Name
 		}
 	}
 
+	applyRelFKFallbacks(r, parent, fkCol)
+	wireKeyedLoad(r, parent, colsByTable)
+}
+
+// wireKeyedLoad fills LoadKey, LoadReferenceKey and JunctionColumns for an edge
+// that loads by key tuples (RelationshipContext.KeyedLoad).
+func wireKeyedLoad(r *RelationshipContext, parent *TableContext, colsByTable map[string]map[string]ColumnContext) {
+	parentCols := make(map[string]ColumnContext, len(parent.Columns))
+	for _, c := range parent.Columns {
+		parentCols[c.Name] = c
+	}
+	targetCols := lookupTableCols(colsByTable, r.TargetSchema, r.TargetTable)
+	switch {
+	case r.Type == parser.ManyToMany:
+		junction := lookupTableCols(colsByTable, r.JunctionSchema, r.JunctionTable)
+		local := loadKeyMembers(r.JunctionLocal, junction, parentCols)
+		reference := loadKeyMembers(r.JunctionReference, junction, targetCols)
+		if r.CompositeKey() || referencesNullable(local) || referencesNullable(reference) || comparatorsDiffer(local) || comparatorsDiffer(reference) {
+			r.LoadKey, r.LoadReferenceKey = local, reference
+			wireJunctionColumns(r)
+		}
+	case r.Type == parser.OneToMany || r.FKOnTarget:
+		key := loadKeyMembers(r.Key, targetCols, parentCols)
+		if r.CompositeKey() || referencesNullable(key) || comparatorsDiffer(key) {
+			r.LoadKey = key
+		}
+	}
+}
+
+func referencesNullable(key []KeyMemberContext) bool {
+	return slices.ContainsFunc(key, func(m KeyMemberContext) bool { return m.Referenced.Nullable })
+}
+
+// comparatorsDiffer reports a key member whose column filters through another
+// comparator than the column it references, so that a list of referenced keys
+// does not assign into the holder's filter field. Two enums differ only by
+// name, which MySQL gives each column: the one-column loader converts the
+// parent's keys to the FK's enum (FKEnumGoType), and every other loader binds
+// them as the strings they are. Every time key filters through comparator.Time,
+// whatever its Go type, and a nullable SQLite datetime FK, which classifies as
+// ID through its types.NullDateTime, does too. A time key next to a key of
+// another family never reaches here: validateTimeKeyPairs refuses it.
+func comparatorsDiffer(key []KeyMemberContext) bool {
+	return slices.ContainsFunc(key, func(m KeyMemberContext) bool {
+		family, param := pkComparatorFamily(m.GoType)
+		refFamily, refParam := pkComparatorFamily(m.Referenced.GoType)
+		switch {
+		case family == "Enum" && refFamily == "Enum":
+			return false
+		case (family == "Time") != (refFamily == "Time"):
+			return false
+		}
+		return family != refFamily || param != refParam
+	})
+}
+
+// validateTimeKeyPairs refuses a relationship key that pairs a time column with
+// a column of another type, which only SQLite accepts as a foreign key (PRD
+// §13.3). No loader can compare the two: the one-column loader does not compile,
+// since comparator.Time does not assign into the other side's filter field, and
+// the tuple loader matches no row, since neither side spells the time as the
+// other stores it. Each column pair is reported once, under the first edge
+// over it.
+func validateTimeKeyPairs(input *GenerateInput, contexts []TableContext) error {
+	colsByTable := make(map[string]map[string]ColumnContext, len(contexts))
+	for _, tc := range contexts {
+		byName := make(map[string]ColumnContext, len(tc.Columns))
+		for _, c := range tc.Columns {
+			byName[c.Name] = c
+		}
+		colsByTable[qualifiedOrBare(tc.Schema, tc.TableName)] = byName
+	}
+	kind := "type"
+	if input.Config.Input.Dialect == config.DialectSQLite {
+		kind = "storage class"
+	}
+
+	var errs []error
+	seen := map[string]bool{}
+	for _, tc := range contexts {
+		for _, r := range tc.Relationships {
+			for _, side := range relationshipKeySides(r, tc) {
+				holder := lookupTableCols(colsByTable, side.holderSchema, side.holderTable)
+				referenced := lookupTableCols(colsByTable, side.refSchema, side.refTable)
+				for _, p := range side.pairs {
+					local, ok := holder[p.Local]
+					ref, refOK := referenced[p.Referenced]
+					if !ok || !refOK || isTimeKeyColumn(local.GoType) == isTimeKeyColumn(ref.GoType) {
+						continue
+					}
+					localName := qualifiedOrBare(side.holderSchema, side.holderTable) + "." + local.Name
+					refName := qualifiedOrBare(side.refSchema, side.refTable) + "." + ref.Name
+					if seen[localName+" "+refName] || seen[refName+" "+localName] {
+						continue
+					}
+					seen[localName+" "+refName] = true
+					errs = append(errs, timeKeyPairError(qualifiedOrBare(tc.Schema, tc.TableName), r.Name, localName, refName, local, ref, kind))
+				}
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// timeKeyPairError is validateTimeKeyPairs' refusal of one column pair. The
+// remedy names the override route too: two columns of one SQL type differ when
+// an override retyped one of them.
+func timeKeyPairError(table, edge, localName, refName string, local, ref ColumnContext, kind string) error {
+	return fmt.Errorf(
+		"tables.%s.relationships: %q pairs %s (%s) with %s (%s), a time column next to a column of another %s: no loader can compare them, since neither side spells the time as the other stores it. Declare both columns with the same %s, or, where an override retyped one of them, give both the same Go type (PRD §4.13 / §13.3)",
+		table, edge, localName, local.SQLType, refName, ref.SQLType, kind, kind,
+	)
+}
+
+// relationshipKeySide is one key of an edge: the table holding its columns, the
+// table they reference, and the pairs.
+type relationshipKeySide struct {
+	holderSchema, holderTable string
+	refSchema, refTable       string
+	pairs                     []parser.KeyPair
+}
+
+// relationshipKeySides returns an edge's keys: an M2M junction's two, an O2M or
+// has-one edge's key on the target, and a belongs-to edge's key on the parent.
+func relationshipKeySides(r RelationshipContext, parent TableContext) []relationshipKeySide {
+	switch {
+	case r.Type == parser.ManyToMany:
+		return []relationshipKeySide{
+			{r.JunctionSchema, r.JunctionTable, parent.Schema, parent.TableName, r.JunctionLocal},
+			{r.JunctionSchema, r.JunctionTable, r.TargetSchema, r.TargetTable, r.JunctionReference},
+		}
+	case r.Type == parser.OneToMany || r.FKOnTarget:
+		return []relationshipKeySide{{r.TargetSchema, r.TargetTable, parent.Schema, parent.TableName, r.Key}}
+	}
+	return []relationshipKeySide{{parent.Schema, parent.TableName, r.TargetSchema, r.TargetTable, r.Key}}
+}
+
+// isTimeKeyColumn reports whether a key column's Go type holds a time, through
+// a pointer or a Null wrapper too.
+func isTimeKeyColumn(goType string) bool {
+	base := strings.TrimPrefix(goType, "*")
+	if underlying, ok := gotype.StdNullUnderlying(base); ok {
+		base = underlying
+	} else if underlying, ok := builtinWrapperValues[base]; ok {
+		base = underlying
+	}
+	return isTimeKeyGoType(base)
+}
+
+// loadKeyMembers resolves key pairs against the table holding the key and the
+// table it references. A holder with no generated columns (an excluded
+// junction) takes each column's type from the column it references.
+func loadKeyMembers(key []parser.KeyPair, holder, referenced map[string]ColumnContext) []KeyMemberContext {
+	members := make([]KeyMemberContext, len(key))
+	for i, p := range key {
+		ref, ok := referenced[p.Referenced]
+		if !ok {
+			ref = ColumnContext{Name: p.Referenced, FieldName: FieldName(p.Referenced)}
+		}
+		m := KeyMemberContext{Column: p.Local, FieldName: FieldName(p.Local), GoType: ref.GoType, Referenced: ref}
+		if col, ok := holder[p.Local]; ok {
+			m.FieldName, m.GoType = col.FieldName, col.GoType
+		}
+		if m.Referenced.GoType == "" {
+			m.Referenced.GoType = m.GoType
+		}
+		members[i] = m
+	}
+	return members
+}
+
+// wireJunctionColumns gives each distinct junction column of an M2M key one
+// scan local, shared by every member over that column.
+func wireJunctionColumns(r *RelationshipContext) {
+	vars := make(map[string]string, len(r.LoadKey)+len(r.LoadReferenceKey))
+	for _, key := range [][]KeyMemberContext{r.LoadKey, r.LoadReferenceKey} {
+		for i := range key {
+			v, ok := vars[key[i].Column]
+			if !ok {
+				v = fmt.Sprintf("key%d", len(r.JunctionColumns))
+				vars[key[i].Column] = v
+				r.JunctionColumns = append(r.JunctionColumns, JunctionColumnContext{Name: key[i].Column, GoType: key[i].GoType, Var: v})
+			}
+			key[i].Var = v
+		}
+	}
+}
+
+// applyRelFKFallbacks fills what wireRelFKMetadata's cross-table lookup left
+// unset, which happens for unit fixtures, bare tables and tables outside the
+// generated set, and derives FKEnumGoType. fkCol is the FK column the lookup
+// read.
+func applyRelFKFallbacks(r *RelationshipContext, parent *TableContext, fkCol string) {
 	// Final fallback for the field name: a bare table (unit fixture, or a
 	// target outside the generated set) leaves it unresolved, in which case
 	// the naming engine's spelling is the only answer available and matches
@@ -174,10 +412,25 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 		r.FKFieldName = FieldName(fkCol)
 	}
 
-	// Final fallback: FKColumnGoType matches FKGoType when no cross-table
-	// metadata was available (covers unit fixtures and bare tables).
+	// Final fallback when no cross-table metadata was available (unit
+	// fixtures, bare tables, an excluded junction): each FK column takes the
+	// type of the key it references. FKGoType is that key for O2M/O2O and the
+	// junction's reference column; an M2M local column references the parent.
 	if r.FKColumnGoType == "" {
 		r.FKColumnGoType = r.FKGoType
+		if r.Type == parser.ManyToMany && r.ParentKey.GoType != "" {
+			r.FKColumnGoType = r.ParentKey.GoType
+		}
+	}
+	if r.Type == parser.ManyToMany && r.JunctionReferenceGoType == "" {
+		r.JunctionReferenceGoType = r.FKGoType
+	}
+	if r.Type == parser.OneToMany {
+		parentFamily, parentEnum := pkComparatorFamily(r.ParentKey.GoType)
+		fkFamily, fkEnum := pkComparatorFamily(r.FKColumnGoType)
+		if parentFamily == "Enum" && fkFamily == "Enum" && fkEnum != parentEnum {
+			r.FKEnumGoType = fkEnum
+		}
 	}
 
 	// Final fallback for the target PK: with the target outside the generated
@@ -193,7 +446,7 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 // FKColumnGoType for r by reading fkCol off the table identified by
 // (schema, name). It reports whether that table actually carries fkCol, so
 // O2O callers can fall back to the parent table when the FK lives on the
-// source side (auto-detected addO2O edges) rather than the target. Returns
+// source side (auto-detected O2O edges) rather than the target. Returns
 // false — leaving r untouched — when the table is absent from the lookup or
 // does not declare fkCol.
 func wireRelFKFromTable(r *RelationshipContext, fkCol, schema, name string, colsByTable map[string]map[string]ColumnContext) bool {
@@ -213,22 +466,35 @@ func wireRelFKFromTable(r *RelationshipContext, fkCol, schema, name string, cols
 	return true
 }
 
-// resolveFKGoType returns the FK Go type for a relationship: the parent's PK
-// type for O2M/O2O (the FK column on the target matches the parent's PK), and
-// the target table's PK type for M2M.
-func resolveFKGoType(r *RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext) string {
-	switch r.Type {
-	case parser.OneToMany, parser.OneToOne:
+// resolveFKGoType returns the FK Go type for a relationship: the type of the
+// parent column an O2M or has-one key references, the parent's PK type for a
+// belongs-to O2O, and the type of the target column an M2M junction references.
+func resolveFKGoType(r *RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) string {
+	switch {
+	case r.ParentKey.GoType != "" && r.Type != parser.ManyToMany:
+		return r.ParentKey.GoType
+	case r.Type == parser.OneToMany || r.Type == parser.OneToOne:
 		if len(parent.PKColumns) > 0 {
 			return parent.PKColumns[0].GoType
 		}
-	case parser.ManyToMany:
-		// By the target's schema, as the TargetPKColumn wiring reads it.
-		if pk, ok := lookupPKColumn(pkColumns, r.TargetSchema, r.TargetTable); ok {
-			return pk.GoType
+	case r.Type == parser.ManyToMany:
+		if key, ok := targetKeyColumn(r, pkColumns, colsByTable); ok {
+			return key.GoType
 		}
 	}
 	return "string"
+}
+
+// targetKeyColumn resolves the target column an M2M junction's reference key
+// references, by the target's schema: the first referenced column, or the
+// target's first PK column for an edge built without key pairs.
+func targetKeyColumn(r *RelationshipContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) (ColumnContext, bool) {
+	if len(r.JunctionReference) > 0 {
+		if col, ok := lookupTableCols(colsByTable, r.TargetSchema, r.TargetTable)[r.JunctionReference[0].Referenced]; ok {
+			return col, true
+		}
+	}
+	return lookupPKColumn(pkColumns, r.TargetSchema, r.TargetTable)
 }
 
 // lookupPKColumn resolves a table's first PK column from the cross-table
@@ -261,8 +527,15 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 		return TableContext{}, err
 	}
 
-	columns, pkColumns := buildTableColumns(input, table, tableCfg)
+	columns, pkColumns, unmapped, err := buildTableColumns(input, table, tableCfg)
+	if err != nil {
+		return TableContext{}, err
+	}
+	if err := checkPrimaryKeyCanKeyAMap(qualifiedTableOrName(table), pkColumns); err != nil {
+		return TableContext{}, err
+	}
 
+	input.Warnings = append(input.Warnings, unmapped...)
 	input.Warnings = append(input.Warnings,
 		incrementSQLTypeWarnings(input.Resolver.ForSchema(table.Schema), qualifiedTableOrName(table), tableCfg, columns)...)
 
@@ -281,7 +554,69 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 	return tc, nil
 }
 
-func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg config.TableConfig) ([]ColumnContext, []ColumnContext) {
+// checkPrimaryKeyCanKeyAMap rejects a primary-key column that cannot key a
+// Go map (PRD §4.13): a MySQL SET, a PostgreSQL array (enum arrays included)
+// or a JSON column, whatever its Go type, or any column whose Go type is not
+// comparable. Get and the batch writes filter on the key, the batch writes
+// and the loaders collect keys into maps, and no comparator family both
+// compares such a value for equality and keys a map. The comparator.Opaque
+// types are slices too, but every key site renders them through KeySetKey.
+func checkPrimaryKeyCanKeyAMap(table string, pkColumns []ColumnContext) error {
+	for _, col := range pkColumns {
+		reason := keyColumnUnkeyableReason(col)
+		if reason == "" {
+			continue
+		}
+		return fmt.Errorf(
+			"primary-key column %q of table %s %s; key the table on other columns with tables.%s.primary_key.columns, or drop it with exclude_tables",
+			col.Name, table, reason, table,
+		)
+	}
+	return nil
+}
+
+// keyColumnUnkeyableReason returns why a key column cannot key a Go map, as
+// the predicate of a sentence about the column, or "" when it can. A MySQL
+// SET, a PostgreSQL array (enum arrays included) or a JSON column never keys,
+// whatever Go type column_map, type_map or overrides.types gives it: that
+// test is on the SQL column kind, not the resolved Go type (PRD §4.13). Any
+// other column keys when its Go type is comparable, directly or, for the
+// comparator.Opaque family, through KeySetKey. A column whose Go type cannot
+// key is reported by that type, so the default SET, array and JSON bindings
+// read as before.
+func keyColumnUnkeyableReason(col ColumnContext) string {
+	base := strings.TrimPrefix(col.GoType, "*")
+	family, _ := pkComparatorFamily(base)
+	if col.IsSlice || (family != "Opaque" && !goTypeComparable(base)) {
+		return fmt.Sprintf("has Go type %s, which cannot key a Go map, so the generated package would not compile", base)
+	}
+	var kind string
+	switch {
+	case col.IsSet:
+		kind = "a MySQL SET"
+	case strings.HasSuffix(col.BaseSQLType, "]"):
+		kind = "an array"
+	case isJSONSQLType(col.BaseSQLType):
+		kind = "a JSON"
+	default:
+		return ""
+	}
+	return fmt.Sprintf("is %s column; a SET, array or JSON column never keys a Go map, whatever Go type (here %s) column_map, type_map or overrides.types gives it", kind, base)
+}
+
+// isJSONSQLType reports whether a base SQL type, as Resolver.BaseSQLType
+// spells it, is a JSON type.
+func isJSONSQLType(baseSQLType string) bool {
+	t := strings.ToLower(baseSQLType)
+	return t == "json" || t == "jsonb"
+}
+
+// buildTableColumns builds the contexts of a table's columns and its primary
+// key columns, and returns the warnings for the columns whose SQL type no
+// resolution step mapped. The caller that builds the table's own context
+// raises them; a caller rebuilding another table's columns drops them, so each
+// column warns once.
+func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg config.TableConfig) ([]ColumnContext, []ColumnContext, []string, error) {
 	var tableOverrides map[string]config.TypeOverride
 	if tableCfg.Overrides != nil {
 		tableOverrides = tableCfg.Overrides.Types
@@ -294,11 +629,20 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 	}
 
 	columns := make([]ColumnContext, 0, len(table.Columns))
+	var unmapped []string
 	for _, col := range table.Columns {
 		if excludeSet[col.Name] {
 			continue
 		}
-		columns = append(columns, buildColumnContext(input, table.Schema, &col, tableCfg, tableOverrides))
+		cc, warning, err := buildColumnContext(input, table.Schema, qualifiedTableOrName(table), &col, tableCfg, tableOverrides)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("building column %s.%s: %w", qualifiedTableOrName(table), col.Name, err)
+		}
+		cc.InForeignKey = inForeignKey(table, col.Name)
+		columns = append(columns, cc)
+		if warning != "" {
+			unmapped = append(unmapped, warning)
+		}
 	}
 
 	// PK column override (PRD §8.6 — tables.<name>.primary_key.columns):
@@ -307,36 +651,43 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 	// (validatePrimaryKeyOverride) hard-errors on missing or nullable
 	// columns, so by the time we get here the override is well-formed.
 	if tableCfg.PrimaryKey != nil && len(tableCfg.PrimaryKey.Columns) > 0 {
-		overrideSet := make(map[string]bool, len(tableCfg.PrimaryKey.Columns))
-		for _, name := range tableCfg.PrimaryKey.Columns {
-			overrideSet[name] = true
-		}
-		for i := range columns {
-			columns[i].PrimaryKey = overrideSet[columns[i].Name]
-		}
-		// Build pkColumns in the user-declared order. Order is load-bearing
-		// for composite-PK cache key construction (CACHE.md §16) and the
-		// generated <Table>PK struct field order.
-		colByName := make(map[string]ColumnContext, len(columns))
-		for _, c := range columns {
-			colByName[c.Name] = c
-		}
-		pkColumns := make([]ColumnContext, 0, len(tableCfg.PrimaryKey.Columns))
-		for _, name := range tableCfg.PrimaryKey.Columns {
-			if col, ok := colByName[name]; ok {
-				pkColumns = append(pkColumns, col)
-			}
-		}
-		return columns, pkColumns
+		return columns, overridePKColumns(columns, tableCfg.PrimaryKey.Columns), unmapped, nil
 	}
 
+	// The PK follows its PRIMARY KEY (...) order, not column order: it sets
+	// the <Table>PK field order and the composite cache key (PRD §27.5).
 	var pkColumns []ColumnContext
-	for i := range columns {
-		if columns[i].PrimaryKey {
+	for _, name := range declaredPrimaryKey(table) {
+		if i := slices.IndexFunc(columns, func(c ColumnContext) bool { return c.Name == name }); i >= 0 {
 			pkColumns = append(pkColumns, columns[i])
 		}
 	}
-	return columns, pkColumns
+	return columns, pkColumns, unmapped, nil
+}
+
+// overridePKColumns marks the declared primary_key.columns as the PK in
+// columns and returns them in the user-declared order. Order is load-bearing
+// for composite-PK cache key construction (CACHE.md §16) and the generated
+// <Table>PK struct field order.
+func overridePKColumns(columns []ColumnContext, names []string) []ColumnContext {
+	overrideSet := make(map[string]bool, len(names))
+	for _, name := range names {
+		overrideSet[name] = true
+	}
+	for i := range columns {
+		columns[i].PrimaryKey = overrideSet[columns[i].Name]
+	}
+	colByName := make(map[string]ColumnContext, len(columns))
+	for _, c := range columns {
+		colByName[c.Name] = c
+	}
+	pkColumns := make([]ColumnContext, 0, len(names))
+	for _, name := range names {
+		if col, ok := colByName[name]; ok {
+			pkColumns = append(pkColumns, col)
+		}
+	}
+	return pkColumns
 }
 
 // detectTableSoftDelete returns the table's soft delete column, or nil when it
@@ -595,7 +946,7 @@ func validateResolvedFieldNames(
 		}
 	}
 	for i := range rels {
-		if err := reservedRelationshipFieldError(qualifiedTable, structName, rels[i]); err != nil {
+		if err := reservedRelationshipFieldError(qualifiedTable, structName, rels[i], pkColumns); err != nil {
 			reservedErrs = append(reservedErrs, err)
 		}
 	}
@@ -624,25 +975,54 @@ func validateResolvedFieldNames(
 // replacement (§13.4). What remains is two declared entries whose
 // names pascalize onto one field, which config.validateRelationships misses
 // because it compares `name:` byte-equal (`primary_document` and
-// `PrimaryDocument` are distinct names, one field), or two inferred edges to
-// different targets whose names pluralize onto one.
+// `PrimaryDocument` are distinct names, one field), two inferred edges to
+// different targets whose names pluralize onto one, or two inferred edges
+// that disambiguation left one name (PRD §5.3 rule 6). The last is reported
+// with the foreign keys behind both edges, since its remedy is to exclude the
+// name and declare the edges by hand.
 //
 // rels is sorted by Name before this runs, so the reported pair is stable.
 func validateDuplicateRelationshipFields(qualifiedTable string, rels []RelationshipContext) error {
-	seen := make(map[string]string, len(rels))
+	seen := make(map[string]int, len(rels))
 	var errs []error
 	for i := range rels {
-		prev, taken := seen[rels[i].FieldName]
+		j, taken := seen[rels[i].FieldName]
 		if !taken {
-			seen[rels[i].FieldName] = rels[i].Name
+			seen[rels[i].FieldName] = i
+			continue
+		}
+		prev := rels[j]
+		if prev.Name == rels[i].Name && len(prev.Constraints) > 0 && len(rels[i].Constraints) > 0 {
+			// rels are sorted by Name alone, so the pair is ordered here.
+			first, second := quotedConstraints(prev), quotedConstraints(rels[i])
+			if second < first {
+				first, second = second, first
+			}
+			errs = append(errs, fmt.Errorf(
+				"tables.%s.relationships: two detected relationships are both named %q after disambiguation, one from %s and one from %s; list %q in `exclude_relationships` and declare both edges by hand (PRD §5.3, §13.4)",
+				qualifiedTable, rels[i].Name, first, second, rels[i].Name,
+			))
 			continue
 		}
 		errs = append(errs, fmt.Errorf(
 			"tables.%s.relationships: relationships %q and %q both resolve to the Go field %q — two relationships on one table cannot share a Go field name (PRD §13.7.3); rename one, or drop an auto-detected edge with `exclude_relationships`",
-			qualifiedTable, prev, rels[i].Name, rels[i].FieldName,
+			qualifiedTable, prev.Name, rels[i].Name, rels[i].FieldName,
 		))
 	}
 	return errors.Join(errs...)
+}
+
+// quotedConstraints spells the foreign keys behind a detected edge: one for an
+// O2O / O2M edge, the junction's two for an M2M edge.
+func quotedConstraints(rel RelationshipContext) string {
+	quoted := make([]string, len(rel.Constraints))
+	for i, c := range rel.Constraints {
+		quoted[i] = strconv.Quote(c)
+	}
+	if len(quoted) == 1 {
+		return "foreign key " + quoted[0]
+	}
+	return "foreign keys " + strings.Join(quoted, " and ")
 }
 
 // validateDuplicateFieldNames is the override-gated half of the rule: two
@@ -793,6 +1173,19 @@ func incrementSQLTypeWarnings(resolver *gotype.Resolver, qualifiedTable string, 
 	return warnings
 }
 
+// unmappedSQLTypeWarning reports a column whose SQL type no resolution step
+// maps, so it fell back to string (PRD §7.1). The fallback stays — it is what
+// lets generation succeed on a type sqlgen has never heard of — but a silent
+// one leaves a geometry or citext column typed string with nothing pointing at
+// the config key that would choose its type. kind is "column" for a table and
+// "view column" for a view.
+func unmappedSQLTypeWarning(kind, qualifiedEntity, column, sqlType string, gt gotype.GoType) string {
+	return fmt.Sprintf(
+		"%s %s.%s has SQL type %q, which no override, integration, enum, SET, domain or built-in mapping resolves, so it is generated as %s; add overrides.types.%s to choose its Go type",
+		kind, qualifiedEntity, column, sqlType, gt.Name, gt.UnmappedSQLType,
+	)
+}
+
 // typeOverrideSource names the config key that produced a column's resolved Go
 // type, so an error can point at the line to edit. The two per-column routes
 // are named exactly. For the by-SQL-type routes the resolver reports the
@@ -829,11 +1222,7 @@ func typeOverrideSource(resolver *gotype.Resolver, qualifiedTable string, tableC
 // builtins carry no qualifier; `time.Time`, `json.RawMessage` and the rest of
 // the known registry carry one but resolve their own import.
 func needsExplicitImport(literal string) bool {
-	if !strings.Contains(literal, ".") {
-		return false
-	}
-	_, known := gotype.KnownLiteral(literal)
-	return !known
+	return gotypeliteral.NeedsExplicitImport(literal)
 }
 
 // buildUpdateColumnContexts pairs each auto-set update column with its
@@ -860,31 +1249,38 @@ func qualifiedTableOrName(t *parser.Table) string {
 }
 
 // tableHasResolvedPK reports whether a table has a primary key after override
-// resolution. A table qualifies when either:
-//   - The matching config.TableConfig declares primary_key.columns (override), or
-//   - At least one of the parser-detected columns has PrimaryKey == true.
-//
-// Tables that fail both checks are skipped from generation; the warning is
-// emitted earlier from config.ValidatePostParse::validateMissingPrimaryKey
-// (PRD §9.4b).
+// resolution and column exclusion: the primary_key.columns override when
+// declared, else the parser-detected PK columns, non-empty and with no member
+// removed by exclude_columns. It must agree with buildTableColumns, which drops
+// excluded columns before collecting PKColumns. config.ValidatePostParse
+// reports every table this skips, as a warning or an error (PRD §4.13, §9.4b).
 func tableHasResolvedPK(cfg *config.RootConfig, table *parser.Table) bool {
+	var tableCfg config.TableConfig
+	var global config.GenerationConfig
 	if cfg != nil {
-		if tc, ok := cfg.Tables[qualifiedTableOrName(table)]; ok {
-			if tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
-				return true
-			}
-		} else if tc, ok := cfg.Tables[table.Name]; ok {
-			if tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
-				return true
+		tableCfg = resolveTableConfig(cfg.Tables, table.Schema, table.Name)
+		global = cfg.Generation
+	}
+	var key []string
+	if tableCfg.PrimaryKey != nil && len(tableCfg.PrimaryKey.Columns) > 0 {
+		key = tableCfg.PrimaryKey.Columns
+	} else {
+		for i := range table.Columns {
+			if table.Columns[i].PrimaryKey {
+				key = append(key, table.Columns[i].Name)
 			}
 		}
 	}
-	for i := range table.Columns {
-		if table.Columns[i].PrimaryKey {
-			return true
+	if len(key) == 0 {
+		return false
+	}
+	excluded := config.ResolveTableExcludeColumns(tableCfg, global)
+	for _, name := range key {
+		if slices.Contains(excluded, name) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // cursorKeyCandidates returns the columns §4.13 cursor_keys resolution checks
@@ -935,12 +1331,21 @@ func collectColumnImports(columns []ColumnContext) []string {
 
 // --- Column building ---
 
-// buildColumnContext builds the context of a column of a table in schema.
-func buildColumnContext(input *GenerateInput, schema string, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) ColumnContext {
+// buildColumnContext builds the context of a column of a table in schema,
+// and the warning to raise when no resolution step mapped its SQL type ("" when
+// one did).
+func buildColumnContext(input *GenerateInput, schema, qualifiedTable string, col *parser.Column, tableCfg config.TableConfig, tableOverrides map[string]config.TypeOverride) (ColumnContext, string, error) {
 	resolver := input.Resolver.ForSchema(schema)
 	gt := resolveColumnGoType(resolver, col, tableCfg, tableOverrides, input.Config.Tenancy)
+	var unmapped string
+	if gt.UnmappedSQLType != "" {
+		unmapped = unmappedSQLTypeWarning("column", qualifiedTable, col.Name, col.Type, gt)
+	}
 
-	accessRole, accessCaps := resolveAccess(tableCfg.ColumnMap[col.Name].Access)
+	accessRole, accessCaps, err := resolveAccess(tableCfg.ColumnMap[col.Name].Access)
+	if err != nil {
+		return ColumnContext{}, "", err
+	}
 	fieldName, fieldNameOverridden := resolveColumnFieldName(col.Name, tableCfg)
 
 	var fkRef *FKReferenceContext
@@ -953,29 +1358,32 @@ func buildColumnContext(input *GenerateInput, schema string, col *parser.Column,
 		}
 	}
 
+	arrayElemGoType := retypedArrayElemGoType(input.Config.Input.Dialect, resolver, col.Type, gt, tableOverrides)
+
 	return ColumnContext{
-		Name:          col.Name,
-		FieldName:     fieldName,
-		GoType:        gt.Name,
-		Import:        gt.Import,
-		ZeroValue:     gt.ZeroValue,
-		SQLType:       col.Type,
-		BaseSQLType:   baseSQLType(resolver, col.Type),
-		Nullable:      col.Nullable,
-		PrimaryKey:    col.PrimaryKey,
-		HasDefault:    col.Default != "",
-		DefaultExpr:   resolveDefaultExpr(col),
-		AutoIncrement: col.AutoIncrement,
-		IsComputed:    col.GeneratedExpr != "",
-		Description:   resolveColumnDescription(col, tableCfg),
-		DBTag:         col.Name,
-		JSONTag:       col.Name,
-		IsSlice:       gt.IsSlice,
-		SliceElemType: gt.SliceElemType,
-		IsSet:         resolver.IsSet(col.Type),
-		FKConvert:     gt.FKConvert,
-		FKReference:   fkRef,
-		Unique:        col.Unique,
+		Name:            col.Name,
+		FieldName:       fieldName,
+		GoType:          gt.Name,
+		Import:          gt.Import,
+		ZeroValue:       gt.ZeroValue,
+		SQLType:         col.Type,
+		BaseSQLType:     baseSQLType(resolver, col.Type),
+		Nullable:        col.Nullable,
+		PrimaryKey:      col.PrimaryKey,
+		HasDefault:      col.Default != "",
+		DefaultExpr:     resolveDefaultExpr(col),
+		AutoIncrement:   col.AutoIncrement,
+		IsComputed:      col.GeneratedExpr != "",
+		Description:     resolveColumnDescription(col, tableCfg),
+		DBTag:           col.Name,
+		JSONTag:         col.Name,
+		IsSlice:         gt.IsSlice,
+		SliceElemType:   gt.SliceElemType,
+		ArrayElemGoType: arrayElemGoType,
+		IsSet:           resolver.IsSet(col.Type),
+		FKConvert:       gt.FKConvert,
+		FKReference:     fkRef,
+		Unique:          col.Unique,
 
 		FieldNameOverridden: fieldNameOverridden,
 
@@ -986,7 +1394,7 @@ func buildColumnContext(input *GenerateInput, schema string, col *parser.Column,
 		APISortable:        accessCaps.APISortable,
 		EventRedacted:      accessCaps.EventRedacted,
 		ManifestVisibility: accessCaps.ManifestVisibility,
-	}
+	}, unmapped, nil
 }
 
 // --- Doc comment resolution ---
@@ -1021,6 +1429,21 @@ func resolveColumnFieldName(column string, tableCfg config.TableConfig) (string,
 		return override.Name, true
 	}
 	return FieldName(column), false
+}
+
+// retypedArrayElemGoType returns the element Go type of a PostgreSQL array
+// column whose resolved Go type gt is not a slice, as a retype leaves it, and
+// "" for any other column. The element resolves as it does for the unretyped
+// column, so the filter compares what the database holds (PRD §11.2).
+func retypedArrayElemGoType(dialect config.Dialect, resolver *gotype.Resolver, sqlType string, gt gotype.GoType, tableOverrides map[string]config.TypeOverride) string {
+	if dialect != config.DialectPostgres || gt.IsSlice || resolver == nil {
+		return ""
+	}
+	elem, ok := strings.CutSuffix(resolver.BaseSQLType(sqlType), "[]")
+	if !ok {
+		return ""
+	}
+	return resolver.ArrayElemGoType(elem, tableOverrides)
 }
 
 // resolveColumnGoType resolves a column's Go type: the tenant column's
@@ -1087,6 +1510,30 @@ func markTenantColumn(cols []ColumnContext, column string) {
 	}
 }
 
+// retypeTenantFilterField re-derives the tenant column's filter comparator
+// once markTenantColumn has stamped the column. buildFilterFields ran while
+// the column still looked untenanted, and the comparator follows the resolved
+// tenant Go type (resolveSimpleComparator's tenant arm), so the field has to
+// be recomputed here or the filter keeps the SQL type's comparator while the
+// row struct carries the tenant type.
+func retypeTenantFilterField(fields []FilterFieldContext, cols []ColumnContext, column string, dialect config.Dialect) {
+	i := slices.IndexFunc(cols, func(c ColumnContext) bool { return c.Name == column })
+	if i < 0 {
+		return
+	}
+	col := cols[i]
+	for j := range fields {
+		if fields[j].ColumnName != column {
+			continue
+		}
+		fields[j].Filterable = columnIsFilterable(col, dialect)
+		fields[j].ComparatorType = ""
+		if fields[j].Filterable {
+			fields[j].ComparatorType = resolveComparatorType(col, dialect)
+		}
+	}
+}
+
 // resolveColumnDescription resolves the doc comment for a column.
 // Priority: config column_map.<col>.description > SQL COMMENT ON COLUMN > empty.
 // All descriptions are returned verbatim — the template handles formatting.
@@ -1138,18 +1585,19 @@ func detectPKStrategy(input *GenerateInput, _ *parser.Table, pkColumns []ColumnC
 }
 
 func autoDetectPKStrategy(dialect config.Dialect, pk ColumnContext) config.PKStrategy {
-	// A single-column PK that is also a foreign key is caller-supplied by
-	// definition (PRD §8.6): its value must equal an existing parent row's
-	// key, so neither the database nor the generated client may mint it.
-	// Without this clause the dialect arms below classify such a PK on type
-	// alone — a UUID 1:1 extension key resolved to `app`, and Create then
-	// minted a fresh UUID that could not satisfy the foreign key.
+	// A single-column PK that is a member of a foreign key, a composite one
+	// included, is caller-supplied by definition (PRD §8.6): its value must
+	// equal an existing parent row's key, so neither the database nor the
+	// generated client may mint it. Without this clause the dialect arms below
+	// classify such a PK on type alone — a UUID 1:1 extension key resolved to
+	// `app`, and Create then minted a fresh UUID that could not satisfy the
+	// foreign key.
 	//
 	// Synthetic references are excluded: they are invented from a config
 	// `relationships.fk` and can land on a column that holds no foreign key,
 	// including a table's own surrogate PK, which would demote a healthy
 	// `db` key to `caller`.
-	if pk.FKReference != nil && !pk.FKReference.Synthetic {
+	if pk.InForeignKey || (pk.FKReference != nil && !pk.FKReference.Synthetic) {
 		return config.PKStrategyCaller
 	}
 	switch dialect {
@@ -1179,31 +1627,20 @@ func detectPostgresPK(pk ColumnContext) config.PKStrategy {
 	}
 }
 
+// MySQL and SQLite have no uuid SQL type, so a UUID key is classified by its
+// storage type like any other column (PRD §8.6).
 func detectMySQLPK(pk ColumnContext) config.PKStrategy {
-	sqlType := strings.ToLower(pk.SQLType)
-	switch {
-	case pk.AutoIncrement:
+	if pk.AutoIncrement {
 		return config.PKStrategyDB
-	case isUUIDType(sqlType):
-		// MySQL + UUID always defaults to app — no way to retrieve DB-generated UUID.
-		return config.PKStrategyApp
-	default:
-		return config.PKStrategyCaller
 	}
+	return config.PKStrategyCaller
 }
 
 func detectSQLitePK(pk ColumnContext) config.PKStrategy {
-	sqlType := strings.ToLower(pk.SQLType)
-	switch {
-	case pk.AutoIncrement || (isIntegerType(sqlType) && pk.HasDefault):
+	if pk.AutoIncrement || (isIntegerType(strings.ToLower(pk.SQLType)) && pk.HasDefault) {
 		return config.PKStrategyDB
-	case isUUIDType(sqlType) && pk.HasDefault:
-		return config.PKStrategyDB
-	case isUUIDType(sqlType):
-		return config.PKStrategyApp
-	default:
-		return config.PKStrategyCaller
 	}
+	return config.PKStrategyCaller
 }
 
 func isUUIDType(sqlType string) bool {
@@ -1357,7 +1794,10 @@ func buildRelationshipContexts(
 		excludeSet[name] = true
 	}
 
-	var inferred []RelationshipContext
+	var (
+		inferred []RelationshipContext
+		omitted  []string
+	)
 
 	qualifiedName := table.Name
 	if table.Schema != "" {
@@ -1392,6 +1832,25 @@ func buildRelationshipContexts(
 		if !targets.generates(r.TargetTable) {
 			continue
 		}
+		// A key column `exclude_columns` removes has no field for the loader,
+		// the filter or the nested writer to use, so the edge is omitted. It
+		// is reported, since the user excluded a column, not the edge.
+		if member := targets.excludedKeyMember(schema, r); member != "" {
+			omitted = append(omitted, fmt.Sprintf(
+				"tables.%s: the foreign-key-inferred relationship %q is omitted because its key column %s is removed by `exclude_columns`. Keep the column to keep the edge, or list %q in `exclude_relationships` (PRD §4.13, §13.4).",
+				qualifiedName, visibleName, member, visibleName,
+			))
+			continue
+		}
+		// An o2m/m2m key column that cannot key a Go map omits the edge with
+		// a warning (unkeyableKeyMember).
+		if member, reason, constraint := targets.unkeyableKeyMember(schema, r); member != "" {
+			omitted = append(omitted, fmt.Sprintf(
+				"tables.%s: foreign key %s gives no relationship %q: its column %s %s; list %q in `exclude_relationships` to silence this (PRD §4.13, §5.3)",
+				qualifiedName, constraint, visibleName, member, reason, visibleName,
+			))
+			continue
+		}
 		inferred = append(inferred, relationshipToContext(schema, r, targets))
 	}
 
@@ -1399,6 +1858,7 @@ func buildRelationshipContexts(
 	if err != nil {
 		return nil, nil, err
 	}
+	warnings = append(omitted, warnings...)
 	slices.SortFunc(rels, func(a, b RelationshipContext) int {
 		return strings.Compare(a.Name, b.Name)
 	})
@@ -1455,7 +1915,15 @@ func mergeDeclaredRelationships(
 			errs = append(errs, errors.Join(targetErr, junctionErr))
 			continue
 		}
-		rel := configRelationshipToContext(schema, r, targets)
+		if err := checkDeclaredJunctionKeys(schema, r, qualifiedName, targets); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		rel := configRelationshipToContext(schema, r, qualifiedName, targets)
+		if err := checkDeclaredLinkColumns(schema, rel, targets, qualifiedName); err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		// The !replaced guard keeps a second declared entry resolving to the
 		// same field from re-reporting a replacement that already happened.
 		// It does not make that pair legal: config.validateRelationships
@@ -1486,8 +1954,32 @@ func mergeDeclaredRelationships(
 	return append(rels, declared...), warnings, nil
 }
 
+// checkDeclaredLinkColumns rejects a declared relationship whose link
+// columns the generated model cannot carry: one that `exclude_columns`
+// removes, or, on an `o2m` or `m2m` edge, one that cannot key a Go map (a
+// MySQL SET, a PostgreSQL array or a JSON column, whatever its Go type, or a
+// column whose Go type is not comparable). The FK-inferred counterparts are
+// omitted with a warning; the user declared this edge by name, so each is an
+// error, as an unresolvable target is (PRD §4.13).
+func checkDeclaredLinkColumns(schema *parser.Schema, rel RelationshipContext, targets *relationshipTargets, qualifiedName string) error {
+	if member := targets.excludedDeclaredMember(schema, rel, qualifiedName); member != "" {
+		return fmt.Errorf(
+			"tables.%s.relationships: %q links through %s, which `exclude_columns` removes from the generated model; keep the column or remove the relationship (PRD §4.13, §13.4)",
+			qualifiedName, rel.Name, member,
+		)
+	}
+	if member, reason := targets.unkeyableDeclaredMember(schema, rel, qualifiedName); member != "" {
+		return fmt.Errorf(
+			"tables.%s.relationships: %q links through %s, and that column %s; link the relationship through other columns or remove it (PRD §4.13, §13.4)",
+			qualifiedName, rel.Name, member, reason,
+		)
+	}
+	return nil
+}
+
 func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets *relationshipTargets) RelationshipContext {
 	tSchema, tName := splitQualifiedName(r.TargetTable)
+	sSchema, sName := splitQualifiedName(r.SourceTable)
 	// Callers drop an edge whose target does not generate before building it.
 	target, _ := targets.resolve(tSchema, tName)
 	targetStruct := target.StructName
@@ -1520,20 +2012,35 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		sorts = append(sorts, SortContext{Column: s.Column, Direction: sortDirection(s.Direction)})
 	}
 
+	// The one-column fields name a composite key's first column; its loaders
+	// and filters read the pairs.
+	var fkCol, localFK, referenceFK string
+	constraints := []string{r.Constraint}
+	if r.Type == parser.ManyToMany {
+		localFK, referenceFK = r.JunctionLocal[0].Local, r.JunctionReference[0].Local
+		constraints = []string{r.JunctionLocalConstraint, r.JunctionReferenceConstraint}
+	} else {
+		fkCol = r.Key[0].Local
+	}
+
 	jSchema, jName := splitQualifiedName(r.JunctionTable)
-	return RelationshipContext{
+	rel := RelationshipContext{
 		Name:                name,
 		Type:                r.Type,
 		Side:                r.Side,
 		TargetTable:         tName,
 		TargetSchema:        tSchema,
 		TargetStructName:    targetStruct,
-		FKColumn:            r.FKColumn,
-		FKOnTarget:          fkColumnOnTarget(schema, r.Type, tSchema, tName, r.FKColumn),
+		FKColumn:            fkCol,
+		Constraints:         constraints,
+		Key:                 r.Key,
+		JunctionLocal:       r.JunctionLocal,
+		JunctionReference:   r.JunctionReference,
+		FKOnTarget:          inferredFKOnTarget(schema, r, tSchema, tName, fkCol),
 		JunctionTable:       jName,
 		JunctionSchema:      jSchema,
-		JunctionLocalFK:     r.JunctionLocalFK,
-		JunctionReferenceFK: r.JunctionReferenceFK,
+		JunctionLocalFK:     localFK,
+		JunctionReferenceFK: referenceFK,
 		Filter:              r.Filter,
 		Sort:                sorts,
 		FieldName:           fieldName,
@@ -1541,6 +2048,8 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		Description:         relationshipDescription(r.Type, tName),
 		JSONTag:             toSnakeName(name),
 	}
+	stampKeyConstraintFacts(schema, &rel, sSchema, sName)
+	return rel
 }
 
 // sortDirection normalizes a relationship `sort:` direction to the sql package's
@@ -1553,7 +2062,11 @@ func sortDirection(d string) string {
 	return "ASC"
 }
 
-func configRelationshipToContext(schema *parser.Schema, r config.TableRelationship, targets *relationshipTargets) RelationshipContext {
+// configRelationshipToContext builds the context of a declared relationship
+// on the source table (its qualified name). An m2m entry's junction keys are
+// the declared or inferred ones (declaredJunctionKeys); a key that cannot be
+// inferred is "", and mergeDeclaredRelationships reports it before building.
+func configRelationshipToContext(schema *parser.Schema, r config.TableRelationship, source string, targets *relationshipTargets) RelationshipContext {
 	relType := parseRelationshipType(r.Type)
 	// Callers run checkDeclaredTarget first, so the target resolves. The
 	// context carries the schema the target resolved in, not the one `table:`
@@ -1573,27 +2086,56 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 	// loader, the relationship filter, the FK metadata and the nested link
 	// step name one table. Callers run checkDeclaredJunction first.
 	cjSchema, cjName, _ := targets.resolveJunction(r.Junction)
-	return RelationshipContext{
+	sourcePK := targets.primaryKey(splitQualifiedName(source))
+	var (
+		key, junctionLocal, junctionReference []parser.KeyPair
+		fkCol, localFK, referenceFK           string
+		fkOnTarget                            bool
+	)
+	if relType == parser.ManyToMany {
+		localFK, referenceFK, _ = declaredJunctionKeys(schema, r, source, targets)
+		junctionLocal = declaredKey(declaredJunctionKey(r.JunctionLocalFK, localFK), sourcePK)
+		junctionReference = declaredKey(declaredJunctionKey(r.JunctionReferenceFK, referenceFK), target.PK)
+	} else if len(r.FK) > 0 {
+		fkCol = r.FK[0]
+		fkOnTarget = !slices.ContainsFunc(r.FK, func(column string) bool {
+			return !fkColumnOnTarget(schema, relType, target.Schema, tName, column)
+		})
+		// An O2M FK, and a has-one O2O FK, is on the target and references
+		// this table; a belongs-to FK references the target.
+		referenced := target.PK
+		if relType == parser.OneToMany || fkOnTarget {
+			referenced = sourcePK
+		}
+		key = declaredKey(r.FK, referenced)
+	}
+	rel := RelationshipContext{
 		Name:                r.Name,
 		Type:                relType,
 		Side:                parseRelationshipSide(r.Side),
 		TargetTable:         tName,
 		TargetSchema:        target.Schema,
 		TargetStructName:    target.StructName,
-		FKColumn:            r.FK,
-		FKOnTarget:          fkColumnOnTarget(schema, relType, target.Schema, tName, r.FK),
+		FKColumn:            fkCol,
+		Key:                 key,
+		JunctionLocal:       junctionLocal,
+		JunctionReference:   junctionReference,
+		FKOnTarget:          fkOnTarget,
 		JunctionTable:       cjName,
 		JunctionSchema:      cjSchema,
-		JunctionLocalFK:     r.JunctionLocalFK,
-		JunctionReferenceFK: r.JunctionReferenceFK,
+		JunctionLocalFK:     localFK,
+		JunctionReferenceFK: referenceFK,
 		Filter:              r.Filter,
 		Discriminator:       discriminatorContext(r.Discriminator),
 		Sort:                sorts,
 		FieldName:           fieldName,
 		GoType:              goType,
-		Description:         relationshipDescription(relType, r.Table),
+		Description:         declaredRelationshipDescription(r, relType),
 		JSONTag:             toSnakeName(r.Name),
 	}
+	sSchema, sName := splitQualifiedName(source)
+	stampKeyConstraintFacts(schema, &rel, sSchema, sName)
+	return rel
 }
 
 // fkColumnOnTarget derives RelationshipContext.FKOnTarget: whether the edge's
@@ -1635,6 +2177,27 @@ func fkColumnOnTarget(schema *parser.Schema, relType parser.RelationshipType, ta
 	return slices.ContainsFunc(target.Columns, func(c parser.Column) bool {
 		return c.Name == fkColumn
 	})
+}
+
+// inferredFKOnTarget is fkColumnOnTarget for a detected edge. A composite key's
+// members can share their names with the referenced table's, as a tenant column
+// does, so its side comes from detection: the FK holder is the target of an O2M
+// edge and the source of an O2O one.
+func inferredFKOnTarget(schema *parser.Schema, r parser.Relationship, targetSchema, targetTable, fkColumn string) bool {
+	if len(r.Key) > 1 {
+		return r.Type == parser.OneToMany
+	}
+	return fkColumnOnTarget(schema, r.Type, targetSchema, targetTable, fkColumn)
+}
+
+// declaredRelationshipDescription returns the doc comment of a declared
+// relationship's field: its `description` verbatim when set, like a column's
+// (PRD §4.8), else the relationshipDescription boilerplate.
+func declaredRelationshipDescription(r config.TableRelationship, relType parser.RelationshipType) string {
+	if r.Description != "" {
+		return r.Description
+	}
+	return relationshipDescription(relType, r.Table)
 }
 
 // relationshipDescription returns a doc comment description for a relationship field.
@@ -1918,7 +2481,7 @@ func buildIncrementColumns(columns []ColumnContext) []ColumnContext {
 // callers reached during assembly see it unset. buildIncrementColumns is
 // therefore re-run once tenancy lands; see attachTenancyToTables.
 func isIncrementEligible(col ColumnContext) bool {
-	return !col.PrimaryKey && col.FKReference == nil && !col.Tenant && !col.IsComputed &&
+	return !col.PrimaryKey && col.FKReference == nil && !col.InForeignKey && !col.Tenant && !col.IsComputed &&
 		isIncrementableGoType(col.GoType) && isArithmeticSQLColumn(col)
 }
 
@@ -1939,7 +2502,7 @@ func isArithmeticSQLColumn(col ColumnContext) bool {
 // ColumnContext.Tenant, so testing it would be dead — and the warning is about
 // the override, which is worth naming whatever else disqualifies the column.
 func incrementBlockedBySQLType(col ColumnContext) bool {
-	return !col.PrimaryKey && col.FKReference == nil &&
+	return !col.PrimaryKey && col.FKReference == nil && !col.InForeignKey &&
 		isIncrementableGoType(col.GoType) && !isArithmeticSQLColumn(col)
 }
 
@@ -2067,7 +2630,7 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 	case col.IsSet:
 		// SET columns store comma-separated strings; use String comparator.
 		return ""
-	case col.IsSlice:
+	case col.IsSlice, col.ArrayElemGoType != "":
 		elemType := sliceElementType(col, baseGoType)
 		if !isComparableSliceElement(elemType) {
 			// `comparator.Slice[T]` requires `T comparable`. JSON
@@ -2104,8 +2667,9 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 
 // pkComparatorFamily classifies which comparator family a PK or FK column's
 // filter field takes, given its Go type. Returns the family's base name
-// ("ID", "Number", "Opaque") and, for the two generic families, the type
-// parameter.
+// ("ID", "Enum", "Number", "Opaque", "Time") and the type parameter: for the
+// generic families their type argument, for "Time" the operand type the
+// non-generic comparator.Time takes.
 //
 // This exists so the generated client's own PK-filter expressions
 // (funcPKFilterExpr / pkFilterInExpr / funcPKIsStringType in funcmap.go) are
@@ -2116,27 +2680,46 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 // `net` types started resolving to comparator.Opaque[T], a `BLOB PRIMARY KEY`
 // still had `&comparator.ID{…}` assigned into its `*comparator.Opaque[[]byte]`
 // field and the generated package stopped compiling. The arms below mirror
-// resolveGenericComparator's order exactly; the two must move together.
+// resolveGenericComparator's order exactly; the two must move together. The
+// last two arms mirror resolveSimpleComparator's time and bool arms, which sit
+// ahead of its key arm for the same reason.
 //
-// Only the arms reachable for a key column are modelled: IsSet / IsSlice /
-// enum-like columns keep whatever resolveGenericComparator gives them and are
-// not routed here, because the helpers this serves are called only for PK and
-// FK columns.
+// IsSet and IsSlice columns are not modelled: the Go type alone does not
+// identify them, and checkPrimaryKeyCanKeyAMap refuses either as a key
+// whatever its Go type.
 func pkComparatorFamily(goType string) (family, typeParam string) {
 	base := strings.TrimPrefix(goType, "*")
 	if underlying, ok := gotype.StdNullUnderlying(base); ok {
 		base = underlying
 	}
 	switch {
+	case isEnumLikeType(base):
+		return "Enum", base
 	case base == durationGoType:
 		return "Number", base
 	case isComparatorNumericGoType(goType):
 		return "Number", base
 	case isOpaqueComparatorGoType(base):
 		return "Opaque", base
+	case isTimeKeyGoType(base):
+		return "Time", "time.Time"
+	case base == "bool":
+		return "Bool", ""
 	}
 	return "ID", ""
 }
+
+// isTimeKeyGoType reports whether a key column's Go type filters through
+// comparator.Time (PRD §11.2). A time key has no text form every dialect and
+// driver reads back: PostgreSQL rejects time.Time.String(), SQLite compares the
+// text the SQL builder writes, and MySQL compares wall time in the driver's
+// loc. Binding the value lets the SQL builder and the driver spell it.
+func isTimeKeyGoType(goType string) bool {
+	return goType == "time.Time" || goType == dateTimeGoType
+}
+
+// dateTimeGoType is SQLite's default Go type for a date/time column.
+const dateTimeGoType = "types.DateTime"
 
 // isOpaqueComparatorGoType reports whether a Go type filters through
 // `comparator.Opaque[T]` (PRD §11.2). These are the four types the built-in
@@ -2182,7 +2765,7 @@ func isOpaqueComparatorGoType(goType string) bool {
 // The dialect is a parameter rather than read from the column because
 // ColumnContext carries the SQL type, not the dialect that spelled it.
 func columnIsFilterable(col ColumnContext, dialect config.Dialect) bool {
-	if col.IsSlice {
+	if col.IsSlice || col.ArrayElemGoType != "" {
 		elemType := sliceElementType(col, strings.TrimPrefix(col.GoType, "*"))
 		return isComparableSliceElement(elemType)
 	}
@@ -2199,6 +2782,9 @@ func columnIsFilterable(col ColumnContext, dialect config.Dialect) bool {
 func sliceElementType(col ColumnContext, baseGoType string) string {
 	if col.SliceElemType != "" {
 		return col.SliceElemType
+	}
+	if col.ArrayElemGoType != "" {
+		return col.ArrayElemGoType
 	}
 	return strings.TrimPrefix(baseGoType, "[]")
 }
@@ -2224,14 +2810,29 @@ func formatGenericComparator(base, typeParam string, nullable bool) string {
 
 func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect config.Dialect) string {
 	switch {
+	case baseGoType == "time.Time", baseGoType == dateTimeGoType, baseGoType == "types.NullDateTime":
+		// Ahead of the key arm: a time key binds as a time, not as text (§11.2).
+		return "Time"
+	case baseGoType == "bool":
+		// Ahead of the key arm for the same reason: MySQL and SQLite cannot
+		// compare a boolean column with the text "true".
+		return "Bool"
 	case (col.PrimaryKey || col.FKReference != nil) && (baseGoType == "string" || col.FKConvert != gotype.FKStringNone):
+		return "ID"
+	case strings.EqualFold(col.SQLType, "uuid"):
+		// A bare `uuid` column that is neither PK nor FK (e.g. a polymorphic
+		// soft-reference like activity.entity_id, or a uuid carried through a
+		// view) still filters as an identifier, whether bound to uuid.UUID,
+		// uuid.NullUUID, or a `string` override. GraphQL maps uuid
+		// to the ID scalar → IDComparator; without this arm the runtime would
+		// emit comparator.String, so the generated filter translator would try
+		// to pass an *IDComparator into translateStringComparator and fail to
+		// compile. Keyed on the SQL type (not FKConvert, which is also set for
+		// decimal/time and would misclassify them), and ahead of the string
+		// arm so a `string` override does not turn it into a String.
 		return "ID"
 	case baseGoType == "string":
 		return "String"
-	case baseGoType == "bool":
-		return "Bool"
-	case baseGoType == "time.Time", baseGoType == "types.DateTime", baseGoType == "types.NullDateTime":
-		return "Time"
 	case baseGoType == "map[string]any", baseGoType == "types.JSON":
 		// json/jsonb columns resolve to types.JSON via gotype (PRD §7.6); the original map[string]any arm stays for overrides or
 		// direct configs that map a column to the bare Go type.
@@ -2239,16 +2840,13 @@ func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect confi
 			return "JSONB"
 		}
 		return "JSON"
-	case strings.EqualFold(col.SQLType, "uuid"):
-		// A bare `uuid` column that is neither PK nor FK (e.g. a polymorphic
-		// soft-reference like activity.entity_id, or a uuid carried through a
-		// view) still filters as an identifier. GraphQL maps uuid to the ID
-		// scalar → IDComparator; without this arm the runtime would emit
-		// comparator.String, so the generated filter translator would try to
-		// pass an *IDComparator into translateStringComparator and fail to
-		// compile. Keyed on the SQL type (not FKConvert, which is also set for
-		// decimal/time and would misclassify them) and placed after the
-		// concrete Go-type arms.
+	case col.Tenant && baseGoType == "uuid.UUID":
+		// The tenant column's Go type comes from `tenancy.type` (or an
+		// `overrides.types` entry) as often as from its SQL type: a SQLite
+		// `blob` tenant typed uuid.UUID is an identifier like a native
+		// `uuid` column, so it filters the same way. The SQL-type arm above
+		// cannot see that, and keying every column on the Go type would
+		// retype non-tenant columns the override never named.
 		return "ID"
 	default:
 		return "String"
@@ -2478,8 +3076,9 @@ func buildAllColumnNames(columns []ColumnContext) []string {
 // buildO2OJoinDetails builds the O2O join detail tree for the relationships template.
 // It walks O2O relationships, resolves target table metadata, and discovers chains.
 // parentPKColumn is the SQL name of the parent table's first PK column, which a
-// has-one edge joins its target's FK to. Every table that reaches here has one:
-// BuildTableContexts skips a table with no resolved PK.
+// has-one edge built without key pairs joins its target's FK to. Every table
+// that reaches here has one: BuildTableContexts skips a table with no resolved
+// PK.
 func buildO2OJoinDetails(input *GenerateInput, o2oRels []RelationshipContext, parentAlias, parentPKColumn string) (details []O2OJoinDetail, allTargets []O2OJoinDetail, err error) {
 	usedAliases := map[string]bool{parentAlias: true}
 
@@ -2505,6 +3104,22 @@ func buildO2OJoinDetails(input *GenerateInput, o2oRels []RelationshipContext, pa
 	return details, allTargets, nil
 }
 
+// o2oExtraOn returns the ON equalities of an O2O edge's key past its first pair.
+func o2oExtraOn(rel RelationshipContext) []O2OOnPair {
+	if len(rel.Key) < 2 {
+		return nil
+	}
+	extra := make([]O2OOnPair, 0, len(rel.Key)-1)
+	for _, p := range rel.Key[1:] {
+		pair := O2OOnPair{Local: p.Local, Remote: p.Referenced}
+		if rel.FKOnTarget {
+			pair = O2OOnPair{Local: p.Referenced, Remote: p.Local}
+		}
+		extra = append(extra, pair)
+	}
+	return extra
+}
+
 // buildSingleO2ODetail builds one O2O join detail, recursively discovering chains.
 // parentFOPath is the FieldOptions path up to the parent (e.g., "fo" or "fo.Users").
 // parentPKColumn is the SQL name of the parent's first PK column — the
@@ -2526,7 +3141,10 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 
 	// Find target table PK
 	var pkCol *ColumnContext
-	targetColumns, targetPKColumns := buildTableColumns(input, targetTable, targetCfg)
+	targetColumns, targetPKColumns, _, err := buildTableColumns(input, targetTable, targetCfg)
+	if err != nil {
+		return nil, err
+	}
 	if len(targetPKColumns) > 0 {
 		pkCol = &targetPKColumns[0]
 	}
@@ -2551,15 +3169,21 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	// target, swap the ON clause sides. The fact itself is derived once, in
 	// fkColumnOnTarget, and read here (PRD §13.1).
 	//
-	// The swapped parent side is the parent's own PK, the column a nested
-	// has-one create writes into the FK (PRD §9.9.1 shape 2) — not pkCol,
-	// which is the target's and only coincides when both tables spell their
-	// key the same. pkCol stays the target-side scan / HasData key.
-	onLocal := rel.FKColumn // FK column (on parent by default)
-	onRemote := pkCol.Name  // PK column (on target by default)
+	// The referenced side is the column the key references, the PK unless
+	// the key references a UNIQUE column (PRD §13.1). Swapped, it is the
+	// parent's column, the one a nested has-one create writes into the FK
+	// (PRD §9.9.1 shape 2) — not pkCol, which is the target's and only
+	// coincides when both tables spell their key the same. pkCol stays the
+	// target-side scan / HasData key.
+	referenced := ""
+	if len(rel.Key) > 0 {
+		referenced = rel.Key[0].Referenced
+	}
+	onLocal := rel.FKColumn                    // FK column (on parent by default)
+	onRemote := cmp.Or(referenced, pkCol.Name) // referenced column (on target by default)
 	if rel.FKOnTarget {
-		onLocal = parentPKColumn // PK on the parent
-		onRemote = rel.FKColumn  // FK on the target
+		onLocal = cmp.Or(referenced, parentPKColumn) // referenced column on the parent
+		onRemote = rel.FKColumn                      // FK on the target
 	}
 
 	qualifiedFilter, err := o2oJoinPredicate(rel, alias, input.Config.Input.Dialect)
@@ -2576,6 +3200,7 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 		OnLocalAlias:        parentAlias,
 		OnLocal:             onLocal,
 		OnRemote:            onRemote,
+		ExtraOn:             o2oExtraOn(rel),
 		Filter:              qualifiedFilter,
 		StructName:          rel.TargetStructName,
 		VarName:             varName,
@@ -2634,7 +3259,8 @@ func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg c
 		if excludeSet[r.Name] {
 			continue
 		}
-		if !targets.generates(r.TargetTable) {
+		// Skipped rather than reported: buildRelationshipContexts reports it.
+		if !targets.generates(r.TargetTable) || targets.excludedKeyMember(schema, r) != "" {
 			continue
 		}
 		results = append(results, chainedRelInfo{
@@ -2658,7 +3284,7 @@ func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg c
 			continue
 		}
 		results = append(results, chainedRelInfo{
-			rel: configRelationshipToContext(schema, r, targets),
+			rel: configRelationshipToContext(schema, r, qualifiedName, targets),
 		})
 	}
 	return results
@@ -2859,21 +3485,18 @@ func classifyRelationships(rels []RelationshipContext) (o2o, o2m, m2m []Relation
 // and is read by nothing — for comparator typing, only the existence of the
 // reference matters.
 //
-// Every reference minted here is flagged Synthetic, and that flag *is* read.
-// `fk` names a column the config author asserts is a foreign key, which is not
-// the same as the schema declaring one: markSyntheticFK resolves it against the
-// *related* table and will mark any column matching the name, including that
-// table's own surrogate primary key. So a consumer reasoning about the
-// referential contract rather than about comparator typing must skip these —
-// see autoDetectPKStrategy, where treating one as real demotes a `db` PK to
-// `caller`.
+// A reference minted here is flagged Synthetic unless a composite FOREIGN KEY
+// on the column into the declaring table already enforces it, and that flag
+// *is* read. `fk` names a column the config author asserts is a foreign key,
+// which is not the same as the schema declaring one: markSyntheticFK resolves
+// it against the *related* table and will mark any column matching the name,
+// including that table's own surrogate primary key. So a consumer reasoning
+// about the referential contract rather than about comparator typing must skip
+// these — see autoDetectPKStrategy, where treating one as real demotes a `db`
+// PK to `caller`.
 //
-// Ordering matters and is not enforced by the type system: the CLI runs
-// cli.applyPrimaryKeyOverrides and then parser.DetectRelationships on this
-// schema *before* handing it to gen, so relationship classification sees the
-// resolved primary key but never the references stamped here. A
-// synthetic reference on a sole-PK column would otherwise promote that edge
-// to a spurious O2O (parser.columnUnique).
+// Relationship detection never sees these references: it reads the FOREIGN
+// KEY constraints, which this adds none of.
 func applyConfigDeclaredFKs(schema *parser.Schema, cfg *config.RootConfig) {
 	if schema == nil || cfg == nil {
 		return
@@ -2881,8 +3504,10 @@ func applyConfigDeclaredFKs(schema *parser.Schema, cfg *config.RootConfig) {
 	for parentKey, tblCfg := range cfg.Tables {
 		parentSchema, parentName := splitQualifiedName(parentKey)
 		for _, rel := range tblCfg.Relationships {
-			if rel.Table != "" && rel.FK != "" {
-				markSyntheticFK(schema, rel.Table, rel.FK, parentSchema, parentName)
+			// FKReference types a single column (PRD §4.6), so a key of
+			// several columns stamps none.
+			if rel.Table != "" && len(rel.FK) == 1 {
+				markSyntheticFK(schema, rel.Table, rel.FK[0], parentSchema, parentName)
 			}
 		}
 	}
@@ -2906,7 +3531,7 @@ func markSyntheticFK(schema *parser.Schema, targetTable, fkCol, parentSchema, pa
 			col.FKReference = &parser.FKReference{
 				Table:     parentName,
 				Schema:    parentSchema,
-				Synthetic: true,
+				Synthetic: !foreignKeyInto(t, fkCol, parentSchema, parentName),
 			}
 		}
 	}

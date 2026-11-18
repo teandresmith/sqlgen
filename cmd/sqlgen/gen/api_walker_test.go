@@ -55,23 +55,23 @@ func walkerFixtureSchema() *parser.Schema {
 				Type:        parser.OneToOne,
 				SourceTable: "products",
 				TargetTable: "companies",
-				FKColumn:    "company_id",
+				Key:         []parser.KeyPair{{Local: "company_id", Referenced: "id"}},
 			},
 			{
 				Name:        "reviews",
 				Type:        parser.OneToMany,
 				SourceTable: "products",
 				TargetTable: "reviews",
-				FKColumn:    "product_id",
+				Key:         []parser.KeyPair{{Local: "product_id", Referenced: "id"}},
 			},
 			{
-				Name:                "tags",
-				Type:                parser.ManyToMany,
-				SourceTable:         "products",
-				TargetTable:         "tags",
-				JunctionTable:       "product_tags",
-				JunctionLocalFK:     "product_id",
-				JunctionReferenceFK: "tag_id",
+				Name:              "tags",
+				Type:              parser.ManyToMany,
+				SourceTable:       "products",
+				TargetTable:       "tags",
+				JunctionTable:     "product_tags",
+				JunctionLocal:     []parser.KeyPair{{Local: "product_id", Referenced: "id"}},
+				JunctionReference: []parser.KeyPair{{Local: "tag_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -429,7 +429,7 @@ func TestWalker_EnvelopeGatingNamedItemsRelationship(t *testing.T) {
 				Type:        parser.OneToMany,
 				SourceTable: "carts",
 				TargetTable: "cart_items",
-				FKColumn:    "cart_id",
+				Key:         []parser.KeyPair{{Local: "cart_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -488,9 +488,9 @@ func TestWalker_SubCategorizedRelationships(t *testing.T) {
 	in := apiTestInput(t, schema)
 	in.Config.Tables["assets"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-			{Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-			{Name: "Invoices", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+			{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+			{Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+			{Name: "Invoices", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 		},
 	}
 

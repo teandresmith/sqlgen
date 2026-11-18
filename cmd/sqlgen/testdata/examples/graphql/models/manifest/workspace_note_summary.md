@@ -61,7 +61,7 @@ GROUP BY n.id, n.workspace_id, n.kind, n.labels, n.body, n.pinned_order;
 | `labels` | Labels | `types.JSON` | `jsonb` |  |  |  |  | `comparator.JSONB` |  |
 | `body` | Body | `string` | `text` |  |  |  |  | `comparator.String` |  |
 | `pinned_order` | PinnedOrder | `int32` | `integer` |  |  |  |  | `comparator.Number[int32]` |  |
-| `document_count` | DocumentCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |
+| `document_count` | DocumentCount | `int32` | `int64` |  |  |  |  | `comparator.Number[int32]` |  |
 
 ## Query methods
 
@@ -143,3 +143,10 @@ Type `WorkspaceNoteSummaryFilter`.
 Type `WorkspaceNoteSummarySort`.
 
 Fields: Body, DocumentCount, ID, Kind, Labels, PinnedOrder, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.WorkspaceNoteSummary().Get(ctx, uuid.NewV4())
+rows, err := client.WorkspaceNoteSummary().GetMany(ctx, &models.GetWorkspaceNoteSummariesInput{Filter: &models.WorkspaceNoteSummaryFilter{Body: &comparator.String{Eq: new("example")}}})
+```

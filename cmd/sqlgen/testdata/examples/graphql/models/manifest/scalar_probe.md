@@ -73,19 +73,6 @@ postgres:
 SELECT "addr", "addr_n", "big_count", "created_at", "dur", "dur_n", "flag", "id", "label", "mac", "mac_n", "mid_count", "net_block", "net_block_n", "note", "observed_at", "payload", "ratio", "signature", "small_count" FROM "public"."scalar_probes" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ScalarProbeFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."scalar_probes" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id uuid.UUID`
@@ -110,6 +97,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."scalar_probes" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ScalarProbeFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."scalar_probes" WHERE <filter>
 ```
 
 ### Paginate
@@ -170,36 +170,6 @@ postgres:
 INSERT INTO "public"."scalar_probes" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateScalarProbeInput`, `target ScalarProbeConflictTarget`
-- Returns: `*ScalarProbe`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ScalarProbeConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."scalar_probes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateScalarProbeInput`, `target ScalarProbeConflictTarget`
-- Returns: `[]*ScalarProbe`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ScalarProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."scalar_probes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id uuid.UUID`, `input *UpdateScalarProbeInput`
@@ -243,6 +213,36 @@ postgres:
 
 ```sql
 UPDATE "public"."scalar_probes" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateScalarProbeInput`, `target ScalarProbeConflictTarget`
+- Returns: `*ScalarProbe`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ScalarProbeConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."scalar_probes" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateScalarProbeInput`, `target ScalarProbeConflictTarget`
+- Returns: `[]*ScalarProbe`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ScalarProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."scalar_probes" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment
@@ -337,3 +337,17 @@ Type `ScalarProbeFilter`.
 Type `ScalarProbeSort`.
 
 Fields: Addr, AddrN, BigCount, CreatedAt, Dur, DurN, Flag, ID, Label, MAC, MACN, MidCount, NetBlock, NetBlockN, Note, ObservedAt, Payload, Ratio, Signature, SmallCount
+
+## Read examples
+
+```go
+row, err := client.ScalarProbes().Get(ctx, uuid.NewV4())
+rows, err := client.ScalarProbes().GetMany(ctx, &models.GetScalarProbesInput{Filter: &models.ScalarProbeFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.ScalarProbes().Create(ctx, &models.CreateScalarProbeInput{Label: "example", Payload: []byte("example"), Dur: time.Minute, Addr: net.ParseIP("192.0.2.1"), NetBlock: *new(net.IPNet), MAC: *new(net.HardwareAddr)})
+updated, err := client.ScalarProbes().Update(ctx, uuid.NewV4(), &models.UpdateScalarProbeInput{Label: omittable.Set("example")})
+```

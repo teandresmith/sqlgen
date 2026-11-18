@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateOwnerProfiles(ctx context.Context, inputs []*gq
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateOwnerProfile(ctx context.Context, id int, input gqlmodel.UpdateOwnerProfileInput) (*models.OwnerProfile, error) {
-	setIn := translateUpdateOwnerProfileInput(input)
-	hasSet := hasUpdateOwnerProfileSetFields(input)
-	return r.M.UpdateOwnerProfile(ctx, id, setIn, hasSet)
+	return r.M.UpdateOwnerProfile(ctx, id, translateUpdateOwnerProfileRequest(input))
 }
 
 // UpdateOwnerProfiles is the resolver for the updateOwnerProfiles field.
 func (r *mutationResolver) UpdateOwnerProfiles(ctx context.Context, filter gqlmodel.OwnerProfileFilter, input gqlmodel.UpdateOwnerProfileInput) ([]*models.OwnerProfile, error) {
-	return r.M.UpdateOwnerProfiles(ctx, translateOwnerProfileFilter(&filter), translateUpdateOwnerProfileInput(input))
+	return r.M.UpdateOwnerProfiles(ctx, translateOwnerProfileFilter(&filter), translateUpdateOwnerProfileRequest(input))
 }
 
 // UpsertOwnerProfile is the resolver for the upsertOwnerProfile field.

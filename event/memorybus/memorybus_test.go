@@ -3,6 +3,8 @@ package memorybus_test
 import (
 	"context"
 	"errors"
+	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -58,7 +60,7 @@ func TestPublishBatch(t *testing.T) {
 
 	events := []event.Event{
 		{ID: "1", Table: "products", Action: event.Create},
-		{ID: "2", Table: "products", Action: event.Update},
+		{ID: "2", Table: "orders", Action: event.Update},
 		{ID: "3", Table: "products", Action: event.Delete},
 	}
 	if err := bus.PublishBatch(context.Background(), events); err != nil {
@@ -126,6 +128,20 @@ func TestFilters(t *testing.T) {
 				{ID: "2", Table: "orders", Action: event.Update},
 			},
 			wantBySub: map[int][]string{0: {"1", "2"}},
+		},
+		{
+			name: "two tables and two actions",
+			subOptions: []event.SubscribeOptions{
+				{Tables: []string{"products", "orders"}, Actions: []event.Action{event.Create, event.Delete}},
+			},
+			publish: []event.Event{
+				{ID: "1", Table: "products", Action: event.Create},
+				{ID: "2", Table: "orders", Action: event.Delete},
+				{ID: "3", Table: "users", Action: event.Create},
+				{ID: "4", Table: "orders", Action: event.Update},
+				{ID: "5", Table: "products", Action: event.Delete},
+			},
+			wantBySub: map[int][]string{0: {"1", "2", "5"}},
 		},
 		{
 			name: "multiple subscribers with different filters",
@@ -361,7 +377,7 @@ func TestSubscribeErrorHandlerRoutesError(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("error handler calls = %d, want 1", calls)
 	}
-	if !errors.Is(gotErr, errHandlerBoom) {
+	if gotErr != errHandlerBoom { //nolint:errorlint // identity: the Handler's own error is routed as-is
 		t.Errorf("routed error = %v, want %v", gotErr, errHandlerBoom)
 	}
 	if diff := cmp.Diff(want, gotEvent); diff != "" {
@@ -381,8 +397,8 @@ func TestDefaultFailingHandlerNoPanicNoRedeliver(t *testing.T) {
 		t.Fatalf("Subscribe() unexpected error: %v", err)
 	}
 
-	// No sink configured: the error is discarded, no panic, no redelivery —
-	// byte-identical to prior behavior.
+	// No sink configured: the error is logged (see
+	// TestHandlerErrorLoggedWithoutErrorHandler), no panic, no redelivery.
 	if err := bus.Publish(context.Background(), event.Event{
 		ID: "evt-default", Table: "products", Schema: "public", Action: event.Create,
 	}); err != nil {
@@ -401,15 +417,17 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 	const workers = 8
 	const events = 200
 
-	var received int64
-	var handler event.Handler = func(_ context.Context, _ event.Event) error {
-		atomic.AddInt64(&received, 1)
+	var standing int64
+	var standingHandler event.Handler = func(_ context.Context, _ event.Event) error {
+		atomic.AddInt64(&standing, 1)
 		return nil
 	}
+	var handler event.Handler = func(_ context.Context, _ event.Event) error { return nil }
 
-	// Start with a few long-lived subscribers so every publish hits at least one handler.
+	// Long-lived subscribers, counted on their own so churn deliveries cannot
+	// mask a lost one.
 	for range workers {
-		if _, err := bus.Subscribe(event.SubscribeOptions{}, handler); err != nil {
+		if _, err := bus.Subscribe(event.SubscribeOptions{}, standingHandler); err != nil {
 			t.Fatalf("Subscribe() unexpected error: %v", err)
 		}
 	}
@@ -442,8 +460,90 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 
 	wg.Wait()
 
-	// Every publish hits at least the `workers` stable subscribers.
-	if got := atomic.LoadInt64(&received); got < int64(workers*events*workers) {
-		t.Errorf("received = %d, want at least %d", got, workers*events*workers)
+	// Every publish reaches every standing subscriber exactly once.
+	if got := atomic.LoadInt64(&standing); got != int64(workers*events*workers) {
+		t.Errorf("standing deliveries = %d, want %d", got, workers*events*workers)
+	}
+}
+
+// TestHandlerErrorLoggedWithoutErrorHandler: with no WithSubscribeErrorHandler,
+// a Handler error is logged through the standard logger, not discarded, and
+// the Handler still runs once.
+func TestHandlerErrorLoggedWithoutErrorHandler(t *testing.T) {
+	var buf strings.Builder
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	bus := memorybus.New()
+	t.Cleanup(func() { _ = bus.Close() })
+	var calls int
+	if _, err := bus.Subscribe(event.SubscribeOptions{}, func(context.Context, event.Event) error {
+		calls++
+		return errHandlerBoom
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{ID: "evt-logged", Table: "products", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, errHandlerBoom.Error()) || !strings.Contains(got, "evt-logged") {
+		t.Errorf("log = %q, want a line naming event %q and carrying %q", got, "evt-logged", errHandlerBoom)
+	}
+	if calls != 1 {
+		t.Errorf("handler invocations = %d, want 1", calls)
+	}
+}
+
+// TestPublishOrder: events published one after another reach a subscriber in
+// publish order.
+func TestPublishOrder(t *testing.T) {
+	bus := memorybus.New()
+	t.Cleanup(func() { _ = bus.Close() })
+
+	var got []string
+	if _, err := bus.Subscribe(event.SubscribeOptions{Tables: []string{"products"}}, func(_ context.Context, e event.Event) error {
+		got = append(got, e.ID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	want := []string{"5", "3", "9", "1", "7"}
+	for _, id := range want {
+		if err := bus.Publish(context.Background(), event.Event{ID: id, Table: "products", Action: event.Update}); err != nil {
+			t.Fatalf("Publish(%q) unexpected error: %v", id, err)
+		}
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("delivery order mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestNoReplayForLateSubscriber: the bus keeps nothing, so a subscriber added
+// after a publish never receives that event.
+func TestNoReplayForLateSubscriber(t *testing.T) {
+	bus := memorybus.New()
+	t.Cleanup(func() { _ = bus.Close() })
+	if err := bus.Publish(context.Background(), event.Event{ID: "early", Table: "products", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	var got []string
+	if _, err := bus.Subscribe(event.SubscribeOptions{}, func(_ context.Context, e event.Event) error {
+		got = append(got, e.ID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{ID: "late", Table: "products", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	if diff := cmp.Diff([]string{"late"}, got); diff != "" {
+		t.Errorf("late subscriber events mismatch (-want +got):\n%s", diff)
 	}
 }

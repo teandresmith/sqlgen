@@ -217,7 +217,7 @@ func TestValidateUUIDLibraries(t *testing.T) {
 			tables: []sqlparser.Table{namedTable("orders", "")},
 			extras: map[string]config.ExtraType{
 				"AuditRef": {Fields: map[string]config.ExtraTypeField{
-					"actor_id": {Type: "uuid.UUID", Import: "github.com/gofrs/uuid/v5"},
+					"ActorID": {Type: "uuid.UUID", Import: "github.com/gofrs/uuid/v5"},
 				}},
 			},
 			wantErr: []string{
@@ -238,7 +238,7 @@ func TestValidateUUIDLibraries(t *testing.T) {
 				// one Go type name is the *other* phase-3 rule, and tripping it
 				// here would mask what this case is for.
 				"AuditMeta": {Fields: map[string]config.ExtraTypeField{
-					"actor_id": {Type: "uuid.UUID", Import: "github.com/google/uuid"},
+					"ActorID": {Type: "uuid.UUID", Import: "github.com/google/uuid"},
 				}},
 			},
 		},

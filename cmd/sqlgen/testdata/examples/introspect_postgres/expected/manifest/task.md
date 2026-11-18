@@ -65,19 +65,6 @@ postgres:
 SELECT "assignee_id", "done", "id", "priority", "project_id", "title" FROM "public"."tasks" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *TaskFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "public"."tasks" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -102,6 +89,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "public"."tasks" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *TaskFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "public"."tasks" WHERE <filter>
 ```
 
 ### Paginate
@@ -162,36 +162,6 @@ postgres:
 INSERT INTO "public"."tasks" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateTaskInput`, `target TaskConflictTarget`
-- Returns: `*Task`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."tasks" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateTaskInput`, `target TaskConflictTarget`
-- Returns: `[]*Task`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "public"."tasks" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateTaskInput`
@@ -235,6 +205,36 @@ postgres:
 
 ```sql
 UPDATE "public"."tasks" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateTaskInput`, `target TaskConflictTarget`
+- Returns: `*Task`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."tasks" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateTaskInput`, `target TaskConflictTarget`
+- Returns: `[]*Task`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "public"."tasks" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -300,3 +300,17 @@ Type `TaskFilter`.
 Type `TaskSort`.
 
 Fields: AssigneeID, Done, ID, Priority, ProjectID, Title
+
+## Read examples
+
+```go
+row, err := client.Tasks().Get(ctx, 1)
+rows, err := client.Tasks().GetMany(ctx, &models.GetTasksInput{Filter: &models.TaskFilter{Title: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Tasks().Create(ctx, &models.CreateTaskInput{ProjectID: 1, Title: "example"})
+updated, err := client.Tasks().Update(ctx, 1, &models.UpdateTaskInput{ProjectID: omittable.Set(int64(1))})
+```

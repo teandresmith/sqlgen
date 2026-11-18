@@ -28,5 +28,5 @@ func newManifestCmd(flags *cliFlags) *cobra.Command {
 	}
 	cmd.AddCommand(newManifestValidateCmd(flags))
 	cmd.AddCommand(newManifestDiffCmd(flags))
-	return cmd
+	return asParent(cmd)
 }

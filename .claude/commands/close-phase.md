@@ -4,14 +4,13 @@ Run the closure sweep for an implementation phase and update all trackers.
 
 The user wants to close Phase `$ARGUMENTS` (e.g., `18`, `17`, `16`).
 
-This skill walks the same recipe that `/done` followed by hand on phases 14, 15, 16.8g, 17.4 — `make check` + `make check-examples` + `make test-integration` sweep under `-race`, FIX triage by severity, sibling design-doc status flip, schema freeze where applicable, STATUS.md row update, Current Focus rewrite. The recipe has been executed ~10 times by hand; each one drifts a little. This skill compresses 30+ minutes of bookkeeping per phase close and prevents the "did I update the Current Focus?" misses.
+This skill walks the same recipe that `/done` followed by hand on phases 14, 15, 16.8g, 17.4 — `make check` + `make static-examples` + `make conformance` sweep under `-race`, FIX triage by severity, sibling design-doc status flip, schema freeze where applicable, STATUS.md row update, Current Focus rewrite. The recipe has been executed ~10 times by hand; each one drifts a little. This skill compresses 30+ minutes of bookkeeping per phase close and prevents the "did I update the Current Focus?" misses.
 
 ### Step 0: Parse arguments
 
 Split `$ARGUMENTS` on whitespace. First token is the phase number `N` (e.g., `18`). Recognize these flags anywhere in the remaining tokens:
 
 - `--dry-run` — execute Steps 1–4 (verification) but skip Steps 5–8 (mutations). Reports what would change without writing.
-- `--skip-integration` — skip `make test-integration` in Step 3. Use only when integration tests have already been run and verified in this session. Note in the closure record that it was skipped + the reference run.
 
 ### Step 1: Verify all sub-items are Complete
 
@@ -58,10 +57,14 @@ If the header says `Queue freeze: on` and the open FIX queue is empty, ask wheth
 Run sequentially (each must complete before the next; capture timings):
 
 ```bash
-make check
-make check-examples
-make test-integration  # skipped if --skip-integration
+make check             # lint, vet and unit tests across all modules
+make static-examples   # format, lint and vet the example and conformance modules
+make conformance       # every test home under -race, Docker included; rewrites docs/conformance/REPORT.md, even when a test fails
 ```
+
+`make conformance` runs what `make test-integration` and the test half of `make check-examples` run (every module, every example module, every conformance dialect module), so the sweep does not run those two separately. There is no flag to skip it: a report from a partial run shows the missing homes as `not run`.
+
+**Conformance gate.** `make conformance` runs every registered test home with `go test -json` and joins the results with the requirement registry into `docs/conformance/REPORT.md`; it exits non-zero after writing the report when any test failed. A stale conformance `models/` or a registry that fails `req-check` stops it before any report is written. For every PRD section the phase implements, read its rows in the report's Requirements tables and its "Failing and not-run rows" list. No row may be `fail`, `not run` or `untested` unless the user accepts it for this closure; record each accepted row and its reason in the closure report. A `not run` row usually means Docker was missing or a package failed to build: fix that and re-run rather than accept it. Commit the regenerated `REPORT.md` with the closure (`docs(conformance): regenerate the report`). Never hand-edit it. Under `--dry-run`, read the report, then restore it with `git checkout -- docs/conformance/REPORT.md`.
 
 Record for each:
 - Exit status (0 = clean)
@@ -104,7 +107,7 @@ Prepend a new Current Focus entry (newest entries at the top). Use this skeleton
 ```markdown
 **Phase N (<Name>) closed YYYY-MM-DD.** All <K> sub-items complete: <one-line summary per sub-item, semicolon-separated>.
 
-**N.<final> closure sweep (landed YYYY-MM-DD):** `make check` clean across all <M> modules under `-race` (<longest-leg> ~<time>s); `make check-examples` clean across all <M> example modules (<longest-leg> ~<time>s); `make test-integration` clean (longest legs <legs> ~<time>s); <flake observations or "no flakes">. **FIX triage:** <count> resolved inline during the phase; <count> carried forward (<list with one-line rationale per entry>). **Surface delta summary (across Phase N):** <2–4 sentence narrative of the user-visible / API-visible / build-visible change set>. **Next:** <follow-on phase or scheduling note>.
+**N.<final> closure sweep (landed YYYY-MM-DD):** `make check` clean across all <M> modules under `-race` (<longest-leg> ~<time>s); `make static-examples` clean across all <M> example modules; `make conformance` clean, <P> pass / <U> untested of <R> registry rows (~<time>s, longest legs <legs>); <flake observations or "no flakes">. **FIX triage:** <count> resolved inline during the phase; <count> carried forward (<list with one-line rationale per entry>). **Surface delta summary (across Phase N):** <2–4 sentence narrative of the user-visible / API-visible / build-visible change set>. **Next:** <follow-on phase or scheduling note>.
 ```
 
 The narrative section ("Surface delta summary") is the load-bearing prose — pull from the Completion Records of all sub-items rather than re-deriving. The pattern across 14.x / 15.x / 16.8g / 17.4 is: 2–4 sentences naming the new types / config blocks / commands / templates / examples added, followed by `Next:`.
@@ -121,7 +124,7 @@ Output a structured closure report:
 ## Phase N closure: <Name>
 
 **Sub-items:** K/K complete
-**Tests:** check / check-examples / test-integration all clean under -race
+**Tests:** check / static-examples / conformance all clean under -race (REPORT.md: <P> pass, <U> untested of <R> rows)
 **FIX triage:** A resolved inline, B carried forward, C must-resolve resolved during closure
 **Sibling design doc:** <SYNCED YYYY-MM-DD | none>
 **Frozen artifacts:** <list, or "none">
@@ -142,8 +145,8 @@ Output a structured closure report:
 
 ### Sweep timings
 - make check: <time>s (longest leg: <pkg> ~<time>s)
-- make check-examples: <time>s (longest leg: <pkg> ~<time>s)
-- make test-integration: <time>s (longest legs: <legs>)
+- make static-examples: <time>s
+- make conformance: <time>s (longest legs: <legs>)
 
 ### Next
 <Suggested next action — usually the next phase number, or a scheduling note if multiple in-progress phases remain.>
@@ -152,7 +155,8 @@ Output a structured closure report:
 ### Rules
 
 - **Never auto-resolve FIX entries** during closure. The classification step asks the user; resolution happens via `/fix-implement` or explicit `/fix resolve` outside this skill.
+- **Never close over an untested, failing or not-run registry row** for the phase's PRD sections without the user's acceptance (Step 3, conformance gate).
 - **Never skip a failing test leg.** A flake suspicion is not a pass — re-run in isolation, or `/fix add (phase N, module) [blocking] — flake pattern X in Y` and resolve before resuming.
 - **Never edit the sub-item Completion Records** at closure time. Those should already be filled in from `/done`; closure synthesizes from them.
 - **Never advance the phase counter in STATUS.md without confirming the sub-item count matches.** Mismatched counts are a sign of an in-flight sub-item split (e.g., 16.8 → 16.8a–g) — handle explicitly.
-- **`--dry-run` writes nothing.** Useful before the integration sweep to confirm the closure pre-conditions hold without committing.
+- **`--dry-run` writes nothing.** Useful before the conformance sweep to confirm the closure pre-conditions hold without committing.

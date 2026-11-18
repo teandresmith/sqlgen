@@ -57,19 +57,6 @@ sqlite:
 SELECT "asset_id", "document_id" FROM "asset_document_links" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *AssetDocumentLinkFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "asset_document_links" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk AssetDocumentLinkPK`
@@ -94,6 +81,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "asset_document_links" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *AssetDocumentLinkFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "asset_document_links" WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ sqlite:
 INSERT INTO "asset_document_links" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateAssetDocumentLinkInput`, `target AssetDocumentLinkConflictTarget`
-- Returns: `*AssetDocumentLink`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "asset_document_links" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateAssetDocumentLinkInput`, `target AssetDocumentLinkConflictTarget`
-- Returns: `[]*AssetDocumentLink`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "asset_document_links" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk AssetDocumentLinkPK`, `input *UpdateAssetDocumentLinkInput`
@@ -227,6 +197,36 @@ sqlite:
 
 ```sql
 UPDATE "asset_document_links" SET <set> WHERE <filter> RETURNING "asset_id", "document_id"
+```
+
+### Upsert
+
+- Params: `input *CreateAssetDocumentLinkInput`, `target AssetDocumentLinkConflictTarget`
+- Returns: `*AssetDocumentLink`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated AssetDocumentLinkConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "asset_document_links" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateAssetDocumentLinkInput`, `target AssetDocumentLinkConflictTarget`
+- Returns: `[]*AssetDocumentLink`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same AssetDocumentLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "asset_document_links" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -288,3 +288,17 @@ Type `AssetDocumentLinkFilter`.
 Type `AssetDocumentLinkSort`.
 
 Fields: AssetID, DocumentID
+
+## Read examples
+
+```go
+row, err := client.AssetDocumentLinks().Get(ctx, models.AssetDocumentLinkPK{AssetID: 1, DocumentID: 1})
+rows, err := client.AssetDocumentLinks().GetMany(ctx, &models.GetAssetDocumentLinksInput{Filter: &models.AssetDocumentLinkFilter{AssetID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.AssetDocumentLinks().Create(ctx, &models.CreateAssetDocumentLinkInput{AssetID: 1, DocumentID: 1})
+updated, err := client.AssetDocumentLinks().Update(ctx, models.AssetDocumentLinkPK{AssetID: 1, DocumentID: 1}, &models.UpdateAssetDocumentLinkInput{})
+```

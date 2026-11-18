@@ -3,6 +3,7 @@ package gen_test
 import (
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,6 +12,9 @@ import (
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
 	"github.com/teandresmith/sqlgen/parser"
+	myparser "github.com/teandresmith/sqlgen/parser/mysql"
+	pgparser "github.com/teandresmith/sqlgen/parser/postgres"
+	liteparser "github.com/teandresmith/sqlgen/parser/sqlite"
 	"github.com/teandresmith/sqlgen/sql"
 )
 
@@ -45,6 +49,36 @@ func testInput(schema *parser.Schema) *gen.GenerateInput {
 		Config:   cfg,
 		Resolver: resolver,
 	}
+}
+
+// detectRelationships runs relationship detection on a hand-built schema. A
+// parsed schema carries a FOREIGN KEY constraint for every column reference,
+// and detection reads only the constraints, so each reference without one
+// gets one here first.
+func detectRelationships(s *parser.Schema) {
+	for i := range s.Tables {
+		t := &s.Tables[i]
+		for _, col := range t.Columns {
+			ref := col.FKReference
+			if ref == nil || ref.Synthetic || slices.ContainsFunc(t.Constraints, func(c parser.Constraint) bool {
+				return c.Type == parser.ForeignKey && slices.Equal(c.Columns, []string{col.Name})
+			}) {
+				continue
+			}
+			refCol := ref.Column
+			if refCol == "" {
+				refCol = "id"
+			}
+			t.Constraints = append(t.Constraints, parser.Constraint{
+				Type:             parser.ForeignKey,
+				Columns:          []string{col.Name},
+				ReferenceSchema:  ref.Schema,
+				ReferenceTable:   ref.Table,
+				ReferenceColumns: []string{refCol},
+			})
+		}
+	}
+	parser.DetectRelationships(s)
 }
 
 // --- Enum context tests ---
@@ -140,14 +174,16 @@ func TestBuildTypeContext_domains(t *testing.T) {
 	}
 }
 
+// TestBuildTypeContext_extras pins that an extras entry's key and its fields
+// keys are the Go names as written (PRD §4.10).
 func TestBuildTypeContext_extras(t *testing.T) {
 	input := testInput(&parser.Schema{})
 	input.Config.Extras = map[string]config.ExtraType{
-		"metadata": {
+		"Metadata": {
 			Description: "Generic metadata object.",
 			Fields: map[string]config.ExtraTypeField{
-				"key":   {Type: "string", Tags: map[string]string{"json": "key"}},
-				"value": {Type: "string", Tags: map[string]string{"json": "value"}},
+				"Key":   {Type: "string", Tags: map[string]string{"json": "key"}},
+				"Value": {Type: "string", Tags: map[string]string{"json": "value"}},
 			},
 		},
 	}
@@ -167,7 +203,7 @@ func TestBuildTypeContext_extras(t *testing.T) {
 	if len(extra.Fields) != 2 {
 		t.Fatalf("Fields has %d entries, want 2", len(extra.Fields))
 	}
-	// Fields sorted by name: key, value.
+	// Fields sorted by name: Key, Value.
 	if extra.Fields[0].FieldName != "Key" {
 		t.Errorf("Fields[0].FieldName = %q, want %q", extra.Fields[0].FieldName, "Key")
 	}
@@ -314,6 +350,7 @@ func TestPKStrategyDetection(t *testing.T) {
 		name     string
 		dialect  config.Dialect
 		columns  []parser.Column
+		fks      []parser.Constraint
 		override *config.TablePrimaryKeyConfig
 		want     config.PKStrategy
 	}{
@@ -350,22 +387,6 @@ func TestPKStrategyDetection(t *testing.T) {
 			want: config.PKStrategyDB,
 		},
 		{
-			name:    "mysql UUID with default → app",
-			dialect: "mysql",
-			columns: []parser.Column{
-				{Name: "id", Type: "uuid", PrimaryKey: true, Default: "UUID()"},
-			},
-			want: config.PKStrategyApp,
-		},
-		{
-			name:    "mysql UUID no default → app",
-			dialect: "mysql",
-			columns: []parser.Column{
-				{Name: "id", Type: "uuid", PrimaryKey: true},
-			},
-			want: config.PKStrategyApp,
-		},
-		{
 			name:    "mysql no auto-gen → caller",
 			dialect: "mysql",
 			columns: []parser.Column{
@@ -380,14 +401,6 @@ func TestPKStrategyDetection(t *testing.T) {
 				{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
 			},
 			want: config.PKStrategyDB,
-		},
-		{
-			name:    "sqlite UUID no default → app",
-			dialect: "sqlite",
-			columns: []parser.Column{
-				{Name: "id", Type: "uuid", PrimaryKey: true},
-			},
-			want: config.PKStrategyApp,
 		},
 		{
 			name:    "explicit override to caller",
@@ -454,6 +467,38 @@ func TestPKStrategyDetection(t *testing.T) {
 			},
 			want: config.PKStrategyDB,
 		},
+		// A PK that is a member of a composite foreign key has no reference
+		// of its own, and is caller-supplied all the same.
+		{
+			name:    "postgres UUID PK in a composite FK → caller",
+			dialect: "postgres",
+			columns: []parser.Column{
+				{Name: "id", Type: "uuid", PrimaryKey: true},
+				{Name: "workspace_id", Type: "uuid"},
+			},
+			fks:  []parser.Constraint{compositeFKOnID("workspace_id")},
+			want: config.PKStrategyCaller,
+		},
+		{
+			name:    "mysql auto-increment bigint PK in a composite FK → caller",
+			dialect: "mysql",
+			columns: []parser.Column{
+				{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+				{Name: "workspace_id", Type: "bigint"},
+			},
+			fks:  []parser.Constraint{compositeFKOnID("workspace_id")},
+			want: config.PKStrategyCaller,
+		},
+		{
+			name:    "sqlite autoincrement integer PK in a composite FK → caller",
+			dialect: "sqlite",
+			columns: []parser.Column{
+				{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
+				{Name: "workspace_id", Type: "integer"},
+			},
+			fks:  []parser.Constraint{compositeFKOnID("workspace_id")},
+			want: config.PKStrategyCaller,
+		},
 		{
 			// An explicit strategy still wins over the FK clause — the
 			// documented escape hatch for schemas that mint the child key
@@ -472,7 +517,7 @@ func TestPKStrategyDetection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			schema := &parser.Schema{
 				Tables: []parser.Table{
-					{Name: "test_table", Columns: tt.columns},
+					{Name: "test_table", Columns: tt.columns, Constraints: tt.fks},
 				},
 			}
 			input := testInput(schema)
@@ -498,6 +543,15 @@ func TestPKStrategyDetection(t *testing.T) {
 				t.Errorf("PKStrategy = %q, want %q", contexts[0].PKStrategy, tt.want)
 			}
 		})
+	}
+}
+
+// compositeFKOnID is a two-column FOREIGN KEY (other, id) on test_table into
+// a parent outside the schema, which makes the table's PK a member of it.
+func compositeFKOnID(other string) parser.Constraint {
+	return parser.Constraint{
+		Name: "test_table_parent_fkey", Type: parser.ForeignKey,
+		Columns: []string{other, "id"}, ReferenceTable: "parents", ReferenceColumns: []string{other, "id"},
 	}
 }
 
@@ -571,7 +625,7 @@ func TestConfigDeclaredFKDoesNotDemoteSurrogatePK(t *testing.T) {
 	input := testInput(schema)
 	input.Config.Tables["orders"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "Customer", Type: "o2o", Table: "customers", FK: "customer_id"},
+			{Name: "Customer", Type: "o2o", Table: "customers", FK: config.KeyColumns{"customer_id"}},
 		},
 	}
 
@@ -590,6 +644,43 @@ func TestConfigDeclaredFKDoesNotDemoteSurrogatePK(t *testing.T) {
 	}
 }
 
+// A declared `fk` into a column a composite FOREIGN KEY already holds is
+// enforced by the database, so its reference is not synthetic; one into a
+// column with no FOREIGN KEY is (design COMPOSITE_FK_RELATIONSHIPS.md §1.4).
+func TestConfigDeclaredFKOverACompositeKeyIsNotSynthetic(t *testing.T) {
+	schema := parseDDLForTest(t, config.DialectPostgres, `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE tasks (
+	id bigint PRIMARY KEY,
+	workspace_id bigint NOT NULL,
+	cycle_id bigint,
+	prev_cycle_id bigint,
+	FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);`)
+	input := testInput(schema)
+	input.Config.Tables["cycles"] = config.TableConfig{Relationships: []config.TableRelationship{
+		{Name: "Tasks", Type: "o2m", Table: "tasks", FK: config.KeyColumns{"cycle_id"}},
+		{Name: "NextTasks", Type: "o2m", Table: "tasks", FK: config.KeyColumns{"prev_cycle_id"}},
+	}}
+	contexts, err := gen.BuildTableContexts(input, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+	tasks, ok := tableContextByName(contexts, "tasks")
+	if !ok {
+		t.Fatal("BuildTableContexts() did not build tasks")
+	}
+	for column, want := range map[string]bool{"cycle_id": false, "prev_cycle_id": true} {
+		col := columnByName(t, tasks.Columns, column)
+		if col.FKReference == nil {
+			t.Fatalf("tasks.%s has no FK reference", column)
+		}
+		if col.FKReference.Synthetic != want {
+			t.Errorf("tasks.%s FKReference.Synthetic = %v, want %v", column, col.FKReference.Synthetic, want)
+		}
+	}
+}
+
 func tableContextByName(contexts []gen.TableContext, name string) (gen.TableContext, bool) {
 	for _, tc := range contexts {
 		if tc.TableName == name {
@@ -597,6 +688,280 @@ func tableContextByName(contexts []gen.TableContext, name string) (gen.TableCont
 		}
 	}
 	return gen.TableContext{}, false
+}
+
+// parseDDLForTest runs ddl through the dialect's real parser, so a test sees
+// the column shape the parser actually produces for a clause rather than a
+// hand-written guess at it.
+func parseDDLForTest(t *testing.T, dialect config.Dialect, ddl string) *parser.Schema {
+	t.Helper()
+	var p interface {
+		Parse(filename string, sql []byte) error
+		Schema() *parser.Schema
+	}
+	switch dialect {
+	case config.DialectPostgres:
+		p = pgparser.New("")
+	case config.DialectMySQL:
+		mp, err := myparser.New()
+		if err != nil {
+			t.Fatalf("mysql.New() error: %v", err)
+		}
+		p = mp
+	case config.DialectSQLite:
+		p = liteparser.New()
+	default:
+		t.Fatalf("unknown dialect %q", dialect)
+	}
+	if err := p.Parse("schema.sql", []byte(ddl)); err != nil {
+		t.Fatalf("Parse(%s) error: %v", dialect, err)
+	}
+	return p.Schema()
+}
+
+// TestPKStrategyDetection_FromDDL drives the strategy table from real DDL on
+// each dialect and checks the two things the strategy decides: the strategy
+// itself and how each key column appears on the create input (left out, or a
+// required bare field).
+func TestPKStrategyDetection_FromDDL(t *testing.T) {
+	const (
+		excluded = "excluded"
+		required = "required"
+	)
+	tests := []struct {
+		name    string
+		dialect config.Dialect
+		ddl     string
+		// tables, when set, is the per-table config.
+		tables map[string]config.TableConfig
+		// wantIDType, when set, is the id field's Go type on the create input,
+		// which shows the type override took effect.
+		wantIDType string
+		want       config.PKStrategy
+		// wantKey maps each key column to its expected create-input shape.
+		wantKey map[string]string
+	}{
+		{
+			name:    "postgres GENERATED ALWAYS AS IDENTITY key is db and left out of the create input",
+			dialect: config.DialectPostgres,
+			ddl:     `CREATE TABLE widgets (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, name text NOT NULL);`,
+			want:    config.PKStrategyDB,
+			wantKey: map[string]string{"id": excluded},
+		},
+		{
+			name:    "postgres GENERATED BY DEFAULT AS IDENTITY key is db and left out of the create input",
+			dialect: config.DialectPostgres,
+			ddl:     `CREATE TABLE widgets (id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, name text NOT NULL);`,
+			want:    config.PKStrategyDB,
+			wantKey: map[string]string{"id": excluded},
+		},
+		{
+			name:    "postgres natural text key with no default is caller and required",
+			dialect: config.DialectPostgres,
+			ddl:     `CREATE TABLE currencies (code text PRIMARY KEY, name text NOT NULL);`,
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"code": required},
+		},
+		{
+			// MySQL cannot key a TEXT column without a prefix length, so
+			// VARCHAR is its spelling of the same natural key.
+			name:    "mysql natural varchar key with no default is caller and required",
+			dialect: config.DialectMySQL,
+			ddl:     "CREATE TABLE currencies (code VARCHAR(3) PRIMARY KEY, name VARCHAR(64) NOT NULL);",
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"code": required},
+		},
+		{
+			name:    "sqlite natural text key with no default is caller and required",
+			dialect: config.DialectSQLite,
+			ddl:     `CREATE TABLE currencies (code TEXT PRIMARY KEY, name TEXT NOT NULL);`,
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"code": required},
+		},
+		{
+			// Each column alone would detect db; as a composite key neither
+			// is evaluated on its own.
+			name:    "postgres composite key of generated columns is caller with every column required",
+			dialect: config.DialectPostgres,
+			ddl: `CREATE TABLE line_items (
+				order_id uuid NOT NULL DEFAULT gen_random_uuid(),
+				line_number serial NOT NULL,
+				quantity integer NOT NULL,
+				PRIMARY KEY (order_id, line_number)
+			);`,
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"order_id": required, "line_number": required},
+		},
+		{
+			name:    "mysql composite key with an auto-increment column is caller with every column required",
+			dialect: config.DialectMySQL,
+			ddl: "CREATE TABLE line_items (" +
+				"id BIGINT NOT NULL AUTO_INCREMENT, " +
+				"line_number INT NOT NULL, " +
+				"quantity INT NOT NULL, " +
+				"PRIMARY KEY (id, line_number));",
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"id": required, "line_number": required},
+		},
+		{
+			name:    "sqlite composite key with a defaulted integer column is caller with every column required",
+			dialect: config.DialectSQLite,
+			ddl: `CREATE TABLE line_items (
+				order_ref TEXT NOT NULL,
+				line_number INTEGER NOT NULL DEFAULT 1,
+				quantity INTEGER NOT NULL,
+				PRIMARY KEY (order_ref, line_number)
+			);`,
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"order_ref": required, "line_number": required},
+		},
+		{
+			name:    "mysql CHAR(36) UUID key with a UUID() default is caller and required",
+			dialect: config.DialectMySQL,
+			ddl:     "CREATE TABLE tokens (id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY, name VARCHAR(64) NOT NULL);",
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"id": required},
+		},
+		{
+			name:    "mysql BINARY(16) UUID key with no default is caller and required",
+			dialect: config.DialectMySQL,
+			ddl:     "CREATE TABLE tokens (id BINARY(16) PRIMARY KEY, name VARCHAR(64) NOT NULL);",
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"id": required},
+		},
+		{
+			name:    "sqlite key declared UUID is caller and required",
+			dialect: config.DialectSQLite,
+			ddl:     `CREATE TABLE tokens (id UUID PRIMARY KEY, name TEXT NOT NULL);`,
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"id": required},
+		},
+		{
+			name:    "sqlite TEXT UUID key with a default is caller and required",
+			dialect: config.DialectSQLite,
+			ddl:     `CREATE TABLE tokens (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))), name TEXT NOT NULL);`,
+			want:    config.PKStrategyCaller,
+			wantKey: map[string]string{"id": required},
+		},
+		{
+			name:    "sqlite TEXT key overridden to uuid.UUID keeps the caller strategy",
+			dialect: config.DialectSQLite,
+			ddl:     `CREATE TABLE tokens (id TEXT PRIMARY KEY, name TEXT NOT NULL);`,
+			tables: map[string]config.TableConfig{"tokens": {ColumnMap: map[string]config.ColumnOverride{
+				"id": {Type: "uuid.UUID", Import: "github.com/gofrs/uuid/v5"},
+			}}},
+			wantIDType: "uuid.UUID",
+			want:       config.PKStrategyCaller,
+			wantKey:    map[string]string{"id": required},
+		},
+		{
+			name:    "mysql CHAR(36) key overridden to uuid.UUID keeps the caller strategy",
+			dialect: config.DialectMySQL,
+			ddl:     "CREATE TABLE tokens (id CHAR(36) PRIMARY KEY, name VARCHAR(64) NOT NULL);",
+			tables: map[string]config.TableConfig{"tokens": {ColumnMap: map[string]config.ColumnOverride{
+				"id": {Type: "uuid.UUID", Import: "github.com/gofrs/uuid/v5"},
+			}}},
+			wantIDType: "uuid.UUID",
+			want:       config.PKStrategyCaller,
+			wantKey:    map[string]string{"id": required},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := testInput(parseDDLForTest(t, tt.dialect, tt.ddl))
+			input.Config.Input.Dialect = tt.dialect
+			if tt.tables != nil {
+				input.Config.Tables = tt.tables
+			}
+			input.Resolver = gotype.NewResolver(tt.dialect, true, input.Config.Overrides.Types)
+
+			contexts, err := gen.BuildTableContexts(input, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts() error: %v", err)
+			}
+			if len(contexts) != 1 {
+				t.Fatalf("got %d contexts, want 1", len(contexts))
+			}
+			tc := contexts[0]
+			if tc.PKStrategy != tt.want {
+				t.Errorf("PKStrategy = %q, want %q", tc.PKStrategy, tt.want)
+			}
+
+			got := make(map[string]string, len(tt.wantKey))
+			for col := range tt.wantKey {
+				got[col] = excluded
+			}
+			for _, f := range tc.CreateInputFields {
+				if tt.wantIDType != "" && f.ColumnName == "id" && f.GoType != tt.wantIDType {
+					t.Errorf("create input id GoType = %q, want %q", f.GoType, tt.wantIDType)
+				}
+				if _, isKey := tt.wantKey[f.ColumnName]; !isKey {
+					continue
+				}
+				switch {
+				case f.Required && !f.Omittable:
+					got[f.ColumnName] = required
+				default:
+					got[f.ColumnName] = "omittable"
+				}
+			}
+			if diff := cmp.Diff(tt.wantKey, got); diff != "" {
+				t.Errorf("key columns on the create input (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestBuildTableContexts_UUIDVersionResolution pins the uuid_version
+// resolution order: the table's primary_key.uuid_version, then the global
+// generation.uuid_version, then v4.
+func TestBuildTableContexts_UUIDVersionResolution(t *testing.T) {
+	tests := []struct {
+		name         string
+		tableVersion config.UUIDVersion
+		globalVer    config.UUIDVersion
+		want         config.UUIDVersion
+	}{
+		{name: "table version wins over the global version", tableVersion: config.UUIDVersionV7, globalVer: config.UUIDVersionV4, want: config.UUIDVersionV7},
+		{name: "table v4 wins over a global v7", tableVersion: config.UUIDVersionV4, globalVer: config.UUIDVersionV7, want: config.UUIDVersionV4},
+		{name: "global version applies when the table sets none", globalVer: config.UUIDVersionV7, want: config.UUIDVersionV7},
+		{name: "v4 when neither the table nor the global config sets one", want: config.UUIDVersionV4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.Schema{
+				Tables: []parser.Table{
+					{Name: "tickets", Columns: []parser.Column{
+						{Name: "id", Type: "uuid", PrimaryKey: true},
+						{Name: "label", Type: "text"},
+					}},
+				},
+			}
+			input := testInput(schema)
+			input.Config.Generation.UUIDVersion = tt.globalVer
+			if tt.tableVersion != "" {
+				input.Config.Tables["tickets"] = config.TableConfig{
+					PrimaryKey: &config.TablePrimaryKeyConfig{UUIDVersion: tt.tableVersion},
+				}
+			}
+
+			contexts, err := gen.BuildTableContexts(input, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts() error: %v", err)
+			}
+			if len(contexts) != 1 {
+				t.Fatalf("got %d contexts, want 1", len(contexts))
+			}
+			if contexts[0].PKStrategy != config.PKStrategyApp {
+				t.Fatalf("PKStrategy = %q, want %q (fixture must take the app path)", contexts[0].PKStrategy, config.PKStrategyApp)
+			}
+			if got := contexts[0].UUIDVersion; got != tt.want {
+				t.Errorf("UUIDVersion = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 // --- Comparator type selection tests ---
@@ -619,6 +984,18 @@ func TestComparatorTypeSelection(t *testing.T) {
 			col:     gen.ColumnContext{GoType: "string", FKReference: &gen.FKReferenceContext{Table: "users"}},
 			dialect: "postgres",
 			want:    "*comparator.ID",
+		},
+		{
+			name:    "uuid column overridden to string → ID",
+			col:     gen.ColumnContext{GoType: "string", SQLType: "uuid"},
+			dialect: "postgres",
+			want:    "*comparator.ID",
+		},
+		{
+			name:    "nullable uuid column overridden to string → NullableID",
+			col:     gen.ColumnContext{GoType: "*string", SQLType: "uuid", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableID",
 		},
 		{
 			name:    "regular string → String",
@@ -687,6 +1064,12 @@ func TestComparatorTypeSelection(t *testing.T) {
 			want:    "*comparator.JSON",
 		},
 		{
+			name:    "mysql jsonb (types.JSON) → JSON, never JSONB",
+			col:     gen.ColumnContext{GoType: "types.JSON", SQLType: "jsonb"},
+			dialect: "mysql",
+			want:    "*comparator.JSON",
+		},
+		{
 			name:    "mysql nullable json (types.JSON) → NullableJSON",
 			col:     gen.ColumnContext{GoType: "types.JSON", SQLType: "json", Nullable: true},
 			dialect: "mysql",
@@ -709,6 +1092,104 @@ func TestComparatorTypeSelection(t *testing.T) {
 			col:     gen.ColumnContext{GoType: "*decimal.Decimal", Nullable: true},
 			dialect: "postgres",
 			want:    "*comparator.NullableString",
+		},
+		// PRD §11.2 "Comparator Selection by Column Type": the remaining table
+		// rows, plus the uuid-by-SQL-type and fallback-to-String rules.
+		{
+			name:    "uint32 → Number[uint32]",
+			col:     gen.ColumnContext{GoType: "uint32", SQLType: "integer"},
+			dialect: "mysql",
+			want:    "*comparator.Number[uint32]",
+		},
+		{
+			name:    "float64 → Number[float64]",
+			col:     gen.ColumnContext{GoType: "float64", SQLType: "double precision"},
+			dialect: "postgres",
+			want:    "*comparator.Number[float64]",
+		},
+		{
+			name:    "time.Duration → Number[time.Duration]",
+			col:     gen.ColumnContext{GoType: "time.Duration", SQLType: "interval"},
+			dialect: "postgres",
+			want:    "*comparator.Number[time.Duration]",
+		},
+		{
+			name:    "nullable *time.Duration → NullableNumber[time.Duration]",
+			col:     gen.ColumnContext{GoType: "*time.Duration", SQLType: "interval", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableNumber[time.Duration]",
+		},
+		{
+			name:    "postgres []byte → Opaque[[]byte]",
+			col:     gen.ColumnContext{GoType: "[]byte", SQLType: "bytea"},
+			dialect: "postgres",
+			want:    "*comparator.Opaque[[]byte]",
+		},
+		{
+			name:    "mysql []byte → Opaque[[]byte]",
+			col:     gen.ColumnContext{GoType: "[]byte", SQLType: "blob"},
+			dialect: "mysql",
+			want:    "*comparator.Opaque[[]byte]",
+		},
+		{
+			name:    "sqlite []byte → Opaque[[]byte]",
+			col:     gen.ColumnContext{GoType: "[]byte", SQLType: "blob"},
+			dialect: "sqlite",
+			want:    "*comparator.Opaque[[]byte]",
+		},
+		{
+			name:    "net.IP → Opaque[net.IP]",
+			col:     gen.ColumnContext{GoType: "net.IP", SQLType: "inet"},
+			dialect: "postgres",
+			want:    "*comparator.Opaque[net.IP]",
+		},
+		{
+			name:    "net.IPNet → Opaque[net.IPNet]",
+			col:     gen.ColumnContext{GoType: "net.IPNet", SQLType: "cidr"},
+			dialect: "postgres",
+			want:    "*comparator.Opaque[net.IPNet]",
+		},
+		{
+			name:    "net.HardwareAddr → Opaque[net.HardwareAddr]",
+			col:     gen.ColumnContext{GoType: "net.HardwareAddr", SQLType: "macaddr"},
+			dialect: "postgres",
+			want:    "*comparator.Opaque[net.HardwareAddr]",
+		},
+		{
+			name:    "enum type → Enum[T]",
+			col:     gen.ColumnContext{GoType: "OrderStatus", SQLType: "order_status"},
+			dialect: "postgres",
+			want:    "*comparator.Enum[OrderStatus]",
+		},
+		{
+			name:    "nullable enum type → NullableEnum[T]",
+			col:     gen.ColumnContext{GoType: "*OrderStatus", SQLType: "order_status", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableEnum[OrderStatus]",
+		},
+		{
+			name:    "uuid column, not a key (uuid.UUID) → ID",
+			col:     gen.ColumnContext{GoType: "uuid.UUID", SQLType: "uuid"},
+			dialect: "postgres",
+			want:    "*comparator.ID",
+		},
+		{
+			name:    "nullable uuid column (*uuid.UUID) → NullableID",
+			col:     gen.ColumnContext{GoType: "*uuid.UUID", SQLType: "uuid", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableID",
+		},
+		{
+			name:    "nullable uuid column (uuid.NullUUID) → NullableID",
+			col:     gen.ColumnContext{GoType: "uuid.NullUUID", SQLType: "uuid", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableID",
+		},
+		{
+			name:    "override type with no built-in mapping → String",
+			col:     gen.ColumnContext{GoType: "ksuid.KSUID", SQLType: "text"},
+			dialect: "postgres",
+			want:    "*comparator.String",
 		},
 	}
 
@@ -1563,14 +2044,14 @@ func TestBuildTableContexts_relationshipDescription(t *testing.T) {
 				SourceTable: "products",
 				TargetTable: "companies",
 				Type:        parser.OneToOne,
-				FKColumn:    "company_id",
+				Key:         []parser.KeyPair{{Local: "company_id", Referenced: "id"}},
 			},
 			{
 				Name:        "reviews",
 				SourceTable: "products",
 				TargetTable: "reviews",
 				Type:        parser.OneToMany,
-				FKColumn:    "product_id",
+				Key:         []parser.KeyPair{{Local: "product_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -1643,7 +2124,7 @@ func TestBuildTableContexts_relationshipFKNullable(t *testing.T) {
 				SourceTable: "public.categories",
 				TargetTable: "public.categories",
 				Type:        parser.OneToMany,
-				FKColumn:    "parent_id",
+				Key:         []parser.KeyPair{{Local: "parent_id", Referenced: "id"}},
 			},
 			// Plain O2M with non-nullable FK on the child side.
 			{
@@ -1651,7 +2132,7 @@ func TestBuildTableContexts_relationshipFKNullable(t *testing.T) {
 				SourceTable: "public.users",
 				TargetTable: "public.posts",
 				Type:        parser.OneToMany,
-				FKColumn:    "author_id",
+				Key:         []parser.KeyPair{{Local: "author_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -1690,7 +2171,7 @@ func TestBuildTableContexts_relationshipFKNullable(t *testing.T) {
 }
 
 // O2O FKNullable must be resolved against whichever table
-// actually carries the FK column. Auto-detected (addO2O) edges hold the FK on
+// actually carries the FK column. Auto-detected edges hold the FK on
 // the *source*/parent table; config edges hold it on the *target*. The wiring
 // previously looked up the FK on the target unconditionally, so auto-detected
 // O2O edges silently resolved FKNullable to its zero value (false). No template
@@ -1743,7 +2224,7 @@ func TestBuildTableContexts_relationshipFKNullable_O2O(t *testing.T) {
 				TargetTable: "public.profiles",
 				Type:        parser.OneToOne,
 				Side:        parser.SideParent,
-				FKColumn:    "primary_profile_id",
+				Key:         []parser.KeyPair{{Local: "primary_profile_id", Referenced: "id"}},
 			},
 			// Config-shaped O2O: FK (entity_id) lives on the target (documents).
 			// Target lookup must win — the parent (assets) has no such column.
@@ -1753,7 +2234,7 @@ func TestBuildTableContexts_relationshipFKNullable_O2O(t *testing.T) {
 				TargetTable: "public.documents",
 				Type:        parser.OneToOne,
 				Side:        parser.SideParent,
-				FKColumn:    "entity_id",
+				Key:         []parser.KeyPair{{Local: "entity_id", Referenced: "id"}},
 			},
 		},
 	}
@@ -1799,8 +2280,8 @@ func TestBuildTableContexts_relationshipFKNullable_O2O(t *testing.T) {
 // columns and then throw it away; the write-side emitters need the same fact,
 // and a second derivation is free to drift from the first.
 //
-// Side does not answer this question and is untouched by the hoist: addO2O and
-// addO2M both hard-code SideParent, and a config-declared edge defaults to
+// Side does not answer this question and is untouched by the hoist: detection
+// always sets SideParent, and a config-declared edge defaults to
 // "parent" while putting the FK on the target — the shape of the graphql
 // example's assets.PrimaryDocument, asserted below.
 func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
@@ -1878,7 +2359,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 				Name:  "PrimaryDocument",
 				Type:  "one_to_one",
 				Table: "documents",
-				FK:    "entity_id",
+				FK:    config.KeyColumns{"entity_id"},
 				Discriminator: &config.RelationshipDiscriminator{
 					Column: "entity_type",
 					Value:  "asset.primary",
@@ -1886,7 +2367,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 			},
 		},
 	}
-	parser.DetectRelationships(input.Schema)
+	detectRelationships(input.Schema)
 
 	contexts, err := gen.BuildTableContexts(input, nil)
 	if err != nil {
@@ -2007,10 +2488,10 @@ func TestBuildO2OJoinDetails_chainedFKOnTarget(t *testing.T) {
 	input := testInput(schema)
 	input.Config.Tables["public.customers"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "PrimaryAddress", Type: "one_to_one", Table: "addresses", FK: "customer_id"},
+			{Name: "PrimaryAddress", Type: "one_to_one", Table: "addresses", FK: config.KeyColumns{"customer_id"}},
 		},
 	}
-	parser.DetectRelationships(input.Schema)
+	detectRelationships(input.Schema)
 
 	contexts, err := gen.BuildTableContexts(input, nil)
 	if err != nil {
@@ -2082,15 +2563,15 @@ func TestBuildO2OJoinDetails_fkOnTargetParentPKName(t *testing.T) {
 	input := testInput(schema)
 	input.Config.Tables["public.users"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "Profile", Type: "one_to_one", Table: "profiles", FK: "owner_id"},
+			{Name: "Profile", Type: "one_to_one", Table: "profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 	}
 	input.Config.Tables["public.profiles"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "Badge", Type: "one_to_one", Table: "badges", FK: "profile_id"},
+			{Name: "Badge", Type: "one_to_one", Table: "badges", FK: config.KeyColumns{"profile_id"}},
 		},
 	}
-	parser.DetectRelationships(input.Schema)
+	detectRelationships(input.Schema)
 
 	contexts, err := gen.BuildTableContexts(input, nil)
 	if err != nil {
@@ -3059,6 +3540,56 @@ func TestBuildContexts_StructNameMustBeExported(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("build error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// A key set is keyed by the primary key itself when every key column's Go
+// type is comparable, and by the key's %#v rendering when one is not: a map
+// keyed by a slice does not compile.
+func TestTableContext_KeySet(t *testing.T) {
+	col := func(name, goType string) gen.ColumnContext {
+		return gen.ColumnContext{Name: name, FieldName: name, GoType: goType, PrimaryKey: true}
+	}
+	tests := []struct {
+		name     string
+		ctx      gen.TableContext
+		wantType string
+		wantKey  string
+	}{
+		{
+			name:     "comparable single key",
+			ctx:      gen.TableContext{PKColumns: []gen.ColumnContext{col("ID", "int64")}},
+			wantType: "int64",
+			wantKey:  "id",
+		},
+		{
+			name:     "comparable composite key",
+			ctx:      gen.TableContext{CompositePK: true, CompositePKStructName: "OrderItemPK", PKColumns: []gen.ColumnContext{col("OrderID", "uuid.UUID"), col("Line", "int32")}},
+			wantType: "OrderItemPK",
+			wantKey:  "id",
+		},
+		{
+			name:     "byte slice single key",
+			ctx:      gen.TableContext{PKColumns: []gen.ColumnContext{col("ID", "[]byte")}},
+			wantType: "string",
+			wantKey:  `fmt.Sprintf("%#v", id)`,
+		},
+		{
+			name:     "composite key with a network address column",
+			ctx:      gen.TableContext{CompositePK: true, CompositePKStructName: "HostPK", PKColumns: []gen.ColumnContext{col("Addr", "net.IP"), col("Port", "int32")}},
+			wantType: "string",
+			wantKey:  `fmt.Sprintf("%#v", id)`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ctx.KeySetType(); got != tt.wantType {
+				t.Errorf("KeySetType() = %q, want %q", got, tt.wantType)
+			}
+			if got := tt.ctx.KeySetKey("id"); got != tt.wantKey {
+				t.Errorf("KeySetKey(%q) = %q, want %q", "id", got, tt.wantKey)
 			}
 		})
 	}

@@ -90,10 +90,6 @@ func (d SQLiteDialect) UpsertClause(opts UpsertClauseOptions) string {
 // SupportsArrayParams returns false — SQLite does not support native array parameters.
 func (d SQLiteDialect) SupportsArrayParams() bool { return false }
 
-// SupportsTupleIN reports whether this dialect supports tuple IN syntax
-// for composite PK batch lookups: WHERE (col1, col2) IN (($1, $2), ...).
-func (d SQLiteDialect) SupportsTupleIN() bool { return true }
-
 // BackslashEscapes returns false — SQLite reads a backslash inside a literal
 // as literal text.
 func (d SQLiteDialect) BackslashEscapes() bool { return false }
@@ -104,10 +100,14 @@ func (d SQLiteDialect) BackslashEscapes() bool { return false }
 // supplied.
 func (d SQLiteDialect) DefaultValuesClause() string { return "DEFAULT VALUES" }
 
+// NoLimitClause returns "LIMIT -1" — SQLite accepts OFFSET only after a
+// LIMIT, and a negative limit means no limit.
+func (d SQLiteDialect) NoLimitClause() string { return "LIMIT -1" }
+
 // LockClause returns the empty string for every mode. SQLite has no per-row
 // locking — it relies on database-level locks via BEGIN IMMEDIATE / BEGIN
 // EXCLUSIVE. Generated read methods reject any non-[LockNone] mode at the
 // runtime guard before reaching the SQL builder (see PRD §9.6a). This method
 // returning empty preserves the [Dialect] contract for [LockNone] callers and
 // is unreachable in well-formed generated code for other modes.
-func (d SQLiteDialect) LockClause(_ LockMode) string { return "" }
+func (d SQLiteDialect) LockClause(_ LockMode, _ string) string { return "" }

@@ -41,8 +41,8 @@ func TestStoreLoadValid(t *testing.T) {
 	if s.Manifest() == nil {
 		t.Fatal("Manifest() = nil after successful Load")
 	}
-	if got := s.Manifest().SchemaVersion; got != "0.1.0" {
-		t.Errorf("SchemaVersion = %q, want %q", got, "0.1.0")
+	if got := s.Manifest().SchemaVersion; got != "0.2.0" {
+		t.Errorf("SchemaVersion = %q, want %q", got, "0.2.0")
 	}
 	if !bytes.Equal(s.Raw(), fixtureManifest(t)) {
 		t.Error("Raw() does not match the loaded fixture bytes")
@@ -181,8 +181,8 @@ func TestStoreSchemaVersionMismatch(t *testing.T) {
 	// A structurally-valid manifest whose schema_version differs from the
 	// version sqlgen was built against loads successfully and logs a warning.
 	raw := bytes.Replace(fixtureManifest(t),
-		[]byte(`"schema_version": "0.1.0"`),
-		[]byte(`"schema_version": "0.2.0"`), 1)
+		[]byte(`"schema_version": "0.2.0"`),
+		[]byte(`"schema_version": "0.1.0"`), 1)
 	path := writeManifest(t, raw)
 
 	var logs bytes.Buffer
@@ -195,8 +195,8 @@ func TestStoreSchemaVersionMismatch(t *testing.T) {
 		t.Fatalf("Load() error on version-mismatched manifest: %v", err)
 	}
 
-	if got := s.Health().SchemaVersion; got != "0.2.0" {
-		t.Errorf("Health().SchemaVersion = %q, want %q", got, "0.2.0")
+	if got := s.Health().SchemaVersion; got != "0.1.0" {
+		t.Errorf("Health().SchemaVersion = %q, want %q", got, "0.1.0")
 	}
 	if !bytes.Contains(logs.Bytes(), []byte("schema_version")) {
 		t.Errorf("expected a schema-version mismatch warning, log output = %q", logs.String())

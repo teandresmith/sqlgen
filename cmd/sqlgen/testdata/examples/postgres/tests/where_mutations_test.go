@@ -2,11 +2,9 @@ package tests
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/teandresmith/sqlgen/comparator"
-	"github.com/teandresmith/sqlgen/omittable"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/postgres/models"
 )
@@ -22,113 +20,6 @@ import (
 //   - SoftDeleteWhere on already-soft-deleted rows is a no-op: the op always
 //     scopes to `deleted_at IS NULL`, so previously-soft-deleted rows are
 //     outside the match set and the result slice is empty.
-
-func TestUpdateWhere_EmptyFilter_ReturnsErrEmptyFilter_Postgres(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	_, err := client.Articles().UpdateWhere(ctx, &models.ArticleFilter{}, &models.UpdateArticleInput{
-		Title: omittable.Set("ignored"),
-	})
-	if !errors.Is(err, models.ErrEmptyFilter) {
-		t.Fatalf("UpdateWhere(empty filter): err = %v, want ErrEmptyFilter", err)
-	}
-}
-
-func TestSoftDeleteWhere_EmptyFilter_ReturnsErrEmptyFilter_Postgres(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	_, err := client.Articles().SoftDeleteWhere(ctx, &models.ArticleFilter{})
-	if !errors.Is(err, models.ErrEmptyFilter) {
-		t.Fatalf("SoftDeleteWhere(empty filter): err = %v, want ErrEmptyFilter", err)
-	}
-}
-
-func TestRestoreWhere_EmptyFilter_ReturnsErrEmptyFilter_Postgres(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	_, err := client.Articles().RestoreWhere(ctx, &models.ArticleFilter{})
-	if !errors.Is(err, models.ErrEmptyFilter) {
-		t.Fatalf("RestoreWhere(empty filter): err = %v, want ErrEmptyFilter", err)
-	}
-}
-
-func TestHardDeleteWhere_EmptyFilter_ReturnsErrEmptyFilter_Postgres(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	err := client.Articles().HardDeleteWhere(ctx, &models.ArticleFilter{})
-	if !errors.Is(err, models.ErrEmptyFilter) {
-		t.Fatalf("HardDeleteWhere(empty filter): err = %v, want ErrEmptyFilter", err)
-	}
-}
-
-func TestUpdateWhere_ZeroMatch_ReturnsNilNoError_Postgres(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	noMatch := "where-mut-no-such-author-" + t.Name()
-	got, err := client.Articles().UpdateWhere(
-		ctx,
-		&models.ArticleFilter{Author: &comparator.String{Eq: &noMatch}},
-		&models.UpdateArticleInput{Title: omittable.Set("ignored")},
-	)
-	if err != nil {
-		t.Fatalf("UpdateWhere(zero match): %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("UpdateWhere(zero match) = %d results, want 0", len(got))
-	}
-}
-
-func TestSoftDeleteWhere_ZeroMatch_ReturnsNilNoError_Postgres(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	noMatch := "where-mut-no-such-author-" + t.Name()
-	got, err := client.Articles().SoftDeleteWhere(
-		ctx,
-		&models.ArticleFilter{Author: &comparator.String{Eq: &noMatch}},
-	)
-	if err != nil {
-		t.Fatalf("SoftDeleteWhere(zero match): %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("SoftDeleteWhere(zero match) = %d results, want 0", len(got))
-	}
-}
-
-func TestRestoreWhere_ZeroMatch_ReturnsNilNoError_Postgres(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	noMatch := "where-mut-no-such-author-" + t.Name()
-	got, err := client.Articles().RestoreWhere(
-		ctx,
-		&models.ArticleFilter{Author: &comparator.String{Eq: &noMatch}},
-	)
-	if err != nil {
-		t.Fatalf("RestoreWhere(zero match): %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("RestoreWhere(zero match) = %d results, want 0", len(got))
-	}
-}
-
-func TestHardDeleteWhere_ZeroMatch_ReturnsNil_Postgres(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	noMatch := "where-mut-no-such-author-" + t.Name()
-	if err := client.Articles().HardDeleteWhere(
-		ctx,
-		&models.ArticleFilter{Author: &comparator.String{Eq: &noMatch}},
-	); err != nil {
-		t.Fatalf("HardDeleteWhere(zero match): %v", err)
-	}
-}
 
 func TestSoftDeleteWhere_AlreadySoftDeleted_NoOp_Postgres(t *testing.T) {
 	// SoftDeleteWhere always scopes to `deleted_at IS NULL` (the op only targets

@@ -25,9 +25,12 @@ func (c *productSummaryClient) Refresh(ctx context.Context) error {
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, false)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh product_summary: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh product_summary: %w", err)
+	}
+	return nil
 }

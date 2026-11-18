@@ -112,6 +112,13 @@ func TestMySQLDialect_SupportsReturning(t *testing.T) {
 	}
 }
 
+func TestMySQLDialect_SupportsArrayParams(t *testing.T) {
+	d := sql.NewMySQLDialect()
+	if got := d.SupportsArrayParams(); got != false {
+		t.Errorf("SupportsArrayParams() = %v, want false", got)
+	}
+}
+
 func TestMySQLDialect_BackslashEscapes(t *testing.T) {
 	d := sql.NewMySQLDialect()
 	if got := d.BackslashEscapes(); got != true {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,7 +32,7 @@ func newMCPCmd(_ *cliFlags) *cobra.Command {
 		Short: "Serve the generated manifest to AI agents over MCP",
 	}
 	cmd.AddCommand(newMCPServeCmd())
-	return cmd
+	return asParent(cmd)
 }
 
 func newMCPServeCmd() *cobra.Command {
@@ -43,8 +44,13 @@ func newMCPServeCmd() *cobra.Command {
 			"stdio is the default transport (agent clients spawn the server per session).\n" +
 			"--http <port> additionally serves Streamable HTTP bound to 127.0.0.1 only;\n" +
 			"any non-loopback bind address is refused.",
-		Args: cobra.NoArgs,
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Checked here rather than with MarkFlagsMutuallyExclusive, whose
+			// error is not a usage error and so would exit 1.
+			if cmd.Flags().Changed("watch") && cmd.Flags().Changed("no-watch") {
+				return &usageError{err: errors.New("--watch and --no-watch are mutually exclusive")}
+			}
 			return runMCPServe(cmd, f)
 		},
 	}
@@ -55,19 +61,21 @@ func newMCPServeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.noWatch, "no-watch", false, "disable manifest watch mode (daemon/production use)")
 	cmd.Flags().StringVar(&f.logPath, "log", "", "log to file (default: stderr — stdout is reserved for JSON-RPC)")
 	cmd.Flags().StringVar(&f.logLevel, "log-level", "info", "log level: debug|info|warn|error")
-	cmd.MarkFlagsMutuallyExclusive("watch", "no-watch")
 	return cmd
 }
 
 func runMCPServe(cmd *cobra.Command, f *mcpServeFlags) error {
 	// Resolve the log destination: stderr by default, --log redirects to a
 	// file. stdout is never a target — it carries JSON-RPC framing.
+	errOut := cmd.ErrOrStderr()
 	logW := io.Writer(os.Stderr)
 	var logFile *os.File
 	if f.logPath != "" {
 		file, err := os.OpenFile(f.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
-			return &exitError{code: ExitConfig, err: fmt.Errorf("open --log %s: %w", f.logPath, err)}
+			err = fmt.Errorf("open --log %s: %w", f.logPath, err)
+			_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
+			return &exitError{code: ExitConfig, err: err}
 		}
 		logW, logFile = file, file
 	}
@@ -77,7 +85,14 @@ func runMCPServe(cmd *cobra.Command, f *mcpServeFlags) error {
 		if logFile != nil {
 			_ = logFile.Close()
 		}
+		_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
 		return &exitError{code: ExitConfig, err: err}
+	}
+	if !f.stdio && f.httpAddr == "" {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
+		return &usageError{err: errors.New("no transport enabled: pass --stdio and/or --http <port>")}
 	}
 
 	// Refuse a non-loopback --http bind up front (flag-parse time).
@@ -88,6 +103,7 @@ func runMCPServe(cmd *cobra.Command, f *mcpServeFlags) error {
 			if logFile != nil {
 				_ = logFile.Close()
 			}
+			_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
 			return &exitError{code: ExitConfig, err: err}
 		}
 		httpAddr = addr
@@ -111,6 +127,14 @@ func runMCPServe(cmd *cobra.Command, f *mcpServeFlags) error {
 		_ = logFile.Close()
 	}
 	if runErr != nil {
+		// A startup failure carrying a reserved code (-32001 MANIFEST_NOT_FOUND,
+		// -32002 MANIFEST_INVALID) names it on stderr; no JSON-RPC reply is sent
+		// because the server never started.
+		if mcpErr, ok := errors.AsType[*mcp.Error](runErr); ok {
+			_, _ = fmt.Fprintf(errOut, "Error: %d %s: %v\n", int(mcpErr.Code), mcpErr.Code, runErr)
+		} else {
+			_, _ = fmt.Fprintf(errOut, "Error: %v\n", runErr)
+		}
 		return &exitError{code: ExitGeneration, err: runErr}
 	}
 	return nil

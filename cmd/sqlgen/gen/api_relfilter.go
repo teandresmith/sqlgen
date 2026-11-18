@@ -23,8 +23,9 @@ import (
 //
 // A view is a member when it is API-enabled. A declared relationship may point
 // at one, and every view column is public (a view has no column_map), so
-// `api.enabled` alone decides. Filter members are unaffected: the model side
-// builds them for table targets only.
+// `api.enabled` alone decides, for the object-type field and the filter
+// member alike: the model side builds a member for a view target as it does
+// for a table, and the view's own filter translator backs it.
 //
 // The key is the struct name because that is what a relationship field
 // renders as its type, and it is unique project-wide (§8.5).
@@ -35,14 +36,9 @@ import (
 func apiExposedTargets(cfg *config.RootConfig, tables []TableContext, views []ViewContext) map[string]bool {
 	out := make(map[string]bool, len(tables)+len(views))
 	for i := range tables {
-		tc := &tables[i]
-		if !tableAPIEnabled(cfg, tc.TableName, tc.Schema) {
-			continue
+		if tableAPIExposed(cfg, &tables[i]) {
+			out[tables[i].StructName] = true
 		}
-		if !hasAPIReadableColumn(tc.Columns) {
-			continue
-		}
-		out[tc.StructName] = true
 	}
 	for i := range views {
 		if viewAPIEnabled(cfg, views[i].ViewName, views[i].Schema) {
@@ -52,9 +48,17 @@ func apiExposedTargets(cfg *config.RootConfig, tables []TableContext, views []Vi
 	return out
 }
 
+// tableAPIExposed reports whether a table has its own API surface:
+// API-enabled and with at least one readable column. BuildAPIContext and
+// apiExposedTargets both read it, so a surface and the edges into it never
+// disagree.
+func tableAPIExposed(cfg *config.RootConfig, tc *TableContext) bool {
+	return tableAPIEnabled(cfg, tc.TableName, tc.Schema) && hasAPIReadableColumn(tc.Columns)
+}
+
 // hasAPIReadableColumn reports whether any column survives §32.2 with the
-// read capability. A table where none does emits an object type with no
-// fields, so there is nothing for a nested filter to select against.
+// read capability. A table where none does has no API surface
+// (tableAPIExposed).
 func hasAPIReadableColumn(cols []ColumnContext) bool {
 	for _, col := range cols {
 		if columnAccessCapabilities(col).APIReadable {

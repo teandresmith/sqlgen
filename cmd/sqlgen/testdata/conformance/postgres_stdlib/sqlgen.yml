@@ -1,0 +1,91 @@
+version: v1
+input:
+  dialect: postgres
+  paths:
+    # The same DDL as the pgx module: this module varies only the driver.
+    - ../postgres/schema.sql
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+generation:
+  # The three WithRelated methods, on every table with an eligible edge.
+  nested_mutations:
+    enabled: true
+tables:
+  products:
+    # Small enough that a handful of keys spans several sub-batches.
+    batch_size: 2
+    # A cursor order that differs from insertion order, so Connection's sort
+    # is observable; id breaks price ties.
+    cursor_keys: [price, id]
+  documents:
+    batch_size: 2
+  revisions:
+    batch_size: 2
+  order_items:
+    # Detection gives an O2O its belongs-to side; the has-one side is declared.
+    relationships:
+      - name: Receipt
+        type: one_to_one
+        table: item_receipts
+        fk: [order_id, product_id]
+    # Smaller than the rows a zero-input Connection subtest seeds, so the
+    # default page size is observable.
+    page_size: 2
+  authors:
+    # A nested verb chunks its id lists at the parent's batch size, so a connect
+    # or disconnect list spans several chunks.
+    batch_size: 2
+    # A has-one edge is declared in config; the edges are listed by name, so
+    # one that turns ineligible fails generation instead of disappearing.
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: author_profiles
+        fk: author_id
+    # Listed out of the byte order of their Go field names, which is the order
+    # the edges are processed in, so that order is observable.
+    nested_mutations:
+      relationships:
+        - name: Tags
+        - name: Profile
+        - name: Posts
+  posts:
+    # A nested create spans several CreateMany chunks.
+    batch_size: 2
+  crates:
+    # Listed by name, so a surrogate-keyed junction this edge cannot link through
+    # fails generation instead of disappearing.
+    nested_mutations:
+      relationships:
+        - name: Seals
+  author_tags:
+    batch_size: 2
+  counters:
+    # Update and Increment on a missing key return nil rather than ErrNotFound.
+    strict_updates: false
+  # Listed by name, so an edge that turns ineligible fails generation. vans is
+  # left to auto-inclusion: its Permits edge has no disconnect, which fails a
+  # listed edge. depots chunks its connect reads across statements.
+  depots:
+    batch_size: 2
+    nested_mutations:
+      relationships:
+        - name: Vans
+  routes:
+    nested_mutations:
+      relationships:
+        - name: Vans
+          allow_reparent: true
+  bays:
+    nested_mutations:
+      relationships:
+        - name: Lockers
+        - name: Slots
+          allow_reparent: true
+overrides:
+  types:
+    # citext has no built-in Go type.
+    citext:
+      type: string

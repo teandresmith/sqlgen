@@ -1,0 +1,112 @@
+"""
+Label corresponds to the labels table.
+"""
+type Label {
+  "id"
+  id: UUID!
+  "workspace_id"
+  workspaceID: UUID!
+  "name"
+  name: String!
+  "many-to-many relationship with the tasks table."
+  tasks: [Task!]!
+}
+
+type LabelConnection {
+  edges:      [LabelEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type LabelEdge {
+  node:   Label!
+  cursor: String!
+}
+
+type LabelListResult {
+  items:      [Label!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input LabelFilter {
+  workspaceID: IDComparator
+  name: StringComparator
+  tasks: TaskFilter
+  and: [LabelFilter!]
+  or:  [LabelFilter!]
+}
+
+enum LabelSortField {
+  ID
+  WORKSPACE_ID
+  NAME
+}
+
+input LabelSort {
+  field:     LabelSortField!
+  direction: SortDirection!
+}
+input CreateLabelInput {
+  workspaceID: UUID
+  name: String!
+}
+input UpdateLabelInput {
+  name: String
+}
+
+extend type Query {
+  label(id: UUID!): Label
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to labelList instead."
+  labels(filter: LabelFilter, first: Int, after: String, last: Int, before: String): LabelConnection!
+  labelList(filter: LabelFilter, sort: [LabelSort!], limit: Int, offset: Int): LabelListResult!
+}
+
+extend type Mutation {
+  createLabel(input: CreateLabelInput!): Label!
+  createLabels(inputs: [CreateLabelInput!]!): [Label!]!
+  updateLabel(id: UUID!, input: UpdateLabelInput!): Label!
+  updateLabels(filter: LabelFilter!, input: UpdateLabelInput!): [Label!]!
+  upsertLabel(input: CreateLabelInput!): Label!
+  deleteLabel(id: UUID!): Boolean!
+}
+
+input CreateLabelWithRelatedInput {
+  label: CreateLabelInput!
+  tasks: LabelTasksCreateNested
+}
+
+input UpdateLabelWithRelatedInput {
+  label: UpdateLabelInput
+  tasks: LabelTasksUpdateNested
+}
+
+input UpsertLabelWithRelatedInput {
+  label: CreateLabelInput!
+  tasks: LabelTasksUpdateNested
+}
+
+enum LabelConflictTarget {
+  PK
+  WORKSPACE_ID_ID
+}
+
+input LabelTasksCreateNested {
+  create: [CreateTaskInput!]
+  connect: [UUID!]
+}
+
+input LabelTasksUpdateNested {
+  clear: Boolean
+  create: [CreateTaskInput!]
+  connect: [UUID!]
+  disconnect: [UUID!]
+}
+
+extend type Mutation {
+  createLabelWithRelated(input: CreateLabelWithRelatedInput!): Label!
+  updateLabelWithRelated(id: UUID!, input: UpdateLabelWithRelatedInput!): Label!
+  upsertLabelWithRelated(input: UpsertLabelWithRelatedInput!, conflictTarget: LabelConflictTarget! = PK): Label!
+}

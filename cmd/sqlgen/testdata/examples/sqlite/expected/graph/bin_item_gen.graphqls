@@ -1,0 +1,78 @@
+"""
+BinItem corresponds to the bin_items table.
+"""
+type BinItem {
+  "id"
+  id: Int!
+  "aisle"
+  aisle: String
+  "slot"
+  slot: Int
+  "name"
+  name: String!
+}
+
+type BinItemConnection {
+  edges:      [BinItemEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type BinItemEdge {
+  node:   BinItem!
+  cursor: String!
+}
+
+type BinItemListResult {
+  items:      [BinItem!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input BinItemFilter {
+  aisle: NullableStringComparator
+  slot: NullableNumericComparator
+  name: StringComparator
+  and: [BinItemFilter!]
+  or:  [BinItemFilter!]
+}
+
+enum BinItemSortField {
+  ID
+  AISLE
+  SLOT
+  NAME
+}
+
+input BinItemSort {
+  field:     BinItemSortField!
+  direction: SortDirection!
+}
+input CreateBinItemInput {
+  aisle: String
+  slot: Int
+  name: String!
+}
+input UpdateBinItemInput {
+  aisle: String
+  slot: Int
+  name: String
+}
+
+extend type Query {
+  binItem(id: Int!): BinItem
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to binItemList instead."
+  binItems(filter: BinItemFilter, first: Int, after: String, last: Int, before: String): BinItemConnection!
+  binItemList(filter: BinItemFilter, sort: [BinItemSort!], limit: Int, offset: Int): BinItemListResult!
+}
+
+extend type Mutation {
+  createBinItem(input: CreateBinItemInput!): BinItem!
+  createBinItems(inputs: [CreateBinItemInput!]!): [BinItem!]!
+  updateBinItem(id: Int!, input: UpdateBinItemInput!): BinItem!
+  updateBinItems(filter: BinItemFilter!, input: UpdateBinItemInput!): [BinItem!]!
+  upsertBinItem(input: CreateBinItemInput!): BinItem!
+  deleteBinItem(id: Int!): Boolean!
+}

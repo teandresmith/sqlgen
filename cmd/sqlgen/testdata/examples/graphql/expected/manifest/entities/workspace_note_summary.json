@@ -101,7 +101,7 @@
       "name": "document_count",
       "go_field": "DocumentCount",
       "go_type": "int32",
-      "db_type": "int32",
+      "db_type": "int64",
       "nullable": false,
       "pk": false,
       "unique": false,
@@ -245,6 +245,12 @@
       "Labels",
       "PinnedOrder",
       "WorkspaceID"
+    ]
+  },
+  "examples": {
+    "read": [
+      "row, err := client.WorkspaceNoteSummary().Get(ctx, uuid.NewV4())",
+      "rows, err := client.WorkspaceNoteSummary().GetMany(ctx, &models.GetWorkspaceNoteSummariesInput{Filter: &models.WorkspaceNoteSummaryFilter{Body: &comparator.String{Eq: new(\"example\")}}})"
     ]
   }
 }

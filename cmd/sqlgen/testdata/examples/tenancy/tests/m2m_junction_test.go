@@ -3,7 +3,7 @@ package tests
 // Tenancy × relationships — M2M junction variance (PRD §29.10, §29.5).
 //
 // M2M loads run as two queries: (1) a SELECT on the junction to map parent→tag
-// IDs; (2) a SELECT on the child table keyed by collected tag IDs. §29.10 is
+// IDs; (2) a SELECT on the child table keyed by the junction's tag IDs. §29.10 is
 // explicit that when the junction is NON-tenanted (the common shape — post_tags
 // has no workspace_id column), cross-tenant isolation rides on the child's
 // own auto-filter. The junction query produces potentially mixed rows; the
@@ -84,16 +84,17 @@ func TestM2M_NonTenantedJunctionSQLShape(t *testing.T) {
 
 	sqls := cap.snapshot()
 	// The read path is: posts SELECT (parent) → post_tags SELECT (junction) →
-	// tags SELECT (child). Classify by FROM-clause table reference.
+	// tags SELECT (child). Classify by the outermost FROM: the tags SELECT
+	// names post_tags too, in the subquery that picks its rows.
 	var postsSQL, junctionSQL, tagsSQL string
 	for _, s := range sqls {
-		low := strings.ToLower(s)
+		_, from, _ := strings.Cut(strings.ToLower(s), "from ")
 		switch {
-		case strings.Contains(low, `from "post_tags"`):
+		case strings.HasPrefix(from, `"post_tags"`):
 			junctionSQL = s
-		case strings.Contains(low, `from "tags"`):
+		case strings.HasPrefix(from, `"tags"`):
 			tagsSQL = s
-		case strings.Contains(low, `from "posts"`):
+		case strings.HasPrefix(from, `"posts"`):
 			postsSQL = s
 		}
 	}

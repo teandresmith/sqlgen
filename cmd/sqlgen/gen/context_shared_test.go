@@ -78,6 +78,7 @@ func TestBuildSharedTypesContext_callOptionsFields(t *testing.T) {
 		{Name: "FieldOptions", GoType: "*FO", JSONTag: "field_options", Doc: "column selection and relationship loading"},
 		{Name: "LockMode", GoType: "sql.LockMode", JSONTag: "lock_mode", Doc: "row-level lock clause for read methods"},
 		{Name: "AllowInTransaction", GoType: "bool", JSONTag: "allow_in_transaction", Doc: "permit Stream inside a transaction; commits the caller to issuing nothing else on that txCtx"},
+		{Name: "caller", GoType: "callerOptions", Doc: "the hook toggles the outermost call resolved; survives internal hops"},
 	}
 
 	if diff := cmp.Diff(wantFields, callOpts.Fields); diff != "" {
@@ -108,6 +109,7 @@ func TestBuildSharedTypesContext_callOptionsFieldsTenancyEnabled(t *testing.T) {
 		{Name: "FieldOptions", GoType: "*FO", JSONTag: "field_options", Doc: "column selection and relationship loading"},
 		{Name: "LockMode", GoType: "sql.LockMode", JSONTag: "lock_mode", Doc: "row-level lock clause for read methods"},
 		{Name: "AllowInTransaction", GoType: "bool", JSONTag: "allow_in_transaction", Doc: "permit Stream inside a transaction; commits the caller to issuing nothing else on that txCtx"},
+		{Name: "caller", GoType: "callerOptions", Doc: "the hook toggles the outermost call resolved; survives internal hops"},
 	}
 
 	if diff := cmp.Diff(wantFields, callOpts.Fields); diff != "" {

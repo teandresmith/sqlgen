@@ -11,7 +11,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver"
 )
 
 // CreateEvent is the resolver for the createEvent field.
@@ -33,39 +32,12 @@ func (r *mutationResolver) CreateEvents(ctx context.Context, inputs []*gqlmodel.
 
 // UpdateEvent is the resolver for the updateEvent field.
 func (r *mutationResolver) UpdateEvent(ctx context.Context, id uuid1.UUID, input gqlmodel.UpdateEventInput) (*models.Event, error) {
-	if input.Adjustment != nil && input.AdjustmentInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update events: column \"adjustment\" cannot be both set and incremented in one mutation")
-	}
-	if input.AdjustmentInc != nil && input.AdjustmentDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update events: column \"adjustment\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateEventInput(input)
-	hasSet := hasUpdateEventSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.EventIncrementColumn]
-	if input.AdjustmentInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.EventIncrementColumn]{
-			Column: models.EventIncrementAdjustment,
-			Amount: int(*input.AdjustmentInc),
-		})
-	}
-	if input.AdjustmentDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.EventIncrementColumn]{
-			Column: models.EventIncrementAdjustment,
-			Amount: -int(*input.AdjustmentDec),
-		})
-	}
-	return r.M.UpdateEvent(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateEvent(ctx, id, translateUpdateEventRequest(input))
 }
 
 // UpdateEvents is the resolver for the updateEvents field.
 func (r *mutationResolver) UpdateEvents(ctx context.Context, filter gqlmodel.EventFilter, input gqlmodel.UpdateEventInput) ([]*models.Event, error) {
-	if input.Adjustment != nil && input.AdjustmentInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update events: column \"adjustment\" cannot be both set and incremented in one mutation")
-	}
-	if input.AdjustmentInc != nil && input.AdjustmentDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update events: column \"adjustment\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateEvents(ctx, translateEventFilter(&filter), translateUpdateEventInput(input))
+	return r.M.UpdateEvents(ctx, translateEventFilter(&filter), translateUpdateEventRequest(input))
 }
 
 // UpsertEvent is the resolver for the upsertEvent field.

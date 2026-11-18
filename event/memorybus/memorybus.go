@@ -7,6 +7,7 @@ package memorybus
 
 import (
 	"context"
+	"log"
 	"slices"
 	"sync"
 
@@ -17,13 +18,11 @@ import (
 type Option func(*Bus)
 
 // WithSubscribeErrorHandler registers a handler invoked when a subscription
-// Handler returns a non-nil error. memorybus is a faithful at-most-once
-// reference transport: it never retries or redelivers, so a Handler error is
-// otherwise discarded exactly as in production single-process use. Registering
-// this makes the failure observable in tests and single-process apps without
-// changing delivery semantics (section 28.7.1). It mirrors natsbus's
-// option of the same name for parity. The default — no handler — discards the
-// error without allocating and is byte-identical to prior behavior.
+// Handler returns a non-nil error, in place of the default, which logs the
+// error through the standard log package (section 28.5). memorybus is a
+// faithful at-most-once reference transport: it never retries or redelivers,
+// so either way the handler only observes the failure. It mirrors natsbus's
+// option of the same name for parity.
 func WithSubscribeErrorHandler(fn func(ctx context.Context, e event.Event, err error)) Option {
 	return func(b *Bus) {
 		b.subErrHandler = fn
@@ -39,9 +38,10 @@ type Bus struct {
 	groupCounters map[string]uint64
 	closed        bool
 
-	// subErrHandler observes Handler errors when set. It is
-	// configured once at construction, before New returns, so Publish reads it
-	// without locking. It never alters delivery — memorybus does not redeliver.
+	// subErrHandler observes Handler errors when set; when nil they are logged.
+	// It is configured once at construction, before New returns, so Publish
+	// reads it without locking. It never alters delivery — memorybus does not
+	// redeliver.
 	subErrHandler func(ctx context.Context, e event.Event, err error)
 }
 
@@ -72,17 +72,27 @@ func New(opts ...Option) *Bus {
 // Publish dispatches the event to all matching subscribers synchronously.
 // Handlers are invoked outside the internal lock so they may subscribe,
 // unsubscribe, or publish without deadlocking. A Handler error is routed to the
-// WithSubscribeErrorHandler handler when one is configured; otherwise it is
-// discarded — memorybus is at-most-once and never redelivers.
+// WithSubscribeErrorHandler handler when one is configured and logged
+// otherwise — memorybus is at-most-once and never redelivers.
 // Returns nil when the bus is closed (no-op).
 func (b *Bus) Publish(ctx context.Context, e event.Event) error {
 	targets := b.selectTargets(e)
 	for _, s := range targets {
-		if err := s.handler(ctx, e); err != nil && b.subErrHandler != nil {
-			b.subErrHandler(ctx, e, err)
+		if err := s.handler(ctx, e); err != nil {
+			b.reportError(ctx, e, err)
 		}
 	}
 	return nil
+}
+
+// reportError hands a Handler error, as-is, to the WithSubscribeErrorHandler
+// handler, or logs it when none is set.
+func (b *Bus) reportError(ctx context.Context, e event.Event, err error) {
+	if b.subErrHandler != nil {
+		b.subErrHandler(ctx, e, err)
+		return
+	}
+	log.Printf("memorybus: subscription error for event %q (%s): %v", e.ID, e.Table, err)
 }
 
 // PublishBatch dispatches every event in the slice via Publish.

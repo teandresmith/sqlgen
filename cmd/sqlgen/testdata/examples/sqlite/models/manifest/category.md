@@ -64,19 +64,6 @@ sqlite:
 SELECT "description", "id", "name" FROM "categories" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *CategoryFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "categories" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -101,6 +88,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "categories" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *CategoryFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "categories" WHERE <filter>
 ```
 
 ### Paginate
@@ -161,36 +161,6 @@ sqlite:
 INSERT INTO "categories" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateCategoryInput`, `target CategoryConflictTarget`
-- Returns: `*Category`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "categories" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateCategoryInput`, `target CategoryConflictTarget`
-- Returns: `[]*Category`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "categories" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateCategoryInput`
@@ -234,6 +204,36 @@ sqlite:
 
 ```sql
 UPDATE "categories" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateCategoryInput`, `target CategoryConflictTarget`
+- Returns: `*Category`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated CategoryConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "categories" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateCategoryInput`, `target CategoryConflictTarget`
+- Returns: `[]*Category`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same CategoryConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "categories" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -296,3 +296,17 @@ Type `CategoryFilter`.
 Type `CategorySort`.
 
 Fields: Description, ID, Name
+
+## Read examples
+
+```go
+row, err := client.Categories().Get(ctx, 1)
+rows, err := client.Categories().GetMany(ctx, &models.GetCategoriesInput{Filter: &models.CategoryFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "example"})
+updated, err := client.Categories().Update(ctx, 1, &models.UpdateCategoryInput{Name: omittable.Set("example")})
+```

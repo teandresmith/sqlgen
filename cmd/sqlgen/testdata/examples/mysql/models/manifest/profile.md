@@ -68,19 +68,6 @@ mysql:
 SELECT `github_handle`, `id`, `preferences`, `user_id`, `verified`, `website` FROM `profiles` WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ProfileFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-mysql:
-
-```sql
-SELECT COUNT(*) FROM `profiles` WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -105,6 +92,19 @@ mysql:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM `profiles` WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ProfileFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+mysql:
+
+```sql
+SELECT COUNT(*) FROM `profiles` WHERE <filter>
 ```
 
 ### Paginate
@@ -165,36 +165,6 @@ mysql:
 INSERT INTO `profiles` (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateProfileInput`, `target ProfileConflictTarget`
-- Returns: `*Profile`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ProfileConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `profiles` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateProfileInput`, `target ProfileConflictTarget`
-- Returns: `[]*Profile`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-mysql:
-
-```sql
-INSERT INTO `profiles` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateProfileInput`
@@ -238,6 +208,36 @@ mysql:
 
 ```sql
 UPDATE `profiles` SET <set> WHERE <filter>
+```
+
+### Upsert
+
+- Params: `input *CreateProfileInput`, `target ProfileConflictTarget`
+- Returns: `*Profile`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ProfileConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `profiles` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateProfileInput`, `target ProfileConflictTarget`
+- Returns: `[]*Profile`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ProfileConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+mysql:
+
+```sql
+INSERT INTO `profiles` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>
 ```
 
 ### HardDelete
@@ -303,3 +303,17 @@ Type `ProfileFilter`.
 Type `ProfileSort`.
 
 Fields: GithubHandle, ID, Preferences, UserID, Verified, Website
+
+## Read examples
+
+```go
+row, err := client.Profiles().Get(ctx, 1)
+rows, err := client.Profiles().GetMany(ctx, &models.GetProfilesInput{Filter: &models.ProfileFilter{UserID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Profiles().Create(ctx, &models.CreateProfileInput{UserID: 1})
+updated, err := client.Profiles().Update(ctx, 1, &models.UpdateProfileInput{UserID: omittable.Set(int64(1))})
+```

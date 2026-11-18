@@ -1,6 +1,8 @@
 package gen_test
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -143,6 +145,33 @@ func TestBuildTableContexts_PKOverride_CompositePreservesOrder(t *testing.T) {
 	}
 }
 
+// TestBuildTableContexts_CompositePKFollowsClauseOrder pins PRD §27.5: with no
+// primary_key override, PKColumns follows the PRIMARY KEY (...) clause, not
+// column order, on every dialect.
+func TestBuildTableContexts_CompositePKFollowsClauseOrder(t *testing.T) {
+	const ddl = "CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT NULL, PRIMARY KEY (id, workspace_id));"
+	tests := []struct {
+		name    string
+		dialect config.Dialect
+	}{
+		{name: "postgres", dialect: config.DialectPostgres},
+		{name: "mysql", dialect: config.DialectMySQL},
+		{name: "sqlite", dialect: config.DialectSQLite},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := parseDDLForTest(t, tt.dialect, ddl)
+			contexts, err := gen.BuildTableContextsFromSchema(schema, testInput(schema).Config)
+			if err != nil {
+				t.Fatalf("BuildTableContextsFromSchema: %v", err)
+			}
+			if diff := cmp.Diff([]string{"id", "workspace_id"}, pkColumnNames(t, contexts[0])); diff != "" {
+				t.Errorf("PKColumns mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestBuildTableContexts_NoPK_SkippedFromGeneration pins PRD §9.4b: a table
 // with no auto-detected PK and no primary_key.columns override is skipped
 // from generation entirely — no TableContext is produced, so no client,
@@ -185,6 +214,95 @@ func TestBuildTableContexts_NoPK_SkippedFromGeneration(t *testing.T) {
 	}
 }
 
+// loadGenerateConfig loads a full generate config for dialect through
+// config.LoadConfig, so every default the CLI would apply is in place. extra
+// is appended verbatim as further top-level YAML.
+func loadGenerateConfig(t *testing.T, outDir string, dialect config.Dialect, extra string) *config.RootConfig {
+	t.Helper()
+	driver := "stdlib"
+	if dialect == config.DialectPostgres {
+		driver = "pgx"
+	}
+	body := `version: v1
+input:
+  dialect: ` + string(dialect) + `
+  paths:
+    - ./schema.sql
+output:
+  driver: ` + driver + `
+  dir: ` + outDir + `
+  package: db
+  layout: single_file
+` + extra
+	cfgPath := filepath.Join(t.TempDir(), "sqlgen.yml")
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	return cfg
+}
+
+// TestGenerate_NoPKTable_NoCacheEntryOrEventHook renders a whole package with
+// caching and events on and checks that a PK-less table reaches neither the
+// cache file nor the event-hooks file, while the keyed table beside it does.
+func TestGenerate_NoPKTable_NoCacheEntryOrEventHook(t *testing.T) {
+	schema := &parser.Schema{
+		Tables: []parser.Table{
+			{
+				Name:   "ledgers",
+				Schema: "public",
+				Columns: []parser.Column{
+					{Name: "name", Type: "text"},
+					{Name: "count", Type: "bigint"},
+				},
+			},
+			{
+				Name:   "users",
+				Schema: "public",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+					{Name: "email", Type: "text"},
+				},
+			},
+		},
+	}
+	outDir := t.TempDir()
+	cfg := loadGenerateConfig(t, outDir, config.DialectPostgres, `cache:
+  enabled: true
+  ttl: "1h"
+  serializer: json
+  key_prefix: sqlgen
+events:
+  enabled: true
+`)
+
+	if _, err := gen.Generate(schema, cfg, "test"); err != nil {
+		t.Fatalf("Generate() error: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		file string
+	}{
+		{name: "no cache entry is emitted for the PK-less table", file: "cache_gen.go"},
+		{name: "no event hook is emitted for the PK-less table", file: "event_hooks_gen.go"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			file := tt.file
+			body := readGenFile(t, outDir, file)
+			if !strings.Contains(body, "TableUsers") {
+				t.Fatalf("%s does not name the keyed users table; fixture is not exercising the file", file)
+			}
+			if lower := strings.ToLower(body); strings.Contains(lower, "ledger") {
+				t.Errorf("%s names the PK-less ledgers table; want it absent", file)
+			}
+		})
+	}
+}
+
 // TestBuildTableContexts_NoPK_WithOverride_NotSkipped confirms the inverse:
 // a no-schema-PK table whose primary_key.columns override resolves the PK
 // is NOT skipped — the override is the user's explicit declaration that the
@@ -221,6 +339,110 @@ func TestBuildTableContexts_NoPK_WithOverride_NotSkipped(t *testing.T) {
 	}
 	if !tc.Operations.Update {
 		t.Error("Operations.Update should be enabled when primary_key.columns supplies a PK")
+	}
+}
+
+// TestBuildTableContexts_ExcludedKeyColumn checks that a table generates only
+// when `exclude_columns` leaves every member of its resolved key, agreeing
+// with buildTableColumns; otherwise the client template indexes an empty
+// PKColumns.
+func TestBuildTableContexts_ExcludedKeyColumn(t *testing.T) {
+	cycles := parser.Table{
+		Name: "cycles", Schema: "public",
+		Columns: []parser.Column{
+			{Name: "id", Type: "integer", PrimaryKey: true},
+			{Name: "code", Type: "text", Unique: true},
+			{Name: "name", Type: "text"},
+		},
+	}
+	memberships := parser.Table{
+		Name: "memberships", Schema: "public",
+		Columns: []parser.Column{
+			{Name: "org_id", Type: "integer", PrimaryKey: true},
+			{Name: "user_id", Type: "integer", PrimaryKey: true},
+			{Name: "role", Type: "text"},
+		},
+	}
+	tests := []struct {
+		name   string
+		table  parser.Table
+		mutate func(*config.RootConfig)
+		wantPK []string // nil means the table is skipped
+	}{
+		{
+			name:  "every column excluded",
+			table: cycles,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{ExcludeColumns: []string{"id", "code", "name"}}
+			},
+		},
+		{
+			name:  "only key column excluded per table",
+			table: cycles,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["public.cycles"] = config.TableConfig{ExcludeColumns: []string{"id"}}
+			},
+		},
+		{
+			name:  "only key column excluded globally",
+			table: cycles,
+			mutate: func(c *config.RootConfig) {
+				c.Generation.ExcludeColumns = []string{"id"}
+			},
+		},
+		{
+			name:  "one member of a composite key excluded",
+			table: memberships,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["memberships"] = config.TableConfig{ExcludeColumns: []string{"user_id"}}
+			},
+		},
+		{
+			name:  "override over a surviving column",
+			table: cycles,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["cycles"] = config.TableConfig{
+					ExcludeColumns: []string{"id"},
+					PrimaryKey:     &config.TablePrimaryKeyConfig{Columns: []string{"code"}},
+				}
+			},
+			wantPK: []string{"code"},
+		},
+		{
+			name:  "non-key column excluded",
+			table: memberships,
+			mutate: func(c *config.RootConfig) {
+				c.Tables["memberships"] = config.TableConfig{ExcludeColumns: []string{"role"}}
+			},
+			wantPK: []string{"org_id", "user_id"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := testInput(&parser.Schema{Tables: []parser.Table{tt.table}})
+			tt.mutate(in.Config)
+
+			contexts, err := gen.BuildTableContexts(in, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts: %v", err)
+			}
+			if tt.wantPK == nil {
+				if len(contexts) != 0 {
+					t.Fatalf("BuildTableContexts returned %d tables, want %s skipped", len(contexts), tt.table.Name)
+				}
+				return
+			}
+			if len(contexts) != 1 {
+				t.Fatalf("BuildTableContexts returned %d tables, want 1", len(contexts))
+			}
+			got := make([]string, len(contexts[0].PKColumns))
+			for i, c := range contexts[0].PKColumns {
+				got[i] = c.Name
+			}
+			if diff := cmp.Diff(tt.wantPK, got); diff != "" {
+				t.Errorf("PKColumns mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
@@ -376,9 +598,9 @@ func TestBuildTableContexts_SubCategorizedRelationships(t *testing.T) {
 	in := testInput(schema)
 	in.Config.Tables["asset"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-			{Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-			{Name: "Invoices", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+			{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+			{Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+			{Name: "Invoices", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 		},
 	}
 
@@ -510,7 +732,7 @@ func TestBuildRelationshipContexts_ExcludeByBaseName(t *testing.T) {
 	// group, so it does not surface on stakeholder; users sees the one
 	// undecorated edge pluralized to "assets".
 	in := testInput(multiFKAssetSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	gotBaseline := relationshipNames(stakeholderRelationships(t, in))
 	wantBaseline := []string{"developer_assets", "om_provider_assets", "owner_assets"}
 	if diff := cmp.Diff(wantBaseline, gotBaseline); diff != "" {
@@ -523,7 +745,7 @@ func TestBuildRelationshipContexts_ExcludeByBaseName(t *testing.T) {
 	// (stakeholder, asset) used the bare name; multi-FK schemas must
 	// continue to honor it.
 	in = testInput(multiFKAssetSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["stakeholder"] = config.TableConfig{
 		ExcludeRelationships: []string{"asset"},
 	}
@@ -536,7 +758,7 @@ func TestBuildRelationshipContexts_ExcludeByBaseName(t *testing.T) {
 	// code, e.g. `DeveloperAssets`) drops only that edge; siblings in the
 	// same (source, target) group remain.
 	in = testInput(multiFKAssetSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["stakeholder"] = config.TableConfig{
 		ExcludeRelationships: []string{"developer_assets"},
 	}
@@ -550,7 +772,7 @@ func TestBuildRelationshipContexts_ExcludeByBaseName(t *testing.T) {
 	// disambiguated entry — combining both still produces zero edges.
 	// Confirms BaseName-match short-circuits Name-match cleanly.
 	in = testInput(multiFKAssetSchema())
-	parser.DetectRelationships(in.Schema)
+	detectRelationships(in.Schema)
 	in.Config.Tables["stakeholder"] = config.TableConfig{
 		ExcludeRelationships: []string{"asset", "owner_assets"},
 	}
@@ -607,7 +829,7 @@ func TestBuildRelationshipContexts_SliceFieldsArePlural(t *testing.T) {
 							{Name: "tag_id", Type: "uuid", PrimaryKey: true, FKReference: &parser.FKReference{Table: "tag", Column: "id"}},
 						},
 						// Composite PK is what the M2M detector keys off
-						// (junctionConstraint in parser/relationship.go) — without
+						// (parser.DetectRelationships) — without
 						// the table-level Constraint entry the parser falls back
 						// to two separate O2M edges instead of one M2M.
 						Constraints: []parser.Constraint{
@@ -672,7 +894,7 @@ func TestBuildRelationshipContexts_SliceFieldsArePlural(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := testInput(tt.schema)
-			parser.DetectRelationships(in.Schema)
+			detectRelationships(in.Schema)
 			contexts, err := gen.BuildTableContexts(in, nil)
 			if err != nil {
 				t.Fatalf("BuildTableContexts: %v", err)
@@ -816,7 +1038,7 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			name: "declared name collides with inferred edge",
 			tableCfg: config.TableConfig{
 				Relationships: []config.TableRelationship{
-					{Name: "Entries", Type: "one_to_many", Table: "entries", FK: "account_id"},
+					{Name: "Entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}},
 				},
 			},
 			wantFieldNames: []string{"Entries"},
@@ -831,7 +1053,7 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			tableCfg: config.TableConfig{
 				ExcludeRelationships: []string{"entries"},
 				Relationships: []config.TableRelationship{
-					{Name: "Entries", Type: "one_to_many", Table: "entries", FK: "account_id"},
+					{Name: "Entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}},
 				},
 			},
 			wantFieldNames: []string{"Entries"},
@@ -844,7 +1066,7 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			name: "declared name distinct from inferred edge",
 			tableCfg: config.TableConfig{
 				Relationships: []config.TableRelationship{
-					{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: "account_id"},
+					{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}},
 				},
 			},
 			wantFieldNames: []string{"Entries", "LedgerEntries"},
@@ -855,7 +1077,7 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := testInput(declaredEntriesSchema())
-			parser.DetectRelationships(in.Schema)
+			detectRelationships(in.Schema)
 			in.Config.Tables["accounts"] = tt.tableCfg
 
 			rels, warnings := accountsRelationships(t, in)
@@ -889,6 +1111,38 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 	}
 }
 
+// A one-pair manual relationship over a composite foreign key replaces the
+// detected edge it duplicates, with the warning, so a config declaring the edge
+// by hand keeps generating what it declared (PRD §13.4).
+func TestBuildRelationshipContexts_DeclaredOverCompositeFK(t *testing.T) {
+	schema := parseDDLForTest(t, config.DialectPostgres, `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint,
+  FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`)
+	parser.DetectRelationships(schema)
+	in := testInput(schema)
+	in.Config.Tables["cycles"] = config.TableConfig{Relationships: []config.TableRelationship{
+		{Name: "Tasks", Type: "one_to_many", Table: "tasks", FK: config.KeyColumns{"cycle_id"}},
+	}}
+	contexts, err := gen.BuildTableContexts(in, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+	i := slices.IndexFunc(contexts, func(tc gen.TableContext) bool { return tc.TableName == "cycles" })
+	if i < 0 {
+		t.Fatal("no cycles context")
+	}
+	if got := relationshipNames(contexts[i].Relationships); !slices.Equal(got, []string{"Tasks"}) {
+		t.Errorf("cycles relationships = %q, want the declared Tasks only", got)
+	}
+	if got := contexts[i].Relationships[0].Key; len(got) != 1 {
+		t.Errorf("key = %v, want the declared pair", got)
+	}
+	if !slices.ContainsFunc(in.Warnings, func(w string) bool { return strings.Contains(w, `"Tasks"`) && strings.Contains(w, "§13.4") }) {
+		t.Errorf("warnings = %q, want the replacement notice", in.Warnings)
+	}
+}
+
 // TestValidateResolvedFieldNames_DuplicateRelationshipField pins the
 // §13.7.3 row 2 rule that nothing enforced: two relationships on one table
 // resolving to the same Go field. config.validateRelationships compares
@@ -915,8 +1169,8 @@ func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 			// far as config validation is concerned.
 			name: "declared names pascalize onto one field",
 			rels: []config.TableRelationship{
-				{Name: "ledger_entries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'ledger'"},
-				{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'audit'"},
+				{Name: "ledger_entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'ledger'"},
+				{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'audit'"},
 			},
 			wantErr:   true,
 			wantNames: []string{"ledger_entries", "LedgerEntries"},
@@ -929,8 +1183,8 @@ func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 			// second notice — and the surviving pair is then rejected.
 			name: "two declared entries both colliding with the inferred edge",
 			rels: []config.TableRelationship{
-				{Name: "Entries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'ledger'"},
-				{Name: "entries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'audit'"},
+				{Name: "Entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'ledger'"},
+				{Name: "entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'audit'"},
 			},
 			wantErr:     true,
 			wantNames:   []string{"Entries", "entries"},
@@ -941,8 +1195,8 @@ func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 			// §13.7 sub-categorization still works — distinct Go fields.
 			name: "distinct Go fields coexist",
 			rels: []config.TableRelationship{
-				{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'ledger'"},
-				{Name: "AuditEntries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'audit'"},
+				{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'ledger'"},
+				{Name: "AuditEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'audit'"},
 			},
 		},
 	}
@@ -950,7 +1204,7 @@ func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := testInput(declaredEntriesSchema())
-			parser.DetectRelationships(in.Schema)
+			detectRelationships(in.Schema)
 			in.Config.Tables["accounts"] = config.TableConfig{Relationships: tt.rels}
 
 			_, err := gen.BuildTableContexts(in, nil)

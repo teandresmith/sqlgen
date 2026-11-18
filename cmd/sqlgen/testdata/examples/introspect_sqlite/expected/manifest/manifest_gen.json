@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-01-01T00:00:00Z",
   "generator": {
     "name": "sqlgen",
@@ -47,6 +47,11 @@
       },
       {
         "name": "ErrConnectionFailed",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrTxDone",
         "graphql_code": "",
         "package": "models"
       },
@@ -154,7 +159,7 @@
     "graph_top_level": false,
     "soft_delete": false,
     "tenancy": false,
-    "views": false
+    "views": true
   },
   "entities": [
     {
@@ -272,7 +277,13 @@
           "target_entity": "Project",
           "fk": {
             "table": "projects",
-            "column": "account_id"
+            "columns": [
+              "account_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "projects(account_id) → accounts(id)"
           }
         },
         {
@@ -281,8 +292,24 @@
           "target_entity": "Project",
           "junction": {
             "table": "project_members",
-            "local_fk": "account_id",
-            "target_fk": "project_id"
+            "local_fk": {
+              "columns": [
+                "account_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "project_members(account_id) → accounts(id)"
+            },
+            "target_fk": {
+              "columns": [
+                "project_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "project_members(project_id) → projects(id)"
+            }
           }
         },
         {
@@ -291,7 +318,13 @@
           "target_entity": "Task",
           "fk": {
             "table": "tasks",
-            "column": "assignee_id"
+            "columns": [
+              "assignee_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks(assignee_id) → accounts(id)"
           }
         }
       ],
@@ -329,20 +362,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*AccountFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"accounts\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -368,6 +387,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"accounts\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*AccountFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"accounts\" WHERE <filter>"
             }
           },
           {
@@ -449,50 +482,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateAccountInput"
-              },
-              {
-                "name": "target",
-                "type": "AccountConflictTarget"
-              }
-            ],
-            "returns": "*Account",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"accounts\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateAccountInput"
-              },
-              {
-                "name": "target",
-                "type": "AccountConflictTarget"
-              }
-            ],
-            "returns": "[]*Account",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"accounts\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -554,6 +543,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"accounts\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateAccountInput"
+              },
+              {
+                "name": "target",
+                "type": "AccountConflictTarget"
+              }
+            ],
+            "returns": "*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated AccountConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"accounts\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateAccountInput"
+              },
+              {
+                "name": "target",
+                "type": "AccountConflictTarget"
+              }
+            ],
+            "returns": "[]*Account",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same AccountConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"accounts\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -653,7 +686,16 @@
           "Nickname"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Accounts().Get(ctx, 1)",
+          "rows, err := client.Accounts().GetMany(ctx, &models.GetAccountsInput{Filter: &models.AccountFilter{CreatedAt: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Accounts().Create(ctx, &models.CreateAccountInput{Email: \"example\", DisplayName: \"example\"})",
+          "updated, err := client.Accounts().Update(ctx, 1, &models.UpdateAccountInput{Email: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -774,8 +816,24 @@
           "target_entity": "Account",
           "junction": {
             "table": "project_members",
-            "local_fk": "project_id",
-            "target_fk": "account_id"
+            "local_fk": {
+              "columns": [
+                "project_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "project_members(project_id) → projects(id)"
+            },
+            "target_fk": {
+              "columns": [
+                "account_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "project_members(account_id) → accounts(id)"
+            }
           }
         },
         {
@@ -784,7 +842,13 @@
           "target_entity": "Task",
           "fk": {
             "table": "tasks",
-            "column": "project_id"
+            "columns": [
+              "project_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks(project_id) → projects(id)"
           }
         }
       ],
@@ -822,20 +886,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProjectFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"projects\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -861,6 +911,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"projects\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"projects\" WHERE <filter>"
             }
           },
           {
@@ -942,50 +1006,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateProjectInput"
-              },
-              {
-                "name": "target",
-                "type": "ProjectConflictTarget"
-              }
-            ],
-            "returns": "*Project",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"projects\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateProjectInput"
-              },
-              {
-                "name": "target",
-                "type": "ProjectConflictTarget"
-              }
-            ],
-            "returns": "[]*Project",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"projects\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -1047,6 +1067,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"projects\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateProjectInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectConflictTarget"
+              }
+            ],
+            "returns": "*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated ProjectConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"projects\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateProjectInput"
+              },
+              {
+                "name": "target",
+                "type": "ProjectConflictTarget"
+              }
+            ],
+            "returns": "[]*Project",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same ProjectConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"projects\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -1162,7 +1226,16 @@
           "Slug"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Projects().Get(ctx, 1)",
+          "rows, err := client.Projects().GetMany(ctx, &models.GetProjectsInput{Filter: &models.ProjectFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Projects().Create(ctx, &models.CreateProjectInput{AccountID: 1, Name: \"example\", Slug: \"example\"})",
+          "updated, err := client.Projects().Update(ctx, 1, &models.UpdateProjectInput{AccountID: omittable.Set(int64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -1177,8 +1250,8 @@
         {
           "name": "project_members_pkey",
           "columns": [
-            "project_id",
-            "account_id"
+            "account_id",
+            "project_id"
           ],
           "unique": true,
           "method": "btree"
@@ -1189,13 +1262,13 @@
         "struct": "ProjectMemberPK",
         "columns": [
           {
-            "name": "project_id",
-            "go_field": "ProjectID",
+            "name": "account_id",
+            "go_field": "AccountID",
             "go_type": "int64"
           },
           {
-            "name": "account_id",
-            "go_field": "AccountID",
+            "name": "project_id",
+            "go_field": "ProjectID",
             "go_type": "int64"
           }
         ]
@@ -1258,7 +1331,7 @@
             ],
             "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
             "sql_bodies": {
-              "sqlite": "SELECT \"account_id\", \"project_id\", \"role\" FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ? LIMIT 1"
+              "sqlite": "SELECT \"account_id\", \"project_id\", \"role\" FROM \"project_members\" WHERE \"account_id\" = ? AND \"project_id\" = ? LIMIT 1"
             }
           },
           {
@@ -1276,20 +1349,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProjectMemberFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"project_members\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -1300,7 +1359,7 @@
             "returns": "bool",
             "errors": [],
             "sql_bodies": {
-              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ?)"
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"project_members\" WHERE \"account_id\" = ? AND \"project_id\" = ?)"
             }
           },
           {
@@ -1315,6 +1374,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"project_members\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectMemberFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"project_members\" WHERE <filter>"
             }
           },
           {
@@ -1396,6 +1469,70 @@
             }
           },
           {
+            "name": "Update",
+            "params": [
+              {
+                "name": "pk",
+                "type": "ProjectMemberPK"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateProjectMemberInput"
+              }
+            ],
+            "returns": "*ProjectMember",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"account_id\" = ? AND \"project_id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateProjectMemberItem"
+              }
+            ],
+            "returns": "[]*ProjectMember",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"account_id\" = ? AND \"project_id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*ProjectMemberFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateProjectMemberInput"
+              }
+            ],
+            "returns": "[]*ProjectMember",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE <filter> RETURNING \"account_id\", \"project_id\""
+            }
+          },
+          {
             "name": "Upsert",
             "params": [
               {
@@ -1440,70 +1577,6 @@
             }
           },
           {
-            "name": "Update",
-            "params": [
-              {
-                "name": "pk",
-                "type": "ProjectMemberPK"
-              },
-              {
-                "name": "input",
-                "type": "*UpdateProjectMemberInput"
-              }
-            ],
-            "returns": "*ProjectMember",
-            "errors": [
-              "ErrNotFound",
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
-            "sql_bodies": {
-              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"project_id\" = ? AND \"account_id\" = ?"
-            }
-          },
-          {
-            "name": "UpdateMany",
-            "params": [
-              {
-                "name": "items",
-                "type": "[]UpdateProjectMemberItem"
-              }
-            ],
-            "returns": "[]*ProjectMember",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
-            "sql_bodies": {
-              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"project_id\" = ? AND \"account_id\" = ?"
-            }
-          },
-          {
-            "name": "UpdateWhere",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*ProjectMemberFilter"
-              },
-              {
-                "name": "input",
-                "type": "*UpdateProjectMemberInput"
-              }
-            ],
-            "returns": "[]*ProjectMember",
-            "errors": [
-              "ErrNilInput",
-              "ErrEmptyFilter",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
-            "sql_bodies": {
-              "sqlite": "UPDATE \"project_members\" SET <set> WHERE <filter> RETURNING \"project_id\", \"account_id\""
-            }
-          },
-          {
             "name": "HardDelete",
             "params": [
               {
@@ -1515,7 +1588,7 @@
             "errors": [],
             "notes": "Idempotent — a primary key that does not exist is not an error.",
             "sql_bodies": {
-              "sqlite": "DELETE FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ?"
+              "sqlite": "DELETE FROM \"project_members\" WHERE \"account_id\" = ? AND \"project_id\" = ?"
             }
           },
           {
@@ -1530,7 +1603,7 @@
             "errors": [],
             "notes": "Idempotent — primary keys that do not exist are not an error.",
             "sql_bodies": {
-              "sqlite": "DELETE FROM \"project_members\" WHERE (\"project_id\", \"account_id\") IN (<pks>)"
+              "sqlite": "DELETE FROM \"project_members\" WHERE (\"account_id\", \"project_id\") IN (<pks>)"
             }
           },
           {
@@ -1547,7 +1620,7 @@
             ],
             "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
-              "sqlite": "DELETE FROM \"project_members\" WHERE <filter> RETURNING \"project_id\", \"account_id\""
+              "sqlite": "DELETE FROM \"project_members\" WHERE <filter> RETURNING \"account_id\", \"project_id\""
             }
           }
         ]
@@ -1585,7 +1658,16 @@
           "Role"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.ProjectMembers().Get(ctx, models.ProjectMemberPK{AccountID: 1, ProjectID: 1})",
+          "rows, err := client.ProjectMembers().GetMany(ctx, &models.GetProjectMembersInput{Filter: &models.ProjectMemberFilter{Role: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.ProjectMembers().Create(ctx, &models.CreateProjectMemberInput{ProjectID: 1, AccountID: 1, Role: \"example\"})",
+          "updated, err := client.ProjectMembers().Update(ctx, models.ProjectMemberPK{AccountID: 1, ProjectID: 1}, &models.UpdateProjectMemberInput{Role: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "view",
@@ -1758,6 +1840,12 @@
           "Name",
           "Slug"
         ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.ProjectSummary().Get(ctx, 1)",
+          "rows, err := client.ProjectSummary().GetMany(ctx, &models.GetProjectSummariesInput{Filter: &models.ProjectSummaryFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ]
       }
     },
     {
@@ -1873,7 +1961,13 @@
           "target_entity": "TaskLabel",
           "fk": {
             "table": "task_labels",
-            "column": "task_id"
+            "columns": [
+              "task_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "task_labels(task_id) → tasks(id)"
           }
         }
       ],
@@ -1911,20 +2005,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*TaskFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"tasks\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -1950,6 +2030,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"tasks\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"tasks\" WHERE <filter>"
             }
           },
           {
@@ -2031,50 +2125,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateTaskInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskConflictTarget"
-              }
-            ],
-            "returns": "*Task",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"tasks\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateTaskInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskConflictTarget"
-              }
-            ],
-            "returns": "[]*Task",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"tasks\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2136,6 +2186,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"tasks\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskConflictTarget"
+              }
+            ],
+            "returns": "*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TaskConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"tasks\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskConflictTarget"
+              }
+            ],
+            "returns": "[]*Task",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TaskConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"tasks\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -2256,7 +2350,16 @@
           "Title"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Tasks().Get(ctx, 1)",
+          "rows, err := client.Tasks().GetMany(ctx, &models.GetTasksInput{Filter: &models.TaskFilter{Title: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Tasks().Create(ctx, &models.CreateTaskInput{ProjectID: 1, Title: \"example\"})",
+          "updated, err := client.Tasks().Update(ctx, 1, &models.UpdateTaskInput{ProjectID: omittable.Set(int64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -2364,20 +2467,6 @@
             }
           },
           {
-            "name": "Count",
-            "params": [
-              {
-                "name": "filter",
-                "type": "*TaskLabelFilter"
-              }
-            ],
-            "returns": "int64",
-            "errors": [],
-            "sql_bodies": {
-              "sqlite": "SELECT COUNT(*) FROM \"task_labels\" WHERE <filter>"
-            }
-          },
-          {
             "name": "Exists",
             "params": [
               {
@@ -2403,6 +2492,20 @@
             "errors": [],
             "sql_bodies": {
               "sqlite": "SELECT EXISTS(SELECT 1 FROM \"task_labels\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TaskLabelFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"task_labels\" WHERE <filter>"
             }
           },
           {
@@ -2484,50 +2587,6 @@
             }
           },
           {
-            "name": "Upsert",
-            "params": [
-              {
-                "name": "input",
-                "type": "*CreateTaskLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskLabelConflictTarget"
-              }
-            ],
-            "returns": "*TaskLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"task_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-            }
-          },
-          {
-            "name": "UpsertMany",
-            "params": [
-              {
-                "name": "inputs",
-                "type": "[]*CreateTaskLabelInput"
-              },
-              {
-                "name": "target",
-                "type": "TaskLabelConflictTarget"
-              }
-            ],
-            "returns": "[]*TaskLabel",
-            "errors": [
-              "ErrNilInput",
-              "ErrConstraintViolation"
-            ],
-            "notes": "Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-            "sql_bodies": {
-              "sqlite": "INSERT INTO \"task_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-            }
-          },
-          {
             "name": "Update",
             "params": [
               {
@@ -2589,6 +2648,50 @@
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
               "sqlite": "UPDATE \"task_labels\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTaskLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskLabelConflictTarget"
+              }
+            ],
+            "returns": "*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TaskLabelConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"task_labels\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTaskLabelInput"
+              },
+              {
+                "name": "target",
+                "type": "TaskLabelConflictTarget"
+              }
+            ],
+            "returns": "[]*TaskLabel",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TaskLabelConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"task_labels\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
             }
           },
           {
@@ -2673,7 +2776,16 @@
           "TaskID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.TaskLabels().Get(ctx, 1)",
+          "rows, err := client.TaskLabels().GetMany(ctx, &models.GetTaskLabelsInput{Filter: &models.TaskLabelFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.TaskLabels().Create(ctx, &models.CreateTaskLabelInput{TaskID: 1, Label: \"example\"})",
+          "updated, err := client.TaskLabels().Update(ctx, 1, &models.UpdateTaskLabelInput{TaskID: omittable.Set(int64(1))})"
+        ]
+      }
     }
   ],
   "enums": [],

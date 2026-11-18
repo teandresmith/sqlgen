@@ -69,9 +69,7 @@ func drain(t *testing.T, rows database.Rows) int {
 // connection either, the whole transaction was lost with it. Run
 // under -race: the failure was a data race first and an error second.
 func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
@@ -131,16 +129,17 @@ func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
 // connection for the life of the process — strictly worse than the loud driver
 // error callers already get today.
 func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
+	// A failed ROLLBACK has still ended the transaction on pgx, so the Tx
+	// closes; a failed COMMIT stays the caller's to roll back.
 	tests := []struct {
-		name     string
-		teardown func(ctx context.Context) error
+		name       string
+		teardown   func(ctx context.Context) error
+		wantClosed bool
 	}{
 		{name: "commit", teardown: database.Commit},
-		{name: "rollback", teardown: database.Rollback},
+		{name: "rollback", teardown: database.Rollback, wantClosed: true},
 	}
 
 	for _, tt := range tests {
@@ -167,13 +166,17 @@ func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
 
 			select {
 			case err := <-done:
-				// The driver's own complaint is the expected outcome, and it is
-				// what callers already see today. What must not happen is a
-				// wait: the assertion is that this arrived at all.
-				if err == nil {
-					t.Logf("%s() against a pinned connection = nil", tt.name)
-				} else {
-					t.Logf("%s() against a pinned connection = %v", tt.name, err)
+				// The driver's own complaint is the expected outcome, and what
+				// must not happen is a wait: the first assertion is that this
+				// arrived at all.
+				if err == nil || !strings.Contains(err.Error(), "conn busy") {
+					t.Errorf("%s() against a pinned connection = %v, want the driver's conn busy error", tt.name, err)
+				}
+				if got := errors.Is(err, database.ErrTxDone); got != tt.wantClosed {
+					t.Errorf("%s() error wraps ErrTxDone = %v, want %v", tt.name, got, tt.wantClosed)
+				}
+				if got := tx.IsClosed(); got != tt.wantClosed {
+					t.Errorf("IsClosed() after %s() = %v, want %v", tt.name, got, tt.wantClosed)
 				}
 			case <-time.After(teardownBound):
 				t.Fatalf("%s() did not return within %s: a leaked result set stranded the connection (PRD §18.5)", tt.name, teardownBound)
@@ -192,9 +195,7 @@ func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
 // another statement is waiting for itself, so it must get the reservation's own
 // bounded error and never the driver's `conn busy`.
 func TestLeakedResultSetBoundsTheNextStatement(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
 	tests := []struct {
 		name string
@@ -284,5 +285,41 @@ func TestLeakedResultSetBoundsTheNextStatement(t *testing.T) {
 				t.Logf("Rollback() after the bounded failure = %v", err)
 			}
 		})
+	}
+}
+
+// TestDrainedResultSetReleasesTheConnection iterates a result set to
+// exhaustion without closing it and then issues another statement on the same
+// transaction. Exhaustion alone must give the connection back: the statement
+// runs at once instead of waiting on the reservation until its deadline.
+func TestDrainedResultSetReleasesTheConnection(t *testing.T) {
+	requireDocker(t)
+	cleanUsers(t)
+	ctx := context.Background()
+	q := pgxadapter.New(testPool)
+
+	txCtx, err := database.NewTransaction(ctx, q, "drain_release")
+	if err != nil {
+		t.Fatalf("NewTransaction() error = %v", err)
+	}
+	tx := database.FromContext(txCtx)
+
+	rows, err := tx.Query(txCtx, "SELECT generate_series(1, 3)")
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if n := drain(t, rows); n != 3 {
+		t.Errorf("drained %d rows, want 3", n)
+	}
+
+	stmtCtx, cancel := context.WithTimeout(txCtx, leakWaitBound)
+	defer cancel()
+	if _, err := tx.Exec(stmtCtx, "INSERT INTO test_users (name, email) VALUES ($1, $2)", "drain", "drain@example.com"); err != nil {
+		t.Errorf("Exec() after draining without Close = %v, want nil: the drained result set still holds the connection", err)
+	}
+
+	_ = rows.Close()
+	if err := database.Rollback(txCtx); err != nil {
+		t.Errorf("Rollback() error = %v", err)
 	}
 }

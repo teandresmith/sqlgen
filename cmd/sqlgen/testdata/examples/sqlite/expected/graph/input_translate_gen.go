@@ -6,6 +6,8 @@ import (
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/model"
+
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/sqlgenresolver"
 )
 
 // Per-table input translators. These bridge the gqlgen-emitted plain-pointer
@@ -29,7 +31,9 @@ func translateCreateArticleInput(in gqlmodel.CreateArticleInput) *models.CreateA
 		out.Body = omittable.Set(in.Body)
 	}
 	out.Author = in.Author
-	out.CreatedAt = omittable.Set(in.CreatedAt)
+	if in.CreatedAt != nil {
+		out.CreatedAt = omittable.Set(*in.CreatedAt)
+	}
 	if in.DeletedAt != nil {
 		out.DeletedAt = omittable.Set(*in.DeletedAt)
 	}
@@ -42,15 +46,23 @@ func translateCreateArticleInput(in gqlmodel.CreateArticleInput) *models.CreateA
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateArticleRequest
+// carries them to the resolver.
 func translateUpdateArticleInput(in gqlmodel.UpdateArticleInput) *models.UpdateArticleInput {
 	out := &models.UpdateArticleInput{}
 	if in.Title != nil {
 		out.Title = omittable.Set(*in.Title)
 	}
-	if in.Body != nil {
-		out.Body = omittable.Set(in.Body)
+	if val, ok := in.Body.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Body.Get()
+			out.Body = omittable.Set(zero)
+		} else {
+			out.Body = omittable.Set(val)
+		}
 	}
 	if in.Author != nil {
 		out.Author = omittable.Set(*in.Author)
@@ -58,21 +70,27 @@ func translateUpdateArticleInput(in gqlmodel.UpdateArticleInput) *models.UpdateA
 	if in.CreatedAt != nil {
 		out.CreatedAt = omittable.Set(*in.CreatedAt)
 	}
-	if in.DeletedAt != nil {
-		out.DeletedAt = omittable.Set(*in.DeletedAt)
+	if val, ok := in.DeletedAt.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.DeletedAt.Get()
+			out.DeletedAt = omittable.Set(zero)
+		} else {
+			out.DeletedAt = omittable.Set(*val)
+		}
 	}
 	return out
 }
 
 // hasUpdateArticleSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateArticleSetFields(in gqlmodel.UpdateArticleInput) bool {
 	if in.Title != nil {
 		return true
 	}
-	if in.Body != nil {
+	if in.Body.IsSet() {
 		return true
 	}
 	if in.Author != nil {
@@ -81,10 +99,24 @@ func hasUpdateArticleSetFields(in gqlmodel.UpdateArticleInput) bool {
 	if in.CreatedAt != nil {
 		return true
 	}
-	if in.DeletedAt != nil {
+	if in.DeletedAt.IsSet() {
 		return true
 	}
 	return false
+}
+
+// translateUpdateArticleRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateArticleInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateArticleRequest(in gqlmodel.UpdateArticleInput) sqlgenresolver.UpdateArticleRequest {
+	out := sqlgenresolver.UpdateArticleRequest{
+		Set:    translateUpdateArticleInput(in),
+		HasSet: hasUpdateArticleSetFields(in),
+	}
+	return out
 }
 
 // translateCreateAssetInput maps a gqlgen-generated input value
@@ -97,7 +129,9 @@ func hasUpdateArticleSetFields(in gqlmodel.UpdateArticleInput) bool {
 func translateCreateAssetInput(in gqlmodel.CreateAssetInput) *models.CreateAssetInput {
 	out := &models.CreateAssetInput{}
 	out.Name = in.Name
-	out.CreatedAt = omittable.Set(in.CreatedAt)
+	if in.CreatedAt != nil {
+		out.CreatedAt = omittable.Set(*in.CreatedAt)
+	}
 
 	return out
 }
@@ -107,8 +141,11 @@ func translateCreateAssetInput(in gqlmodel.CreateAssetInput) *models.CreateAsset
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateAssetRequest
+// carries them to the resolver.
 func translateUpdateAssetInput(in gqlmodel.UpdateAssetInput) *models.UpdateAssetInput {
 	out := &models.UpdateAssetInput{}
 	if in.Name != nil {
@@ -121,9 +158,10 @@ func translateUpdateAssetInput(in gqlmodel.UpdateAssetInput) *models.UpdateAsset
 }
 
 // hasUpdateAssetSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateAssetSetFields(in gqlmodel.UpdateAssetInput) bool {
 	if in.Name != nil {
 		return true
@@ -132,6 +170,20 @@ func hasUpdateAssetSetFields(in gqlmodel.UpdateAssetInput) bool {
 		return true
 	}
 	return false
+}
+
+// translateUpdateAssetRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateAssetInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateAssetRequest(in gqlmodel.UpdateAssetInput) sqlgenresolver.UpdateAssetRequest {
+	out := sqlgenresolver.UpdateAssetRequest{
+		Set:    translateUpdateAssetInput(in),
+		HasSet: hasUpdateAssetSetFields(in),
+	}
+	return out
 }
 
 // translateCreateAssetDocumentLinkInput maps a gqlgen-generated input value
@@ -149,6 +201,213 @@ func translateCreateAssetDocumentLinkInput(in gqlmodel.CreateAssetDocumentLinkIn
 	return out
 }
 
+// translateCreateBadgeInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBadgeInput(in gqlmodel.CreateBadgeInput) *models.CreateBadgeInput {
+	out := &models.CreateBadgeInput{}
+	out.Code = in.Code
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateBadgeInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBadgeRequest
+// carries them to the resolver.
+func translateUpdateBadgeInput(in gqlmodel.UpdateBadgeInput) *models.UpdateBadgeInput {
+	out := &models.UpdateBadgeInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateBadgeSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBadgeSetFields(in gqlmodel.UpdateBadgeInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBadgeRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBadgeInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBadgeRequest(in gqlmodel.UpdateBadgeInput) sqlgenresolver.UpdateBadgeRequest {
+	out := sqlgenresolver.UpdateBadgeRequest{
+		Set:    translateUpdateBadgeInput(in),
+		HasSet: hasUpdateBadgeSetFields(in),
+	}
+	return out
+}
+
+// translateCreateBinInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBinInput(in gqlmodel.CreateBinInput) *models.CreateBinInput {
+	out := &models.CreateBinInput{}
+	out.Aisle = in.Aisle
+	out.Slot = int64(in.Slot)
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateBinInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBinRequest
+// carries them to the resolver.
+func translateUpdateBinInput(in gqlmodel.UpdateBinInput) *models.UpdateBinInput {
+	out := &models.UpdateBinInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateBinSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBinSetFields(in gqlmodel.UpdateBinInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBinRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBinInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBinRequest(in gqlmodel.UpdateBinInput) sqlgenresolver.UpdateBinRequest {
+	out := sqlgenresolver.UpdateBinRequest{
+		Set:    translateUpdateBinInput(in),
+		HasSet: hasUpdateBinSetFields(in),
+	}
+	return out
+}
+
+// translateCreateBinItemInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBinItemInput(in gqlmodel.CreateBinItemInput) *models.CreateBinItemInput {
+	out := &models.CreateBinItemInput{}
+	if in.Aisle != nil {
+		out.Aisle = omittable.Set(in.Aisle)
+	}
+	if in.Slot != nil {
+		v := int64(*in.Slot)
+		out.Slot = omittable.Set(&v)
+	}
+	out.Name = in.Name
+
+	return out
+}
+
+// translateUpdateBinItemInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBinItemRequest
+// carries them to the resolver.
+func translateUpdateBinItemInput(in gqlmodel.UpdateBinItemInput) *models.UpdateBinItemInput {
+	out := &models.UpdateBinItemInput{}
+	if val, ok := in.Aisle.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Aisle.Get()
+			out.Aisle = omittable.Set(zero)
+		} else {
+			out.Aisle = omittable.Set(val)
+		}
+	}
+	if val, ok := in.Slot.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Slot.Get()
+			out.Slot = omittable.Set(zero)
+		} else {
+			v := int64(*val)
+			out.Slot = omittable.Set(&v)
+		}
+	}
+	if in.Name != nil {
+		out.Name = omittable.Set(*in.Name)
+	}
+	return out
+}
+
+// hasUpdateBinItemSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBinItemSetFields(in gqlmodel.UpdateBinItemInput) bool {
+	if in.Aisle.IsSet() {
+		return true
+	}
+	if in.Slot.IsSet() {
+		return true
+	}
+	if in.Name != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBinItemRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBinItemInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBinItemRequest(in gqlmodel.UpdateBinItemInput) sqlgenresolver.UpdateBinItemRequest {
+	out := sqlgenresolver.UpdateBinItemRequest{
+		Set:    translateUpdateBinItemInput(in),
+		HasSet: hasUpdateBinItemSetFields(in),
+	}
+	return out
+}
+
 // translateCreateBinaryKeyInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
@@ -160,7 +419,9 @@ func translateCreateBinaryKeyInput(in gqlmodel.CreateBinaryKeyInput) *models.Cre
 	out := &models.CreateBinaryKeyInput{}
 	out.ID = in.ID
 	out.Name = in.Name
-	out.CreatedAt = omittable.Set(in.CreatedAt)
+	if in.CreatedAt != nil {
+		out.CreatedAt = omittable.Set(*in.CreatedAt)
+	}
 
 	return out
 }
@@ -170,8 +431,11 @@ func translateCreateBinaryKeyInput(in gqlmodel.CreateBinaryKeyInput) *models.Cre
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBinaryKeyRequest
+// carries them to the resolver.
 func translateUpdateBinaryKeyInput(in gqlmodel.UpdateBinaryKeyInput) *models.UpdateBinaryKeyInput {
 	out := &models.UpdateBinaryKeyInput{}
 	if in.Name != nil {
@@ -184,9 +448,10 @@ func translateUpdateBinaryKeyInput(in gqlmodel.UpdateBinaryKeyInput) *models.Upd
 }
 
 // hasUpdateBinaryKeySetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateBinaryKeySetFields(in gqlmodel.UpdateBinaryKeyInput) bool {
 	if in.Name != nil {
 		return true
@@ -195,6 +460,35 @@ func hasUpdateBinaryKeySetFields(in gqlmodel.UpdateBinaryKeyInput) bool {
 		return true
 	}
 	return false
+}
+
+// translateUpdateBinaryKeyRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBinaryKeyInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBinaryKeyRequest(in gqlmodel.UpdateBinaryKeyInput) sqlgenresolver.UpdateBinaryKeyRequest {
+	out := sqlgenresolver.UpdateBinaryKeyRequest{
+		Set:    translateUpdateBinaryKeyInput(in),
+		HasSet: hasUpdateBinaryKeySetFields(in),
+	}
+	return out
+}
+
+// translateCreateBinaryKeyBadgeInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBinaryKeyBadgeInput(in gqlmodel.CreateBinaryKeyBadgeInput) *models.CreateBinaryKeyBadgeInput {
+	out := &models.CreateBinaryKeyBadgeInput{}
+	out.BinaryKeyID = in.BinaryKeyID
+	out.BadgeCode = in.BadgeCode
+
+	return out
 }
 
 // translateCreateBinaryKeyEventInput maps a gqlgen-generated input value
@@ -217,8 +511,11 @@ func translateCreateBinaryKeyEventInput(in gqlmodel.CreateBinaryKeyEventInput) *
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBinaryKeyEventRequest
+// carries them to the resolver.
 func translateUpdateBinaryKeyEventInput(in gqlmodel.UpdateBinaryKeyEventInput) *models.UpdateBinaryKeyEventInput {
 	out := &models.UpdateBinaryKeyEventInput{}
 	if in.BinaryKeyID != nil {
@@ -231,9 +528,10 @@ func translateUpdateBinaryKeyEventInput(in gqlmodel.UpdateBinaryKeyEventInput) *
 }
 
 // hasUpdateBinaryKeyEventSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateBinaryKeyEventSetFields(in gqlmodel.UpdateBinaryKeyEventInput) bool {
 	if in.BinaryKeyID != nil {
 		return true
@@ -242,6 +540,151 @@ func hasUpdateBinaryKeyEventSetFields(in gqlmodel.UpdateBinaryKeyEventInput) boo
 		return true
 	}
 	return false
+}
+
+// translateUpdateBinaryKeyEventRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBinaryKeyEventInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBinaryKeyEventRequest(in gqlmodel.UpdateBinaryKeyEventInput) sqlgenresolver.UpdateBinaryKeyEventRequest {
+	out := sqlgenresolver.UpdateBinaryKeyEventRequest{
+		Set:    translateUpdateBinaryKeyEventInput(in),
+		HasSet: hasUpdateBinaryKeyEventSetFields(in),
+	}
+	return out
+}
+
+// translateCreateBoolKeyedInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBoolKeyedInput(in gqlmodel.CreateBoolKeyedInput) *models.CreateBoolKeyedInput {
+	out := &models.CreateBoolKeyedInput{}
+	out.K = in.K
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateBoolKeyedInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBoolKeyedRequest
+// carries them to the resolver.
+func translateUpdateBoolKeyedInput(in gqlmodel.UpdateBoolKeyedInput) *models.UpdateBoolKeyedInput {
+	out := &models.UpdateBoolKeyedInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateBoolKeyedSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBoolKeyedSetFields(in gqlmodel.UpdateBoolKeyedInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBoolKeyedRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBoolKeyedInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBoolKeyedRequest(in gqlmodel.UpdateBoolKeyedInput) sqlgenresolver.UpdateBoolKeyedRequest {
+	out := sqlgenresolver.UpdateBoolKeyedRequest{
+		Set:    translateUpdateBoolKeyedInput(in),
+		HasSet: hasUpdateBoolKeyedSetFields(in),
+	}
+	return out
+}
+
+// translateCreateBoolKeyedNoteInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBoolKeyedNoteInput(in gqlmodel.CreateBoolKeyedNoteInput) *models.CreateBoolKeyedNoteInput {
+	out := &models.CreateBoolKeyedNoteInput{}
+	if in.KeyedK != nil {
+		out.KeyedK = omittable.Set(in.KeyedK)
+	}
+	out.Note = in.Note
+
+	return out
+}
+
+// translateUpdateBoolKeyedNoteInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBoolKeyedNoteRequest
+// carries them to the resolver.
+func translateUpdateBoolKeyedNoteInput(in gqlmodel.UpdateBoolKeyedNoteInput) *models.UpdateBoolKeyedNoteInput {
+	out := &models.UpdateBoolKeyedNoteInput{}
+	if val, ok := in.KeyedK.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.KeyedK.Get()
+			out.KeyedK = omittable.Set(zero)
+		} else {
+			out.KeyedK = omittable.Set(val)
+		}
+	}
+	if in.Note != nil {
+		out.Note = omittable.Set(*in.Note)
+	}
+	return out
+}
+
+// hasUpdateBoolKeyedNoteSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBoolKeyedNoteSetFields(in gqlmodel.UpdateBoolKeyedNoteInput) bool {
+	if in.KeyedK.IsSet() {
+		return true
+	}
+	if in.Note != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBoolKeyedNoteRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBoolKeyedNoteInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBoolKeyedNoteRequest(in gqlmodel.UpdateBoolKeyedNoteInput) sqlgenresolver.UpdateBoolKeyedNoteRequest {
+	out := sqlgenresolver.UpdateBoolKeyedNoteRequest{
+		Set:    translateUpdateBoolKeyedNoteInput(in),
+		HasSet: hasUpdateBoolKeyedNoteSetFields(in),
+	}
+	return out
 }
 
 // translateCreateCategoryInput maps a gqlgen-generated input value
@@ -266,31 +709,54 @@ func translateCreateCategoryInput(in gqlmodel.CreateCategoryInput) *models.Creat
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateCategoryRequest
+// carries them to the resolver.
 func translateUpdateCategoryInput(in gqlmodel.UpdateCategoryInput) *models.UpdateCategoryInput {
 	out := &models.UpdateCategoryInput{}
 	if in.Name != nil {
 		out.Name = omittable.Set(*in.Name)
 	}
-	if in.Description != nil {
-		out.Description = omittable.Set(in.Description)
+	if val, ok := in.Description.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Description.Get()
+			out.Description = omittable.Set(zero)
+		} else {
+			out.Description = omittable.Set(val)
+		}
 	}
 	return out
 }
 
 // hasUpdateCategorySetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateCategorySetFields(in gqlmodel.UpdateCategoryInput) bool {
 	if in.Name != nil {
 		return true
 	}
-	if in.Description != nil {
+	if in.Description.IsSet() {
 		return true
 	}
 	return false
+}
+
+// translateUpdateCategoryRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateCategoryInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateCategoryRequest(in gqlmodel.UpdateCategoryInput) sqlgenresolver.UpdateCategoryRequest {
+	out := sqlgenresolver.UpdateCategoryRequest{
+		Set:    translateUpdateCategoryInput(in),
+		HasSet: hasUpdateCategorySetFields(in),
+	}
+	return out
 }
 
 // translateCreateDigitLeadingColumnInput maps a gqlgen-generated input value
@@ -302,10 +768,18 @@ func hasUpdateCategorySetFields(in gqlmodel.UpdateCategoryInput) bool {
 // and Go cannot convert a pointee inline, so the value goes through a local.
 func translateCreateDigitLeadingColumnInput(in gqlmodel.CreateDigitLeadingColumnInput) *models.CreateDigitLeadingColumnInput {
 	out := &models.CreateDigitLeadingColumnInput{}
-	out.Col2010Revenue = omittable.Set(in.Col2010Revenue)
-	out.Col2024Quota = omittable.Set(int64(in.Col2024Quota))
-	out.Col1stPlace = omittable.Set(in.Col1stPlace)
-	out.Col3dModelURL = omittable.Set(in.Col3dModelURL)
+	if in.Col2010Revenue != nil {
+		out.Col2010Revenue = omittable.Set(*in.Col2010Revenue)
+	}
+	if in.Col2024Quota != nil {
+		out.Col2024Quota = omittable.Set(int64(*in.Col2024Quota))
+	}
+	if in.Col1stPlace != nil {
+		out.Col1stPlace = omittable.Set(*in.Col1stPlace)
+	}
+	if in.Col3dModelURL != nil {
+		out.Col3dModelURL = omittable.Set(*in.Col3dModelURL)
+	}
 
 	return out
 }
@@ -315,8 +789,11 @@ func translateCreateDigitLeadingColumnInput(in gqlmodel.CreateDigitLeadingColumn
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateDigitLeadingColumnRequest
+// carries them to the resolver.
 func translateUpdateDigitLeadingColumnInput(in gqlmodel.UpdateDigitLeadingColumnInput) *models.UpdateDigitLeadingColumnInput {
 	out := &models.UpdateDigitLeadingColumnInput{}
 	if in.Col2010Revenue != nil {
@@ -335,9 +812,10 @@ func translateUpdateDigitLeadingColumnInput(in gqlmodel.UpdateDigitLeadingColumn
 }
 
 // hasUpdateDigitLeadingColumnSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateDigitLeadingColumnSetFields(in gqlmodel.UpdateDigitLeadingColumnInput) bool {
 	if in.Col2010Revenue != nil {
 		return true
@@ -354,6 +832,32 @@ func hasUpdateDigitLeadingColumnSetFields(in gqlmodel.UpdateDigitLeadingColumnIn
 	return false
 }
 
+// translateUpdateDigitLeadingColumnRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateDigitLeadingColumnInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateDigitLeadingColumnRequest(in gqlmodel.UpdateDigitLeadingColumnInput) sqlgenresolver.UpdateDigitLeadingColumnRequest {
+	out := sqlgenresolver.UpdateDigitLeadingColumnRequest{
+		Set:    translateUpdateDigitLeadingColumnInput(in),
+		HasSet: hasUpdateDigitLeadingColumnSetFields(in),
+	}
+	if in.Col2010RevenueInc != nil {
+		out.Col2010RevenueInc = new(int(*in.Col2010RevenueInc))
+	}
+	if in.Col2010RevenueDec != nil {
+		out.Col2010RevenueDec = new(int(*in.Col2010RevenueDec))
+	}
+	if in.Col2024QuotaInc != nil {
+		out.Col2024QuotaInc = new(int(*in.Col2024QuotaInc))
+	}
+	if in.Col2024QuotaDec != nil {
+		out.Col2024QuotaDec = new(int(*in.Col2024QuotaDec))
+	}
+	return out
+}
+
 // translateCreateDocumentInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
@@ -366,7 +870,9 @@ func translateCreateDocumentInput(in gqlmodel.CreateDocumentInput) *models.Creat
 	out.EntityID = int64(in.EntityID)
 	out.EntityType = in.EntityType
 	out.Name = in.Name
-	out.CreatedAt = omittable.Set(in.CreatedAt)
+	if in.CreatedAt != nil {
+		out.CreatedAt = omittable.Set(*in.CreatedAt)
+	}
 
 	return out
 }
@@ -376,8 +882,11 @@ func translateCreateDocumentInput(in gqlmodel.CreateDocumentInput) *models.Creat
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateDocumentRequest
+// carries them to the resolver.
 func translateUpdateDocumentInput(in gqlmodel.UpdateDocumentInput) *models.UpdateDocumentInput {
 	out := &models.UpdateDocumentInput{}
 	if in.EntityID != nil {
@@ -396,9 +905,10 @@ func translateUpdateDocumentInput(in gqlmodel.UpdateDocumentInput) *models.Updat
 }
 
 // hasUpdateDocumentSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateDocumentSetFields(in gqlmodel.UpdateDocumentInput) bool {
 	if in.EntityID != nil {
 		return true
@@ -415,6 +925,150 @@ func hasUpdateDocumentSetFields(in gqlmodel.UpdateDocumentInput) bool {
 	return false
 }
 
+// translateUpdateDocumentRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateDocumentInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateDocumentRequest(in gqlmodel.UpdateDocumentInput) sqlgenresolver.UpdateDocumentRequest {
+	out := sqlgenresolver.UpdateDocumentRequest{
+		Set:    translateUpdateDocumentInput(in),
+		HasSet: hasUpdateDocumentSetFields(in),
+	}
+	return out
+}
+
+// translateCreateKeyClassChildInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateKeyClassChildInput(in gqlmodel.CreateKeyClassChildInput) *models.CreateKeyClassChildInput {
+	out := &models.CreateKeyClassChildInput{}
+	if in.ParentID != nil {
+		out.ParentID = omittable.Set(in.ParentID)
+	}
+
+	return out
+}
+
+// translateUpdateKeyClassChildInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateKeyClassChildRequest
+// carries them to the resolver.
+func translateUpdateKeyClassChildInput(in gqlmodel.UpdateKeyClassChildInput) *models.UpdateKeyClassChildInput {
+	out := &models.UpdateKeyClassChildInput{}
+	if val, ok := in.ParentID.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.ParentID.Get()
+			out.ParentID = omittable.Set(zero)
+		} else {
+			out.ParentID = omittable.Set(val)
+		}
+	}
+	return out
+}
+
+// hasUpdateKeyClassChildSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateKeyClassChildSetFields(in gqlmodel.UpdateKeyClassChildInput) bool {
+	if in.ParentID.IsSet() {
+		return true
+	}
+	return false
+}
+
+// translateUpdateKeyClassChildRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateKeyClassChildInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateKeyClassChildRequest(in gqlmodel.UpdateKeyClassChildInput) sqlgenresolver.UpdateKeyClassChildRequest {
+	out := sqlgenresolver.UpdateKeyClassChildRequest{
+		Set:    translateUpdateKeyClassChildInput(in),
+		HasSet: hasUpdateKeyClassChildSetFields(in),
+	}
+	return out
+}
+
+// translateCreateKeyClassRealChildInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateKeyClassRealChildInput(in gqlmodel.CreateKeyClassRealChildInput) *models.CreateKeyClassRealChildInput {
+	out := &models.CreateKeyClassRealChildInput{}
+	if in.ParentID != nil {
+		out.ParentID = omittable.Set(in.ParentID)
+	}
+
+	return out
+}
+
+// translateUpdateKeyClassRealChildInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateKeyClassRealChildRequest
+// carries them to the resolver.
+func translateUpdateKeyClassRealChildInput(in gqlmodel.UpdateKeyClassRealChildInput) *models.UpdateKeyClassRealChildInput {
+	out := &models.UpdateKeyClassRealChildInput{}
+	if val, ok := in.ParentID.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.ParentID.Get()
+			out.ParentID = omittable.Set(zero)
+		} else {
+			out.ParentID = omittable.Set(val)
+		}
+	}
+	return out
+}
+
+// hasUpdateKeyClassRealChildSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateKeyClassRealChildSetFields(in gqlmodel.UpdateKeyClassRealChildInput) bool {
+	if in.ParentID.IsSet() {
+		return true
+	}
+	return false
+}
+
+// translateUpdateKeyClassRealChildRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateKeyClassRealChildInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateKeyClassRealChildRequest(in gqlmodel.UpdateKeyClassRealChildInput) sqlgenresolver.UpdateKeyClassRealChildRequest {
+	out := sqlgenresolver.UpdateKeyClassRealChildRequest{
+		Set:    translateUpdateKeyClassRealChildInput(in),
+		HasSet: hasUpdateKeyClassRealChildSetFields(in),
+	}
+	return out
+}
+
 // translateCreateOrderInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
@@ -425,28 +1079,6 @@ func hasUpdateDocumentSetFields(in gqlmodel.UpdateDocumentInput) bool {
 func translateCreateOrderInput(in gqlmodel.CreateOrderInput) *models.CreateOrderInput {
 	out := &models.CreateOrderInput{}
 	out.UserID = int64(in.UserID)
-	out.Status = omittable.Set(in.Status)
-	out.Total = omittable.Set(in.Total)
-	if in.Notes != nil {
-		out.Notes = omittable.Set(in.Notes)
-	}
-	out.OrderedAt = omittable.Set(in.OrderedAt)
-
-	return out
-}
-
-// translateUpdateOrderInput maps the gqlgen-generated update
-// input onto the consumer model's Update<Table>Input. All fields are
-// omittable in the model; gqlgen emits each field as `*T` regardless of
-// schema nullability so the nil-check is uniform — only the inner coercion
-// varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
-func translateUpdateOrderInput(in gqlmodel.UpdateOrderInput) *models.UpdateOrderInput {
-	out := &models.UpdateOrderInput{}
-	if in.UserID != nil {
-		out.UserID = omittable.Set(int64(*in.UserID))
-	}
 	if in.Status != nil {
 		out.Status = omittable.Set(*in.Status)
 	}
@@ -459,13 +1091,50 @@ func translateUpdateOrderInput(in gqlmodel.UpdateOrderInput) *models.UpdateOrder
 	if in.OrderedAt != nil {
 		out.OrderedAt = omittable.Set(*in.OrderedAt)
 	}
+
+	return out
+}
+
+// translateUpdateOrderInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateOrderRequest
+// carries them to the resolver.
+func translateUpdateOrderInput(in gqlmodel.UpdateOrderInput) *models.UpdateOrderInput {
+	out := &models.UpdateOrderInput{}
+	if in.UserID != nil {
+		out.UserID = omittable.Set(int64(*in.UserID))
+	}
+	if in.Status != nil {
+		out.Status = omittable.Set(*in.Status)
+	}
+	if in.Total != nil {
+		out.Total = omittable.Set(*in.Total)
+	}
+	if val, ok := in.Notes.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Notes.Get()
+			out.Notes = omittable.Set(zero)
+		} else {
+			out.Notes = omittable.Set(val)
+		}
+	}
+	if in.OrderedAt != nil {
+		out.OrderedAt = omittable.Set(*in.OrderedAt)
+	}
 	return out
 }
 
 // hasUpdateOrderSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateOrderSetFields(in gqlmodel.UpdateOrderInput) bool {
 	if in.UserID != nil {
 		return true
@@ -476,13 +1145,33 @@ func hasUpdateOrderSetFields(in gqlmodel.UpdateOrderInput) bool {
 	if in.Total != nil {
 		return true
 	}
-	if in.Notes != nil {
+	if in.Notes.IsSet() {
 		return true
 	}
 	if in.OrderedAt != nil {
 		return true
 	}
 	return false
+}
+
+// translateUpdateOrderRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateOrderInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateOrderRequest(in gqlmodel.UpdateOrderInput) sqlgenresolver.UpdateOrderRequest {
+	out := sqlgenresolver.UpdateOrderRequest{
+		Set:    translateUpdateOrderInput(in),
+		HasSet: hasUpdateOrderSetFields(in),
+	}
+	if in.TotalInc != nil {
+		out.TotalInc = new(int(*in.TotalInc))
+	}
+	if in.TotalDec != nil {
+		out.TotalDec = new(int(*in.TotalDec))
+	}
+	return out
 }
 
 // translateCreateOrderItemInput maps a gqlgen-generated input value
@@ -507,8 +1196,11 @@ func translateCreateOrderItemInput(in gqlmodel.CreateOrderItemInput) *models.Cre
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateOrderItemRequest
+// carries them to the resolver.
 func translateUpdateOrderItemInput(in gqlmodel.UpdateOrderItemInput) *models.UpdateOrderItemInput {
 	out := &models.UpdateOrderItemInput{}
 	if in.OrderID != nil {
@@ -527,9 +1219,10 @@ func translateUpdateOrderItemInput(in gqlmodel.UpdateOrderItemInput) *models.Upd
 }
 
 // hasUpdateOrderItemSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateOrderItemSetFields(in gqlmodel.UpdateOrderItemInput) bool {
 	if in.OrderID != nil {
 		return true
@@ -544,6 +1237,32 @@ func hasUpdateOrderItemSetFields(in gqlmodel.UpdateOrderItemInput) bool {
 		return true
 	}
 	return false
+}
+
+// translateUpdateOrderItemRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateOrderItemInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateOrderItemRequest(in gqlmodel.UpdateOrderItemInput) sqlgenresolver.UpdateOrderItemRequest {
+	out := sqlgenresolver.UpdateOrderItemRequest{
+		Set:    translateUpdateOrderItemInput(in),
+		HasSet: hasUpdateOrderItemSetFields(in),
+	}
+	if in.QuantityInc != nil {
+		out.QuantityInc = new(int(*in.QuantityInc))
+	}
+	if in.QuantityDec != nil {
+		out.QuantityDec = new(int(*in.QuantityDec))
+	}
+	if in.UnitPriceInc != nil {
+		out.UnitPriceInc = new(int(*in.UnitPriceInc))
+	}
+	if in.UnitPriceDec != nil {
+		out.UnitPriceDec = new(int(*in.UnitPriceDec))
+	}
+	return out
 }
 
 // translateCreateOwnerInput maps a gqlgen-generated input value
@@ -565,8 +1284,11 @@ func translateCreateOwnerInput(in gqlmodel.CreateOwnerInput) *models.CreateOwner
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateOwnerRequest
+// carries them to the resolver.
 func translateUpdateOwnerInput(in gqlmodel.UpdateOwnerInput) *models.UpdateOwnerInput {
 	out := &models.UpdateOwnerInput{}
 	if in.Name != nil {
@@ -576,14 +1298,44 @@ func translateUpdateOwnerInput(in gqlmodel.UpdateOwnerInput) *models.UpdateOwner
 }
 
 // hasUpdateOwnerSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateOwnerSetFields(in gqlmodel.UpdateOwnerInput) bool {
 	if in.Name != nil {
 		return true
 	}
 	return false
+}
+
+// translateUpdateOwnerRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateOwnerInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateOwnerRequest(in gqlmodel.UpdateOwnerInput) sqlgenresolver.UpdateOwnerRequest {
+	out := sqlgenresolver.UpdateOwnerRequest{
+		Set:    translateUpdateOwnerInput(in),
+		HasSet: hasUpdateOwnerSetFields(in),
+	}
+	return out
+}
+
+// translateCreateOwnerBadgeInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateOwnerBadgeInput(in gqlmodel.CreateOwnerBadgeInput) *models.CreateOwnerBadgeInput {
+	out := &models.CreateOwnerBadgeInput{}
+	out.OwnerID = int64(in.OwnerID)
+	out.BadgeCode = in.BadgeCode
+
+	return out
 }
 
 // translateCreateOwnerProfileInput maps a gqlgen-generated input value
@@ -608,31 +1360,54 @@ func translateCreateOwnerProfileInput(in gqlmodel.CreateOwnerProfileInput) *mode
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateOwnerProfileRequest
+// carries them to the resolver.
 func translateUpdateOwnerProfileInput(in gqlmodel.UpdateOwnerProfileInput) *models.UpdateOwnerProfileInput {
 	out := &models.UpdateOwnerProfileInput{}
 	if in.OwnerID != nil {
 		out.OwnerID = omittable.Set(int64(*in.OwnerID))
 	}
-	if in.Bio != nil {
-		out.Bio = omittable.Set(in.Bio)
+	if val, ok := in.Bio.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Bio.Get()
+			out.Bio = omittable.Set(zero)
+		} else {
+			out.Bio = omittable.Set(val)
+		}
 	}
 	return out
 }
 
 // hasUpdateOwnerProfileSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateOwnerProfileSetFields(in gqlmodel.UpdateOwnerProfileInput) bool {
 	if in.OwnerID != nil {
 		return true
 	}
-	if in.Bio != nil {
+	if in.Bio.IsSet() {
 		return true
 	}
 	return false
+}
+
+// translateUpdateOwnerProfileRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateOwnerProfileInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateOwnerProfileRequest(in gqlmodel.UpdateOwnerProfileInput) sqlgenresolver.UpdateOwnerProfileRequest {
+	out := sqlgenresolver.UpdateOwnerProfileRequest{
+		Set:    translateUpdateOwnerProfileInput(in),
+		HasSet: hasUpdateOwnerProfileSetFields(in),
+	}
+	return out
 }
 
 // translateCreateProductInput maps a gqlgen-generated input value
@@ -650,9 +1425,13 @@ func translateCreateProductInput(in gqlmodel.CreateProductInput) *models.CreateP
 	if in.WeightKg != nil {
 		out.WeightKg = omittable.Set(in.WeightKg)
 	}
-	out.InStock = omittable.Set(in.InStock)
+	if in.InStock != nil {
+		out.InStock = omittable.Set(*in.InStock)
+	}
 	out.SKU = in.SKU
-	out.CreatedAt = omittable.Set(in.CreatedAt)
+	if in.CreatedAt != nil {
+		out.CreatedAt = omittable.Set(*in.CreatedAt)
+	}
 
 	return out
 }
@@ -662,8 +1441,11 @@ func translateCreateProductInput(in gqlmodel.CreateProductInput) *models.CreateP
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateProductRequest
+// carries them to the resolver.
 func translateUpdateProductInput(in gqlmodel.UpdateProductInput) *models.UpdateProductInput {
 	out := &models.UpdateProductInput{}
 	if in.CategoryID != nil {
@@ -675,8 +1457,13 @@ func translateUpdateProductInput(in gqlmodel.UpdateProductInput) *models.UpdateP
 	if in.Price != nil {
 		out.Price = omittable.Set(*in.Price)
 	}
-	if in.WeightKg != nil {
-		out.WeightKg = omittable.Set(in.WeightKg)
+	if val, ok := in.WeightKg.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.WeightKg.Get()
+			out.WeightKg = omittable.Set(zero)
+		} else {
+			out.WeightKg = omittable.Set(val)
+		}
 	}
 	if in.InStock != nil {
 		out.InStock = omittable.Set(*in.InStock)
@@ -691,9 +1478,10 @@ func translateUpdateProductInput(in gqlmodel.UpdateProductInput) *models.UpdateP
 }
 
 // hasUpdateProductSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateProductSetFields(in gqlmodel.UpdateProductInput) bool {
 	if in.CategoryID != nil {
 		return true
@@ -704,7 +1492,7 @@ func hasUpdateProductSetFields(in gqlmodel.UpdateProductInput) bool {
 	if in.Price != nil {
 		return true
 	}
-	if in.WeightKg != nil {
+	if in.WeightKg.IsSet() {
 		return true
 	}
 	if in.InStock != nil {
@@ -717,6 +1505,32 @@ func hasUpdateProductSetFields(in gqlmodel.UpdateProductInput) bool {
 		return true
 	}
 	return false
+}
+
+// translateUpdateProductRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateProductInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateProductRequest(in gqlmodel.UpdateProductInput) sqlgenresolver.UpdateProductRequest {
+	out := sqlgenresolver.UpdateProductRequest{
+		Set:    translateUpdateProductInput(in),
+		HasSet: hasUpdateProductSetFields(in),
+	}
+	if in.PriceInc != nil {
+		out.PriceInc = new(int(*in.PriceInc))
+	}
+	if in.PriceDec != nil {
+		out.PriceDec = new(int(*in.PriceDec))
+	}
+	if in.WeightKgInc != nil {
+		out.WeightKgInc = new(int(*in.WeightKgInc))
+	}
+	if in.WeightKgDec != nil {
+		out.WeightKgDec = new(int(*in.WeightKgDec))
+	}
+	return out
 }
 
 // translateCreateProductTagLabelInput maps a gqlgen-generated input value
@@ -743,25 +1557,48 @@ func translateCreateProductTagLabelInput(in gqlmodel.CreateProductTagLabelInput)
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateProductTagLabelRequest
+// carries them to the resolver.
 func translateUpdateProductTagLabelInput(in gqlmodel.UpdateProductTagLabelInput) *models.UpdateProductTagLabelInput {
 	out := &models.UpdateProductTagLabelInput{}
-	if in.Description != nil {
-		out.Description = omittable.Set(in.Description)
+	if val, ok := in.Description.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Description.Get()
+			out.Description = omittable.Set(zero)
+		} else {
+			out.Description = omittable.Set(val)
+		}
 	}
 	return out
 }
 
 // hasUpdateProductTagLabelSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateProductTagLabelSetFields(in gqlmodel.UpdateProductTagLabelInput) bool {
-	if in.Description != nil {
+	if in.Description.IsSet() {
 		return true
 	}
 	return false
+}
+
+// translateUpdateProductTagLabelRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateProductTagLabelInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateProductTagLabelRequest(in gqlmodel.UpdateProductTagLabelInput) sqlgenresolver.UpdateProductTagLabelRequest {
+	out := sqlgenresolver.UpdateProductTagLabelRequest{
+		Set:    translateUpdateProductTagLabelInput(in),
+		HasSet: hasUpdateProductTagLabelSetFields(in),
+	}
+	return out
 }
 
 // translateCreateProfileInput maps a gqlgen-generated input value
@@ -780,7 +1617,9 @@ func translateCreateProfileInput(in gqlmodel.CreateProfileInput) *models.CreateP
 	if in.GithubHandle != nil {
 		out.GithubHandle = omittable.Set(in.GithubHandle)
 	}
-	out.Verified = omittable.Set(in.Verified)
+	if in.Verified != nil {
+		out.Verified = omittable.Set(*in.Verified)
+	}
 
 	return out
 }
@@ -790,18 +1629,31 @@ func translateCreateProfileInput(in gqlmodel.CreateProfileInput) *models.CreateP
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateProfileRequest
+// carries them to the resolver.
 func translateUpdateProfileInput(in gqlmodel.UpdateProfileInput) *models.UpdateProfileInput {
 	out := &models.UpdateProfileInput{}
 	if in.UserID != nil {
 		out.UserID = omittable.Set(int64(*in.UserID))
 	}
-	if in.Website != nil {
-		out.Website = omittable.Set(in.Website)
+	if val, ok := in.Website.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Website.Get()
+			out.Website = omittable.Set(zero)
+		} else {
+			out.Website = omittable.Set(val)
+		}
 	}
-	if in.GithubHandle != nil {
-		out.GithubHandle = omittable.Set(in.GithubHandle)
+	if val, ok := in.GithubHandle.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.GithubHandle.Get()
+			out.GithubHandle = omittable.Set(zero)
+		} else {
+			out.GithubHandle = omittable.Set(val)
+		}
 	}
 	if in.Verified != nil {
 		out.Verified = omittable.Set(*in.Verified)
@@ -810,23 +1662,38 @@ func translateUpdateProfileInput(in gqlmodel.UpdateProfileInput) *models.UpdateP
 }
 
 // hasUpdateProfileSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateProfileSetFields(in gqlmodel.UpdateProfileInput) bool {
 	if in.UserID != nil {
 		return true
 	}
-	if in.Website != nil {
+	if in.Website.IsSet() {
 		return true
 	}
-	if in.GithubHandle != nil {
+	if in.GithubHandle.IsSet() {
 		return true
 	}
 	if in.Verified != nil {
 		return true
 	}
 	return false
+}
+
+// translateUpdateProfileRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateProfileInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateProfileRequest(in gqlmodel.UpdateProfileInput) sqlgenresolver.UpdateProfileRequest {
+	out := sqlgenresolver.UpdateProfileRequest{
+		Set:    translateUpdateProfileInput(in),
+		HasSet: hasUpdateProfileSetFields(in),
+	}
+	return out
 }
 
 // translateCreateReservedWordColumnInput maps a gqlgen-generated input value
@@ -838,16 +1705,36 @@ func hasUpdateProfileSetFields(in gqlmodel.UpdateProfileInput) bool {
 // and Go cannot convert a pointee inline, so the value goes through a local.
 func translateCreateReservedWordColumnInput(in gqlmodel.CreateReservedWordColumnInput) *models.CreateReservedWordColumnInput {
 	out := &models.CreateReservedWordColumnInput{}
-	out.Type = omittable.Set(in.Type)
-	out.Interface = omittable.Set(in.Interface)
-	out.Func = omittable.Set(in.Func)
-	out.Map = omittable.Set(in.Map)
-	out.New = omittable.Set(in.New)
-	out.Make = omittable.Set(in.Make)
-	out.Len = omittable.Set(int64(in.Len))
-	out.Error = omittable.Set(in.Error)
-	out.Ctx = omittable.Set(in.Ctx)
-	out.Err = omittable.Set(in.Err)
+	if in.Type != nil {
+		out.Type = omittable.Set(*in.Type)
+	}
+	if in.Interface != nil {
+		out.Interface = omittable.Set(*in.Interface)
+	}
+	if in.Func != nil {
+		out.Func = omittable.Set(*in.Func)
+	}
+	if in.Map != nil {
+		out.Map = omittable.Set(*in.Map)
+	}
+	if in.New != nil {
+		out.New = omittable.Set(*in.New)
+	}
+	if in.Make != nil {
+		out.Make = omittable.Set(*in.Make)
+	}
+	if in.Len != nil {
+		out.Len = omittable.Set(int64(*in.Len))
+	}
+	if in.Error != nil {
+		out.Error = omittable.Set(*in.Error)
+	}
+	if in.Ctx != nil {
+		out.Ctx = omittable.Set(*in.Ctx)
+	}
+	if in.Err != nil {
+		out.Err = omittable.Set(*in.Err)
+	}
 
 	return out
 }
@@ -857,8 +1744,11 @@ func translateCreateReservedWordColumnInput(in gqlmodel.CreateReservedWordColumn
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateReservedWordColumnRequest
+// carries them to the resolver.
 func translateUpdateReservedWordColumnInput(in gqlmodel.UpdateReservedWordColumnInput) *models.UpdateReservedWordColumnInput {
 	out := &models.UpdateReservedWordColumnInput{}
 	if in.Type != nil {
@@ -895,9 +1785,10 @@ func translateUpdateReservedWordColumnInput(in gqlmodel.UpdateReservedWordColumn
 }
 
 // hasUpdateReservedWordColumnSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateReservedWordColumnSetFields(in gqlmodel.UpdateReservedWordColumnInput) bool {
 	if in.Type != nil {
 		return true
@@ -932,6 +1823,26 @@ func hasUpdateReservedWordColumnSetFields(in gqlmodel.UpdateReservedWordColumnIn
 	return false
 }
 
+// translateUpdateReservedWordColumnRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateReservedWordColumnInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateReservedWordColumnRequest(in gqlmodel.UpdateReservedWordColumnInput) sqlgenresolver.UpdateReservedWordColumnRequest {
+	out := sqlgenresolver.UpdateReservedWordColumnRequest{
+		Set:    translateUpdateReservedWordColumnInput(in),
+		HasSet: hasUpdateReservedWordColumnSetFields(in),
+	}
+	if in.LenInc != nil {
+		out.LenInc = new(int(*in.LenInc))
+	}
+	if in.LenDec != nil {
+		out.LenDec = new(int(*in.LenDec))
+	}
+	return out
+}
+
 // translateCreateSluggedRowInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
@@ -941,7 +1852,9 @@ func hasUpdateReservedWordColumnSetFields(in gqlmodel.UpdateReservedWordColumnIn
 // and Go cannot convert a pointee inline, so the value goes through a local.
 func translateCreateSluggedRowInput(in gqlmodel.CreateSluggedRowInput) *models.CreateSluggedRowInput {
 	out := &models.CreateSluggedRowInput{}
-	out.Name = omittable.Set(in.Name)
+	if in.Name != nil {
+		out.Name = omittable.Set(*in.Name)
+	}
 
 	return out
 }
@@ -951,8 +1864,11 @@ func translateCreateSluggedRowInput(in gqlmodel.CreateSluggedRowInput) *models.C
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateSluggedRowRequest
+// carries them to the resolver.
 func translateUpdateSluggedRowInput(in gqlmodel.UpdateSluggedRowInput) *models.UpdateSluggedRowInput {
 	out := &models.UpdateSluggedRowInput{}
 	if in.Name != nil {
@@ -962,14 +1878,29 @@ func translateUpdateSluggedRowInput(in gqlmodel.UpdateSluggedRowInput) *models.U
 }
 
 // hasUpdateSluggedRowSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateSluggedRowSetFields(in gqlmodel.UpdateSluggedRowInput) bool {
 	if in.Name != nil {
 		return true
 	}
 	return false
+}
+
+// translateUpdateSluggedRowRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateSluggedRowInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateSluggedRowRequest(in gqlmodel.UpdateSluggedRowInput) sqlgenresolver.UpdateSluggedRowRequest {
+	out := sqlgenresolver.UpdateSluggedRowRequest{
+		Set:    translateUpdateSluggedRowInput(in),
+		HasSet: hasUpdateSluggedRowSetFields(in),
+	}
+	return out
 }
 
 // translateCreateTagInput maps a gqlgen-generated input value
@@ -982,7 +1913,9 @@ func hasUpdateSluggedRowSetFields(in gqlmodel.UpdateSluggedRowInput) bool {
 func translateCreateTagInput(in gqlmodel.CreateTagInput) *models.CreateTagInput {
 	out := &models.CreateTagInput{}
 	out.Name = in.Name
-	out.IsDeleted = omittable.Set(in.IsDeleted)
+	if in.IsDeleted != nil {
+		out.IsDeleted = omittable.Set(*in.IsDeleted)
+	}
 
 	return out
 }
@@ -992,8 +1925,11 @@ func translateCreateTagInput(in gqlmodel.CreateTagInput) *models.CreateTagInput 
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateTagRequest
+// carries them to the resolver.
 func translateUpdateTagInput(in gqlmodel.UpdateTagInput) *models.UpdateTagInput {
 	out := &models.UpdateTagInput{}
 	if in.Name != nil {
@@ -1006,9 +1942,10 @@ func translateUpdateTagInput(in gqlmodel.UpdateTagInput) *models.UpdateTagInput 
 }
 
 // hasUpdateTagSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateTagSetFields(in gqlmodel.UpdateTagInput) bool {
 	if in.Name != nil {
 		return true
@@ -1017,6 +1954,151 @@ func hasUpdateTagSetFields(in gqlmodel.UpdateTagInput) bool {
 		return true
 	}
 	return false
+}
+
+// translateUpdateTagRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateTagInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateTagRequest(in gqlmodel.UpdateTagInput) sqlgenresolver.UpdateTagRequest {
+	out := sqlgenresolver.UpdateTagRequest{
+		Set:    translateUpdateTagInput(in),
+		HasSet: hasUpdateTagSetFields(in),
+	}
+	return out
+}
+
+// translateCreateTimeKeyedInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateTimeKeyedInput(in gqlmodel.CreateTimeKeyedInput) *models.CreateTimeKeyedInput {
+	out := &models.CreateTimeKeyedInput{}
+	out.At = in.At
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateTimeKeyedInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateTimeKeyedRequest
+// carries them to the resolver.
+func translateUpdateTimeKeyedInput(in gqlmodel.UpdateTimeKeyedInput) *models.UpdateTimeKeyedInput {
+	out := &models.UpdateTimeKeyedInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateTimeKeyedSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateTimeKeyedSetFields(in gqlmodel.UpdateTimeKeyedInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateTimeKeyedRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateTimeKeyedInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateTimeKeyedRequest(in gqlmodel.UpdateTimeKeyedInput) sqlgenresolver.UpdateTimeKeyedRequest {
+	out := sqlgenresolver.UpdateTimeKeyedRequest{
+		Set:    translateUpdateTimeKeyedInput(in),
+		HasSet: hasUpdateTimeKeyedSetFields(in),
+	}
+	return out
+}
+
+// translateCreateTimeKeyedNoteInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateTimeKeyedNoteInput(in gqlmodel.CreateTimeKeyedNoteInput) *models.CreateTimeKeyedNoteInput {
+	out := &models.CreateTimeKeyedNoteInput{}
+	if in.KeyedAt != nil {
+		out.KeyedAt = omittable.Set(*in.KeyedAt)
+	}
+	out.Note = in.Note
+
+	return out
+}
+
+// translateUpdateTimeKeyedNoteInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateTimeKeyedNoteRequest
+// carries them to the resolver.
+func translateUpdateTimeKeyedNoteInput(in gqlmodel.UpdateTimeKeyedNoteInput) *models.UpdateTimeKeyedNoteInput {
+	out := &models.UpdateTimeKeyedNoteInput{}
+	if val, ok := in.KeyedAt.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.KeyedAt.Get()
+			out.KeyedAt = omittable.Set(zero)
+		} else {
+			out.KeyedAt = omittable.Set(*val)
+		}
+	}
+	if in.Note != nil {
+		out.Note = omittable.Set(*in.Note)
+	}
+	return out
+}
+
+// hasUpdateTimeKeyedNoteSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateTimeKeyedNoteSetFields(in gqlmodel.UpdateTimeKeyedNoteInput) bool {
+	if in.KeyedAt.IsSet() {
+		return true
+	}
+	if in.Note != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateTimeKeyedNoteRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateTimeKeyedNoteInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateTimeKeyedNoteRequest(in gqlmodel.UpdateTimeKeyedNoteInput) sqlgenresolver.UpdateTimeKeyedNoteRequest {
+	out := sqlgenresolver.UpdateTimeKeyedNoteRequest{
+		Set:    translateUpdateTimeKeyedNoteInput(in),
+		HasSet: hasUpdateTimeKeyedNoteSetFields(in),
+	}
+	return out
 }
 
 // translateCreateUserInput maps a gqlgen-generated input value
@@ -1030,46 +2112,6 @@ func translateCreateUserInput(in gqlmodel.CreateUserInput) *models.CreateUserInp
 	out := &models.CreateUserInput{}
 	out.Name = in.Name
 	out.Email = in.Email
-	out.Role = omittable.Set(in.Role)
-	if in.Age != nil {
-		v := int64(*in.Age)
-		out.Age = omittable.Set(&v)
-	}
-	if in.Bio != nil {
-		out.Bio = omittable.Set(in.Bio)
-	}
-	out.IsActive = omittable.Set(in.IsActive)
-	out.Balance = omittable.Set(in.Balance)
-	out.LoginCount = omittable.Set(int64(in.LoginCount))
-	if in.Avatar != nil {
-		out.Avatar = omittable.Set(in.Avatar)
-	}
-	if in.Score != nil {
-		out.Score = omittable.Set(in.Score)
-	}
-	out.CreatedAt = omittable.Set(in.CreatedAt)
-	if in.UpdatedAt != nil {
-		out.UpdatedAt = omittable.Set(*in.UpdatedAt)
-	}
-
-	return out
-}
-
-// translateUpdateUserInput maps the gqlgen-generated update
-// input onto the consumer model's Update<Table>Input. All fields are
-// omittable in the model; gqlgen emits each field as `*T` regardless of
-// schema nullability so the nil-check is uniform — only the inner coercion
-// varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
-func translateUpdateUserInput(in gqlmodel.UpdateUserInput) *models.UpdateUserInput {
-	out := &models.UpdateUserInput{}
-	if in.Name != nil {
-		out.Name = omittable.Set(*in.Name)
-	}
-	if in.Email != nil {
-		out.Email = omittable.Set(*in.Email)
-	}
 	if in.Role != nil {
 		out.Role = omittable.Set(*in.Role)
 	}
@@ -1101,13 +2143,92 @@ func translateUpdateUserInput(in gqlmodel.UpdateUserInput) *models.UpdateUserInp
 	if in.UpdatedAt != nil {
 		out.UpdatedAt = omittable.Set(*in.UpdatedAt)
 	}
+
+	return out
+}
+
+// translateUpdateUserInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateUserRequest
+// carries them to the resolver.
+func translateUpdateUserInput(in gqlmodel.UpdateUserInput) *models.UpdateUserInput {
+	out := &models.UpdateUserInput{}
+	if in.Name != nil {
+		out.Name = omittable.Set(*in.Name)
+	}
+	if in.Email != nil {
+		out.Email = omittable.Set(*in.Email)
+	}
+	if in.Role != nil {
+		out.Role = omittable.Set(*in.Role)
+	}
+	if val, ok := in.Age.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Age.Get()
+			out.Age = omittable.Set(zero)
+		} else {
+			v := int64(*val)
+			out.Age = omittable.Set(&v)
+		}
+	}
+	if val, ok := in.Bio.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Bio.Get()
+			out.Bio = omittable.Set(zero)
+		} else {
+			out.Bio = omittable.Set(val)
+		}
+	}
+	if in.IsActive != nil {
+		out.IsActive = omittable.Set(*in.IsActive)
+	}
+	if in.Balance != nil {
+		out.Balance = omittable.Set(*in.Balance)
+	}
+	if in.LoginCount != nil {
+		out.LoginCount = omittable.Set(int64(*in.LoginCount))
+	}
+	if val, ok := in.Avatar.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Avatar.Get()
+			out.Avatar = omittable.Set(zero)
+		} else {
+			out.Avatar = omittable.Set(val)
+		}
+	}
+	if val, ok := in.Score.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Score.Get()
+			out.Score = omittable.Set(zero)
+		} else {
+			out.Score = omittable.Set(val)
+		}
+	}
+	if in.CreatedAt != nil {
+		out.CreatedAt = omittable.Set(*in.CreatedAt)
+	}
+	if val, ok := in.UpdatedAt.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.UpdatedAt.Get()
+			out.UpdatedAt = omittable.Set(zero)
+		} else {
+			out.UpdatedAt = omittable.Set(*val)
+		}
+	}
 	return out
 }
 
 // hasUpdateUserSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateUserSetFields(in gqlmodel.UpdateUserInput) bool {
 	if in.Name != nil {
 		return true
@@ -1118,10 +2239,10 @@ func hasUpdateUserSetFields(in gqlmodel.UpdateUserInput) bool {
 	if in.Role != nil {
 		return true
 	}
-	if in.Age != nil {
+	if in.Age.IsSet() {
 		return true
 	}
-	if in.Bio != nil {
+	if in.Bio.IsSet() {
 		return true
 	}
 	if in.IsActive != nil {
@@ -1133,19 +2254,57 @@ func hasUpdateUserSetFields(in gqlmodel.UpdateUserInput) bool {
 	if in.LoginCount != nil {
 		return true
 	}
-	if in.Avatar != nil {
+	if in.Avatar.IsSet() {
 		return true
 	}
-	if in.Score != nil {
+	if in.Score.IsSet() {
 		return true
 	}
 	if in.CreatedAt != nil {
 		return true
 	}
-	if in.UpdatedAt != nil {
+	if in.UpdatedAt.IsSet() {
 		return true
 	}
 	return false
+}
+
+// translateUpdateUserRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateUserInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateUserRequest(in gqlmodel.UpdateUserInput) sqlgenresolver.UpdateUserRequest {
+	out := sqlgenresolver.UpdateUserRequest{
+		Set:    translateUpdateUserInput(in),
+		HasSet: hasUpdateUserSetFields(in),
+	}
+	if in.AgeInc != nil {
+		out.AgeInc = new(int(*in.AgeInc))
+	}
+	if in.AgeDec != nil {
+		out.AgeDec = new(int(*in.AgeDec))
+	}
+	if in.BalanceInc != nil {
+		out.BalanceInc = new(int(*in.BalanceInc))
+	}
+	if in.BalanceDec != nil {
+		out.BalanceDec = new(int(*in.BalanceDec))
+	}
+	if in.LoginCountInc != nil {
+		out.LoginCountInc = new(int(*in.LoginCountInc))
+	}
+	if in.LoginCountDec != nil {
+		out.LoginCountDec = new(int(*in.LoginCountDec))
+	}
+	if in.ScoreInc != nil {
+		out.ScoreInc = new(int(*in.ScoreInc))
+	}
+	if in.ScoreDec != nil {
+		out.ScoreDec = new(int(*in.ScoreDec))
+	}
+	return out
 }
 
 // translateCreateUserCategoryInput maps a gqlgen-generated input value
@@ -1178,7 +2337,9 @@ func translateCreateWarehouseInput(in gqlmodel.CreateWarehouseInput) *models.Cre
 	if in.NullablePrice != nil {
 		out.NullablePrice = omittable.Set(*in.NullablePrice)
 	}
-	out.CreatedAt = omittable.Set(in.CreatedAt)
+	if in.CreatedAt != nil {
+		out.CreatedAt = omittable.Set(*in.CreatedAt)
+	}
 
 	return out
 }
@@ -1188,8 +2349,11 @@ func translateCreateWarehouseInput(in gqlmodel.CreateWarehouseInput) *models.Cre
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateWarehouseRequest
+// carries them to the resolver.
 func translateUpdateWarehouseInput(in gqlmodel.UpdateWarehouseInput) *models.UpdateWarehouseInput {
 	out := &models.UpdateWarehouseInput{}
 	if in.ExternalID != nil {
@@ -1201,8 +2365,13 @@ func translateUpdateWarehouseInput(in gqlmodel.UpdateWarehouseInput) *models.Upd
 	if in.Price != nil {
 		out.Price = omittable.Set(*in.Price)
 	}
-	if in.NullablePrice != nil {
-		out.NullablePrice = omittable.Set(*in.NullablePrice)
+	if val, ok := in.NullablePrice.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.NullablePrice.Get()
+			out.NullablePrice = omittable.Set(zero)
+		} else {
+			out.NullablePrice = omittable.Set(*val)
+		}
 	}
 	if in.CreatedAt != nil {
 		out.CreatedAt = omittable.Set(*in.CreatedAt)
@@ -1211,9 +2380,10 @@ func translateUpdateWarehouseInput(in gqlmodel.UpdateWarehouseInput) *models.Upd
 }
 
 // hasUpdateWarehouseSetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdateWarehouseSetFields(in gqlmodel.UpdateWarehouseInput) bool {
 	if in.ExternalID != nil {
 		return true
@@ -1224,11 +2394,37 @@ func hasUpdateWarehouseSetFields(in gqlmodel.UpdateWarehouseInput) bool {
 	if in.Price != nil {
 		return true
 	}
-	if in.NullablePrice != nil {
+	if in.NullablePrice.IsSet() {
 		return true
 	}
 	if in.CreatedAt != nil {
 		return true
 	}
 	return false
+}
+
+// translateUpdateWarehouseRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateWarehouseInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateWarehouseRequest(in gqlmodel.UpdateWarehouseInput) sqlgenresolver.UpdateWarehouseRequest {
+	out := sqlgenresolver.UpdateWarehouseRequest{
+		Set:    translateUpdateWarehouseInput(in),
+		HasSet: hasUpdateWarehouseSetFields(in),
+	}
+	if in.PriceInc != nil {
+		out.PriceInc = new(int(*in.PriceInc))
+	}
+	if in.PriceDec != nil {
+		out.PriceDec = new(int(*in.PriceDec))
+	}
+	if in.NullablePriceInc != nil {
+		out.NullablePriceInc = new(int(*in.NullablePriceInc))
+	}
+	if in.NullablePriceDec != nil {
+		out.NullablePriceDec = new(int(*in.NullablePriceDec))
+	}
+	return out
 }

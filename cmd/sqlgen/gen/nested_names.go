@@ -55,16 +55,12 @@ type nestedTypeName struct {
 //
 // FKOnTarget is read only inside the O2O arm, never as a general "belongs-to"
 // test, because false is three answers in one. M2M is separated by the switch
-// before the flag is consulted. The third — the target is absent from the
-// parsed schema, where fkColumnOnTarget also returns false — is deliberately
-// left to under-claim: with the target unresolved there is no way to tell
-// has-one from belongs-to, so whether the parent's key flows down the edge is
-// unknown, and claiming a name for an edge that may be shape 1 would reject a
-// config over a type that is never declared. An O2M to an unresolved target
-// *is* claimed, and the asymmetry is the point rather than an oversight: O2M
-// fixes the direction by its type, so nothing is unknown there. The emitters
-// need the same distinction for a different purpose and must make it the same
-// way — do not read FKOnTarget == false as belongs-to.
+// before the flag is consulted. The third — the target is not a generated
+// table, where fkColumnOnTarget also returns false — is not a candidate here:
+// with no target table there is no telling has-one from belongs-to, and the
+// emitters read this set.
+// Its names are still claimed: nestedClaimEdges adds it back for the name
+// check. Do not read FKOnTarget == false as belongs-to.
 func nestedCandidateEdges(tc TableContext) []RelationshipContext {
 	if tc.CompositePK || len(tc.PKColumns) != 1 {
 		return nil
@@ -97,12 +93,41 @@ func nestedCandidateEdges(tc TableContext) []RelationshipContext {
 	return candidates
 }
 
-// nestedSurfaceNames returns every package-scope type name tc's nested-mutation
-// surface declares, in the order PRD §9.9.5 lists the families. A parent with
-// no candidate edge declares nothing at all — a wrapper carrying only the flat
-// input would be the base operation with extra steps.
-func nestedSurfaceNames(tc TableContext) []nestedTypeName {
+// nestedClaimEdges is nestedCandidateEdges plus every O2O edge whose target is
+// not a generated table, the set whose names PRD §8.5 claims. With the target
+// unresolved, has-one and belongs-to cannot be told apart, so the edge claims
+// its names as one that may be has-one, like a permanently non-nestable edge
+// does.
+func nestedClaimEdges(tc TableContext, generated tableIndex) []RelationshipContext {
+	if tc.CompositePK || len(tc.PKColumns) != 1 {
+		return nil
+	}
 	edges := nestedCandidateEdges(tc)
+	added := false
+	for _, rel := range tc.Relationships {
+		if rel.Type != parser.OneToOne || rel.FKOnTarget {
+			continue
+		}
+		if _, ok := generated.lookup(rel.TargetSchema, rel.TargetTable); ok {
+			continue
+		}
+		edges = append(edges, rel)
+		added = true
+	}
+	if added {
+		slices.SortFunc(edges, func(a, b RelationshipContext) int {
+			return strings.Compare(a.FieldName, b.FieldName)
+		})
+	}
+	return edges
+}
+
+// nestedSurfaceNames returns every package-scope type name tc's nested-mutation
+// surface claims, in the order PRD §9.9.5 lists the families. A parent with
+// no claimed edge claims nothing at all — a wrapper carrying only the flat
+// input would be the base operation with extra steps.
+func nestedSurfaceNames(tc TableContext, generated tableIndex) []nestedTypeName {
+	edges := nestedClaimEdges(tc, generated)
 	if len(edges) == 0 {
 		return nil
 	}

@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/sqlgenresolver"
 )
 
 // CreateWarehouse is the resolver for the createWarehouse field.
@@ -32,63 +31,12 @@ func (r *mutationResolver) CreateWarehouses(ctx context.Context, inputs []*gqlmo
 
 // UpdateWarehouse is the resolver for the updateWarehouse field.
 func (r *mutationResolver) UpdateWarehouse(ctx context.Context, id int, input gqlmodel.UpdateWarehouseInput) (*models.Warehouse, error) {
-	if input.Price != nil && input.PriceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update warehouses: column \"price\" cannot be both set and incremented in one mutation")
-	}
-	if input.PriceInc != nil && input.PriceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update warehouses: column \"price\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.NullablePrice != nil && input.NullablePriceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update warehouses: column \"nullable_price\" cannot be both set and incremented in one mutation")
-	}
-	if input.NullablePriceInc != nil && input.NullablePriceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update warehouses: column \"nullable_price\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateWarehouseInput(input)
-	hasSet := hasUpdateWarehouseSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.WarehouseIncrementColumn]
-	if input.PriceInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.WarehouseIncrementColumn]{
-			Column: models.WarehouseIncrementPrice,
-			Amount: int(*input.PriceInc),
-		})
-	}
-	if input.PriceDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.WarehouseIncrementColumn]{
-			Column: models.WarehouseIncrementPrice,
-			Amount: -int(*input.PriceDec),
-		})
-	}
-	if input.NullablePriceInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.WarehouseIncrementColumn]{
-			Column: models.WarehouseIncrementNullablePrice,
-			Amount: int(*input.NullablePriceInc),
-		})
-	}
-	if input.NullablePriceDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.WarehouseIncrementColumn]{
-			Column: models.WarehouseIncrementNullablePrice,
-			Amount: -int(*input.NullablePriceDec),
-		})
-	}
-	return r.M.UpdateWarehouse(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateWarehouse(ctx, id, translateUpdateWarehouseRequest(input))
 }
 
 // UpdateWarehouses is the resolver for the updateWarehouses field.
 func (r *mutationResolver) UpdateWarehouses(ctx context.Context, filter gqlmodel.WarehouseFilter, input gqlmodel.UpdateWarehouseInput) ([]*models.Warehouse, error) {
-	if input.Price != nil && input.PriceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update warehouses: column \"price\" cannot be both set and incremented in one mutation")
-	}
-	if input.PriceInc != nil && input.PriceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update warehouses: column \"price\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.NullablePrice != nil && input.NullablePriceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update warehouses: column \"nullable_price\" cannot be both set and incremented in one mutation")
-	}
-	if input.NullablePriceInc != nil && input.NullablePriceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update warehouses: column \"nullable_price\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateWarehouses(ctx, translateWarehouseFilter(&filter), translateUpdateWarehouseInput(input))
+	return r.M.UpdateWarehouses(ctx, translateWarehouseFilter(&filter), translateUpdateWarehouseRequest(input))
 }
 
 // UpsertWarehouse is the resolver for the upsertWarehouse field.

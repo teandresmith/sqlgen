@@ -191,7 +191,6 @@ generation:
     json_per_entity_dir: entities       # default (used when json_layout: per_entity; relative to markdown_dir)
     markdown_dir: manifest              # default (relative to output.dir)
     include_examples: true              # default: true (canonical example per entity)
-    include_internal: false             # default: false (skip exclude_columns, system views)
     breadcrumbs:                        # each default true when manifest.enabled
       claude_md:   true                 # emit <output.dir>/CLAUDE.md
       agents_md:   true                 # emit <output.dir>/AGENTS.md
@@ -223,7 +222,6 @@ type ManifestConfig struct {
     JSONPerEntityDir string            `yaml:"json_per_entity_dir,omitempty"`
     MarkdownDir      string            `yaml:"markdown_dir,omitempty"`
     IncludeExamples  *bool             `yaml:"include_examples,omitempty"`
-    IncludeInternal  *bool             `yaml:"include_internal,omitempty"`
     Breadcrumbs      BreadcrumbsConfig `yaml:"breadcrumbs,omitempty"`
     EmbedInClient    *bool             `yaml:"embed_in_client,omitempty"`
 }
@@ -261,7 +259,7 @@ Parallel to PRD §4.6's general per-table override rule:
 2. Global `generation.manifest.enabled`.
 3. Default: `false`.
 
-Pointer types (`*bool`) for `IncludeExamples` / `IncludeInternal` so unset
+Pointer types (`*bool`) for `IncludeExamples` so unset
 distinguishes from explicit false — matches the existing PRD §4.6
 convention for nullable booleans.
 
@@ -592,9 +590,11 @@ introspection of the manifest:
 // full entity records — the lookup is layout-agnostic.
 func (c *Client) Manifest() *manifest.Document
 
-// ManifestEntity returns the full record for a given table name.
-// Works identically across `single` and `per_entity` disk layouts.
-// Returns (nil, manifest.ErrEntityNotFound) for unknown tables.
+// ManifestEntity returns the full record for a given table: `schema.table`
+// for a table with a schema, or its bare name when no other schema has a
+// table of that name. Works identically across `single` and `per_entity`
+// disk layouts. Returns (nil, manifest.ErrEntityNotFound) for unknown
+// tables, and an error wrapping it for a bare name several schemas share.
 func (c *Client) ManifestEntity(table string) (*manifest.Entity, error)
 
 // ManifestVersion returns the schema_version field, pre-extracted at
@@ -661,8 +661,10 @@ sensitive consumers (embedded systems, lambda cold starts, etc.).
 
 **Marshaling back to bytes.** Consumers needing JSON for an HTTP
 endpoint or telemetry simply do `json.Marshal(client.Manifest())`. The
-output is content-equivalent to the on-disk file (key order may differ;
-content identical). No `ManifestRaw() []byte` helper in v1 — add later
+output is content-equivalent to the on-disk top-level file, `$schema`
+included (key order may differ); in the `single` layout `entities[]`
+comes back in the index form, and full records come from
+`ManifestEntity`. No `ManifestRaw() []byte` helper in v1 — add later
 if a consumer surfaces a real need for byte-identical output.
 
 ---
@@ -972,14 +974,18 @@ read it — no duplicated fields.
       "name": "Posts",
       "kind": "o2m",
       "target_entity": "Post",
-      "fk": { "table": "posts", "column": "author_id" },
+      "fk": { "table": "posts", "columns": ["author_id"], "references": ["id"], "constraint": "posts_author_id_fkey" },
       "filter": null
     },
     {
       "name": "Roles",
       "kind": "m2m",
       "target_entity": "Role",
-      "junction": { "table": "user_roles", "local_fk": "user_id", "target_fk": "role_id" },
+      "junction": {
+        "table": "user_roles",
+        "local_fk": { "columns": ["user_id"], "references": ["id"], "constraint": "user_roles_user_id_fkey" },
+        "target_fk": { "columns": ["role_id"], "references": ["id"], "constraint": "user_roles_role_id_fkey" }
+      },
       "filter": null
     }
   ],
@@ -1114,12 +1120,17 @@ read it — no duplicated fields.
 }
 ```
 
-**Relationship `fk` and `junction` fields.** `fk.table` names the table
-that holds `fk.column`: the target's table when the column is on the
+**Relationship `fk` and `junction` fields** (key lists since
+`schema_version` `0.2.0`, PRD §30.4.2). `fk.table` names the table
+that holds `fk.columns`: the target's table when the columns are on the
 target (an `o2m` edge such as `posts.author_id` above, or a has-one
-`o2o`), and the entity's own table when the entity holds the column (a
+`o2o`), and the entity's own table when the entity holds them (a
 belongs-to edge, such as `Profile.users` → `profiles.user_id`).
-`junction.table` names the M2M junction. Both carry
+`fk.columns[i]` references `fk.references[i]`, in the foreign key's
+declared order, and `fk.constraint` names the FOREIGN KEY the edge was
+detected from (omitted for a manual relationship). `junction.local_fk`
+and `junction.target_fk` have the same `columns` / `references` /
+`constraint` shape. `junction.table` names the M2M junction. Both carry
 the bare table name, with an optional `schema` beside it when sqlgen
 resolved one (a config-declared `junction:` resolves by PRD §5.5's
 rule, and carries no schema only when it names no parsed table),
@@ -1432,7 +1443,8 @@ var (
 func LoadInto(doc **Document, raw []byte, entitiesFS embed.FS, entities map[string]*Entity) error
 ```
 
-**Type count.** ~25 named types total. All flat data structs with JSON
+**Type count.** The named types of PRD §30.6 plus the sub-structs of the
+JSON shape they hold. All flat data structs with JSON
 struct tags. No methods other than `String()` on a few enum-style
 aliases (`Dialect`, `EntityKind`, `Layout`, `RelationshipKind`).
 
@@ -1866,7 +1878,8 @@ here so the design doc shows the full implementation arc.
   layout-agnostic `ManifestEntity` lookup across single and per-entity
   fixtures, drift between `ManifestVersion()` and `Document.SchemaVersion`.
 - Marshal round-trip test (`json.Marshal(c.Manifest())` produces
-  content-equivalent JSON to the on-disk file).
+  content-equivalent JSON to the on-disk top-level file; `entities[]` in
+  index form for the `single` layout).
 - Binary-size regression test on a 100-entity fixture (expected: ~30KB
   embed; total package binary growth <50KB including init code).
 

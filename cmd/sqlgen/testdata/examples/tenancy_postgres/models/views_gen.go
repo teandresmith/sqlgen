@@ -196,7 +196,7 @@ func (c *articleStatClient) Get(ctx context.Context, id int64, opts ...func(*Cal
 		return articleStats[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get article_stat: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -252,7 +252,7 @@ func (c *articleStatClient) GetMany(ctx context.Context, input *GetArticleStatsI
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get article_stats: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -289,7 +289,7 @@ func (c *articleStatClient) GetMany(ctx context.Context, input *GetArticleStatsI
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get article_stats: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -301,7 +301,7 @@ func (c *articleStatClient) GetMany(ctx context.Context, input *GetArticleStatsI
 		return articleStats, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many article_stats: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -329,7 +329,7 @@ func (c *articleStatClient) Count(ctx context.Context, filter *ArticleStatFilter
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return int64(0), fmt.Errorf("count article_stats: resolve tenant: %w", err)
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -340,12 +340,12 @@ func (c *articleStatClient) Count(ctx context.Context, filter *ArticleStatFilter
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count article_stats: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count article_stats: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -372,7 +372,7 @@ func (c *articleStatClient) Paginate(ctx context.Context, input PaginateInput[Ar
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate article_stats count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -383,7 +383,7 @@ func (c *articleStatClient) Paginate(ctx context.Context, input PaginateInput[Ar
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate article_stats: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[ArticleStat]{
@@ -391,11 +391,11 @@ func (c *articleStatClient) Paginate(ctx context.Context, input PaginateInput[Ar
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate article_stats: %w", err)
 	}
 	return result.(*PaginateResult[ArticleStat]), nil
 }
@@ -429,7 +429,7 @@ func (c *articleStatClient) Connection(ctx context.Context, input ConnectionInpu
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection article_stats count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -473,7 +473,7 @@ func (c *articleStatClient) Connection(ctx context.Context, input ConnectionInpu
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection article_stats: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -512,7 +512,7 @@ func (c *articleStatClient) Connection(ctx context.Context, input ConnectionInpu
 		return &Connection[ArticleStat]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection article_stats: %w", err)
 	}
 	return result.(*Connection[ArticleStat]), nil
 }
@@ -579,7 +579,7 @@ type ArticleStatFilter struct {
 // of a nil dereference. And a nil entry inside and / or is skipped rather than
 // fatal, matching the "an unset member contributes no SQL" rule the
 // relationship members already follow.
-func (f *ArticleStatFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
+func (f *ArticleStatFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
 	if f == nil {
 		return nil
 	}
@@ -599,7 +599,7 @@ func (f *ArticleStatFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
 	}
 
 	for _, sub := range f.And {
-		subConds := sub.ToConditions(dialect)
+		subConds := sub.ToConditions(dialect, opts...)
 		if len(subConds) > 0 {
 			conds = append(conds, sql.And(subConds...))
 		}
@@ -617,7 +617,7 @@ func (f *ArticleStatFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
 	// because it is not the empty string, yielding invalid SQL.
 	var orGroup []sql.Condition
 	for _, sub := range f.Or {
-		subConds := sub.ToConditions(dialect)
+		subConds := sub.ToConditions(dialect, opts...)
 		if len(subConds) > 0 {
 			orGroup = append(orGroup, sql.And(subConds...))
 		}
@@ -879,7 +879,7 @@ func (c *workspaceLineTotalClient) Get(ctx context.Context, id uuid.UUID, opts .
 		return workspaceLineTotals[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get workspace_line_total: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -935,7 +935,7 @@ func (c *workspaceLineTotalClient) GetMany(ctx context.Context, input *GetWorksp
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get workspace_line_totals: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -972,7 +972,7 @@ func (c *workspaceLineTotalClient) GetMany(ctx context.Context, input *GetWorksp
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get workspace_line_totals: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -984,7 +984,7 @@ func (c *workspaceLineTotalClient) GetMany(ctx context.Context, input *GetWorksp
 		return workspaceLineTotals, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many workspace_line_totals: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1012,7 +1012,7 @@ func (c *workspaceLineTotalClient) Count(ctx context.Context, filter *WorkspaceL
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return int64(0), fmt.Errorf("count workspace_line_totals: resolve tenant: %w", err)
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -1023,12 +1023,12 @@ func (c *workspaceLineTotalClient) Count(ctx context.Context, filter *WorkspaceL
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count workspace_line_totals: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count workspace_line_totals: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1055,7 +1055,7 @@ func (c *workspaceLineTotalClient) Paginate(ctx context.Context, input PaginateI
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate workspace_line_totals count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -1066,7 +1066,7 @@ func (c *workspaceLineTotalClient) Paginate(ctx context.Context, input PaginateI
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate workspace_line_totals: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[WorkspaceLineTotal]{
@@ -1074,11 +1074,11 @@ func (c *workspaceLineTotalClient) Paginate(ctx context.Context, input PaginateI
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate workspace_line_totals: %w", err)
 	}
 	return result.(*PaginateResult[WorkspaceLineTotal]), nil
 }
@@ -1112,7 +1112,7 @@ func (c *workspaceLineTotalClient) Connection(ctx context.Context, input Connect
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection workspace_line_totals count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1156,7 +1156,7 @@ func (c *workspaceLineTotalClient) Connection(ctx context.Context, input Connect
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection workspace_line_totals: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1195,7 +1195,7 @@ func (c *workspaceLineTotalClient) Connection(ctx context.Context, input Connect
 		return &Connection[WorkspaceLineTotal]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection workspace_line_totals: %w", err)
 	}
 	return result.(*Connection[WorkspaceLineTotal]), nil
 }
@@ -1253,11 +1253,14 @@ func (c *workspaceLineTotalClient) Refresh(ctx context.Context) error {
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, false)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh workspace_line_totals: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh workspace_line_totals: %w", err)
+	}
+	return nil
 }
 
 // RefreshConcurrently recomputes the workspace_line_totals materialized view without
@@ -1267,7 +1270,7 @@ func (c *workspaceLineTotalClient) Refresh(ctx context.Context) error {
 // database.ErrRefreshConcurrentlyInTx before issuing any SQL.
 func (c *workspaceLineTotalClient) RefreshConcurrently(ctx context.Context) error {
 	if database.InTransaction(ctx) {
-		return fmt.Errorf("refresh workspace_line_totals: %w", database.ErrRefreshConcurrentlyInTx)
+		return fmt.Errorf("refresh concurrently workspace_line_totals: %w", database.ErrRefreshConcurrentlyInTx)
 	}
 	_, err := c.executeQuery(ctx, false, &hook.QueryContext{
 		Op: hook.OpRefresh, Table: TableWorkspaceLineTotals, Schema: "public",
@@ -1275,11 +1278,14 @@ func (c *workspaceLineTotalClient) RefreshConcurrently(ctx context.Context) erro
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, true)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh workspace_line_totals: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh concurrently workspace_line_totals: %w", err)
+	}
+	return nil
 }
 
 // WorkspaceLineTotalFilter provides type-safe filtering for the workspace_line_totals table.
@@ -1298,7 +1304,7 @@ type WorkspaceLineTotalFilter struct {
 // of a nil dereference. And a nil entry inside and / or is skipped rather than
 // fatal, matching the "an unset member contributes no SQL" rule the
 // relationship members already follow.
-func (f *WorkspaceLineTotalFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
+func (f *WorkspaceLineTotalFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
 	if f == nil {
 		return nil
 	}
@@ -1314,7 +1320,7 @@ func (f *WorkspaceLineTotalFilter) ToConditions(dialect sql.Dialect) []sql.Condi
 	}
 
 	for _, sub := range f.And {
-		subConds := sub.ToConditions(dialect)
+		subConds := sub.ToConditions(dialect, opts...)
 		if len(subConds) > 0 {
 			conds = append(conds, sql.And(subConds...))
 		}
@@ -1332,7 +1338,7 @@ func (f *WorkspaceLineTotalFilter) ToConditions(dialect sql.Dialect) []sql.Condi
 	// because it is not the empty string, yielding invalid SQL.
 	var orGroup []sql.Condition
 	for _, sub := range f.Or {
-		subConds := sub.ToConditions(dialect)
+		subConds := sub.ToConditions(dialect, opts...)
 		if len(subConds) > 0 {
 			orGroup = append(orGroup, sql.And(subConds...))
 		}

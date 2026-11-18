@@ -35,14 +35,12 @@ func (r *mutationResolver) CreateUserCredentials(ctx context.Context, inputs []*
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateUserCredential(ctx context.Context, userID uuid.UUID, input gqlmodel.UpdateUserCredentialInput) (*models.UserCredential, error) {
-	setIn := translateUpdateUserCredentialInput(input)
-	hasSet := hasUpdateUserCredentialSetFields(input)
-	return r.M.UpdateUserCredential(ctx, userID, setIn, hasSet)
+	return r.M.UpdateUserCredential(ctx, userID, translateUpdateUserCredentialRequest(input))
 }
 
 // UpdateUserCredentials is the resolver for the updateUserCredentials field.
 func (r *mutationResolver) UpdateUserCredentials(ctx context.Context, filter gqlmodel.UserCredentialFilter, input gqlmodel.UpdateUserCredentialInput) ([]*models.UserCredential, error) {
-	return r.M.UpdateUserCredentials(ctx, translateUserCredentialFilter(&filter), translateUpdateUserCredentialInput(input))
+	return r.M.UpdateUserCredentials(ctx, translateUserCredentialFilter(&filter), translateUpdateUserCredentialRequest(input))
 }
 
 // UpsertUserCredential is the resolver for the upsertUserCredential field.

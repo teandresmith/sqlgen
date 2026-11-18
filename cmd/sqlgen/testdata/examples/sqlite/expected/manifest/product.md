@@ -69,19 +69,6 @@ sqlite:
 SELECT "category_id", "created_at", "id", "in_stock", "price", "sku", "title", "weight_kg" FROM "products" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *ProductFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-sqlite:
-
-```sql
-SELECT COUNT(*) FROM "products" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `id int64`
@@ -106,6 +93,19 @@ sqlite:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "products" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *ProductFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+sqlite:
+
+```sql
+SELECT COUNT(*) FROM "products" WHERE <filter>
 ```
 
 ### Paginate
@@ -166,36 +166,6 @@ sqlite:
 INSERT INTO "products" (<columns>) VALUES <values> RETURNING "id"
 ```
 
-### Upsert
-
-- Params: `input *CreateProductInput`, `target ProductConflictTarget`
-- Returns: `*Product`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "products" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateProductInput`, `target ProductConflictTarget`
-- Returns: `[]*Product`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-sqlite:
-
-```sql
-INSERT INTO "products" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `id int64`, `input *UpdateProductInput`
@@ -239,6 +209,36 @@ sqlite:
 
 ```sql
 UPDATE "products" SET <set> WHERE <filter> RETURNING "id"
+```
+
+### Upsert
+
+- Params: `input *CreateProductInput`, `target ProductConflictTarget`
+- Returns: `*Product`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated ProductConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "products" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING "id"
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateProductInput`, `target ProductConflictTarget`
+- Returns: `[]*Product`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same ProductConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+sqlite:
+
+```sql
+INSERT INTO "products" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### Increment
@@ -321,3 +321,17 @@ Type `ProductFilter`.
 Type `ProductSort`.
 
 Fields: CategoryID, CreatedAt, ID, InStock, Price, SKU, Title, WeightKg
+
+## Read examples
+
+```go
+row, err := client.Products().Get(ctx, 1)
+rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{Filter: &models.ProductFilter{SKU: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Products().Create(ctx, &models.CreateProductInput{CategoryID: 1, Title: "example", Price: 1, SKU: "example"})
+updated, err := client.Products().Update(ctx, 1, &models.UpdateProductInput{CategoryID: omittable.Set(int64(1))})
+```

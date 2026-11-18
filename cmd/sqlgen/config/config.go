@@ -39,15 +39,6 @@ const (
 	SourceBoth     Source = "both"
 )
 
-// ParseMode controls how duplicate table definitions across files are handled.
-type ParseMode string
-
-// Supported parse modes.
-const (
-	ParseModeStrict ParseMode = "strict"
-	ParseModeMerge  ParseMode = "merge"
-)
-
 // Driver identifies the Go database driver imported by generated code.
 type Driver string
 
@@ -134,15 +125,6 @@ func (d Dialect) IsValid() bool {
 func (s Source) IsValid() bool {
 	switch s {
 	case SourceFiles, SourceDatabase, SourceBoth:
-		return true
-	}
-	return false
-}
-
-// IsValid reports whether p is one of the defined ParseMode constants.
-func (p ParseMode) IsValid() bool {
-	switch p {
-	case ParseModeStrict, ParseModeMerge:
 		return true
 	}
 	return false
@@ -242,6 +224,11 @@ type RootConfig struct {
 	// envVars maps a dotted path to the environment variables its value
 	// referenced (PRD §4.1.1).
 	envVars map[string][]string
+
+	// cacheKeys records which cache sub-block keys the YAML writes, so a
+	// partial hydration or circuit_breaker block can default each key it
+	// leaves out without overwriting an explicit false or 0.
+	cacheKeys cacheKeyPresence
 }
 
 // InputConfig controls where the schema is read from.
@@ -251,7 +238,6 @@ type InputConfig struct {
 	Schema     string            `yaml:"schema"`
 	Paths      []string          `yaml:"paths"`
 	Views      []string          `yaml:"views"`
-	ParseMode  ParseMode         `yaml:"parse_mode"`
 	Connection *ConnectionConfig `yaml:"connection"`
 	Introspect *IntrospectConfig `yaml:"introspect"`
 
@@ -480,7 +466,6 @@ type ManifestConfig struct {
 	JSONPerEntityDir string            `yaml:"json_per_entity_dir"`
 	MarkdownDir      string            `yaml:"markdown_dir"`
 	IncludeExamples  *bool             `yaml:"include_examples"`
-	IncludeInternal  *bool             `yaml:"include_internal"`
 	Breadcrumbs      BreadcrumbsConfig `yaml:"breadcrumbs"`
 	EmbedInClient    *bool             `yaml:"embed_in_client"`
 	MCP              *MCPConfig        `yaml:"mcp"`
@@ -719,10 +704,10 @@ type TableRelationship struct {
 	Type                string             `yaml:"type"`
 	Side                string             `yaml:"side"`
 	Table               string             `yaml:"table"`
-	FK                  string             `yaml:"fk"`
+	FK                  KeyColumns         `yaml:"fk"`
 	Junction            string             `yaml:"junction"`
-	JunctionLocalFK     string             `yaml:"junction_local_fk"`
-	JunctionReferenceFK string             `yaml:"junction_reference_fk"`
+	JunctionLocalFK     KeyColumns         `yaml:"junction_local_fk"`
+	JunctionReferenceFK KeyColumns         `yaml:"junction_reference_fk"`
 	Filter              string             `yaml:"filter"`
 	Sort                []RelationshipSort `yaml:"sort"`
 	Description         string             `yaml:"description"`
@@ -732,6 +717,47 @@ type TableRelationship struct {
 	// form that is write-eligible for nested mutations — `filter:` is raw SQL
 	// and therefore not invertible into something a writer could set.
 	Discriminator *RelationshipDiscriminator `yaml:"discriminator"`
+}
+
+// KeyColumns is a relationship key's column list: `fk`, `junction_local_fk` or
+// `junction_reference_fk`. YAML takes a string, a one-item list, or a list
+// that maps by position onto the primary key of the table it references
+// (PRD §13.4). nil means the key is unset; `[]` decodes to an empty, non-nil
+// list, which validation rejects.
+type KeyColumns []string
+
+// UnmarshalYAML handles the dual string/list form of a relationship key.
+func (k *KeyColumns) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		if value.Value == "" {
+			*k = nil
+		} else {
+			*k = KeyColumns{value.Value}
+		}
+		return nil
+	}
+	var cols []string
+	if err := value.Decode(&cols); err != nil {
+		// Returned as is so yaml.v3 collects it; see Operations.UnmarshalYAML.
+		if terr, ok := errors.AsType[*yaml.TypeError](err); ok {
+			return terr
+		}
+		return fmt.Errorf("decoding relationship key: %w", err)
+	}
+	if cols == nil {
+		cols = []string{}
+	}
+	*k = KeyColumns(cols)
+	return nil
+}
+
+// String renders the key as written in YAML: the bare column for one column,
+// a flow list otherwise.
+func (k KeyColumns) String() string {
+	if len(k) == 1 {
+		return k[0]
+	}
+	return "[" + strings.Join(k, ", ") + "]"
 }
 
 // RelationshipDiscriminator is the {column, value} form of a polymorphic edge
@@ -818,7 +844,6 @@ type TableEventConfig struct {
 // ViewConfig defines a read-only view.
 type ViewConfig struct {
 	StructName   string           `yaml:"struct_name"`
-	SQL          string           `yaml:"sql"`
 	Cache        *ViewCacheConfig `yaml:"cache"`
 	InvalidateOn []string         `yaml:"invalidate_on"`
 	// CursorKeys overrides generation.cursor_keys for this view. When set
@@ -886,6 +911,43 @@ type CircuitBreakerConfig struct {
 	FailureThreshold  int    `yaml:"failure_threshold"`
 	ProbeInterval     string `yaml:"probe_interval"`
 	HalfOpenMaxProbes int    `yaml:"half_open_max_probes"`
+}
+
+// cacheKeyPresence records the cache.hydration and cache.circuit_breaker keys
+// a config file writes. A bool or int left out of a written block decodes to
+// its zero value, the same as an explicit false or 0, so the defaults need
+// the key itself to tell the two apart.
+type cacheKeyPresence struct {
+	hydrationEnabled bool
+	breakerEnabled   bool
+	breakerThreshold bool
+	breakerProbes    bool
+}
+
+// cacheKeyNodes is the shape decodeConfig reads the cache sub-block keys
+// into to learn which ones the file writes.
+type cacheKeyNodes struct {
+	Hydration struct {
+		Enabled yaml.Node `yaml:"enabled"`
+	} `yaml:"hydration"`
+	CircuitBreaker struct {
+		Enabled           yaml.Node `yaml:"enabled"`
+		FailureThreshold  yaml.Node `yaml:"failure_threshold"`
+		HalfOpenMaxProbes yaml.Node `yaml:"half_open_max_probes"`
+	} `yaml:"circuit_breaker"`
+}
+
+// presence reports which keys n holds. A key whose value is null counts as
+// left out.
+func (n cacheKeyNodes) presence() cacheKeyPresence {
+	written := func(v yaml.Node) bool { return v.Kind != 0 && v.Tag != "!!null" }
+	hy, cb := n.Hydration, n.CircuitBreaker
+	return cacheKeyPresence{
+		hydrationEnabled: written(hy.Enabled),
+		breakerEnabled:   written(cb.Enabled),
+		breakerThreshold: written(cb.FailureThreshold),
+		breakerProbes:    written(cb.HalfOpenMaxProbes),
+	}
 }
 
 // TableAPIConfig overrides per-table API exposure. Enabled is a tri-state
@@ -1690,11 +1752,13 @@ func decodeConfig(data []byte) (*RootConfig, error) {
 		Input struct {
 			Paths yaml.Node `yaml:"paths"`
 		} `yaml:"input"`
+		Cache cacheKeyNodes `yaml:"cache"`
 	}
 	if err := yaml.Unmarshal(data, &present); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 	cfg.Input.pathsSet = present.Input.Paths.Kind != 0
+	cfg.cacheKeys = present.Cache.presence()
 	return &cfg, nil
 }
 
@@ -1751,7 +1815,9 @@ func applyManifestDefaults(gen *GenerationConfig) {
 	if !*m.Enabled {
 		return
 	}
-	if len(m.Formats) == 0 {
+	// Only a missing key takes the default. An explicit `formats: []` decodes
+	// to an empty non-nil slice and is kept, so validation rejects it (§4.13).
+	if m.Formats == nil {
 		m.Formats = []string{ManifestFormatJSON, ManifestFormatMarkdown}
 	}
 	if m.JSONFilename == "" {
@@ -1768,9 +1834,6 @@ func applyManifestDefaults(gen *GenerationConfig) {
 	}
 	if m.IncludeExamples == nil {
 		m.IncludeExamples = new(true)
-	}
-	if m.IncludeInternal == nil {
-		m.IncludeInternal = new(false)
 	}
 	if m.EmbedInClient == nil {
 		m.EmbedInClient = new(true)
@@ -1881,9 +1944,6 @@ func applyInputDefaults(in *InputConfig) {
 	if len(in.Paths) == 0 {
 		in.Paths = []string{"."}
 	}
-	if in.ParseMode == "" {
-		in.ParseMode = ParseModeStrict
-	}
 }
 
 func applyOutputDefaults(out *OutputConfig) {
@@ -1898,7 +1958,7 @@ func applyOutputDefaults(out *OutputConfig) {
 		out.Layout = LayoutSingleFile
 	}
 	if out.Package == "" {
-		out.Package = derivePackageName(out.Dir)
+		out.Package = derivePackageName(absDir(out.Dir))
 	}
 	applyOutputSubDefaults(out)
 }
@@ -1943,7 +2003,11 @@ func applyGenerationDefaults(gen *GenerationConfig) {
 	if gen.PageSize == nil {
 		gen.PageSize = new(100)
 	}
-	if len(gen.CursorKeys) == 0 {
+	// Only a missing key takes a list default. An explicit `[]` decodes to an
+	// empty non-nil slice and is kept: for soft_delete_columns and
+	// update_columns it turns detection off, and an empty cursor_keys is left
+	// for validation to reject.
+	if gen.CursorKeys == nil {
 		gen.CursorKeys = []string{"id"}
 	}
 	if gen.UUIDVersion == "" {
@@ -1952,10 +2016,10 @@ func applyGenerationDefaults(gen *GenerationConfig) {
 	if gen.StrictUpdates == nil {
 		gen.StrictUpdates = new(true)
 	}
-	if len(gen.SoftDeleteColumns) == 0 {
+	if gen.SoftDeleteColumns == nil {
 		gen.SoftDeleteColumns = defaultSoftDeleteColumns()
 	}
-	if len(gen.UpdateColumns) == 0 {
+	if gen.UpdateColumns == nil {
 		gen.UpdateColumns = defaultUpdateColumns()
 	}
 }
@@ -1971,14 +2035,44 @@ func applyOverrideDefaults(ov *OverrideConfig) {
 
 // applyCacheDefaults fills unset fields on cfg.Cache with the built-in defaults
 // documented in PRD §27.2 and CACHE.md §3.4. Nothing is done when the YAML has
-// no `cache:` block. When `key_prefix` is empty (unset or explicit ""), the
-// default "sqlgen" is applied and cfg.CacheKeyPrefixDefaulted is flipped so
-// ValidatePreParse can emit the defaulted-key_prefix stderr warning.
+// no `cache:` block and no table or view opts into caching. A per-table or
+// per-view `cache.enabled: true` opts in even without a global block (PRD
+// §4.8 / §27.2 / §27.11), so in that case the block is materialized with
+// `enabled: false` and the same defaults, which the cached entities inherit.
+// When `key_prefix` is empty (unset or explicit ""), the default "sqlgen" is
+// applied and cfg.CacheKeyPrefixDefaulted is flipped so ValidatePreParse can
+// emit the defaulted-key_prefix stderr warning.
 func applyCacheDefaults(cfg *RootConfig) {
 	if cfg.Cache == nil {
-		return
+		if !anyEntityOptsIntoCache(cfg) {
+			return
+		}
+		cfg.Cache = &CacheConfig{}
 	}
-	c := cfg.Cache
+	cfg.CacheKeyPrefixDefaulted = fillCacheDefaults(cfg.Cache, cfg.cacheKeys)
+}
+
+// anyEntityOptsIntoCache reports whether some table or view sets
+// cache.enabled: true.
+func anyEntityOptsIntoCache(cfg *RootConfig) bool {
+	for _, t := range cfg.Tables {
+		if t.Cache != nil && t.Cache.Enabled != nil && *t.Cache.Enabled {
+			return true
+		}
+	}
+	for _, v := range cfg.Views {
+		if v.Cache != nil && v.Cache.Enabled != nil && *v.Cache.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// fillCacheDefaults fills the unset fields of c with the PRD §27.2 defaults
+// and reports whether key_prefix was defaulted. A hydration or
+// circuit_breaker block the config writes takes the default for each key it
+// leaves out; set says which bool and int keys it does write.
+func fillCacheDefaults(c *CacheConfig, set cacheKeyPresence) (prefixDefaulted bool) {
 	if c.TTL == "" {
 		c.TTL = "1h"
 	}
@@ -1987,21 +2081,43 @@ func applyCacheDefaults(cfg *RootConfig) {
 	}
 	if c.KeyPrefix == "" {
 		c.KeyPrefix = "sqlgen"
-		cfg.CacheKeyPrefixDefaulted = true
+		prefixDefaulted = true
 	}
 	if c.Hydration == nil {
-		c.Hydration = &HydrationConfig{Enabled: true, Timeout: "30s"}
-	} else if c.Hydration.Timeout == "" {
+		c.Hydration = &HydrationConfig{}
+	}
+	if !set.hydrationEnabled {
+		c.Hydration.Enabled = true
+	}
+	if c.Hydration.Timeout == "" {
 		c.Hydration.Timeout = "30s"
 	}
 	if c.CircuitBreaker == nil {
-		c.CircuitBreaker = &CircuitBreakerConfig{
-			Enabled:           true,
-			FailureThreshold:  5,
-			ProbeInterval:     "30s",
-			HalfOpenMaxProbes: 1,
-		}
+		c.CircuitBreaker = &CircuitBreakerConfig{}
 	}
+	cb := c.CircuitBreaker
+	if !set.breakerEnabled {
+		cb.Enabled = true
+	}
+	if !set.breakerThreshold {
+		cb.FailureThreshold = 5
+	}
+	if cb.ProbeInterval == "" {
+		cb.ProbeInterval = "30s"
+	}
+	if !set.breakerProbes {
+		cb.HalfOpenMaxProbes = 1
+	}
+	return prefixDefaulted
+}
+
+// DefaultCacheConfig returns a cache block with `enabled: false` and every
+// PRD §27.2 default filled in — what a config with no `cache:` block resolves
+// to once a table or view opts into caching.
+func DefaultCacheConfig() *CacheConfig {
+	c := &CacheConfig{}
+	fillCacheDefaults(c, cacheKeyPresence{})
+	return c
 }
 
 func applyMapDefaults(cfg *RootConfig) {
@@ -2050,6 +2166,17 @@ func applyEnvOverrides(cfg *RootConfig) {
 	}
 }
 
+// absDir returns dir made absolute against the working directory, so its base
+// name is a real directory name even for "." or "..". dir is returned as is
+// when the working directory cannot be read.
+func absDir(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return dir
+	}
+	return abs
+}
+
 // derivePackageName extracts a Go package name from a directory path.
 // It uses the last path component, lowercased, with hyphens replaced by underscores.
 func derivePackageName(dir string) string {
@@ -2077,8 +2204,8 @@ func ResolveTablePageSize(table TableConfig, global GenerationConfig) int {
 
 // CursorKeysDecision is the outcome of cursor_keys resolution for one table or
 // view. It carries the effective keys, whether Connection should be emitted,
-// an optional warning for fallback paths, and an error when an explicit
-// override names a missing or nullable column. See PRD §4.13.
+// an optional warning for fallback paths, and one error per column an explicit
+// override names that is missing or nullable. See PRD §4.13.
 type CursorKeysDecision struct {
 	// Keys is the effective cursor key column list. Empty when Emit is false.
 	Keys []string
@@ -2087,17 +2214,17 @@ type CursorKeysDecision struct {
 	// Warning is a human-readable diagnostic when resolution relied on a
 	// PK-less omit. Empty on clean resolution and on silent PK fallback.
 	Warning string
-	// Err is non-nil when an explicit table/view-level override names a
-	// column that does not exist on the entity or is nullable (hard
-	// validation error).
-	Err error
+	// Errs holds one error per column an explicit table/view-level
+	// override names that does not exist on the entity or is nullable, in
+	// list order (hard validation errors). Empty when the override resolves.
+	Errs []error
 }
 
 // ResolveTableConnection applies the §4.13 cursor_keys resolution rules for a
 // table. The rules are:
 //
 //  1. Explicit table-level cursor_keys with any missing or nullable column →
-//     Err.
+//     Errs, one per such column.
 //  2. Inherited (global) cursor_keys all present and NOT NULL → use them
 //     silently.
 //  3. Inherited cursor_keys with any column missing or nullable, table has
@@ -2113,8 +2240,8 @@ type CursorKeysDecision struct {
 // names in declaration order.
 func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifiedName string, columns []SchemaColumn, pk []string) CursorKeysDecision {
 	if len(table.CursorKeys) > 0 {
-		if err := checkExplicitCursorKeys(table.CursorKeys, columns, "table", qualifiedName); err != nil {
-			return CursorKeysDecision{Err: err}
+		if errs := checkExplicitCursorKeys(table.CursorKeys, columns, "table", qualifiedName); len(errs) > 0 {
+			return CursorKeysDecision{Errs: errs}
 		}
 		return CursorKeysDecision{Keys: table.CursorKeys, Emit: true}
 	}
@@ -2137,7 +2264,7 @@ func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifie
 // view. The rules are:
 //
 //  1. Explicit view-level cursor_keys with any missing or nullable column →
-//     Err.
+//     Errs, one per such column.
 //  2. Inherited (global) cursor_keys all present and NOT NULL → use them
 //     silently.
 //  3. Inherited cursor_keys with any column missing or nullable → Emit is
@@ -2149,8 +2276,8 @@ func ResolveTableConnection(table TableConfig, global GenerationConfig, qualifie
 // nullability.
 func ResolveViewConnection(view ViewConfig, global GenerationConfig, qualifiedName string, columns []SchemaColumn) CursorKeysDecision {
 	if len(view.CursorKeys) > 0 {
-		if err := checkExplicitCursorKeys(view.CursorKeys, columns, "view", qualifiedName); err != nil {
-			return CursorKeysDecision{Err: err}
+		if errs := checkExplicitCursorKeys(view.CursorKeys, columns, "view", qualifiedName); len(errs) > 0 {
+			return CursorKeysDecision{Errs: errs}
 		}
 		return CursorKeysDecision{Keys: view.CursorKeys, Emit: true}
 	}
@@ -2175,20 +2302,22 @@ func inheritedCursorKeys(global GenerationConfig) []string {
 	return global.CursorKeys
 }
 
-// checkExplicitCursorKeys reports the first explicit key that names a missing
-// or nullable column.
-func checkExplicitCursorKeys(keys []string, columns []SchemaColumn, kind, qualifiedName string) error {
+// checkExplicitCursorKeys reports every explicit key that names a missing or
+// nullable column, one error per key in list order, so a single run surfaces
+// the whole list's problems.
+func checkExplicitCursorKeys(keys []string, columns []SchemaColumn, kind, qualifiedName string) []error {
 	byName := columnsByName(columns)
+	var errs []error
 	for _, k := range keys {
 		col, ok := byName[k]
-		if !ok {
-			return fmt.Errorf("cursor_keys: column %q does not exist in %s %s", k, kind, qualifiedName)
-		}
-		if col.Nullable {
-			return fmt.Errorf("cursor_keys: column %q in %s %s is nullable; a cursor key must be NOT NULL", k, kind, qualifiedName)
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Errorf("cursor_keys: column %q does not exist in %s %s", k, kind, qualifiedName))
+		case col.Nullable:
+			errs = append(errs, fmt.Errorf("cursor_keys: column %q in %s %s is nullable; a cursor key must be NOT NULL", k, kind, qualifiedName))
 		}
 	}
-	return nil
+	return errs
 }
 
 // unresolvedCursorKeys returns why inherited keys do not resolve against
@@ -2249,15 +2378,16 @@ func ResolveTableExcludeColumns(table TableConfig, global GenerationConfig) []st
 }
 
 // ResolveTableEventsEnabled returns whether events are enabled for a table.
-// Resolution order: table-level override → global events.enabled → false.
+// The global events.enabled is a gate: a table is enabled only when the
+// global flag is on and the table does not opt out with
+// tables.<name>.events.enabled: false. A per-table `enabled: true` cannot
+// opt in under a global off — validation rejects it (validateEventsConfig).
 func ResolveTableEventsEnabled(table TableConfig, global *EventConfig) bool {
-	if table.Events != nil && table.Events.Enabled != nil {
-		return *table.Events.Enabled
+	if global == nil || !global.Enabled {
+		return false
 	}
-	if global != nil {
-		return global.Enabled
-	}
-	return false
+	optedOut := table.Events != nil && table.Events.Enabled != nil && !*table.Events.Enabled
+	return !optedOut
 }
 
 // IsValidPreset returns true if the given string is a recognized operations preset.

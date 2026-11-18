@@ -2,12 +2,14 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/segmentio/ksuid"
 
 	"github.com/teandresmith/sqlgen/cache"
+	"github.com/teandresmith/sqlgen/hook"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/tenancy/models"
 )
@@ -222,21 +224,51 @@ func TestCache_KSUIDTenantStringification(t *testing.T) {
 	}
 }
 
-// TestCache_InvalidateManyOnTenantedTableErrors verifies the §29.5 contract
-// that the public Cache.InvalidateMany on a tenanted table returns an actionable
-// error rather than silently succeeding (which would leave per-tenant entries
-// orphaned). Callers must use the auto-invalidation hook or
-// BuildTenantTablePattern.
+// TestCache_InvalidateManyOnTenantedTableErrors pins that the public
+// Invalidate and InvalidateMany return an error on every tenanted table,
+// tenant-in-PK tables included, naming the paths that are precise.
 func TestCache_InvalidateManyOnTenantedTableErrors(t *testing.T) {
 	envA := newEnv(t, withResolver(staticResolver(tenantA)), withCache())
 	ctx := context.Background()
+	pk := models.OrderItemPK{WorkspaceID: tenantA, OrderID: 1, ProductID: 2}
 
-	err := envA.cache.InvalidateMany(ctx, "products", []any{int64(1), int64(2)})
-	if err == nil {
-		t.Fatalf("InvalidateMany on tenanted table: err = nil, want descriptive error per §29.5")
+	tests := []struct {
+		name  string
+		table hook.TableName
+		call  func() error
+	}{
+		{
+			name:  "InvalidateMany, tenant outside the PK",
+			table: models.TableProducts,
+			call:  func() error { return envA.cache.InvalidateMany(ctx, models.TableProducts, []any{int64(1), int64(2)}) },
+		},
+		{
+			name:  "Invalidate, tenant outside the PK",
+			table: models.TableProducts,
+			call:  func() error { return envA.cache.Invalidate(ctx, models.TableProducts, int64(1)) },
+		},
+		{
+			name:  "InvalidateMany, tenant in the PK",
+			table: models.TableOrderItems,
+			call:  func() error { return envA.cache.InvalidateMany(ctx, models.TableOrderItems, []any{pk}) },
+		},
+		{
+			name:  "Invalidate, tenant in the PK",
+			table: models.TableOrderItems,
+			call:  func() error { return envA.cache.Invalidate(ctx, models.TableOrderItems, pk) },
+		},
 	}
-	if !strings.Contains(err.Error(), "tenanted") {
-		t.Errorf("error %q does not mention tenancy — must direct callers to the right escape hatch", err.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			if err == nil {
+				t.Fatal("err = nil, want the tenanted-table error")
+			}
+			want := fmt.Sprintf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", tt.table)
+			if err.Error() != want {
+				t.Errorf("err = %q, want %q", err, want)
+			}
+		})
 	}
 }
 

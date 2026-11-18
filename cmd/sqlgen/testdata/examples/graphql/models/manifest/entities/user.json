@@ -46,12 +46,21 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:user:{id}",
       "invalidates_on": [
-        "Create",
         "Update",
-        "Delete",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "Increment",
         "SoftDelete",
+        "SoftDeleteMany",
+        "SoftDeleteWhere",
         "Restore",
-        "Increment"
+        "RestoreMany",
+        "RestoreWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -239,7 +248,12 @@
       "fk": {
         "table": "user_badges",
         "schema": "public",
-        "column": "user_id"
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ]
       }
     },
     {
@@ -249,8 +263,24 @@
       "junction": {
         "table": "user_categories",
         "schema": "public",
-        "local_fk": "user_id",
-        "target_fk": "category_id"
+        "local_fk": {
+          "columns": [
+            "user_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "user_categories_user_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "category_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "user_categories_category_id_fkey"
+        }
       }
     },
     {
@@ -260,7 +290,13 @@
       "fk": {
         "table": "events",
         "schema": "public",
-        "column": "user_id"
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "events_user_id_fkey"
       }
     },
     {
@@ -270,7 +306,13 @@
       "fk": {
         "table": "orders",
         "schema": "public",
-        "column": "user_id"
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "orders_user_id_fkey"
       }
     },
     {
@@ -280,7 +322,13 @@
       "fk": {
         "table": "user_sessions",
         "schema": "public",
-        "column": "user_id"
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "user_sessions_user_id_fkey"
       }
     }
   ],
@@ -318,20 +366,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*UserFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"users\" WHERE <filter> AND \"deleted_at\" IS NULL"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -357,6 +391,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"users\" WHERE <filter> AND \"deleted_at\" IS NULL)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*UserFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"users\" WHERE <filter> AND \"deleted_at\" IS NULL"
         }
       },
       {
@@ -438,50 +486,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateUserInput"
-          },
-          {
-            "name": "target",
-            "type": "UserConflictTarget"
-          }
-        ],
-        "returns": "*User",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"users\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateUserInput"
-          },
-          {
-            "name": "target",
-            "type": "UserConflictTarget"
-          }
-        ],
-        "returns": "[]*User",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"users\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -544,6 +548,112 @@
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"users\" SET <set> WHERE <filter> RETURNING \"id\""
         }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateUserInput"
+          },
+          {
+            "name": "target",
+            "type": "UserConflictTarget"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated UserConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"users\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateUserInput"
+          },
+          {
+            "name": "target",
+            "type": "UserConflictTarget"
+          }
+        ],
+        "returns": "[]*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same UserConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"users\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "CreateWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateUserWithRelatedInput"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpdateWithRelated",
+        "params": [
+          {
+            "name": "id",
+            "type": "uuid.UUID"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateUserWithRelatedInput"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+      },
+      {
+        "name": "UpsertWithRelated",
+        "params": [
+          {
+            "name": "input",
+            "type": "*UpsertUserWithRelatedInput"
+          },
+          {
+            "name": "target",
+            "type": "UserConflictTarget"
+          }
+        ],
+        "returns": "*User",
+        "errors": [
+          "ErrNilInput",
+          "ErrNotFound",
+          "ErrAlreadyRelated",
+          "ErrNestedVerbConflict",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "Increment",
@@ -706,68 +816,6 @@
         "sql_bodies": {
           "postgres": "DELETE FROM \"public\".\"users\" WHERE <filter> RETURNING \"id\""
         }
-      },
-      {
-        "name": "CreateWithRelated",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateUserWithRelatedInput"
-          }
-        ],
-        "returns": "*User",
-        "errors": [
-          "ErrNilInput",
-          "ErrNotFound",
-          "ErrAlreadyRelated",
-          "ErrNestedVerbConflict",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-      },
-      {
-        "name": "UpdateWithRelated",
-        "params": [
-          {
-            "name": "id",
-            "type": "uuid.UUID"
-          },
-          {
-            "name": "input",
-            "type": "*UpdateUserWithRelatedInput"
-          }
-        ],
-        "returns": "*User",
-        "errors": [
-          "ErrNilInput",
-          "ErrNotFound",
-          "ErrAlreadyRelated",
-          "ErrNestedVerbConflict",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
-      },
-      {
-        "name": "UpsertWithRelated",
-        "params": [
-          {
-            "name": "input",
-            "type": "*UpsertUserWithRelatedInput"
-          },
-          {
-            "name": "target",
-            "type": "UserConflictTarget"
-          }
-        ],
-        "returns": "*User",
-        "errors": [
-          "ErrNilInput",
-          "ErrNotFound",
-          "ErrAlreadyRelated",
-          "ErrNestedVerbConflict",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Badge, Categories, Events, Orders, UserSessions), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       }
     ]
   },
@@ -854,5 +902,14 @@
       "UpdatedAt"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Users().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Users().GetMany(ctx, &models.GetUsersInput{Filter: &models.UserFilter{Email: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Users().Create(ctx, &models.CreateUserInput{Email: \"example\", Name: \"example\"})",
+      "updated, err := client.Users().Update(ctx, uuid.NewV4(), &models.UpdateUserInput{Email: omittable.Set(\"example\")})"
+    ]
+  }
 }

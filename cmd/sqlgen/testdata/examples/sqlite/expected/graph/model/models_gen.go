@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/segmentio/ksuid"
 	"github.com/shopspring/decimal"
 	"github.com/teandresmith/sqlgen/types"
@@ -57,6 +58,54 @@ type AssetSort struct {
 	Direction SortDirection  `json:"direction"`
 }
 
+type BadgeFilter struct {
+	Label      *StringComparator `json:"label,omitempty"`
+	BinaryKeys *BinaryKeyFilter  `json:"binaryKeys,omitempty"`
+	Owners     *OwnerFilter      `json:"owners,omitempty"`
+	And        []*BadgeFilter    `json:"and,omitempty"`
+	Or         []*BadgeFilter    `json:"or,omitempty"`
+}
+
+type BadgeSort struct {
+	Field     BadgeSortField `json:"field"`
+	Direction SortDirection  `json:"direction"`
+}
+
+type BinFilter struct {
+	Label    *StringComparator `json:"label,omitempty"`
+	BinItems *BinItemFilter    `json:"binItems,omitempty"`
+	And      []*BinFilter      `json:"and,omitempty"`
+	Or       []*BinFilter      `json:"or,omitempty"`
+}
+
+type BinItemFilter struct {
+	Aisle *NullableStringComparator  `json:"aisle,omitempty"`
+	Slot  *NullableNumericComparator `json:"slot,omitempty"`
+	Name  *StringComparator          `json:"name,omitempty"`
+	And   []*BinItemFilter           `json:"and,omitempty"`
+	Or    []*BinItemFilter           `json:"or,omitempty"`
+}
+
+type BinItemSort struct {
+	Field     BinItemSortField `json:"field"`
+	Direction SortDirection    `json:"direction"`
+}
+
+type BinSort struct {
+	Field     BinSortField  `json:"field"`
+	Direction SortDirection `json:"direction"`
+}
+
+type BinaryKeyBadgeFilter struct {
+	And []*BinaryKeyBadgeFilter `json:"and,omitempty"`
+	Or  []*BinaryKeyBadgeFilter `json:"or,omitempty"`
+}
+
+type BinaryKeyBadgeSort struct {
+	Field     BinaryKeyBadgeSortField `json:"field"`
+	Direction SortDirection           `json:"direction"`
+}
+
 type BinaryKeyEventFilter struct {
 	BinaryKeyID *BytesComparator        `json:"binaryKeyID,omitempty"`
 	Label       *StringComparator       `json:"label,omitempty"`
@@ -72,6 +121,7 @@ type BinaryKeyEventSort struct {
 type BinaryKeyFilter struct {
 	Name            *StringComparator     `json:"name,omitempty"`
 	CreatedAt       *TimeComparator       `json:"createdAt,omitempty"`
+	Badges          *BadgeFilter          `json:"badges,omitempty"`
 	BinaryKeyEvents *BinaryKeyEventFilter `json:"binaryKeyEvents,omitempty"`
 	Events          *BinaryKeyEventFilter `json:"events,omitempty"`
 	And             []*BinaryKeyFilter    `json:"and,omitempty"`
@@ -83,9 +133,34 @@ type BinaryKeySort struct {
 	Direction SortDirection      `json:"direction"`
 }
 
+type BoolKeyedFilter struct {
+	Label          *StringComparator    `json:"label,omitempty"`
+	BoolKeyedNotes *BoolKeyedNoteFilter `json:"boolKeyedNotes,omitempty"`
+	And            []*BoolKeyedFilter   `json:"and,omitempty"`
+	Or             []*BoolKeyedFilter   `json:"or,omitempty"`
+}
+
+type BoolKeyedNoteFilter struct {
+	KeyedK *NullableBooleanComparator `json:"keyedK,omitempty"`
+	Note   *StringComparator          `json:"note,omitempty"`
+	And    []*BoolKeyedNoteFilter     `json:"and,omitempty"`
+	Or     []*BoolKeyedNoteFilter     `json:"or,omitempty"`
+}
+
+type BoolKeyedNoteSort struct {
+	Field     BoolKeyedNoteSortField `json:"field"`
+	Direction SortDirection          `json:"direction"`
+}
+
+type BoolKeyedSort struct {
+	Field     BoolKeyedSortField `json:"field"`
+	Direction SortDirection      `json:"direction"`
+}
+
 type BooleanComparator struct {
-	Eq  *bool `json:"eq,omitempty"`
-	Neq *bool `json:"neq,omitempty"`
+	Eq  *bool  `json:"eq,omitempty"`
+	Neq *bool  `json:"neq,omitempty"`
+	In  []bool `json:"in,omitempty"`
 }
 
 type BytesComparator struct {
@@ -134,7 +209,7 @@ type CreateArticleInput struct {
 	Title     string              `json:"title"`
 	Body      *string             `json:"body,omitempty"`
 	Author    string              `json:"author"`
-	CreatedAt types.DateTime      `json:"createdAt"`
+	CreatedAt *types.DateTime     `json:"createdAt,omitempty"`
 	DeletedAt *types.NullDateTime `json:"deletedAt,omitempty"`
 }
 
@@ -144,8 +219,30 @@ type CreateAssetDocumentLinkInput struct {
 }
 
 type CreateAssetInput struct {
-	Name      string         `json:"name"`
-	CreatedAt types.DateTime `json:"createdAt"`
+	Name      string          `json:"name"`
+	CreatedAt *types.DateTime `json:"createdAt,omitempty"`
+}
+
+type CreateBadgeInput struct {
+	Code  string `json:"code"`
+	Label string `json:"label"`
+}
+
+type CreateBinInput struct {
+	Aisle string `json:"aisle"`
+	Slot  int    `json:"slot"`
+	Label string `json:"label"`
+}
+
+type CreateBinItemInput struct {
+	Aisle *string `json:"aisle,omitempty"`
+	Slot  *int    `json:"slot,omitempty"`
+	Name  string  `json:"name"`
+}
+
+type CreateBinaryKeyBadgeInput struct {
+	BinaryKeyID []byte `json:"binaryKeyID"`
+	BadgeCode   string `json:"badgeCode"`
 }
 
 type CreateBinaryKeyEventInput struct {
@@ -154,9 +251,19 @@ type CreateBinaryKeyEventInput struct {
 }
 
 type CreateBinaryKeyInput struct {
-	ID        []byte         `json:"id"`
-	Name      string         `json:"name"`
-	CreatedAt types.DateTime `json:"createdAt"`
+	ID        []byte          `json:"id"`
+	Name      string          `json:"name"`
+	CreatedAt *types.DateTime `json:"createdAt,omitempty"`
+}
+
+type CreateBoolKeyedInput struct {
+	K     bool   `json:"k"`
+	Label string `json:"label"`
+}
+
+type CreateBoolKeyedNoteInput struct {
+	KeyedK *bool  `json:"keyedK,omitempty"`
+	Note   string `json:"note"`
 }
 
 type CreateCategoryInput struct {
@@ -165,25 +272,33 @@ type CreateCategoryInput struct {
 }
 
 type CreateDigitLeadingColumnInput struct {
-	Col2010Revenue float64 `json:"col2010Revenue"`
-	Col2024Quota   int     `json:"col2024Quota"`
-	Col1stPlace    string  `json:"col1stPlace"`
-	Col3dModelURL  string  `json:"col3dModelURL"`
+	Col2010Revenue *float64 `json:"col2010Revenue,omitempty"`
+	Col2024Quota   *int     `json:"col2024Quota,omitempty"`
+	Col1stPlace    *string  `json:"col1stPlace,omitempty"`
+	Col3dModelURL  *string  `json:"col3dModelURL,omitempty"`
 }
 
 type CreateDocumentInput struct {
-	EntityID   int            `json:"entityID"`
-	EntityType string         `json:"entityType"`
-	Name       string         `json:"name"`
-	CreatedAt  types.DateTime `json:"createdAt"`
+	EntityID   int             `json:"entityID"`
+	EntityType string          `json:"entityType"`
+	Name       string          `json:"name"`
+	CreatedAt  *types.DateTime `json:"createdAt,omitempty"`
+}
+
+type CreateKeyClassChildInput struct {
+	ParentID *string `json:"parentID,omitempty"`
+}
+
+type CreateKeyClassRealChildInput struct {
+	ParentID *float64 `json:"parentID,omitempty"`
 }
 
 type CreateOrderInput struct {
-	UserID    int            `json:"userID"`
-	Status    string         `json:"status"`
-	Total     float64        `json:"total"`
-	Notes     *string        `json:"notes,omitempty"`
-	OrderedAt types.DateTime `json:"orderedAt"`
+	UserID    int             `json:"userID"`
+	Status    *string         `json:"status,omitempty"`
+	Total     *float64        `json:"total,omitempty"`
+	Notes     *string         `json:"notes,omitempty"`
+	OrderedAt *types.DateTime `json:"orderedAt,omitempty"`
 }
 
 type CreateOrderItemInput struct {
@@ -191,6 +306,11 @@ type CreateOrderItemInput struct {
 	ProductID int     `json:"productID"`
 	Quantity  int     `json:"quantity"`
 	UnitPrice float64 `json:"unitPrice"`
+}
+
+type CreateOwnerBadgeInput struct {
+	OwnerID   int    `json:"ownerID"`
+	BadgeCode string `json:"badgeCode"`
 }
 
 type CreateOwnerInput struct {
@@ -203,13 +323,13 @@ type CreateOwnerProfileInput struct {
 }
 
 type CreateProductInput struct {
-	CategoryID int            `json:"categoryID"`
-	Title      string         `json:"title"`
-	Price      float64        `json:"price"`
-	WeightKg   *float64       `json:"weightKg,omitempty"`
-	InStock    bool           `json:"inStock"`
-	SKU        string         `json:"sku"`
-	CreatedAt  types.DateTime `json:"createdAt"`
+	CategoryID int             `json:"categoryID"`
+	Title      string          `json:"title"`
+	Price      float64         `json:"price"`
+	WeightKg   *float64        `json:"weightKg,omitempty"`
+	InStock    *bool           `json:"inStock,omitempty"`
+	SKU        string          `json:"sku"`
+	CreatedAt  *types.DateTime `json:"createdAt,omitempty"`
 }
 
 type CreateProductTagLabelInput struct {
@@ -223,29 +343,39 @@ type CreateProfileInput struct {
 	UserID       int     `json:"userID"`
 	Website      *string `json:"website,omitempty"`
 	GithubHandle *string `json:"githubHandle,omitempty"`
-	Verified     bool    `json:"verified"`
+	Verified     *bool   `json:"verified,omitempty"`
 }
 
 type CreateReservedWordColumnInput struct {
-	Type      string `json:"type"`
-	Interface string `json:"interface"`
-	Func      string `json:"func"`
-	Map       string `json:"map"`
-	New       string `json:"new"`
-	Make      string `json:"make"`
-	Len       int    `json:"len"`
-	Error     string `json:"error"`
-	Ctx       string `json:"ctx"`
-	Err       string `json:"err"`
+	Type      *string `json:"type,omitempty"`
+	Interface *string `json:"interface,omitempty"`
+	Func      *string `json:"func,omitempty"`
+	Map       *string `json:"map,omitempty"`
+	New       *string `json:"new,omitempty"`
+	Make      *string `json:"make,omitempty"`
+	Len       *int    `json:"len,omitempty"`
+	Error     *string `json:"error,omitempty"`
+	Ctx       *string `json:"ctx,omitempty"`
+	Err       *string `json:"err,omitempty"`
 }
 
 type CreateSluggedRowInput struct {
-	Name string `json:"name"`
+	Name *string `json:"name,omitempty"`
 }
 
 type CreateTagInput struct {
 	Name      string `json:"name"`
-	IsDeleted bool   `json:"isDeleted"`
+	IsDeleted *bool  `json:"isDeleted,omitempty"`
+}
+
+type CreateTimeKeyedInput struct {
+	At    types.DateTime `json:"at"`
+	Label string         `json:"label"`
+}
+
+type CreateTimeKeyedNoteInput struct {
+	KeyedAt *types.NullDateTime `json:"keyedAt,omitempty"`
+	Note    string              `json:"note"`
 }
 
 type CreateUserCategoryInput struct {
@@ -256,15 +386,15 @@ type CreateUserCategoryInput struct {
 type CreateUserInput struct {
 	Name       string              `json:"name"`
 	Email      string              `json:"email"`
-	Role       string              `json:"role"`
+	Role       *string             `json:"role,omitempty"`
 	Age        *int                `json:"age,omitempty"`
 	Bio        *string             `json:"bio,omitempty"`
-	IsActive   bool                `json:"isActive"`
-	Balance    float64             `json:"balance"`
-	LoginCount int                 `json:"loginCount"`
+	IsActive   *bool               `json:"isActive,omitempty"`
+	Balance    *float64            `json:"balance,omitempty"`
+	LoginCount *int                `json:"loginCount,omitempty"`
 	Avatar     []byte              `json:"avatar,omitempty"`
 	Score      *float64            `json:"score,omitempty"`
-	CreatedAt  types.DateTime      `json:"createdAt"`
+	CreatedAt  *types.DateTime     `json:"createdAt,omitempty"`
 	UpdatedAt  *types.NullDateTime `json:"updatedAt,omitempty"`
 }
 
@@ -273,7 +403,7 @@ type CreateWarehouseInput struct {
 	Name          string               `json:"name"`
 	Price         decimal.Decimal      `json:"price"`
 	NullablePrice *decimal.NullDecimal `json:"nullablePrice,omitempty"`
-	CreatedAt     types.DateTime       `json:"createdAt"`
+	CreatedAt     *types.DateTime      `json:"createdAt,omitempty"`
 }
 
 type DecimalComparator struct {
@@ -316,6 +446,40 @@ type DocumentSort struct {
 	Direction SortDirection     `json:"direction"`
 }
 
+type KeyClassChildFilter struct {
+	ParentID *NullableIDComparator  `json:"parentID,omitempty"`
+	And      []*KeyClassChildFilter `json:"and,omitempty"`
+	Or       []*KeyClassChildFilter `json:"or,omitempty"`
+}
+
+type KeyClassChildSort struct {
+	Field     KeyClassChildSortField `json:"field"`
+	Direction SortDirection          `json:"direction"`
+}
+
+type KeyClassParentFilter struct {
+	KeyClassChildren     *KeyClassChildFilter     `json:"keyClassChildren,omitempty"`
+	KeyClassRealChildren *KeyClassRealChildFilter `json:"keyClassRealChildren,omitempty"`
+	And                  []*KeyClassParentFilter  `json:"and,omitempty"`
+	Or                   []*KeyClassParentFilter  `json:"or,omitempty"`
+}
+
+type KeyClassParentSort struct {
+	Field     KeyClassParentSortField `json:"field"`
+	Direction SortDirection           `json:"direction"`
+}
+
+type KeyClassRealChildFilter struct {
+	ParentID *NullableNumericComparator `json:"parentID,omitempty"`
+	And      []*KeyClassRealChildFilter `json:"and,omitempty"`
+	Or       []*KeyClassRealChildFilter `json:"or,omitempty"`
+}
+
+type KeyClassRealChildSort struct {
+	Field     KeyClassRealChildSortField `json:"field"`
+	Direction SortDirection              `json:"direction"`
+}
+
 type KeyOnlyRowFilter struct {
 	And []*KeyOnlyRowFilter `json:"and,omitempty"`
 	Or  []*KeyOnlyRowFilter `json:"or,omitempty"`
@@ -327,6 +491,13 @@ type KeyOnlyRowSort struct {
 }
 
 type Mutation struct {
+}
+
+type NullableBooleanComparator struct {
+	Eq     *bool  `json:"eq,omitempty"`
+	Neq    *bool  `json:"neq,omitempty"`
+	In     []bool `json:"in,omitempty"`
+	IsNull *bool  `json:"isNull,omitempty"`
 }
 
 type NullableBytesComparator struct {
@@ -351,6 +522,18 @@ type NullableDecimalComparator struct {
 	In     []*decimal.Decimal `json:"in,omitempty"`
 	Nin    []*decimal.Decimal `json:"nin,omitempty"`
 	IsNull *bool              `json:"isNull,omitempty"`
+}
+
+type NullableIDComparator struct {
+	Eq     *string  `json:"eq,omitempty"`
+	Neq    *string  `json:"neq,omitempty"`
+	Gt     *string  `json:"gt,omitempty"`
+	Gte    *string  `json:"gte,omitempty"`
+	Lt     *string  `json:"lt,omitempty"`
+	Lte    *string  `json:"lte,omitempty"`
+	In     []string `json:"in,omitempty"`
+	Nin    []string `json:"nin,omitempty"`
+	IsNull *bool    `json:"isNull,omitempty"`
 }
 
 type NullableNumericComparator struct {
@@ -446,10 +629,21 @@ type OrderSort struct {
 	Direction SortDirection  `json:"direction"`
 }
 
+type OwnerBadgeFilter struct {
+	And []*OwnerBadgeFilter `json:"and,omitempty"`
+	Or  []*OwnerBadgeFilter `json:"or,omitempty"`
+}
+
+type OwnerBadgeSort struct {
+	Field     OwnerBadgeSortField `json:"field"`
+	Direction SortDirection       `json:"direction"`
+}
+
 type OwnerFilter struct {
-	Name *StringComparator `json:"name,omitempty"`
-	And  []*OwnerFilter    `json:"and,omitempty"`
-	Or   []*OwnerFilter    `json:"or,omitempty"`
+	Name   *StringComparator `json:"name,omitempty"`
+	Badges *BadgeFilter      `json:"badges,omitempty"`
+	And    []*OwnerFilter    `json:"and,omitempty"`
+	Or     []*OwnerFilter    `json:"or,omitempty"`
 }
 
 type OwnerProfileFilter struct {
@@ -603,22 +797,60 @@ type TimeComparator struct {
 	Nbetween *TimeRange   `json:"nbetween,omitempty"`
 }
 
+type TimeKeyedFilter struct {
+	Label          *StringComparator    `json:"label,omitempty"`
+	TimeKeyedNotes *TimeKeyedNoteFilter `json:"timeKeyedNotes,omitempty"`
+	And            []*TimeKeyedFilter   `json:"and,omitempty"`
+	Or             []*TimeKeyedFilter   `json:"or,omitempty"`
+}
+
+type TimeKeyedNoteFilter struct {
+	KeyedAt *NullableTimeComparator `json:"keyedAt,omitempty"`
+	Note    *StringComparator       `json:"note,omitempty"`
+	And     []*TimeKeyedNoteFilter  `json:"and,omitempty"`
+	Or      []*TimeKeyedNoteFilter  `json:"or,omitempty"`
+}
+
+type TimeKeyedNoteSort struct {
+	Field     TimeKeyedNoteSortField `json:"field"`
+	Direction SortDirection          `json:"direction"`
+}
+
+type TimeKeyedSort struct {
+	Field     TimeKeyedSortField `json:"field"`
+	Direction SortDirection      `json:"direction"`
+}
+
 type TimeRange struct {
 	From time.Time `json:"from"`
 	To   time.Time `json:"to"`
 }
 
 type UpdateArticleInput struct {
-	Title     *string             `json:"title,omitempty"`
-	Body      *string             `json:"body,omitempty"`
-	Author    *string             `json:"author,omitempty"`
-	CreatedAt *types.DateTime     `json:"createdAt,omitempty"`
-	DeletedAt *types.NullDateTime `json:"deletedAt,omitempty"`
+	Title     *string                                `json:"title,omitempty"`
+	Body      graphql.Omittable[*string]             `json:"body,omitempty"`
+	Author    *string                                `json:"author,omitempty"`
+	CreatedAt *types.DateTime                        `json:"createdAt,omitempty"`
+	DeletedAt graphql.Omittable[*types.NullDateTime] `json:"deletedAt,omitempty"`
 }
 
 type UpdateAssetInput struct {
 	Name      *string         `json:"name,omitempty"`
 	CreatedAt *types.DateTime `json:"createdAt,omitempty"`
+}
+
+type UpdateBadgeInput struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type UpdateBinInput struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type UpdateBinItemInput struct {
+	Aisle graphql.Omittable[*string] `json:"aisle,omitempty"`
+	Slot  graphql.Omittable[*int]    `json:"slot,omitempty"`
+	Name  *string                    `json:"name,omitempty"`
 }
 
 type UpdateBinaryKeyEventInput struct {
@@ -631,9 +863,18 @@ type UpdateBinaryKeyInput struct {
 	CreatedAt *types.DateTime `json:"createdAt,omitempty"`
 }
 
+type UpdateBoolKeyedInput struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type UpdateBoolKeyedNoteInput struct {
+	KeyedK graphql.Omittable[*bool] `json:"keyedK,omitempty"`
+	Note   *string                  `json:"note,omitempty"`
+}
+
 type UpdateCategoryInput struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
+	Name        *string                    `json:"name,omitempty"`
+	Description graphql.Omittable[*string] `json:"description,omitempty"`
 }
 
 type UpdateDigitLeadingColumnInput struct {
@@ -654,14 +895,22 @@ type UpdateDocumentInput struct {
 	CreatedAt  *types.DateTime `json:"createdAt,omitempty"`
 }
 
+type UpdateKeyClassChildInput struct {
+	ParentID graphql.Omittable[*string] `json:"parentID,omitempty"`
+}
+
+type UpdateKeyClassRealChildInput struct {
+	ParentID graphql.Omittable[*float64] `json:"parentID,omitempty"`
+}
+
 type UpdateOrderInput struct {
-	UserID    *int            `json:"userID,omitempty"`
-	Status    *string         `json:"status,omitempty"`
-	Total     *float64        `json:"total,omitempty"`
-	TotalInc  *int            `json:"total_inc,omitempty"`
-	TotalDec  *int            `json:"total_dec,omitempty"`
-	Notes     *string         `json:"notes,omitempty"`
-	OrderedAt *types.DateTime `json:"orderedAt,omitempty"`
+	UserID    *int                       `json:"userID,omitempty"`
+	Status    *string                    `json:"status,omitempty"`
+	Total     *float64                   `json:"total,omitempty"`
+	TotalInc  *int                       `json:"total_inc,omitempty"`
+	TotalDec  *int                       `json:"total_dec,omitempty"`
+	Notes     graphql.Omittable[*string] `json:"notes,omitempty"`
+	OrderedAt *types.DateTime            `json:"orderedAt,omitempty"`
 }
 
 type UpdateOrderItemInput struct {
@@ -680,33 +929,33 @@ type UpdateOwnerInput struct {
 }
 
 type UpdateOwnerProfileInput struct {
-	OwnerID *int    `json:"ownerID,omitempty"`
-	Bio     *string `json:"bio,omitempty"`
+	OwnerID *int                       `json:"ownerID,omitempty"`
+	Bio     graphql.Omittable[*string] `json:"bio,omitempty"`
 }
 
 type UpdateProductInput struct {
-	CategoryID  *int            `json:"categoryID,omitempty"`
-	Title       *string         `json:"title,omitempty"`
-	Price       *float64        `json:"price,omitempty"`
-	PriceInc    *int            `json:"price_inc,omitempty"`
-	PriceDec    *int            `json:"price_dec,omitempty"`
-	WeightKg    *float64        `json:"weightKg,omitempty"`
-	WeightKgInc *int            `json:"weightKg_inc,omitempty"`
-	WeightKgDec *int            `json:"weightKg_dec,omitempty"`
-	InStock     *bool           `json:"inStock,omitempty"`
-	SKU         *string         `json:"sku,omitempty"`
-	CreatedAt   *types.DateTime `json:"createdAt,omitempty"`
+	CategoryID  *int                        `json:"categoryID,omitempty"`
+	Title       *string                     `json:"title,omitempty"`
+	Price       *float64                    `json:"price,omitempty"`
+	PriceInc    *int                        `json:"price_inc,omitempty"`
+	PriceDec    *int                        `json:"price_dec,omitempty"`
+	WeightKg    graphql.Omittable[*float64] `json:"weightKg,omitempty"`
+	WeightKgInc *int                        `json:"weightKg_inc,omitempty"`
+	WeightKgDec *int                        `json:"weightKg_dec,omitempty"`
+	InStock     *bool                       `json:"inStock,omitempty"`
+	SKU         *string                     `json:"sku,omitempty"`
+	CreatedAt   *types.DateTime             `json:"createdAt,omitempty"`
 }
 
 type UpdateProductTagLabelInput struct {
-	Description *string `json:"description,omitempty"`
+	Description graphql.Omittable[*string] `json:"description,omitempty"`
 }
 
 type UpdateProfileInput struct {
-	UserID       *int    `json:"userID,omitempty"`
-	Website      *string `json:"website,omitempty"`
-	GithubHandle *string `json:"githubHandle,omitempty"`
-	Verified     *bool   `json:"verified,omitempty"`
+	UserID       *int                       `json:"userID,omitempty"`
+	Website      graphql.Omittable[*string] `json:"website,omitempty"`
+	GithubHandle graphql.Omittable[*string] `json:"githubHandle,omitempty"`
+	Verified     *bool                      `json:"verified,omitempty"`
 }
 
 type UpdateReservedWordColumnInput struct {
@@ -733,39 +982,48 @@ type UpdateTagInput struct {
 	IsDeleted *bool   `json:"isDeleted,omitempty"`
 }
 
+type UpdateTimeKeyedInput struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type UpdateTimeKeyedNoteInput struct {
+	KeyedAt graphql.Omittable[*types.NullDateTime] `json:"keyedAt,omitempty"`
+	Note    *string                                `json:"note,omitempty"`
+}
+
 type UpdateUserInput struct {
-	Name          *string             `json:"name,omitempty"`
-	Email         *string             `json:"email,omitempty"`
-	Role          *string             `json:"role,omitempty"`
-	Age           *int                `json:"age,omitempty"`
-	AgeInc        *int                `json:"age_inc,omitempty"`
-	AgeDec        *int                `json:"age_dec,omitempty"`
-	Bio           *string             `json:"bio,omitempty"`
-	IsActive      *bool               `json:"isActive,omitempty"`
-	Balance       *float64            `json:"balance,omitempty"`
-	BalanceInc    *int                `json:"balance_inc,omitempty"`
-	BalanceDec    *int                `json:"balance_dec,omitempty"`
-	LoginCount    *int                `json:"loginCount,omitempty"`
-	LoginCountInc *int                `json:"loginCount_inc,omitempty"`
-	LoginCountDec *int                `json:"loginCount_dec,omitempty"`
-	Avatar        []byte              `json:"avatar,omitempty"`
-	Score         *float64            `json:"score,omitempty"`
-	ScoreInc      *int                `json:"score_inc,omitempty"`
-	ScoreDec      *int                `json:"score_dec,omitempty"`
-	CreatedAt     *types.DateTime     `json:"createdAt,omitempty"`
-	UpdatedAt     *types.NullDateTime `json:"updatedAt,omitempty"`
+	Name          *string                                `json:"name,omitempty"`
+	Email         *string                                `json:"email,omitempty"`
+	Role          *string                                `json:"role,omitempty"`
+	Age           graphql.Omittable[*int]                `json:"age,omitempty"`
+	AgeInc        *int                                   `json:"age_inc,omitempty"`
+	AgeDec        *int                                   `json:"age_dec,omitempty"`
+	Bio           graphql.Omittable[*string]             `json:"bio,omitempty"`
+	IsActive      *bool                                  `json:"isActive,omitempty"`
+	Balance       *float64                               `json:"balance,omitempty"`
+	BalanceInc    *int                                   `json:"balance_inc,omitempty"`
+	BalanceDec    *int                                   `json:"balance_dec,omitempty"`
+	LoginCount    *int                                   `json:"loginCount,omitempty"`
+	LoginCountInc *int                                   `json:"loginCount_inc,omitempty"`
+	LoginCountDec *int                                   `json:"loginCount_dec,omitempty"`
+	Avatar        graphql.Omittable[[]byte]              `json:"avatar,omitempty"`
+	Score         graphql.Omittable[*float64]            `json:"score,omitempty"`
+	ScoreInc      *int                                   `json:"score_inc,omitempty"`
+	ScoreDec      *int                                   `json:"score_dec,omitempty"`
+	CreatedAt     *types.DateTime                        `json:"createdAt,omitempty"`
+	UpdatedAt     graphql.Omittable[*types.NullDateTime] `json:"updatedAt,omitempty"`
 }
 
 type UpdateWarehouseInput struct {
-	ExternalID       *ksuid.KSUID         `json:"externalID,omitempty"`
-	Name             *string              `json:"name,omitempty"`
-	Price            *decimal.Decimal     `json:"price,omitempty"`
-	PriceInc         *int                 `json:"price_inc,omitempty"`
-	PriceDec         *int                 `json:"price_dec,omitempty"`
-	NullablePrice    *decimal.NullDecimal `json:"nullablePrice,omitempty"`
-	NullablePriceInc *int                 `json:"nullablePrice_inc,omitempty"`
-	NullablePriceDec *int                 `json:"nullablePrice_dec,omitempty"`
-	CreatedAt        *types.DateTime      `json:"createdAt,omitempty"`
+	ExternalID       *ksuid.KSUID                            `json:"externalID,omitempty"`
+	Name             *string                                 `json:"name,omitempty"`
+	Price            *decimal.Decimal                        `json:"price,omitempty"`
+	PriceInc         *int                                    `json:"price_inc,omitempty"`
+	PriceDec         *int                                    `json:"price_dec,omitempty"`
+	NullablePrice    graphql.Omittable[*decimal.NullDecimal] `json:"nullablePrice,omitempty"`
+	NullablePriceInc *int                                    `json:"nullablePrice_inc,omitempty"`
+	NullablePriceDec *int                                    `json:"nullablePrice_dec,omitempty"`
+	CreatedAt        *types.DateTime                         `json:"createdAt,omitempty"`
 }
 
 type UserCategoryFilter struct {
@@ -992,6 +1250,232 @@ func (e AssetSortField) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type BadgeSortField string
+
+const (
+	BadgeSortFieldCode  BadgeSortField = "CODE"
+	BadgeSortFieldLabel BadgeSortField = "LABEL"
+)
+
+var AllBadgeSortField = []BadgeSortField{
+	BadgeSortFieldCode,
+	BadgeSortFieldLabel,
+}
+
+func (e BadgeSortField) IsValid() bool {
+	switch e {
+	case BadgeSortFieldCode, BadgeSortFieldLabel:
+		return true
+	}
+	return false
+}
+
+func (e BadgeSortField) String() string {
+	return string(e)
+}
+
+func (e *BadgeSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BadgeSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BadgeSortField", str)
+	}
+	return nil
+}
+
+func (e BadgeSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BadgeSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BadgeSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BinItemSortField string
+
+const (
+	BinItemSortFieldID    BinItemSortField = "ID"
+	BinItemSortFieldAisle BinItemSortField = "AISLE"
+	BinItemSortFieldSlot  BinItemSortField = "SLOT"
+	BinItemSortFieldName  BinItemSortField = "NAME"
+)
+
+var AllBinItemSortField = []BinItemSortField{
+	BinItemSortFieldID,
+	BinItemSortFieldAisle,
+	BinItemSortFieldSlot,
+	BinItemSortFieldName,
+}
+
+func (e BinItemSortField) IsValid() bool {
+	switch e {
+	case BinItemSortFieldID, BinItemSortFieldAisle, BinItemSortFieldSlot, BinItemSortFieldName:
+		return true
+	}
+	return false
+}
+
+func (e BinItemSortField) String() string {
+	return string(e)
+}
+
+func (e *BinItemSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BinItemSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BinItemSortField", str)
+	}
+	return nil
+}
+
+func (e BinItemSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BinItemSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BinItemSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BinSortField string
+
+const (
+	BinSortFieldAisle BinSortField = "AISLE"
+	BinSortFieldSlot  BinSortField = "SLOT"
+	BinSortFieldLabel BinSortField = "LABEL"
+)
+
+var AllBinSortField = []BinSortField{
+	BinSortFieldAisle,
+	BinSortFieldSlot,
+	BinSortFieldLabel,
+}
+
+func (e BinSortField) IsValid() bool {
+	switch e {
+	case BinSortFieldAisle, BinSortFieldSlot, BinSortFieldLabel:
+		return true
+	}
+	return false
+}
+
+func (e BinSortField) String() string {
+	return string(e)
+}
+
+func (e *BinSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BinSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BinSortField", str)
+	}
+	return nil
+}
+
+func (e BinSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BinSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BinSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BinaryKeyBadgeSortField string
+
+const (
+	BinaryKeyBadgeSortFieldBinaryKeyID BinaryKeyBadgeSortField = "BINARY_KEY_ID"
+	BinaryKeyBadgeSortFieldBadgeCode   BinaryKeyBadgeSortField = "BADGE_CODE"
+)
+
+var AllBinaryKeyBadgeSortField = []BinaryKeyBadgeSortField{
+	BinaryKeyBadgeSortFieldBinaryKeyID,
+	BinaryKeyBadgeSortFieldBadgeCode,
+}
+
+func (e BinaryKeyBadgeSortField) IsValid() bool {
+	switch e {
+	case BinaryKeyBadgeSortFieldBinaryKeyID, BinaryKeyBadgeSortFieldBadgeCode:
+		return true
+	}
+	return false
+}
+
+func (e BinaryKeyBadgeSortField) String() string {
+	return string(e)
+}
+
+func (e *BinaryKeyBadgeSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BinaryKeyBadgeSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BinaryKeyBadgeSortField", str)
+	}
+	return nil
+}
+
+func (e BinaryKeyBadgeSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BinaryKeyBadgeSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BinaryKeyBadgeSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 type BinaryKeyEventSortField string
 
 const (
@@ -1101,6 +1585,118 @@ func (e *BinaryKeySortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e BinaryKeySortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BoolKeyedNoteSortField string
+
+const (
+	BoolKeyedNoteSortFieldID     BoolKeyedNoteSortField = "ID"
+	BoolKeyedNoteSortFieldKeyedK BoolKeyedNoteSortField = "KEYED_K"
+	BoolKeyedNoteSortFieldNote   BoolKeyedNoteSortField = "NOTE"
+)
+
+var AllBoolKeyedNoteSortField = []BoolKeyedNoteSortField{
+	BoolKeyedNoteSortFieldID,
+	BoolKeyedNoteSortFieldKeyedK,
+	BoolKeyedNoteSortFieldNote,
+}
+
+func (e BoolKeyedNoteSortField) IsValid() bool {
+	switch e {
+	case BoolKeyedNoteSortFieldID, BoolKeyedNoteSortFieldKeyedK, BoolKeyedNoteSortFieldNote:
+		return true
+	}
+	return false
+}
+
+func (e BoolKeyedNoteSortField) String() string {
+	return string(e)
+}
+
+func (e *BoolKeyedNoteSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BoolKeyedNoteSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BoolKeyedNoteSortField", str)
+	}
+	return nil
+}
+
+func (e BoolKeyedNoteSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BoolKeyedNoteSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BoolKeyedNoteSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BoolKeyedSortField string
+
+const (
+	BoolKeyedSortFieldK     BoolKeyedSortField = "K"
+	BoolKeyedSortFieldLabel BoolKeyedSortField = "LABEL"
+)
+
+var AllBoolKeyedSortField = []BoolKeyedSortField{
+	BoolKeyedSortFieldK,
+	BoolKeyedSortFieldLabel,
+}
+
+func (e BoolKeyedSortField) IsValid() bool {
+	switch e {
+	case BoolKeyedSortFieldK, BoolKeyedSortFieldLabel:
+		return true
+	}
+	return false
+}
+
+func (e BoolKeyedSortField) String() string {
+	return string(e)
+}
+
+func (e *BoolKeyedSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BoolKeyedSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BoolKeyedSortField", str)
+	}
+	return nil
+}
+
+func (e BoolKeyedSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BoolKeyedSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BoolKeyedSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil
@@ -1350,6 +1946,169 @@ func (e DocumentSortField) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type KeyClassChildSortField string
+
+const (
+	KeyClassChildSortFieldID       KeyClassChildSortField = "ID"
+	KeyClassChildSortFieldParentID KeyClassChildSortField = "PARENT_ID"
+)
+
+var AllKeyClassChildSortField = []KeyClassChildSortField{
+	KeyClassChildSortFieldID,
+	KeyClassChildSortFieldParentID,
+}
+
+func (e KeyClassChildSortField) IsValid() bool {
+	switch e {
+	case KeyClassChildSortFieldID, KeyClassChildSortFieldParentID:
+		return true
+	}
+	return false
+}
+
+func (e KeyClassChildSortField) String() string {
+	return string(e)
+}
+
+func (e *KeyClassChildSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = KeyClassChildSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid KeyClassChildSortField", str)
+	}
+	return nil
+}
+
+func (e KeyClassChildSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *KeyClassChildSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e KeyClassChildSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type KeyClassParentSortField string
+
+const (
+	KeyClassParentSortFieldID KeyClassParentSortField = "ID"
+)
+
+var AllKeyClassParentSortField = []KeyClassParentSortField{
+	KeyClassParentSortFieldID,
+}
+
+func (e KeyClassParentSortField) IsValid() bool {
+	switch e {
+	case KeyClassParentSortFieldID:
+		return true
+	}
+	return false
+}
+
+func (e KeyClassParentSortField) String() string {
+	return string(e)
+}
+
+func (e *KeyClassParentSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = KeyClassParentSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid KeyClassParentSortField", str)
+	}
+	return nil
+}
+
+func (e KeyClassParentSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *KeyClassParentSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e KeyClassParentSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type KeyClassRealChildSortField string
+
+const (
+	KeyClassRealChildSortFieldID       KeyClassRealChildSortField = "ID"
+	KeyClassRealChildSortFieldParentID KeyClassRealChildSortField = "PARENT_ID"
+)
+
+var AllKeyClassRealChildSortField = []KeyClassRealChildSortField{
+	KeyClassRealChildSortFieldID,
+	KeyClassRealChildSortFieldParentID,
+}
+
+func (e KeyClassRealChildSortField) IsValid() bool {
+	switch e {
+	case KeyClassRealChildSortFieldID, KeyClassRealChildSortFieldParentID:
+		return true
+	}
+	return false
+}
+
+func (e KeyClassRealChildSortField) String() string {
+	return string(e)
+}
+
+func (e *KeyClassRealChildSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = KeyClassRealChildSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid KeyClassRealChildSortField", str)
+	}
+	return nil
+}
+
+func (e KeyClassRealChildSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *KeyClassRealChildSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e KeyClassRealChildSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 type KeyOnlyRowSortField string
 
 const (
@@ -1522,6 +2281,61 @@ func (e *OrderSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e OrderSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type OwnerBadgeSortField string
+
+const (
+	OwnerBadgeSortFieldOwnerID   OwnerBadgeSortField = "OWNER_ID"
+	OwnerBadgeSortFieldBadgeCode OwnerBadgeSortField = "BADGE_CODE"
+)
+
+var AllOwnerBadgeSortField = []OwnerBadgeSortField{
+	OwnerBadgeSortFieldOwnerID,
+	OwnerBadgeSortFieldBadgeCode,
+}
+
+func (e OwnerBadgeSortField) IsValid() bool {
+	switch e {
+	case OwnerBadgeSortFieldOwnerID, OwnerBadgeSortFieldBadgeCode:
+		return true
+	}
+	return false
+}
+
+func (e OwnerBadgeSortField) String() string {
+	return string(e)
+}
+
+func (e *OwnerBadgeSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = OwnerBadgeSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid OwnerBadgeSortField", str)
+	}
+	return nil
+}
+
+func (e OwnerBadgeSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *OwnerBadgeSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e OwnerBadgeSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil
@@ -2124,6 +2938,118 @@ func (e *TagSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e TagSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TimeKeyedNoteSortField string
+
+const (
+	TimeKeyedNoteSortFieldID      TimeKeyedNoteSortField = "ID"
+	TimeKeyedNoteSortFieldKeyedAt TimeKeyedNoteSortField = "KEYED_AT"
+	TimeKeyedNoteSortFieldNote    TimeKeyedNoteSortField = "NOTE"
+)
+
+var AllTimeKeyedNoteSortField = []TimeKeyedNoteSortField{
+	TimeKeyedNoteSortFieldID,
+	TimeKeyedNoteSortFieldKeyedAt,
+	TimeKeyedNoteSortFieldNote,
+}
+
+func (e TimeKeyedNoteSortField) IsValid() bool {
+	switch e {
+	case TimeKeyedNoteSortFieldID, TimeKeyedNoteSortFieldKeyedAt, TimeKeyedNoteSortFieldNote:
+		return true
+	}
+	return false
+}
+
+func (e TimeKeyedNoteSortField) String() string {
+	return string(e)
+}
+
+func (e *TimeKeyedNoteSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TimeKeyedNoteSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TimeKeyedNoteSortField", str)
+	}
+	return nil
+}
+
+func (e TimeKeyedNoteSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TimeKeyedNoteSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TimeKeyedNoteSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TimeKeyedSortField string
+
+const (
+	TimeKeyedSortFieldAt    TimeKeyedSortField = "AT"
+	TimeKeyedSortFieldLabel TimeKeyedSortField = "LABEL"
+)
+
+var AllTimeKeyedSortField = []TimeKeyedSortField{
+	TimeKeyedSortFieldAt,
+	TimeKeyedSortFieldLabel,
+}
+
+func (e TimeKeyedSortField) IsValid() bool {
+	switch e {
+	case TimeKeyedSortFieldAt, TimeKeyedSortFieldLabel:
+		return true
+	}
+	return false
+}
+
+func (e TimeKeyedSortField) String() string {
+	return string(e)
+}
+
+func (e *TimeKeyedSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TimeKeyedSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TimeKeyedSortField", str)
+	}
+	return nil
+}
+
+func (e TimeKeyedSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TimeKeyedSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TimeKeyedSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

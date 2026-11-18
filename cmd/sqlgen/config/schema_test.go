@@ -112,6 +112,10 @@ func TestSchemaV1_rejectsKnownMistakes(t *testing.T) {
 			yaml: "output:\n  driver: pq\n",
 		},
 		{
+			name: "cache warming block",
+			yaml: "cache:\n  enabled: true\n  warm:\n    enabled: true\n",
+		},
+		{
 			name: "invalid operations preset",
 			yaml: "api:\n  operations: readonly\n",
 		},
@@ -208,6 +212,35 @@ func TestSchemaV1_rejectsKnownMistakes(t *testing.T) {
 		{
 			name: "misspelled relationship side",
 			yaml: "tables:\n  assets:\n    relationships:\n      - name: Document\n        type: o2o\n        side: chld\n        table: documents\n        fk: asset_id\n",
+		},
+		// PRD §4.13 rules whose closed sets the schema also carries (§4.14).
+		{
+			name: "relationship sort entry missing its column",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Documents\n        type: o2m\n        table: documents\n        fk: asset_id\n        sort:\n          - direction: desc\n",
+		},
+		{
+			name: "relationship sort entry with an unknown direction",
+			yaml: "tables:\n  assets:\n    relationships:\n      - name: Documents\n        type: o2m\n        table: documents\n        fk: asset_id\n        sort:\n          - column: name\n            direction: descending\n",
+		},
+		{
+			name: "nested mutations max depth other than one",
+			yaml: "generation:\n  nested_mutations:\n    max_depth: 2\n",
+		},
+		{
+			name: "unknown nested mutation operation",
+			yaml: "generation:\n  nested_mutations:\n    operations: [create, delete]\n",
+		},
+		{
+			name: "unknown nested mutation verb",
+			yaml: "generation:\n  nested_mutations:\n    verbs: [create, attach]\n",
+		},
+		{
+			name: "unknown manifest format",
+			yaml: "generation:\n  manifest:\n    enabled: true\n    formats: [json, xml]\n",
+		},
+		{
+			name: "manifest json layout outside its closed set",
+			yaml: "generation:\n  manifest:\n    enabled: true\n    json_layout: nested\n",
 		},
 	}
 

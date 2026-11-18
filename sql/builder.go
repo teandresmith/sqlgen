@@ -33,7 +33,7 @@ type SelectOptions struct {
 	Limit      *int        // LIMIT value
 	Offset     *int        // OFFSET value
 	Alias      string      // primary table alias for JOIN queries; empty for non-JOIN
-	LockMode   LockMode    // row-level lock clause appended after LIMIT/OFFSET (see [LockMode])
+	LockMode   LockMode    // row-level lock clause appended after LIMIT/OFFSET; BuildSelectJoin restricts it to Alias (see [LockMode])
 }
 
 // InsertOptions configures an INSERT statement.
@@ -128,13 +128,14 @@ func BuildSelect(d Dialect, t Table, opts SelectOptions) (string, []any) {
 	pos := 1
 	args := appendWhere(&b, d, opts.Conditions, pos, table)
 	writeOrderBy(&b, d, opts.OrderBy, "")
-	writeLimitOffset(&b, opts.Limit, opts.Offset)
-	writeLockClause(&b, d, opts.LockMode)
+	writeLimitOffset(&b, d, opts.Limit, opts.Offset)
+	writeLockClause(&b, d, opts.LockMode, "")
 
 	return b.String(), bindArgs(d, args)
 }
 
-// BuildSelectJoin generates a SELECT with LEFT JOIN clauses for O2O relationships.
+// BuildSelectJoin generates a SELECT with LEFT JOIN clauses for O2O relationships
+// and the M2M junction read.
 // Column aliases use the "alias.column" pattern for prefix-based scanning.
 //
 // Placeholder numbering is driven entirely by opts.Conditions in slice order;
@@ -168,8 +169,11 @@ func BuildSelectJoin(d Dialect, t Table, joins []JoinClause, opts SelectOptions)
 	pos := 1
 	args := appendWhere(&b, d, opts.Conditions, pos, qualifier)
 	writeOrderBy(&b, d, opts.OrderBy, qualifier)
-	writeLimitOffset(&b, opts.Limit, opts.Offset)
-	writeLockClause(&b, d, opts.LockMode)
+	writeLimitOffset(&b, d, opts.Limit, opts.Offset)
+	// The lock names the primary alias so the LEFT-JOINed rows stay unlocked:
+	// LockMode locks the rows the caller read, not the relationships loaded
+	// alongside them.
+	writeLockClause(&b, d, opts.LockMode, opts.Alias)
 
 	return b.String(), bindArgs(d, args)
 }
@@ -469,66 +473,33 @@ func BuildCompositePKConditions(d Dialect, columns []string, values []any) []Con
 	return conds
 }
 
-// BuildCompositePKBatchCondition returns a condition for batch composite PK lookup.
-// Dialects with tuple IN support produce: ("c1","c2") IN (($,$),($,$)).
-// Others produce: (c1=$ AND c2=$) OR (c1=$ AND c2=$).
+// BuildCompositePKBatchCondition returns a condition for batch composite PK
+// lookup: ("c1", "c2") IN (($, $), ($, $)) on every dialect. MySQL 8.0 and 8.4
+// evaluate it with the same composite-index range scan as an OR of ANDs, and
+// far faster.
 func BuildCompositePKBatchCondition(d Dialect, columns []string, valueSets [][]any) Condition {
 	if len(valueSets) == 0 {
 		return Condition{Clause: "1 = 0"}
 	}
-	if d.SupportsTupleIN() {
-		return buildTupleIN(d, columns, valueSets)
+	quoted := make([]string, len(columns))
+	for i, col := range columns {
+		quoted[i] = d.QuoteIdentifier(col)
 	}
-	return buildExpandedOR(d, columns, valueSets)
+	return Condition{Value: tupleInCondition{Columns: quoted, Rows: valueSets}}
+}
+
+// TupleInSubquery returns ("c1", "c2") IN (SELECT …), matching a key of several
+// columns against the rows sub selects. sub takes the bare "$" tokens
+// [SubqueryWhere] renders.
+func TupleInSubquery(d Dialect, columns []string, sub Subquery) Condition {
+	quoted := make([]string, len(columns))
+	for i, col := range columns {
+		quoted[i] = d.QuoteIdentifier(col)
+	}
+	return Condition{Value: tupleInCondition{Columns: quoted, Subquery: &sub}}
 }
 
 // --- Internal helpers ---
-
-func buildTupleIN(d Dialect, columns []string, valueSets [][]any) Condition {
-	var b strings.Builder
-	b.WriteString("(")
-	for i, col := range columns {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(d.QuoteIdentifier(col))
-	}
-	b.WriteString(") IN (")
-
-	args := make([]any, 0, len(columns)*len(valueSets))
-	for i, vals := range valueSets {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString("(")
-		for j := range columns {
-			if j > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString("$")
-		}
-		b.WriteString(")")
-		args = append(args, vals...)
-	}
-	b.WriteString(")")
-
-	return Condition{Clause: b.String(), Value: args}
-}
-
-func buildExpandedOR(d Dialect, columns []string, valueSets [][]any) Condition {
-	orConds := make([]Condition, len(valueSets))
-	for i, vals := range valueSets {
-		andConds := make([]Condition, len(columns))
-		for j, col := range columns {
-			andConds[j] = Condition{
-				Clause: d.QuoteIdentifier(col) + " = $",
-				Value:  vals[j],
-			}
-		}
-		orConds[i] = And(andConds...)
-	}
-	return Or(orConds...)
-}
 
 // buildWhere generates a WHERE clause from conditions, joining them with AND.
 // Returns the clause SQL (no "WHERE" prefix), args, and next placeholder position.
@@ -591,6 +562,9 @@ func expandConditionClause(d Dialect, cond Condition, pos int, qualifier string)
 	if e, ok := cond.Value.(existsCondition); ok {
 		return expandExists(d, e, pos, qualifier)
 	}
+	if t, ok := cond.Value.(tupleInCondition); ok {
+		return expandTupleIN(d, t, pos)
+	}
 	if r, ok := cond.Value.(Range); ok {
 		return expandRange(d, cond.Clause, r, pos)
 	}
@@ -627,17 +601,48 @@ func expandRange(d Dialect, clause string, r Range, pos int) (string, []any, int
 	return result, vals, nextPos
 }
 
-// expandExists renders a correlated EXISTS predicate. Every
-// [CorrelationToken] in the subquery becomes the enclosing statement's
-// qualifier plus the quoted correlation column, and the subquery's $ tokens
-// are renumbered into the enclosing statement's positional sequence, so its
-// args participate in Conditions order like any other multi-arg condition.
+// expandExists renders a correlated EXISTS predicate. Each correlation token
+// in the subquery becomes the enclosing statement's qualifier plus its quoted
+// correlation column, and the subquery's $ tokens are renumbered into the
+// enclosing statement's positional sequence, so its args participate in
+// Conditions order like any other multi-arg condition.
 func expandExists(d Dialect, e existsCondition, pos int, qualifier string) (string, []any, int) {
 	// Renumber before substituting, so a qualifier that happens to contain a $
-	// cannot be mistaken for a placeholder token.
+	// cannot be mistaken for a placeholder token. One Replacer pass keeps a
+	// substituted column from being scanned for a later token.
 	rendered, args, nextPos := renumberTokens(d, e.Subquery.SQL, e.Subquery.Args, pos)
-	rendered = strings.ReplaceAll(rendered, CorrelationToken, qualifier+"."+d.QuoteIdentifier(e.CorrelationColumn))
+	pairs := make([]string, 0, 2*len(e.CorrelationColumns))
+	for i, col := range e.CorrelationColumns {
+		pairs = append(pairs, CorrelationTokenAt(i), qualifier+"."+d.QuoteIdentifier(col))
+	}
+	rendered = strings.NewReplacer(pairs...).Replace(rendered)
 	return "EXISTS (" + rendered + ")", args, nextPos
+}
+
+// expandTupleIN renders a composite-key batch predicate, binding the rows'
+// values in row order, or its subquery.
+func expandTupleIN(d Dialect, t tupleInCondition, pos int) (string, []any, int) {
+	if t.Subquery != nil {
+		clause, args, next := expandSubquery(d, "$", *t.Subquery, pos)
+		return "(" + strings.Join(t.Columns, ", ") + ") IN " + clause, args, next
+	}
+	var b strings.Builder
+	b.WriteString("(")
+	b.WriteString(strings.Join(t.Columns, ", "))
+	b.WriteString(") IN (")
+	args := make([]any, 0, len(t.Columns)*len(t.Rows))
+	for i, row := range t.Rows {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString("(")
+		b.WriteString(d.PlaceholderList(pos, len(row)))
+		b.WriteString(")")
+		pos += len(row)
+		args = append(args, row...)
+	}
+	b.WriteString(")")
+	return b.String(), args, pos
 }
 
 // expandSubquery splices a nested SELECT into the clause's "$" token. The
@@ -963,9 +968,16 @@ func writeOrderBy(b *strings.Builder, d Dialect, sorts []Sort, qualifier string)
 	}
 }
 
-func writeLimitOffset(b *strings.Builder, limit, offset *int) {
+// writeLimitOffset appends LIMIT and OFFSET. An OFFSET with no LIMIT takes the
+// dialect's no-limit form first, which MySQL and SQLite require.
+func writeLimitOffset(b *strings.Builder, d Dialect, limit, offset *int) {
 	if limit != nil {
 		fmt.Fprintf(b, " LIMIT %d", *limit)
+	} else if offset != nil {
+		if clause := d.NoLimitClause(); clause != "" {
+			b.WriteString(" ")
+			b.WriteString(clause)
+		}
 	}
 	if offset != nil {
 		fmt.Fprintf(b, " OFFSET %d", *offset)
@@ -973,13 +985,14 @@ func writeLimitOffset(b *strings.Builder, limit, offset *int) {
 }
 
 // writeLockClause appends the dialect-specific row-level lock clause when the
-// mode is not [LockNone]. Dialects that do not support a given mode return an
-// empty fragment, in which case nothing is appended.
-func writeLockClause(b *strings.Builder, d Dialect, mode LockMode) {
+// mode is not [LockNone], restricted to the table aliased of when of is not
+// empty. Dialects that do not support a given mode return an empty fragment,
+// in which case nothing is appended.
+func writeLockClause(b *strings.Builder, d Dialect, mode LockMode, of string) {
 	if mode == LockNone {
 		return
 	}
-	clause := d.LockClause(mode)
+	clause := d.LockClause(mode, of)
 	if clause == "" {
 		return
 	}

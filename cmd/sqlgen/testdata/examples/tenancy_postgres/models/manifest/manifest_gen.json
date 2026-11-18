@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-01-01T00:00:00Z",
   "generator": {
     "name": "sqlgen",
@@ -47,6 +47,11 @@
       },
       {
         "name": "ErrConnectionFailed",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
+        "name": "ErrTxDone",
         "graphql_code": "",
         "package": "models"
       },
@@ -172,26 +177,240 @@
     {
       "name": "Article",
       "table": "articles",
+      "schema": "public",
       "kind": "table",
       "file": "entities/article.json"
     },
     {
       "name": "ArticleStat",
       "table": "article_stats",
+      "schema": "public",
       "kind": "view",
       "file": "entities/article_stat.json"
     },
     {
+      "name": "Badge",
+      "table": "badges",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/badge.json"
+    },
+    {
+      "name": "Checkpoint",
+      "table": "checkpoints",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/checkpoint.json"
+    },
+    {
+      "name": "Cycle",
+      "table": "cycles",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/cycle.json"
+    },
+    {
+      "name": "Label",
+      "table": "labels",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/label.json"
+    },
+    {
       "name": "LineItem",
       "table": "line_items",
+      "schema": "public",
       "kind": "table",
       "file": "entities/line_item.json"
     },
     {
+      "name": "Milestone",
+      "table": "milestones",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/milestone.json"
+    },
+    {
+      "name": "Moment",
+      "table": "moments",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/moment.json"
+    },
+    {
+      "name": "MomentOwner",
+      "table": "moment_owners",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/moment_owner.json"
+    },
+    {
+      "name": "MomentTag",
+      "table": "moment_tags",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/moment_tag.json"
+    },
+    {
+      "name": "MomentTagLink",
+      "table": "moment_tag_links",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/moment_tag_link.json"
+    },
+    {
+      "name": "Plot",
+      "table": "plots",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/plot.json"
+    },
+    {
+      "name": "Project",
+      "table": "projects",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/project.json"
+    },
+    {
+      "name": "Reviewer",
+      "table": "reviewers",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/reviewer.json"
+    },
+    {
+      "name": "SharedGuardian",
+      "table": "shared_guardians",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/shared_guardian.json"
+    },
+    {
+      "name": "SharedKid",
+      "table": "shared_kids",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/shared_kid.json"
+    },
+    {
+      "name": "SharedParent",
+      "table": "shared_parents",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/shared_parent.json"
+    },
+    {
+      "name": "Site",
+      "table": "sites",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/site.json"
+    },
+    {
+      "name": "Sprint",
+      "table": "sprints",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/sprint.json"
+    },
+    {
+      "name": "Stamp",
+      "table": "stamps",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/stamp.json"
+    },
+    {
+      "name": "Task",
+      "table": "tasks",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/task.json"
+    },
+    {
+      "name": "TaskBadge",
+      "table": "task_badges",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/task_badge.json"
+    },
+    {
+      "name": "TaskLabel",
+      "table": "task_labels",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/task_label.json"
+    },
+    {
+      "name": "TaskReviewer",
+      "table": "task_reviewers",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/task_reviewer.json"
+    },
+    {
+      "name": "Template",
+      "table": "templates",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template.json"
+    },
+    {
+      "name": "TemplateLabel",
+      "table": "template_labels",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template_label.json"
+    },
+    {
+      "name": "TemplateNote",
+      "table": "template_notes",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template_note.json"
+    },
+    {
+      "name": "TemplateStamp",
+      "table": "template_stamps",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template_stamp.json"
+    },
+    {
+      "name": "TemplateStep",
+      "table": "template_steps",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template_step.json"
+    },
+    {
+      "name": "Workspace",
+      "table": "workspaces",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/workspace.json"
+    },
+    {
       "name": "WorkspaceLineTotal",
       "table": "workspace_line_totals",
+      "schema": "public",
       "kind": "view",
       "file": "entities/workspace_line_total.json"
+    },
+    {
+      "name": "WorkspaceNote",
+      "table": "workspace_notes",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/workspace_note.json"
+    },
+    {
+      "name": "Zone",
+      "table": "zones",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/zone.json"
     }
   ],
   "enums": [],

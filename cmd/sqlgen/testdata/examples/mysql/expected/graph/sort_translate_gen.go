@@ -141,6 +141,150 @@ func assetDocumentLinkSortFieldToColumn(f gqlmodel.AssetDocumentLinkSortField) s
 	return ""
 }
 
+// translateBinSort converts a gqlgen-generated
+// []*BinSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBinSort(in []*gqlmodel.BinSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    binSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// binSortFieldToColumn resolves a gqlgen
+// BinSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func binSortFieldToColumn(f gqlmodel.BinSortField) string {
+	switch string(f) {
+	case "AISLE":
+		return "aisle"
+	case "SLOT":
+		return "slot"
+	case "LABEL":
+		return "label"
+	}
+	return ""
+}
+
+// translateBinItemSort converts a gqlgen-generated
+// []*BinItemSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBinItemSort(in []*gqlmodel.BinItemSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    binItemSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// binItemSortFieldToColumn resolves a gqlgen
+// BinItemSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func binItemSortFieldToColumn(f gqlmodel.BinItemSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "AISLE":
+		return "aisle"
+	case "SLOT":
+		return "slot"
+	case "NAME":
+		return "name"
+	}
+	return ""
+}
+
+// translateBoolKeyedSort converts a gqlgen-generated
+// []*BoolKeyedSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBoolKeyedSort(in []*gqlmodel.BoolKeyedSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    boolKeyedSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// boolKeyedSortFieldToColumn resolves a gqlgen
+// BoolKeyedSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func boolKeyedSortFieldToColumn(f gqlmodel.BoolKeyedSortField) string {
+	switch string(f) {
+	case "K":
+		return "k"
+	case "LABEL":
+		return "label"
+	}
+	return ""
+}
+
+// translateBoolKeyedNoteSort converts a gqlgen-generated
+// []*BoolKeyedNoteSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBoolKeyedNoteSort(in []*gqlmodel.BoolKeyedNoteSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    boolKeyedNoteSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// boolKeyedNoteSortFieldToColumn resolves a gqlgen
+// BoolKeyedNoteSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func boolKeyedNoteSortFieldToColumn(f gqlmodel.BoolKeyedNoteSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "KEYED_K":
+		return "keyed_k"
+	case "NOTE":
+		return "note"
+	}
+	return ""
+}
+
 // translateCategorySort converts a gqlgen-generated
 // []*CategorySort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.
@@ -651,6 +795,76 @@ func tagSortFieldToColumn(f gqlmodel.TagSortField) string {
 		return "name"
 	case "IS_DELETED":
 		return "is_deleted"
+	}
+	return ""
+}
+
+// translateTimeKeyedSort converts a gqlgen-generated
+// []*TimeKeyedSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateTimeKeyedSort(in []*gqlmodel.TimeKeyedSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    timeKeyedSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// timeKeyedSortFieldToColumn resolves a gqlgen
+// TimeKeyedSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func timeKeyedSortFieldToColumn(f gqlmodel.TimeKeyedSortField) string {
+	switch string(f) {
+	case "AT":
+		return "at"
+	case "LABEL":
+		return "label"
+	}
+	return ""
+}
+
+// translateTimeKeyedNoteSort converts a gqlgen-generated
+// []*TimeKeyedNoteSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateTimeKeyedNoteSort(in []*gqlmodel.TimeKeyedNoteSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    timeKeyedNoteSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// timeKeyedNoteSortFieldToColumn resolves a gqlgen
+// TimeKeyedNoteSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func timeKeyedNoteSortFieldToColumn(f gqlmodel.TimeKeyedNoteSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "KEYED_AT":
+		return "keyed_at"
+	case "NOTE":
+		return "note"
 	}
 	return ""
 }

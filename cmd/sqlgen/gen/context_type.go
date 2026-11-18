@@ -69,6 +69,11 @@ func buildDomainContexts(input *GenerateInput, _ map[string]bool) []DomainTypeCo
 	return contexts
 }
 
+// buildExtraContexts builds one context per `extras` entry. The entry key is
+// the Go struct name and each `fields` key a field name, both used verbatim:
+// PRD §4.10 calls them Go names, and config.ValidatePreParse rejects one that
+// is not an exported Go identifier. Running them through the naming engine
+// would respell a valid name (`CIDRs` → `CidRs`).
 func buildExtraContexts(cfg *config.RootConfig) []ExtraTypeContext {
 	// Convert map to sorted slice.
 	names := make([]string, 0, len(cfg.Extras))
@@ -104,7 +109,7 @@ func buildExtraContexts(cfg *config.RootConfig) []ExtraTypeContext {
 			}
 
 			fields = append(fields, ExtraFieldContext{
-				FieldName:   FieldName(fn),
+				FieldName:   fn,
 				GoType:      f.Type,
 				Import:      f.Import,
 				Description: f.Description,
@@ -113,7 +118,7 @@ func buildExtraContexts(cfg *config.RootConfig) []ExtraTypeContext {
 		}
 
 		contexts = append(contexts, ExtraTypeContext{
-			GoTypeName:  toPascalCase(name),
+			GoTypeName:  name,
 			Description: extra.Description,
 			Fields:      fields,
 		})

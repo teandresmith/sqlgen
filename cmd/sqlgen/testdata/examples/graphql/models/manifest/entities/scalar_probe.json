@@ -35,12 +35,15 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:scalarprobe:{id}",
       "invalidates_on": [
-        "Create",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "Increment",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -315,20 +318,6 @@
         }
       },
       {
-        "name": "Count",
-        "params": [
-          {
-            "name": "filter",
-            "type": "*ScalarProbeFilter"
-          }
-        ],
-        "returns": "int64",
-        "errors": [],
-        "sql_bodies": {
-          "postgres": "SELECT COUNT(*) FROM \"public\".\"scalar_probes\" WHERE <filter>"
-        }
-      },
-      {
         "name": "Exists",
         "params": [
           {
@@ -354,6 +343,20 @@
         "errors": [],
         "sql_bodies": {
           "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"scalar_probes\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*ScalarProbeFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"scalar_probes\" WHERE <filter>"
         }
       },
       {
@@ -435,50 +438,6 @@
         }
       },
       {
-        "name": "Upsert",
-        "params": [
-          {
-            "name": "input",
-            "type": "*CreateScalarProbeInput"
-          },
-          {
-            "name": "target",
-            "type": "ScalarProbeConflictTarget"
-          }
-        ],
-        "returns": "*ScalarProbe",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "One method over the generated ScalarProbeConflictTarget enum — the target argument selects the conflict columns at call time.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"scalar_probes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
-        }
-      },
-      {
-        "name": "UpsertMany",
-        "params": [
-          {
-            "name": "inputs",
-            "type": "[]*CreateScalarProbeInput"
-          },
-          {
-            "name": "target",
-            "type": "ScalarProbeConflictTarget"
-          }
-        ],
-        "returns": "[]*ScalarProbe",
-        "errors": [
-          "ErrNilInput",
-          "ErrConstraintViolation"
-        ],
-        "notes": "Batched in generation.batch_size chunks over the same ScalarProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
-        "sql_bodies": {
-          "postgres": "INSERT INTO \"public\".\"scalar_probes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
-        }
-      },
-      {
         "name": "Update",
         "params": [
           {
@@ -540,6 +499,50 @@
         "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
         "sql_bodies": {
           "postgres": "UPDATE \"public\".\"scalar_probes\" SET <set> WHERE <filter> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateScalarProbeInput"
+          },
+          {
+            "name": "target",
+            "type": "ScalarProbeConflictTarget"
+          }
+        ],
+        "returns": "*ScalarProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated ScalarProbeConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"scalar_probes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateScalarProbeInput"
+          },
+          {
+            "name": "target",
+            "type": "ScalarProbeConflictTarget"
+          }
+        ],
+        "returns": "[]*ScalarProbe",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same ScalarProbeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"scalar_probes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
         }
       },
       {
@@ -730,5 +733,14 @@
       "SmallCount"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.ScalarProbes().Get(ctx, uuid.NewV4())",
+      "rows, err := client.ScalarProbes().GetMany(ctx, &models.GetScalarProbesInput{Filter: &models.ScalarProbeFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.ScalarProbes().Create(ctx, &models.CreateScalarProbeInput{Label: \"example\", Payload: []byte(\"example\"), Dur: time.Minute, Addr: net.ParseIP(\"192.0.2.1\"), NetBlock: *new(net.IPNet), MAC: *new(net.HardwareAddr)})",
+      "updated, err := client.ScalarProbes().Update(ctx, uuid.NewV4(), &models.UpdateScalarProbeInput{Label: omittable.Set(\"example\")})"
+    ]
+  }
 }

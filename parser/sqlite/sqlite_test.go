@@ -2360,3 +2360,29 @@ func TestCreateTableUnreadColumns(t *testing.T) {
 		})
 	}
 }
+
+// SQLite accepts any MATCH clause and enforces MATCH SIMPLE, so every FOREIGN
+// KEY records MATCH SIMPLE.
+func TestForeignKeyMatchIsSimple(t *testing.T) {
+	p := sqlite.New()
+	if err := p.Parse("schema.sql", []byte(`
+		CREATE TABLE p (a INTEGER, b INTEGER, PRIMARY KEY (a, b));
+		CREATE TABLE c (x INTEGER REFERENCES p (a) MATCH FULL, y INTEGER, z INTEGER,
+			FOREIGN KEY (y, z) REFERENCES p (a, b) MATCH FULL);
+	`)); err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	var fks int
+	for _, c := range p.Schema().Tables[1].Constraints {
+		if c.Type != parser.ForeignKey {
+			continue
+		}
+		fks++
+		if c.Match != parser.MatchSimple {
+			t.Errorf("FOREIGN KEY %v Match = %v, want %v", c.Columns, c.Match, parser.MatchSimple)
+		}
+	}
+	if fks != 2 {
+		t.Errorf("parsed %d FOREIGN KEYs, want 2", fks)
+	}
+}

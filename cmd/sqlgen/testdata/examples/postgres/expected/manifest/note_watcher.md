@@ -57,19 +57,6 @@ postgres:
 SELECT "note_id", "user_id" FROM "audit"."note_watchers" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
-### Count
-
-- Params: `filter *NoteWatcherFilter`
-- Returns: `int64`, `error`
-
-Generated SQL:
-
-postgres:
-
-```sql
-SELECT COUNT(*) FROM "audit"."note_watchers" WHERE <filter>
-```
-
 ### Exists
 
 - Params: `pk NoteWatcherPK`
@@ -94,6 +81,19 @@ postgres:
 
 ```sql
 SELECT EXISTS(SELECT 1 FROM "audit"."note_watchers" WHERE <filter>)
+```
+
+### Count
+
+- Params: `filter *NoteWatcherFilter`
+- Returns: `int64`, `error`
+
+Generated SQL:
+
+postgres:
+
+```sql
+SELECT COUNT(*) FROM "audit"."note_watchers" WHERE <filter>
 ```
 
 ### Paginate
@@ -154,36 +154,6 @@ postgres:
 INSERT INTO "audit"."note_watchers" (<columns>) VALUES <values>
 ```
 
-### Upsert
-
-- Params: `input *CreateNoteWatcherInput`, `target NoteWatcherConflictTarget`
-- Returns: `*NoteWatcher`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: One method over the generated NoteWatcherConflictTarget enum — the target argument selects the conflict columns at call time.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "audit"."note_watchers" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
-### UpsertMany
-
-- Params: `inputs []*CreateNoteWatcherInput`, `target NoteWatcherConflictTarget`
-- Returns: `[]*NoteWatcher`, `error`
-- Errors: `ErrNilInput`, `ErrConstraintViolation`
-- Notes: Batched in generation.batch_size chunks over the same NoteWatcherConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
-
-Generated SQL:
-
-postgres:
-
-```sql
-INSERT INTO "audit"."note_watchers" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
-```
-
 ### Update
 
 - Params: `pk NoteWatcherPK`, `input *UpdateNoteWatcherInput`
@@ -227,6 +197,36 @@ postgres:
 
 ```sql
 UPDATE "audit"."note_watchers" SET <set> WHERE <filter> RETURNING "user_id", "note_id"
+```
+
+### Upsert
+
+- Params: `input *CreateNoteWatcherInput`, `target NoteWatcherConflictTarget`
+- Returns: `*NoteWatcher`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: One method over the generated NoteWatcherConflictTarget enum — the target argument selects the conflict columns at call time.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "audit"."note_watchers" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
+```
+
+### UpsertMany
+
+- Params: `inputs []*CreateNoteWatcherInput`, `target NoteWatcherConflictTarget`
+- Returns: `[]*NoteWatcher`, `error`
+- Errors: `ErrNilInput`, `ErrConstraintViolation`
+- Notes: Batched in generation.batch_size chunks over the same NoteWatcherConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.
+
+Generated SQL:
+
+postgres:
+
+```sql
+INSERT INTO "audit"."note_watchers" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>
 ```
 
 ### HardDelete
@@ -288,3 +288,17 @@ Type `NoteWatcherFilter`.
 Type `NoteWatcherSort`.
 
 Fields: NoteID, UserID
+
+## Read examples
+
+```go
+row, err := client.NoteWatchers().Get(ctx, models.NoteWatcherPK{UserID: uuid.NewV4(), NoteID: 1})
+rows, err := client.NoteWatchers().GetMany(ctx, &models.GetNoteWatchersInput{Filter: &models.NoteWatcherFilter{NoteID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.NoteWatchers().Create(ctx, &models.CreateNoteWatcherInput{UserID: uuid.NewV4(), NoteID: 1})
+updated, err := client.NoteWatchers().Update(ctx, models.NoteWatcherPK{UserID: uuid.NewV4(), NoteID: 1}, &models.UpdateNoteWatcherInput{})
+```

@@ -19,8 +19,14 @@ generation:
       type: timestamp
 
 tables:
-  products: {}
-  articles: {}
+  products:
+    # Non-strict, so an Increment whose key matches no row returns nil and its
+    # event behavior (none published) is observable.
+    strict_updates: false
+  articles:
+    # Non-strict, so an Update whose key matches no row returns nil and its
+    # event behavior (none published) is observable.
+    strict_updates: false
   audit_logs:
     # A DATETIME cursor key: the keyset binds the stored text format, so pages
     # across equal timestamps neither skip nor repeat rows.
