@@ -66,6 +66,14 @@ func TestValidatePreParse_TenancyTypeImportAtEachScope(t *testing.T) {
 			},
 		},
 		{
+			name: "nullable from another package than the parent",
+			typ: config.TypeOverride{
+				Type: "uuid.UUID", Import: "github.com/google/uuid",
+				Nullable: config.NullableVariant{Type: "types.JSON"},
+			},
+			wantErr: `.nullable.type: "types.JSON" names a package-qualified type`,
+		},
+		{
 			name: "nullable inheriting the parent import",
 			typ: config.TypeOverride{
 				Type: "uuid.UUID", Import: "github.com/google/uuid",

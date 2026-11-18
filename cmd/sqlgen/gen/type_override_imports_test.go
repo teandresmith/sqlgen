@@ -73,6 +73,28 @@ func TestTypeOverrideRejectsUnimportableLiteral(t *testing.T) {
 			wantErr: "overrides.types.text.nullable.type",
 		},
 		{
+			name: "a known literal nullable variant from another package than the parent",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["jsonb"] = config.TypeOverride{
+					Type:     "pgtype.Text",
+					Import:   "github.com/jackc/pgx/v5/pgtype",
+					Nullable: config.NullableVariant{Type: "types.JSON"},
+				}
+			},
+			wantErr: "overrides.types.jsonb.nullable.type",
+		},
+		{
+			name: "a nullable variant from another package than the parent",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["text"] = config.TypeOverride{
+					Type:     "pgtype.Text",
+					Import:   "github.com/jackc/pgx/v5/pgtype",
+					Nullable: config.NullableVariant{Type: "sql.NullString"},
+				}
+			},
+			wantErr: "overrides.types.text.nullable.type",
+		},
+		{
 			name: "an extras field without an import",
 			apply: func(cfg *config.RootConfig) {
 				cfg.Extras["Payload"] = config.ExtraType{
@@ -150,6 +172,35 @@ func TestTypeOverrideAcceptsImportableLiteral(t *testing.T) {
 					Type:     "uuid.UUID",
 					Import:   "github.com/google/uuid",
 					Nullable: config.NullableVariant{Type: "uuid.NullUUID"},
+				}
+			},
+		},
+		{
+			name: "a pointer nullable variant shares the parent's package",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["numeric"] = config.TypeOverride{
+					Type:     "decimal.Decimal",
+					Import:   "github.com/shopspring/decimal",
+					Nullable: config.NullableVariant{Type: "*decimal.Decimal"},
+				}
+			},
+		},
+		{
+			name: "a known literal nullable variant under a parent with no import",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["jsonb"] = config.TypeOverride{
+					Type:     "json.RawMessage",
+					Nullable: config.NullableVariant{Type: "types.JSON"},
+				}
+			},
+		},
+		{
+			name: "a nullable variant from another package with its own import",
+			apply: func(cfg *config.RootConfig) {
+				cfg.Overrides.Types["jsonb"] = config.TypeOverride{
+					Type:     "pgtype.Text",
+					Import:   "github.com/jackc/pgx/v5/pgtype",
+					Nullable: config.NullableVariant{Type: "types.JSON", Import: "github.com/teandresmith/sqlgen/types"},
 				}
 			},
 		},

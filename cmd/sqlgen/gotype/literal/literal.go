@@ -61,3 +61,22 @@ func NeedsExplicitImport(goType string) bool {
 	_, ok := known[goType]
 	return !ok
 }
+
+// NullableNeedsOwnImport reports whether a nullable variant names a package
+// other than its parent's, so it cannot share the parent's import and needs its
+// own (PRD §4.7). An unqualified variant never does. Callers apply it only when
+// the parent carries an import.
+func NullableNeedsOwnImport(parentType, nullableType string) bool {
+	q := qualifier(nullableType)
+	return q != "" && q != qualifier(parentType)
+}
+
+// qualifier returns the package qualifier of a Go type literal, after any
+// pointer or slice prefix, or "" for an unqualified type.
+func qualifier(goType string) string {
+	pkg, _, ok := strings.Cut(strings.TrimLeft(goType, "*[]"), ".")
+	if !ok {
+		return ""
+	}
+	return pkg
+}

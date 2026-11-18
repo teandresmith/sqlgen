@@ -9,7 +9,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 §4.13 validation rules and the package's unclaimed tests stay in [`config.md`](config.md).
 
 ## §4 Configuration System
-<!-- prd: 4 sha256: a2103f5f72d67538 -->
+<!-- prd: 4 sha256: 5c3b47c473faf7c7 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -277,7 +277,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config-resolution: generation.uuid-version × view-inherits | §4.9: ViewConfig has no `primary_key` block | |
 
 ## §4.7 OverrideConfig
-<!-- prd: 4.7 sha256: 5bcb83f15685165a -->
+<!-- prd: 4.7 sha256: d64eacca64e811f9 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -308,6 +308,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config.overrides.types.import-omitted-known-literal.others | The other built-in literals that resolve their own import (`json.RawMessage`, `types.JSON`, `net.IP`) need no `import` | `unit: cmd/sqlgen/gen: TestGenerate_KnownLiteralOverridesNeedNoImport`; `unit: cmd/sqlgen/gotype: TestFromOverrideKnownLiteralImport` | all |  |
 | config.overrides.types.nullable-shorthand-shares-import | The shorthand `nullable: <Type>` takes the parent's import | `unit: cmd/sqlgen/gotype: TestResolve_NullableShorthandSharesParentImport/global override`; `unit: cmd/sqlgen/gotype: TestResolve_NullableShorthandSharesParentImport/table override` | all |  |
 | config.overrides.types.nullable-import-uninheritable | A package-qualified `nullable.type` with no import on either half (the parent is a builtin or same-package type) is a config error | `unit: cmd/sqlgen/gen: TestTypeOverrideRejectsUnimportableLiteral/a nullable variant with no import to inherit`; `unit: cmd/sqlgen/gen: TestTypeOverrideImportsRejectsUninheritableNullWrapper` | all |  |
+| config.overrides.types.nullable-import-other-package | A package-qualified `nullable.type` with no `nullable.import` whose package differs from the parent `type`'s is a config error, at `overrides.types` scope and for `tenancy.type` | `unit: cmd/sqlgen/gen: TestTypeOverrideRejectsUnimportableLiteral/a known literal nullable variant from another package than the parent`; `unit: cmd/sqlgen/gen: TestTypeOverrideRejectsUnimportableLiteral/a nullable variant from another package than the parent`; `unit: cmd/sqlgen/config: TestValidatePreParse_TenancyTypeImportAtEachScope` | all |  |
 | config.overrides.types.zero-value-derived | With `zero_value` unset, the zero value is derived: `Type{}` for a struct, `""` for a string, `0` for a number | `unit: cmd/sqlgen/gotype: TestResolve_OverrideZeroValueDerived/struct type`; `unit: cmd/sqlgen/gotype: TestResolve_OverrideZeroValueDerived/same-package struct type`; `unit: cmd/sqlgen/gotype: TestResolve_OverrideZeroValueDerived/string`; `unit: cmd/sqlgen/gotype: TestResolve_OverrideZeroValueDerived/int64`; `unit: cmd/sqlgen/gotype: TestResolve_OverrideZeroValueDerived/float64` | all |  |
 | config.overrides.types.scanner-valuer | A named type implementing `sql.Scanner` and `driver.Valuer` crosses the driver boundary on its own: values round-trip | `example: postgres: TestKSUIDOverrideRoundTrip`; `example: sqlite: TestKSUIDOverrideRoundTrip` | all |  |
 | config.overrides.types.no-conversion | sqlgen performs no conversion of its own: the scan target is always the resolved Go type | `unit: cmd/sqlgen/gen: TestGenerate_OverrideScanTargetIsResolvedType` | all |  |

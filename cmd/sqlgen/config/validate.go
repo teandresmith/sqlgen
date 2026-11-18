@@ -1717,20 +1717,22 @@ func fileDirectlyIn(file, dir string) bool {
 // only when `type` names a package sqlgen does not already know. Builtins,
 // same-package types and the built-in literals (`time.Time`, `types.JSON`, …)
 // need none. The nullable variant inherits the parent's import, so it needs its
-// own only when neither half carries one — the rule gen's
-// typeOverrideImportErrors applies to `overrides.types`, over the same
-// literal registry.
+// own when neither half carries one, or when the parent has one but the variant
+// names another package — the rule gen's typeOverrideImportErrors applies to `overrides.types`,
+// over the same literal registry.
 func validateTenancyTypeOverride(t *TypeOverride, path string, errs *[]error) {
-	if t == nil || t.Import != "" {
+	if t == nil {
 		return
 	}
 	switch {
-	case literal.NeedsExplicitImport(t.Type):
+	case t.Import == "" && literal.NeedsExplicitImport(t.Type):
 		*errs = append(*errs, fmt.Errorf(
 			"%s.type: %q names a package-qualified type — set %s.import to the package it comes from",
 			path, t.Type, path,
 		))
-	case t.Nullable.Import == "" && literal.NeedsExplicitImport(t.Nullable.Type):
+	case t.Nullable.Import == "" &&
+		(t.Import == "" && literal.NeedsExplicitImport(t.Nullable.Type) ||
+			t.Import != "" && literal.NullableNeedsOwnImport(t.Type, t.Nullable.Type)):
 		*errs = append(*errs, fmt.Errorf(
 			"%s.nullable.type: %q names a package-qualified type — set %s.nullable.import to the package it comes from",
 			path, t.Nullable.Type, path,

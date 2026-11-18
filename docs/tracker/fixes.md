@@ -31,6 +31,44 @@ _No open fixes._
 
 <!-- fixes:resolved:begin -->
 
+### FIX-387
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 26, cmd/sqlgen/gen
+- **Surfaced by:** FIX-386 auto-review (2026-11-18); ruled by the user 2026-11-18 (reject in validation)
+
+**Issue.** **A nullable variant from another package than its parent, with no `nullable.import`,
+passes validation and inherits the wrong import.**
+`overrides.types.jsonb: {type: pgtype.Text, import: <pgtype>, nullable: {type: types.JSON}}`
+validates, and `FromOverride` gives the nullable column the parent's `pgtype` import, so
+`github.com/teandresmith/sqlgen/types` is imported only if goimports finds it in the module cache
+(the FIX-386 failure, reached through the nullable variant). `nullable: sql.NullString` under a
+`pgtype.Text` parent fails the same way: `database/sql` never enters the import set. PRD §4.7's
+`nullable.import` row says the import is "needed when it differs from the parent type's import".
+
+**Root cause.** `typeOverrideImportErrors` (`cmd/sqlgen/gen/type_override_imports.go:106-121`)
+and `config.validateTenancyTypeOverride` (`cmd/sqlgen/config/validate.go:1723`) check the
+nullable variant only when the parent carries no import; with a parent import they assume the
+variant shares it, without comparing packages.
+
+**Suggested fix.**
+- Add `literal.Qualifier(goType)` (the package qualifier, after any `*` / `[]`).
+- In both validators, reject a package-qualified `nullable.type` with no `nullable.import` whose
+  qualifier differs from the parent `type`'s qualifier, at `<scope>.nullable.type` with the
+  existing message. The `nullable: uuid.NullUUID` shorthand (same qualifier) stays valid.
+- Tests: reject cases (registry literal `types.JSON` and `sql.NullString` under a `pgtype.Text`
+  parent) in `TestTypeOverrideRejectsUnimportableLiteral` and `TestValidatePreParse_TenancyTypeImportAtEachScope`;
+  accept a same-qualifier variant inheriting the parent's explicit import.
+- PRD §4.7 `nullable.import` row: state the error for a variant from a different package.
+
+**References.**
+- PRD §4.7 (`import` and `nullable.import` rows), §29.2.4 (`tenancy.type`).
+- FIX-386 (the registry import in `FromOverride`); `TestTypeOverrideImportsRejectsUninheritableNullWrapper`
+  (the parent-without-import twin of this rule).
+
+**Resolution notes.** New `literal.NullableNeedsOwnImport` compares the package qualifiers of the parent `type` and `nullable.type` (after any `*` / `[]`). `typeOverrideImportErrors` and `config.validateTenancyTypeOverride` now reject a package-qualified `nullable.type` with no `nullable.import` whose package differs from the parent's, only when the parent carries an import, at `<scope>.nullable.type` with the existing message; the tenancy validator no longer returns early when the parent has an import. Same-package variants (`uuid.NullUUID`, `*decimal.Decimal`) and variants with their own import stay valid. Fail first: the two new `TestTypeOverrideRejectsUnimportableLiteral` cases and the three scopes of the new `TestValidatePreParse_TenancyTypeImportAtEachScope` case. PRD §4.7 `nullable.import` row states the error; registry row `config.overrides.types.nullable-import-other-package` added, §4 and §4.7 anchors rehashed. The FIX-387 review caught the gen check firing without a parent import too, which rejected valid shapes such as `{type: json.RawMessage, nullable: types.JSON}` (FIX-386 resolves those); the guard and an accept case for that shape were added. Every example config already complied: `make check` and `make check-examples` pass with no golden churn.
+
 ### FIX-386
 
 - **Status:** Resolved
