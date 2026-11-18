@@ -115,7 +115,7 @@ precise eviction for `UpdateMany`, `UpdateWhere` and `SoftDelete`, and per-row e
 MySQL. Nothing checks MySQL `Upsert`, `UpsertMany`, `Increment` or `Create` `LastInsertId` events,
 the `rowMatches` path, MySQL `HardDeleteWhere`, or any PostgreSQL event.
 
-### 3.2 Carrier-dependent rows (need every target): 46
+### 3.2 Carrier-dependent rows (need every target): 49
 
 Their outcome depends on the carriers of §3.1:
 
@@ -123,7 +123,8 @@ Their outcome depends on the carriers of §3.1:
   `.update`, `.update-many`, `.update-where`, `.upsert`, `.soft-delete`, `.soft-delete-many`,
   `.soft-delete-where`, `.hard-delete`, `.hard-delete-many`, `.hard-delete-where`, `.restore`,
   `.restore-many`, `.restore-where`, `.increment`; `event.batch.one-publish-batch`,
-  `event.pk.fire-and-forget`, `event.hook.failed-mutation-no-event`.
+  `event.pk.fire-and-forget`, `event.hook.failed-mutation-no-event`;
+  `gen.events.empty-affected-publishes-nothing` (`cli/gen.md` §28.9).
 - **Event input** (§28.6): `event.input.single-op-same-pointer`, `.increment-by-value`,
   `.create-many-ith`, `.update-many-ith-written`, `.delete-restore-nil`, `.update-where-shared`,
   `.where-filter-shared`.
@@ -132,15 +133,24 @@ Their outcome depends on the carriers of §3.1:
   `.unmatched-key-no-event`, `.stamp-percent-v`.
 - **Cache invalidation** (§27.5, §27.7, §27.9, §29.5): `cache.invalidate.mutations-by-key`,
   `cache.invalidate.many-and-where-by-key`, `cache.create.write-through`,
-  `cache.mutation.unbuildable-key-reported`, `cache-key.tenant-per-row-invalidation`.
+  `cache.mutation.unbuildable-key-reported`, `cache-key.tenant-per-row-invalidation`;
+  `edge.noop-skips-view-invalidation` (`client.md`).
 - **Event-driven invalidation** (§28.11, PostgreSQL key segment): `event.cache-receive.tenant-stamp-precise`,
   `.tenant-in-pk-precise`, `.tenant-less-fallback`.
 - **Tenant in the PK** (§29.7, §29.9): `tenancy-pk.match-proceeds`, `tenancy-pk.skip-tenancy`,
   `tenancy-hooks.affected-pks-tenant`.
 - **Nested tenancy** (§9.9): `nested.unlink-tenant-mismatch`,
   `nested.m2m-create-shared-column-mismatch`. Their tests are in `tenancy_postgres` only.
+- **Tenant filter comparator** (`cli/gen.md` §29.2): `gen.tenancy.filter-comparator-follows-type`.
+  The comparator comes from a different `resolveSimpleComparator` arm per tenant column type: the
+  SQL-type `uuid` arm (`cmd/sqlgen/gen/context_table.go:2822`) on PostgreSQL, the tenant-type arm
+  (`:2843`) for a SQLite `blob`. Only SQLite is tested.
 
-### 3.3 Dialect-neutral rows (one target is enough): 64
+Moved from §3.3 on 2026-11-18 (user ruling during 33.0): the two no-op guards
+(`event_hooks.go.tmpl:103`, `cache.go.tmpl:1011`) have no dialect branch, but they read
+`AffectedPKs`, which MySQL fills by pre-read (§3.1). So their outcome depends on the carriers.
+
+### 3.3 Dialect-neutral rows (one target is enough): 61
 
 Their behavior runs before any SQL, or in code with no dialect branch: the tenant verify-match
 and `SkipTenancy` check (`table/get.go.tmpl:52-69,188`), the relationship-subquery tenant
@@ -151,7 +161,7 @@ callbacks at 188-212. They cover these areas:
 
 - **Event config** (`cli/config-features.md` §28.8): 10 rows.
 - **Tenancy config and constraints** (§29.2, §29.11): 8 rows.
-- **Event hook generation** (`cli/gen.md` §28.9, §29.x): 7 rows.
+- **Event hook generation** (`cli/gen.md` §28.9, §29.x): 5 rows.
 - **Cache facade, read-through, breaker and transactions** (§27.3–§27.9, §29.5 fallback): 18 rows.
 - **Event transactions and `SkipEvents`** (§28.4): 4 rows.
 - **Tenancy wiring and types** (`runtime/support.md` §29.3): 5 rows.
@@ -159,9 +169,9 @@ callbacks at 188-212. They cover these areas:
   `.update-input-omits-tenant`, `tenancy-hooks.filter-not-a-hook`, `.input-unchanged`,
   `error-prefix.tenant-mismatch`, `client.close-cache-publisher`,
   `tenancy-soft-delete.anded`, `.comparator-keeps-tenant`, `.orthogonal`,
-  `edge.noop-skips-view-invalidation`, `tenant-rel.composite-load-in-tenant`: 12 rows.
+  `tenant-rel.composite-load-in-tenant`: 11 rows.
 
-The exact list is the "NEUTRAL" set of the §7 probe. These rows already apply to `all`, apart
+The exact list is the "NEUTRAL" set of the §7 probe, less the three rows moved to §3.2. These rows already apply to `all`, apart
 from the seven `sqlite` ones listed above.
 
 ### 3.4 Rows that stay narrowed (justified): 7
@@ -218,7 +228,7 @@ clients with and without them through `WithTenantResolver`, `WithCache` (memory 
   (one dialect). Add a registry note that names the dialect-free code it runs through (§3.3
   citations), so the single-target proof is deliberate and reviewable. Widen the seven `sqlite`
   narrowings to `all`.
-- **B. Every `all` row on every target.** Port all 64 neutral rows to the Features suite too.
+- **B. Every `all` row on every target.** Port all 61 neutral rows to the Features suite too.
   This roughly doubles the work for no branch that can differ today, and the next template change
   that adds a branch is not caught by the rule either.
 
@@ -300,7 +310,7 @@ PRD, since the PRD does not specify repository tooling.
 | cache.receive | Each §28.11 receive row holds on every target, PostgreSQL's `public` key segment included | §28.11 | all | `conformance: Features/Cache/event-driven invalidation/<case>` | `cache-keys: tenant-table-pattern × schema` | planned |
 | tenancy.pk-carriers | `tenancy-pk.match-proceeds`, `tenancy-pk.skip-tenancy` and `tenancy-hooks.affected-pks-tenant` hold on every target | §29.7, §29.9 | all | `conformance: Features/Tenancy/<Method>/a matching PK tenant proceeds` and siblings | `client-methods: <Method> × composite-pk` | planned |
 | tenancy.nested | `nested.unlink-tenant-mismatch` and `nested.m2m-create-shared-column-mismatch` hold on every target | §9.9 | all | `conformance: Features/Tenancy/UpdateWithRelated/<case>` | — | planned |
-| relabel.neutral | The seven §3.3 `sqlite` rows apply to `all`, and every §3.3 row carries a note naming its dialect-free code | CONFORMANCE.md §5.1 (proposed in §8) | all | `unit: cmd/sqlgen/internal/reqcheck: TestCheck/a narrowing without a PRD basis needs a note` | — | planned |
+| relabel.neutral | The seven §3.3 `sqlite` rows apply to `all`, and every §3.3 row carries a note naming its dialect-free code | CONFORMANCE.md §5.1 (proposed in §8) | all | `make req-check` over the widened rows and the notes under each table (ruled 2026-11-18: the note is prose, so no `reqcheck` test) | — | planned |
 | views.reads | A view's `Get` (with a declared key), `GetMany`, `Count`, `Paginate` and `Connection` return the rows its query selects, on every target | §16.4 | all | `conformance: GetMany/a view returns the rows its query selects` and siblings | `client-methods: GetMany × view` | planned |
 | relfilter.exact | O2M and M2M relationship filters return exactly the parents with a matching child, compose with a column filter, and honor a discriminator | §11.1, §13.7 | all | `conformance: GetMany/an O2M relationship filter returns exactly the parents with a matching child` and siblings | `relationships: o2m × filter`, `relationships: m2m × filter` | planned |
 | comparators.db | Each operator of the `comparators` matrix returns the rows its PRD semantics select, on every target | §11.2 | all | `conformance: GetMany/<operator> selects the rows its semantics state` | `comparators: <operator> × <target>` | planned |

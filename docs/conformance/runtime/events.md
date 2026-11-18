@@ -61,6 +61,13 @@ JetStream tests skip under `-short`, so they are cited as `integration:`; they r
 | event.pk.fire-and-forget | A fire-and-forget `Create` (empty `FieldOptions`) on a database-generated PK returns no entity, and its event carries the generated PK | `example: events: TestEventConfig_FireAndForgetCreateCarriesGeneratedPK` | all |  |
 | event.skip-events | With `SkipEvents: true` a mutation publishes nothing, inside a transaction or outside one, while an unskipped mutation in the same scope still publishes | `example: events: TestEventConfig_SkipEvents`; `example: events: TestEventConfig_SkipEventsInsideTransaction` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `event.tx.deferred-to-commit`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:294-295`, `database/transaction.go:733`
+- `event.tx.rollback-discards`: `database/transaction.go:604,612`
+- `event.outside-tx-immediate`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:297`
+- `event.skip-events`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:99`
+
 ## §28.5 Subscriber Interface
 <!-- prd: 28.5 sha256: 3b4776e87504ac22 -->
 

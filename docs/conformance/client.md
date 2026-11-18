@@ -1,7 +1,7 @@
 # Generated Client Requirements
 
 <!-- seeding: complete -->
-<!-- matrix: client-methods rows=method:Get,GetMany,Count,Exists,ExistsWhere,Stream,Paginate,Connection,Create,CreateMany,Update,UpdateMany,UpdateWhere,Upsert,UpsertMany,Increment,CreateWithRelated,UpdateWithRelated,UpsertWithRelated,SoftDelete,SoftDeleteMany,SoftDeleteWhere,Restore,RestoreMany,RestoreWhere,HardDelete,HardDeleteMany,HardDeleteWhere cols=happy-path,nil-empty-input,not-found,soft-delete,transaction,hooks,error-mapping,field-selection,lock-mode,composite-pk -->
+<!-- matrix: client-methods rows=method:Get,GetMany,Count,Exists,ExistsWhere,Stream,Paginate,Connection,Create,CreateMany,Update,UpdateMany,UpdateWhere,Upsert,UpsertMany,Increment,CreateWithRelated,UpdateWithRelated,UpsertWithRelated,SoftDelete,SoftDeleteMany,SoftDeleteWhere,Restore,RestoreMany,RestoreWhere,HardDelete,HardDeleteMany,HardDeleteWhere cols=happy-path,nil-empty-input,not-found,soft-delete,transaction,hooks,error-mapping,field-selection,lock-mode,composite-pk,view -->
 
 Requirements of the generated client, proved by the cross-dialect conformance suite in
 `cmd/sqlgen/testdata/conformance` (see [README.md](README.md) for the format). Each method's
@@ -620,6 +620,17 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|---|---|
 | sort.multiple-in-order | `GetMany` applies several sorts in order: the primary sort first, the secondary breaking its ties | `conformance: GetMany/multiple sorts apply in order, primary then secondary` | all |  |
 
+## §16.4 Generated Artifacts (Views vs Tables)
+<!-- prd: 16.4 sha256: bf3de67d9722ba06 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| view.get | A view with a declared key (`@pk`) returns from `Get` the row its query selects for that key | | all | client-methods: Get × view |
+| view.get-many | A view's `GetMany` returns the rows its query selects | | all | client-methods: GetMany × view |
+| view.count | A view's `Count` returns the number of rows its query selects | | all | client-methods: Count × view |
+| view.paginate | A view's `Paginate` pages through the rows its query selects | | all | client-methods: Paginate × view |
+| view.connection | A view's `Connection` pages through the rows its query selects | | all | client-methods: Connection × view |
+
 ## §16.5.1 Dialect Scope
 <!-- prd: 16.5.1 sha256: 4231f90c985c79ec -->
 
@@ -749,7 +760,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | client.raw-global-hooks | `Raw` runs through the client's registered query hooks and `RawExec` through its registered mutation hooks (the global chain), with panic recovery | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_goldenFile` | postgres, sqlite |  |
 | client.ping | `Ping(ctx)` calls the querier's own `Ping(ctx) error` when it has one, and otherwise runs `SELECT 1` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_pingWithNativeMethod`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_pingFallbackSelect1` | postgres, sqlite |  |
 | client.close-querier | `Close()` calls `Close()` on the querier when it implements `io.Closer`, skips it otherwise, and returns the collected errors joined with `errors.Join` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeWithIOCloser`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeJoinsMultipleErrors` | postgres, sqlite |  |
-| client.close-cache-publisher | `Close()` also calls `Close()` on the configured cache and event publisher when each is set and implements `io.Closer` | `example: cache: TestClientClose_ClosesCacheAndEventPublisher`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeClosesConfiguredCacheAndPublisher` | sqlite |  |
+| client.close-cache-publisher | `Close()` also calls `Close()` on the configured cache and event publisher when each is set and implements `io.Closer` | `example: cache: TestClientClose_ClosesCacheAndEventPublisher`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeClosesConfiguredCacheAndPublisher` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `client.close-cache-publisher`: `cmd/sqlgen/gen/templates/client.go.tmpl:394-408`
 
 ## §20.5 Concurrency Safety
 <!-- prd: 20.5 sha256: 15a679cf7a1814fc -->
@@ -858,7 +873,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | error-prefix.upsert-with-related | Every error `UpsertWithRelated` returns starts exactly once with `upsert {singular} with related: `, sentinels included, and its cause stays reachable with `errors.Is`. An edge failure is `… with related: {edge}: {verb}: {cause}` with the edge and verb once, not repeated from the `*NestedMutationError` | `conformance: ErrorWrapping/UpsertWithRelated prefixes an edge failure once with upsert with related, the edge and the verb` | all |  |
 | error-prefix.view-reads | Every error a view client's `Get`, `GetMany`, `Count`, `Paginate` and `Connection` return starts exactly once with that method's prefix on the view name (`get order_total`, `get many order_totals`, `count order_totals`, `paginate order_totals`, `connection order_totals`), and its cause stays reachable with `errors.Is` | `example: postgres: TestViewErrors_CarryTheMethodPrefix/Get_prefixes_a_missing_key_with_get_and_the_singular`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/Get_prefixes_a_database_failure_with_get_and_the_singular`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/GetMany_prefixes_a_database_failure_with_get_many_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/Count_prefixes_a_database_failure_with_count_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/Paginate_prefixes_a_database_failure_with_paginate_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/Connection_prefixes_an_invalid_cursor_with_connection_and_the_view` | postgres, pgx |  |
 | error-prefix.refresh | Every error a materialized view's `Refresh` returns starts exactly once with `refresh {table}: `, and `RefreshConcurrently`'s with `refresh concurrently {table}: `, its refusal inside a transaction included, the cause reachable with `errors.Is` | `example: postgres: TestViewErrors_CarryTheMethodPrefix/Refresh_prefixes_a_database_failure_with_refresh_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/RefreshConcurrently_prefixes_a_database_failure_with_refresh_concurrently_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/RefreshConcurrently_prefixes_its_refusal_inside_a_transaction_with_refresh_concurrently_and_the_view` | postgres, pgx |  |
-| error-prefix.tenant-mismatch | A `tenancy.ErrMismatch` is returned under the method's prefix like any other error, on `Get`, `Update` and `Create` alike | `example: tenancy: TestErrMismatch_CarriesTheMethodPrefix` | sqlite |  |
+| error-prefix.tenant-mismatch | A `tenancy.ErrMismatch` is returned under the method's prefix like any other error, on `Get`, `Update` and `Create` alike | `example: tenancy: TestErrMismatch_CarriesTheMethodPrefix` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `error-prefix.tenant-mismatch`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:70`, `cmd/sqlgen/gen/templates/table/update.go.tmpl:263`, `cmd/sqlgen/gen/templates/table/create.go.tmpl:204`
 
 ## §25.1 Query Count Guarantee
 <!-- prd: 25.1 sha256: 30bc2a28df8813d0 -->
@@ -920,10 +939,16 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | tenancy-pk.match-proceeds | When the tenant column is in the PK, a `{Table}PK` whose tenant matches the resolver is accepted and `Get`, `Update`, `HardDelete`, `Increment` and `Exists` act on that row | `example: tenancy: TestCompositePK_Get_MatchSucceeds`; `example: tenancy: TestCompositePK_MatchingTenantProceeds` | sqlite |  |
-| tenancy-pk.mismatch | A `{Table}PK` whose tenant differs from the resolver makes `Get`, `Update`, `HardDelete`, `Increment` and `Exists` return `tenancy.ErrMismatch` before any statement | `example: tenancy: TestCompositePK_Get_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Update_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_HardDelete_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Increment_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Exists_MismatchReturnsErrMismatch` | sqlite |  |
-| tenancy-pk.zero-tenant | A `{Table}PK` whose tenant is the zero value makes `Get`, `Update`, `HardDelete`, `Increment` and `Exists` return `tenancy.ErrMismatch` before any statement | `example: tenancy: TestCompositePK_Get_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Update_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_HardDelete_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Increment_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Exists_ZeroTenantOnPKReturnsErrMismatch` | sqlite |  |
+| tenancy-pk.mismatch | A `{Table}PK` whose tenant differs from the resolver makes `Get`, `Update`, `HardDelete`, `Increment` and `Exists` return `tenancy.ErrMismatch` before any statement | `example: tenancy: TestCompositePK_Get_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Update_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_HardDelete_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Increment_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Exists_MismatchReturnsErrMismatch` | all |  |
+| tenancy-pk.zero-tenant | A `{Table}PK` whose tenant is the zero value makes `Get`, `Update`, `HardDelete`, `Increment` and `Exists` return `tenancy.ErrMismatch` before any statement | `example: tenancy: TestCompositePK_Get_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Update_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_HardDelete_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Increment_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Exists_ZeroTenantOnPKReturnsErrMismatch` | all |  |
 | tenancy-pk.skip-tenancy | Under `SkipTenancy` the resolver is not consulted and the caller's `pk.Tenant` is used as-is, so `Get`, `Update`, `HardDelete`, `Increment` and `Exists` reach another tenant's row by PK | `example: tenancy: TestCompositePK_SkipTenancy_AdminCrossTenantGet`; `example: tenancy: TestCompositePK_SkipTenancyWritesAnotherTenantsRowByPK`; `example: tenancy: TestIncrement_CompositePK_SkipTenancy_Succeeds`; `example: tenancy: TestExists_CompositePK_SkipTenancy_Succeeds` | sqlite |  |
-| tenancy-pk.update-input-omits-tenant | When the tenant column is in the PK, the `{Table}PK` struct carries it and `Update{Table}Input` has no field for it | `example: tenancy: TestCompositePK_UpdateInputOmitsTheTenantColumn` | sqlite |  |
+| tenancy-pk.update-input-omits-tenant | When the tenant column is in the PK, the `{Table}PK` struct carries it and `Update{Table}Input` has no field for it | `example: tenancy: TestCompositePK_UpdateInputOmitsTheTenantColumn` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `tenancy-pk.mismatch`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:69`, `cmd/sqlgen/gen/templates/table/update.go.tmpl:61`, `cmd/sqlgen/gen/templates/table/delete.go.tmpl:1619`, `cmd/sqlgen/gen/templates/table/increment.go.tmpl:48`, `cmd/sqlgen/gen/templates/table/exists.go.tmpl:44`
+- `tenancy-pk.zero-tenant`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:69`, `cmd/sqlgen/gen/templates/table/update.go.tmpl:61`, `cmd/sqlgen/gen/templates/table/delete.go.tmpl:1619`, `cmd/sqlgen/gen/templates/table/increment.go.tmpl:48`, `cmd/sqlgen/gen/templates/table/exists.go.tmpl:44`
+- `tenancy-pk.update-input-omits-tenant`: `cmd/sqlgen/gen/context_table.go:2956`
 
 ## §29.8 Soft Delete Composition
 <!-- prd: 29.8 sha256: f12ba7d857282f01 -->
@@ -934,14 +959,25 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | tenancy-soft-delete.comparator-keeps-tenant | Setting the soft-delete comparator on the filter brings back soft-deleted rows only within the caller's tenant | `example: tenancy: TestSoftDelete_IncludeDeletedScopedToTenant` | all |  |
 | tenancy-soft-delete.orthogonal | `SkipTenancy` and the soft-delete comparator compose orthogonally: together they read every row, soft-deleted ones included, across all tenants | `example: tenancy: TestSoftDelete_SkipTenancyAndIncludeDeletedAreOrthogonal` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `tenancy-soft-delete.anded`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:201-218`
+- `tenancy-soft-delete.comparator-keeps-tenant`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:201`, `cmd/sqlgen/gen/templates/table/get.go.tmpl:211-218`
+- `tenancy-soft-delete.orthogonal`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:201`, `cmd/sqlgen/gen/templates/table/get.go.tmpl:211`
+
 ## §29.9 Hooks Orthogonality
 <!-- prd: 29.9 sha256: ba43cba310405cbc -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| tenancy-hooks.filter-not-a-hook | The tenancy filter is applied by the SQL builders, not by a hook: a call with `SkipHooks` is still scoped to the resolver's tenant | `example: tenancy: TestHooks_SkippingHooksKeepsTheTenantFilter` | sqlite |  |
-| tenancy-hooks.input-unchanged | A query hook's `Input` is the caller's struct unchanged: the tenant condition is added in SQL, not to the filter | `example: tenancy: TestHooks_QueryInputCarriesNoTenantCondition` | sqlite |  |
+| tenancy-hooks.filter-not-a-hook | The tenancy filter is applied by the SQL builders, not by a hook: a call with `SkipHooks` is still scoped to the resolver's tenant | `example: tenancy: TestHooks_SkippingHooksKeepsTheTenantFilter` | all |  |
+| tenancy-hooks.input-unchanged | A query hook's `Input` is the caller's struct unchanged: the tenant condition is added in SQL, not to the filter | `example: tenancy: TestHooks_QueryInputCarriesNoTenantCondition` | all |  |
 | tenancy-hooks.affected-pks-tenant | On a table with the tenant column in its PK, `MutationContext.AffectedPKs` holds full `{Table}PK` values, tenant component included | `example: tenancy: TestHooks_AffectedPKsCarryTheTenantComponent` | sqlite |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `tenancy-hooks.filter-not-a-hook`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:211-218`
+- `tenancy-hooks.input-unchanged`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:197`, `cmd/sqlgen/gen/templates/table/get.go.tmpl:217`
 
 ## §29.10 Relationship Propagation
 <!-- prd: 29.10 sha256: 46e732fe5b40a130 -->
@@ -950,6 +986,10 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|---|---|
 | tenant-rel.skip-tenancy-propagates | A parent read's `SkipTenancy` is forwarded to the child `GetMany` that loads its O2M relationship | `unit: cmd/sqlgen/gen: TestTenancyTemplate_loadRelationships_propagatesSkipTenancy` | all |  |
 | tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` | `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/o2m`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/m2m`; `example: tenancy_postgres: TestCompositeTenantFK_LoadStaysInTenant`; `example: tenancy_postgres: TestCompositeTenantFK_RelationshipFilterStaysInTenant` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `tenant-rel.composite-load-in-tenant`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:795`
 
 ## Not applicable
 
@@ -994,6 +1034,29 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | client-methods: CreateWithRelated × composite-pk | §9.9.4 E3 gives a composite-key parent no nested surface, and E1 makes a composite-key target not write-eligible, so no composite key reaches CreateWithRelated | |
 | client-methods: UpdateWithRelated × composite-pk | §9.9.4 E3: a composite-key parent gets no nested surface, and E1: a composite-key target is not nestable, so `UpdateWithRelated` has no composite-key case | |
 | client-methods: UpsertWithRelated × composite-pk | §9.9.4 E3: a composite-key parent gets no nested surface, and E1 makes a composite-key target not write-eligible | |
+| client-methods: Exists × view | §16.4 lists no `Exists` for a view; a view client has `Get`, `GetMany`, `Count`, `Paginate` and `Connection` | |
+| client-methods: ExistsWhere × view | §16.4 lists no `ExistsWhere` for a view; a view client has `Get`, `GetMany`, `Count`, `Paginate` and `Connection` | |
+| client-methods: Stream × view | §16.4 lists no `Stream` for a view; a view client has `Get`, `GetMany`, `Count`, `Paginate` and `Connection` | |
+| client-methods: Create × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: CreateMany × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: Update × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: UpdateMany × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: UpdateWhere × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: Upsert × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: UpsertMany × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: Increment × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: CreateWithRelated × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: UpdateWithRelated × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: UpsertWithRelated × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: SoftDelete × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: SoftDeleteMany × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: SoftDeleteWhere × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: Restore × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: RestoreMany × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: RestoreWhere × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: HardDelete × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: HardDeleteMany × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
+| client-methods: HardDeleteWhere × view | §16.4: a view is read-only, with no Create, Update or Delete method, no soft delete and no relationships | |
 
 ## PRD gaps
 

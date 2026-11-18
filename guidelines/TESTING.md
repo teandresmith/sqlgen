@@ -86,6 +86,18 @@ An `os.Exit(0)` under `-short` would also skip every unit test in the package, s
 
 **No build tags.** Module boundaries handle dependency isolation. Do not use `//go:build` tags to gate tests.
 
+### Where a New Generated-Client Test Goes
+
+A test of generated-client behavior has three homes (`docs/design/CONFORMANCE.md` §4, `docs/design/CONFORMANCE_VARIANTS.md` §5):
+
+| Behavior | Home |
+|---|---|
+| A client behavior every dialect shares, with no feature enabled | The core conformance suite, `cmd/sqlgen/testdata/conformance/suite/`, cited as `conformance: Method/subtest` |
+| A behavior that needs tenancy, cache or events | The Features suite, `cmd/sqlgen/testdata/conformance/features_suite/`, cited as `conformance: Features/Method/subtest` |
+| A config combination, or a feature only one dialect has | An example module under `cmd/sqlgen/testdata/examples/` (§10) |
+
+Both suites run on postgres/pgx, postgres/stdlib, mysql and sqlite. Do not add a copy of a suite test to an example.
+
 ### Test Package
 
 Use the `_test` package suffix for black-box tests that validate the public API:

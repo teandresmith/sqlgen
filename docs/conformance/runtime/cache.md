@@ -44,6 +44,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.redis.scan-not-keys | The Redis backend's `InvalidatePattern` walks the keyspace with paginated `SCAN` and deletes each page with one bounded `DEL`; it never sends `KEYS` | `integration: cache/redis: TestInvalidatePatternWith10KKeysUsesSCANAndBatchedDELs` | all |  |
 | cache.redis.close-owned-client | The Redis backend's `Close` closes the Redis client only when the backend was built with `WithOwnedClient()`; by default the client stays usable | `integration: cache/redis: TestCloseDefaultIsNoOpClientStaysUsable`; `integration: cache/redis: TestCloseOwnedClientClosesClient` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.facade.close-probes-closer`: `cmd/sqlgen/gen/templates/cache.go.tmpl:1133`
+
 ## §27.4 Injection via Hooks
 <!-- prd: 27.4 sha256: 7a57b9dc63f77f85 -->
 
@@ -52,6 +56,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.facade.hooks | The generated `Cache` exposes `QueryHook() hook.QueryHook` and `MutationHook() hook.MutationHook`, the hooks it injects into the client | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsQueryAndMutationHooks` | all |  |
 | cache.facade.options | The generated package declares the runtime options `WithInvalidationSource`, `WithMetricsRecorder`, `WithSerializer`, `WithCircuitBreaker` and `WithOnError`, each returning `CacheOption` with the parameter type the PRD gives | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsOptionsAPI` | all |  |
 | cache.facade.with-cache-outermost | `WithCache` puts the cache query hook outside every hook registered with `WithQueryHook`, whichever option comes first: a cache hit returns before a user query hook runs | `example: cache: TestWithCache_OutermostWhateverTheOptionOrder/WithCache before the user hook`; `example: cache: TestWithCache_OutermostWhateverTheOptionOrder/WithCache after the user hook` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.facade.with-cache-outermost`: `cmd/sqlgen/gen/templates/client.go.tmpl:176-177`
 
 ## §27.5 Cache Key Generation
 <!-- prd: 27.5 sha256: c21af87fbe355014 -->
@@ -78,6 +86,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache-key.table-pattern.no-schema | With no schema, `BuildTablePattern` returns `{prefix}:{table}:*` | `unit: cache: TestBuildTablePattern/mysql empty schema` | mysql, sqlite | cache-keys: table-pattern × no-schema |
 | cache-key.table-pattern.generations | A table pattern matches the table's keys under any fingerprint, and no key of a table whose name extends it or of the same table in another schema | `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern matches an earlier fingerprint generation`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern does not match a table whose name extends it`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern does not match the same table in another schema` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache-key.time-utc-instant`: `cache/key.go:177-178`
+
 ## §27.6 Cache Invariant
 <!-- prd: 27.6 sha256: ae8265d73e0a67e9 -->
 
@@ -85,6 +97,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 |---|---|---|---|---|
 | cache.relationship-bypass | A `Get` with any relationship flag set on `FieldOptions` bypasses the cache: the query hook checks for it before dispatching to read-through | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookPreservesBypassGates`; `example: cache: TestSkip_RelationshipBypass` | all |  |
 | cache.create.field-options-not-cached | A `Create` or `CreateMany` call that carries `FieldOptions` writes nothing to the cache | `unit: cmd/sqlgen/gen: TestCacheTemplate_createCachingSkipsWhenFieldOptionsSet` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.relationship-bypass`: `cmd/sqlgen/gen/templates/cache.go.tmpl:802`
 
 ## §27.7 Cache Behavior by Operation
 <!-- prd: 27.7 sha256: 98d0918d8dbb9798 -->
@@ -101,6 +117,14 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.invalidate.many-and-where-by-key | `UpsertMany`, `UpdateMany`, `SoftDeleteMany`, `HardDeleteMany`, `RestoreMany` and the four `*Where` mutations share one key-based invalidation arm | `unit: cmd/sqlgen/gen: TestCacheTemplate_whereOpsShareKeyBasedArm`; `example: cache: TestMutation_UpdateManyInvalidatesBatch`; `example: cache: TestMutation_UpsertManyInvalidatesBatch`; `example: cache: TestMutation_WhereMutationsInvalidateByKey` | all |  |
 | cache.invalidate.uncached-table-guard | The mutation invalidation arm returns before any backend call for a table that is not cached | `unit: cmd/sqlgen/gen: TestCacheTemplate_whereOpsShareKeyBasedArm`; `example: cache: TestWhereMutation_NonCachedTable_InvalidatesNothing` | all |  |
 | cache.skip-cache.read | A `Get` with `CallOptions.SkipCache: true` does not read through the cache | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookPreservesBypassGates`; `example: cache: TestSkip_CacheOnGet` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.read-through.dispatch`: `cmd/sqlgen/gen/templates/cache.go.tmpl:813-835`, `cmd/sqlgen/gen/templates/cache.go.tmpl:263-271`
+- `cache.read-through.singleflight-recheck`: `cmd/sqlgen/gen/templates/cache.go.tmpl:320-334`
+- `cache.partial.hydration-on`: `cmd/sqlgen/gen/templates/cache.go.tmpl:306-317`
+- `cache.invalidate.uncached-table-guard`: `cmd/sqlgen/gen/templates/cache.go.tmpl:979-981`
+- `cache.skip-cache.read`: `cmd/sqlgen/gen/templates/cache.go.tmpl:798`
 
 ## §27.8 Hydration
 <!-- prd: 27.8 sha256: 1940f10057dfe00e -->
@@ -144,6 +168,17 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.breaker.reports-to-recorder | The breaker `NewCache` builds from the config reports its transitions to the `WithMetricsRecorder` recorder as `CircuitBreakerStateChange(from, to)` | `example: cache: TestBreaker_DefaultBreakerReportsToMetricsRecorder` | all |  |
 | cache.error-policy.order | The error policy records `MetricsRecorder.Error` with the backend's own error, then calls the `OnErrorFunc`, then `breaker.RecordFailure()`, in that order | `unit: cache: TestRouteError_ThreeChannelOrdering` | all |  |
 | cache.error-policy.logger-cannot-mask | A panicking `OnErrorFunc` does not stop the breaker feedback | `unit: cache: TestRouteError_PanickingOnErrorDoesNotSkipBreaker` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.breaker.open-skips`: `cmd/sqlgen/gen/templates/cache.go.tmpl:271`, `cmd/sqlgen/gen/templates/cache.go.tmpl:343`, `cmd/sqlgen/gen/templates/cache.go.tmpl:391`
+- `cache.direct-invalidate.tenanted-error`: `cmd/sqlgen/gen/templates/cache.go.tmpl:582`
+- `cache.tx.event-before-cache`: `cmd/sqlgen/gen/templates/client.go.tmpl:168,176`, `database/transaction.go:215`
+- `cache.tx.rollback-discards`: `cmd/sqlgen/gen/templates/cache.go.tmpl:1027-1028`, `database/transaction.go:604,612`
+- `cache.tx.committed-write-survives`: `cmd/sqlgen/gen/templates/cache.go.tmpl:1062-1068`
+- `cache.tx.retry-once`: `cmd/sqlgen/gen/templates/cache.go.tmpl:1064-1065`
+- `cache.breaker.read-through-releases-probe`: `cmd/sqlgen/gen/templates/cache.go.tmpl:330`
+- `cache.breaker.reports-to-recorder`: `cmd/sqlgen/gen/templates/cache.go.tmpl:100-104`
 
 ## §27.10 Serialization
 <!-- prd: 27.10 sha256: 384ffadc196b96c4 -->
@@ -211,6 +246,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache-key.tenant-pattern.no-schema | With no schema, `BuildTenantTablePattern` returns `{prefix}:{table}:tenant:{tenant}:*` | `unit: cache: TestBuildTenantTablePattern/mysql tenanted empty schema` | mysql, sqlite | cache-keys: tenant-table-pattern × no-schema |
 | cache-key.tenant-pattern.tenanted | A tenant pattern matches its tenant's keys under any fingerprint, composite keys included, and no key of another tenant, including a tenant whose value extends it | `unit: cache: TestPatternsMatchTheKeysTheyCover/tenant pattern matches its tenant under any fingerprint`; `unit: cache: TestPatternsMatchTheKeysTheyCover/tenant pattern matches its tenant's composite keys`; `unit: cache: TestPatternsMatchTheKeysTheyCover/tenant pattern does not match another tenant`; `unit: cache: TestPatternsMatchTheKeysTheyCover/tenant pattern does not match a tenant whose value extends it` | all | cache-keys: tenant-table-pattern × tenanted |
 | cache-key.pattern-builder-signatures | `BuildTablePattern(prefix, schema, table string) string` and `BuildTenantTablePattern(prefix, schema, table string, tenant any) string` have the PRD's signatures | `unit: cache: TestPatternBuilderSignatures` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache-key.tenant-fallback-table-pattern`: `cmd/sqlgen/gen/templates/cache.go.tmpl:665-673`
 
 ## Not applicable
 

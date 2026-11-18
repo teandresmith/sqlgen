@@ -326,6 +326,10 @@
 | gen.filter.member-column-wins | A relationship whose Go field name a column comparator already takes gets no member; the column wins | `unit: cmd/sqlgen/gen: TestRelationshipFilters_ColumnComparatorKeepsItsFieldName` | all | |
 | gen.filter.tenant-reaches-nested-member | A parent whose relationship filters reach a tenanted table only through untenanted intermediates is treated as having a tenanted relationship filter, so its methods pass the resolved tenant down to the nested member; a parent that reaches no tenanted table is not | `unit: cmd/sqlgen/gen: TestGenerate_RelationshipFilterTenantReachesNestedMember/rendered methods/postgres`; `unit: cmd/sqlgen/gen: TestGenerate_RelationshipFilterTenantReachesNestedMember/rendered methods/mysql`; `unit: cmd/sqlgen/gen: TestGenerate_RelationshipFilterTenantReachesNestedMember/rendered methods/sqlite`; `unit: cmd/sqlgen/gen: TestGenerate_RelationshipFilterTenantReachesNestedMember/generated reads` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `gen.filter.view-target-member`: `cmd/sqlgen/gen/context_relfilter.go:55-60`
+
 ## §12.1 FieldOptions Struct
 <!-- prd: 12.1 sha256: ab07f217cdc476b5 -->
 
@@ -633,6 +637,11 @@
 | gen.events.hook-config-resolved-once | `buildEventHooks` resolves `event.Config` once (`OnError` through its default, and `MetadataFunc`) and passes both to each per-entity hook | `golden: postgres` | all |  |
 | gen.events.metadata-at-hook-entry | Each per-entity hook calls `MetadataFunc` once at hook entry and merges its result into every event's `Metadata`, shallow-cloned per event, with the tenant stamp applied last (§28.3) | `unit: cmd/sqlgen/gen: TestEventHooks_metadataFunc_mergedAtHookEntry` | all | |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `gen.event-hooks.prepended-outermost`: `cmd/sqlgen/gen/templates/client.go.tmpl:167-168`
+- `gen.event-hooks.upsert-many-deduped`: `cmd/sqlgen/gen/templates/table/upsert_many.go.tmpl:333,343`
+
 ## §29.2 Configuration
 <!-- prd: 29.2 sha256: cbf6770c2c1d9d4a -->
 
@@ -657,6 +666,10 @@
 | artifacts.tenant-scoping.tenanted | On a tenanted table `GetMany` appends `AND <tenant> = $N` to the user-composed WHERE | `unit: cmd/sqlgen/gen: TestTenancyTemplate_getMany_emitsTenantFilter`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_sharedTableInTenancyProjectHasNoFilter` | all | generated-artifacts: tenant-scoping × tenanted |
 | artifacts.count.tenanted | A tenanted table's `Count` appends the tenant predicate, as `GetMany` does | `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/postgres`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/mysql`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/sqlite`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/generated counts` | all | generated-artifacts: count × tenanted |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `artifacts.soft-delete.tenanted`: `cmd/sqlgen/gen/templates/table/delete.go.tmpl:28-50`
+
 ## §29.7 Composite Primary Keys
 <!-- prd: 29.7 sha256: e64916d685aa78d0 -->
 
@@ -670,6 +683,10 @@
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | artifacts.tenant-scoping.soft-delete | On a tenanted soft-delete table reads AND the tenant and soft-delete filters (`WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`) | `unit: cmd/sqlgen/gen: TestGenerate_TenantedSoftDeleteTable/postgres/reads AND the tenant and soft-delete filters`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedSoftDeleteTable/mysql/reads AND the tenant and soft-delete filters`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedSoftDeleteTable/sqlite/reads AND the tenant and soft-delete filters`; `example: tenancy: TestSoftDelete_TenantedGetANDsTenantAndSoftDeleteFilters` | all | generated-artifacts: tenant-scoping × soft-delete |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `artifacts.tenant-scoping.soft-delete`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:201-218`
 
 ## Not applicable
 

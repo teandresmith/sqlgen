@@ -1,6 +1,6 @@
 # Phase 33: Conformance Variant Suite and Core-Suite Ports
 
-Status: Not Started
+Status: In Progress
 PRD Sections: 9.9, 11.1, 11.2, 13.7, 16.4, 20.2, 22.3, 27.5, 27.7, 27.9, 28.4, 28.6, 28.11, 29.6, 29.7, 29.9
 
 > **Design.** `docs/design/CONFORMANCE_VARIANTS.md`, approved 2026-11-18, is the source for every
@@ -35,28 +35,28 @@ PRD Sections: 9.9, 11.1, 11.2, 13.7, 16.4, 20.2, 22.3, 27.5, 27.7, 27.9, 28.4, 2
 
 **PRD Reference:** Sections 20.2, 22.3, 29.7, 29.9 (rows relabeled); no PRD text changes
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `docs/design/CONFORMANCE.md`: §8 replaces the tenancy / cache follow-on bullet with the
+- [x] `docs/design/CONFORMANCE.md`: §8 replaces the tenancy / cache follow-on bullet with the
   Features suite and a link to `CONFORMANCE_VARIANTS.md`; §4.2 gains the variant-module paragraph
   (`features_*` modules, the `Features` root segment); §5.3 gains the suite-rooted citation rule
   (design §8).
-- [ ] `docs/conformance/README.md`: the `conformance: Features/Method/subtest` citation form, and
+- [x] `docs/conformance/README.md`: the `conformance: Features/Method/subtest` citation form, and
   the Applies-to rule for a dialect-neutral row (one target, a note naming the code) (design §8).
-- [ ] `guidelines/TESTING.md`: which test home a new test belongs in (core suite, Features suite,
+- [x] `guidelines/TESTING.md`: which test home a new test belongs in (core suite, Features suite,
   example) (design §8).
-- [ ] Widen the seven `sqlite`-narrowed dialect-neutral `client.md` rows to `all`:
+- [x] Widen the seven `sqlite`-narrowed dialect-neutral `client.md` rows to `all`:
   `tenancy-pk.mismatch`, `tenancy-pk.zero-tenant`, `tenancy-pk.update-input-omits-tenant`,
   `tenancy-hooks.filter-not-a-hook`, `tenancy-hooks.input-unchanged`,
   `error-prefix.tenant-mismatch`, `client.close-cache-publisher`.
-- [ ] Add a note to each of the 64 dialect-neutral rows (design §3.3) naming the dialect-free code it
+- [x] Add a note to each of the 61 dialect-neutral rows (design §3.3) naming the dialect-free code it
   runs through, as `path:line` at HEAD. Re-derive the list from the registry at HEAD rather than
   copying it.
-- [ ] Add the `view` column to the `client-methods` matrix declaration in `client.md`. Set the
+- [x] Add the `view` column to the `client-methods` matrix declaration in `client.md`. Set the
   five read cells to `untested`, ready for 33.7, and the rest to `n/a` citing §16.4.
-- [ ] `make req-check` is ok; `make conformance` totals unchanged except for the widened rows.
+- [x] `make req-check` is ok; `make conformance` totals unchanged except for the widened rows.
 
 ### Acceptance Criteria
 
@@ -67,12 +67,40 @@ PRD Sections: 9.9, 11.1, 11.2, 13.7, 16.4, 20.2, 22.3, 27.5, 27.7, 27.9, 28.4, 2
 
 ### Tests Required
 
-- [ ] `make req-check` passes with the widened rows, the notes and the new matrix column.
-- [ ] `make conformance`: the seven widened rows still `pass`, and no other row changes status.
+- [x] `make req-check` passes with the widened rows, the notes and the new matrix column.
+- [x] `make conformance`: the seven widened rows still `pass`, and no other row changes status.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-18 on `feat/conformance-variants`. Docs only, no code.
+
+- **Files:** `docs/conformance/{README.md,client.md}`, `docs/conformance/cli/{config-features,gen}.md`,
+  `docs/conformance/runtime/{cache,events,support}.md`, `docs/design/CONFORMANCE.md` (§4.2 variant
+  modules, §5.3 suite-rooted citations, §8), `docs/design/CONFORMANCE_VARIANTS.md` (§6.1
+  `relabel.neutral` Test cell), `guidelines/TESTING.md` (where a new generated-client test goes).
+- **Rulings (2026-11-18):** the note is a prose list under each requirements table ("Proven on one
+  target …", one `id`: `path:line` bullet per row), because the table format has no note column.
+  No `reqcheck` test is added; §6.1 now names `make req-check`.
+- **Neutral set re-derived at HEAD:** 117 rows cite only `cache` / `events` / `tenancy*` example
+  tests and no `conformance:` test. Removing the 46 §3.2 rows and the 7 §3.4 rows leaves 64:
+  config-features 18, gen 7, cache 18, events 4, support 5, client 12. This matched design §3.3.
+- **Moved to carrier-dependent (user ruling, 2026-11-18, from the auto-review):**
+  `gen.events.empty-affected-publishes-nothing` and `edge.noop-skips-view-invalidation` (their
+  guards read `AffectedPKs`, which MySQL fills by pre-read), and
+  `gen.tenancy.filter-comparator-follows-type` (a different comparator arm per tenant column
+  type, only SQLite tested). Their notes are removed. Design §3.2 is now 49 and §3.3 is 61
+  (gen 5, client 11). They are added to 33.4, 33.6 and 33.5.
+- **Widened to `all`:** the seven listed `client.md` rows.
+- **`view` column:** five `untested` §16.4 rows (`view.get`, `.get-many`, `.count`, `.paginate`,
+  `.connection`) and 23 `n/a` cells citing §16.4.
+- **Auto-review:** 4 wrong citations and 5 doc nits, all fixed inline (metadata, CachedTenant,
+  keyed-load, comparator arm, Update prefix site, two ranges, the `features_<target>` wording,
+  a re-wrap).
+- **Tests:** `make check` green; `make req-check` ok (6342 requirements).
+- **`make conformance`:** 6257 pass, 0 fail, 0 skip, 0 not run, 85 untested. No existing row
+  changed status, and the seven widened rows still `pass`. Against the 2026-11-17 report
+  (6256 / 80 untested): +5 untested are the new view rows. +1 pass is
+  `config.overrides.types.nullable-import-other-package`, a row added after that report.
 
 ## 33.1 Regression guard — report delta
 
@@ -199,6 +227,8 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] Cover the MySQL paths design §3.1 lists as untested: `Create` via `LastInsertId`, `Upsert`
   with its tenant read-back, `Increment`, `HardDeleteWhere`, and the `rowMatches`
   matched-but-unchanged row.
+- [ ] A no-op write on every target publishes nothing (`gen.events.empty-affected-publishes-nothing`),
+  the MySQL pre-read `*Many` / `*Where` paths included.
 - [ ] Move each row's citation to its Features test and widen it to `all`.
 
 ### Acceptance Criteria
@@ -232,6 +262,8 @@ _Filled in when complete: files changed, commit references, notes._
   `pk.Tenant`; `MutationContext.AffectedPKs` holds full PK values, tenant included.
 - [ ] Nested cases on the tenanted O2M child and the tenant junction: unlink with a mismatched
   parent tenant; an M2M create whose target differs on a shared junction column.
+- [ ] Filtering on the tenant column with the target's tenant Go type compiles and selects the
+  caller's rows on every target (`gen.tenancy.filter-comparator-follows-type`).
 - [ ] Move each row's citation and widen it to `all`.
 
 ### Acceptance Criteria
@@ -267,6 +299,8 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] Event-driven receive cases (§28.11): a tenant-stamped event, a tenant-in-PK event with no
   stamp, a tenant-less event's fallback. Assert the key each target builds, PostgreSQL's
   `public` segment included (`context_cache.go:253-261`).
+- [ ] A no-op write invalidates no view pattern on every target
+  (`edge.noop-skips-view-invalidation`), the MySQL pre-read paths included.
 - [ ] Move each row's citation and widen it to `all`. Fill the `cache-keys` matrix cells the
   design §6.3 names.
 

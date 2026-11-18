@@ -273,6 +273,13 @@ whichever dialect is running. No source is copied.
     **Absorbed** by a hand-written `models/conformance.go` per dialect that declares
     `type Timestamp = …` and `func Now() Timestamp`. The suite names only `models.Timestamp`.
 
+**Variant modules.** A variant suite enables features the core schema leaves off (§4.1). It uses
+the same layout beside the core modules. The Features suite (`docs/design/CONFORMANCE_VARIANTS.md`)
+is the shared module `features_suite/` plus one module per target (`features_postgres`,
+`features_postgres_stdlib`, `features_mysql`, `features_sqlite`), each declaring
+`…/conformance/features/models`. Its `Run` wraps its tree in `t.Run("Features", …)`, so every
+Features subtest path starts with the `Features` root segment.
+
 ### 4.3 Harness
 
 ```go
@@ -496,6 +503,9 @@ name containing `/` is nested, as `go test` reports it. Any other name (`fmt.Spr
 computed: a unit test itself can still be claimed, but a path below it fails with a message
 saying the names are computed. In the suite, a computed name fails outright, because every
 suite subtest must be claimable.
+
+A `conformance:` citation whose first segment names a suite (`Features`) is checked against that
+suite's tree and joined only with its targets.
 
 ### 5.4 Coverage ratchet
 
@@ -2331,8 +2341,7 @@ database versions it ran against.
 
 ## 8. Follow-ons (not part of this design)
 
-- **Variant suites:** tenancy (§29) and cache (§27) suites on the §4 plumbing, each with its own
-  schema and harness, registered in `client.md`.
+- **Variant suite:** Features (tenancy, cache, events), `docs/design/CONFORMANCE_VARIANTS.md`.
 - **The schema fuzzer** (`SCHEMAFUZZ.md`, design-frozen 2026-05-15, never scheduled). Its
   metamorphic invariants (`Count == len(GetMany)`, `Insert → Get` round-trip) run over random
   schemas. The matrices test specific behaviors on known inputs, and the fuzzer tests general
