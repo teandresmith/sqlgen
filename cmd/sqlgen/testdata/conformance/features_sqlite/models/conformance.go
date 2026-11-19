@@ -4,6 +4,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/types"
 )
 
@@ -21,3 +22,7 @@ type Tenant = uuid.UUID
 
 // NewTenant returns a fresh tenant.
 func NewTenant() Tenant { return uuid.New() }
+
+// TenantEq is the filter on a tenant column outside the primary key that
+// selects tenant: a uuid.UUID tenant filters through comparator.ID.
+func TenantEq(tenant Tenant) *comparator.ID { return &comparator.ID{Eq: new(tenant.String())} }

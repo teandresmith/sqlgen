@@ -3,6 +3,8 @@ package models
 import (
 	"time"
 	"uuid"
+
+	"github.com/teandresmith/sqlgen/comparator"
 )
 
 // Timestamp is the Go type this dialect generates for a timestamp column.
@@ -19,3 +21,7 @@ type Tenant = uuid.UUID
 
 // NewTenant returns a fresh tenant.
 func NewTenant() Tenant { return uuid.New() }
+
+// TenantEq is the filter on a tenant column outside the primary key that
+// selects tenant: a uuid.UUID tenant filters through comparator.ID.
+func TenantEq(tenant Tenant) *comparator.ID { return &comparator.ID{Eq: new(tenant.String())} }

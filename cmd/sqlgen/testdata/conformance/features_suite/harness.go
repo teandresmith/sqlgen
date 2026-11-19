@@ -205,6 +205,7 @@ func Run(t *testing.T, h *Harness) {
 	checkWiring(t, h)
 	t.Run("Features", func(t *testing.T) {
 		t.Run("Events", func(t *testing.T) { events(t, h) })
+		t.Run("Tenancy", func(t *testing.T) { tenancy(t, h) })
 	})
 }
 

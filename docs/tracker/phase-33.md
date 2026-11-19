@@ -451,19 +451,19 @@ Completed 2026-11-19 on `feat/conformance-variants`.
 
 **PRD Reference:** Sections 9.9, 29.6, 29.7, 29.9
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `Features/Tenancy/<Method>` stamp cases for each §29.6 row: row-derived, from the PK,
+- [x] `Features/Tenancy/<Method>` stamp cases for each §29.6 row: row-derived, from the PK,
   `SkipTenancy`, `required: false` with a zero tenant, an unmatched key, `%v` formatting.
-- [ ] Tenant-in-PK cases: a matching PK tenant proceeds; `SkipTenancy` uses the caller's
+- [x] Tenant-in-PK cases: a matching PK tenant proceeds; `SkipTenancy` uses the caller's
   `pk.Tenant`; `MutationContext.AffectedPKs` holds full PK values, tenant included.
-- [ ] Nested cases on the tenanted O2M child and the tenant junction: unlink with a mismatched
+- [x] Nested cases on the tenanted O2M child and the tenant junction: unlink with a mismatched
   parent tenant; an M2M create whose target differs on a shared junction column.
-- [ ] Filtering on the tenant column with the target's tenant Go type compiles and selects the
+- [x] Filtering on the tenant column with the target's tenant Go type compiles and selects the
   caller's rows on every target (`gen.tenancy.filter-comparator-follows-type`).
-- [ ] Move each row's citation and widen it to `all`.
+- [x] Move each row's citation and widen it to `all`.
 
 ### Acceptance Criteria
 
@@ -472,17 +472,87 @@ Completed 2026-11-19 on `feat/conformance-variants`.
 
 ### Tests Required
 
-- [ ] `conformance: Features/Tenancy/<Method>/each event is stamped with its row's tenant`, per
+- [x] `conformance: Features/Tenancy/<Method>/each event is stamped with its row's tenant`, per
   §29.6 row, on all four targets: fails before, passes after.
-- [ ] `conformance: Features/Tenancy/<Method>/a matching PK tenant proceeds` and its `SkipTenancy`
+- [x] `conformance: Features/Tenancy/<Method>/a matching PK tenant proceeds` and its `SkipTenancy`
   and `AffectedPKs` siblings (§29.7, §29.9), on all four targets: fail before, pass after.
-- [ ] `conformance: Features/Tenancy/UpdateWithRelated/<case>` for the two §9.9 rows, on all four
+- [x] `conformance: Features/Tenancy/UpdateWithRelated/<case>` for the two §9.9 rows, on all four
   targets: fails before, passes after.
-- [ ] 33.1's report-delta check: no row leaves `pass`.
+- [x] 33.1's report-delta check: no row leaves `pass`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-19 on `feat/conformance-variants`.
+
+- **Files:** `cmd/sqlgen/testdata/conformance/features_suite/{tenancy.go,harness.go}`;
+  `features_{postgres,postgres_stdlib,mysql,sqlite}/models/conformance.go` (`TenantEq`);
+  `docs/conformance/{client.md,runtime/events.md,cli/gen.md}`, `docs/conformance/REPORT.md`
+  (regenerated); `docs/design/CONFORMANCE_VARIANTS.md` §6.1 (`events.tenant-stamp`,
+  `tenancy.pk-carriers`, `tenancy.nested` now `passing`).
+- **Tree (`Features/Tenancy/…`, 45 leaves):** for each of the 16 §28.4 methods on `notes` and
+  `tasks`, `each event is stamped with its row's tenant`. It runs the write twice: under the
+  resolved tenant, then under `SkipTenancy` over rows of two other tenants, with the resolver still
+  answering the first. Each event's `Metadata["tenant"]` must equal its own row's tenant formatted
+  with `%v`. On `memberships` (tenant in the PK), `Get`, `Update`, `HardDelete`, `Increment` and
+  `Exists` each have `a matching PK tenant proceeds` and `SkipTenancy uses the caller's PK tenant`.
+  The latter runs under another tenant's context and requires zero resolver calls. Ten writes
+  have `AffectedPKs hold the full PK, tenant included`: `Create`, `CreateMany`, `Update`,
+  `UpdateMany`, `UpdateWhere`, `Upsert`, `Increment`, `HardDelete`, `HardDeleteMany` and
+  `HardDeleteWhere`. Three more leaves: `a tenant-in-PK event is stamped from its PK` (ten
+  `memberships` writes), `a required-false write under the zero tenant stamps its row's tenant`
+  (`bulletins`, seven writes) and `a listed key that matched no row publishes no event` (six
+  `*Many` writes on notes, tasks and memberships). Nested: `UpdateWithRelated/` holds `an unlink
+  under a parent of another tenant is ErrAlreadyRelated` (O2M and M2M disconnect, a disconnect
+  naming no row, and clear), `an unlink on the parent's tenant writes` (resolved, `SkipTenancy`,
+  explicit tenant), `a disconnect miss on the parent's tenant is a no-op` and `an M2M create
+  whose target differs on a shared junction column is ErrAlreadyRelated`. `UpsertWithRelated/`
+  holds `an unlink under a parent of another tenant rolls back the insert`. `GetMany/a filter on
+  the tenant column selects that tenant's rows` filters through `models.TenantEq`.
+- **Seeding:** the nested cases seed through the client, not raw SQL. `templates` is untenanted,
+  so a template owned by one tenant takes its note, tag and link from that tenant's resolver.
+  This keeps the tests free of per-dialect placeholders.
+- **`TenantEq`:** each target's handwritten `models/conformance.go` declares the comparator the
+  tenant column outside the PK filters through: `comparator.ID` for the `uuid.UUID` tenant on
+  PostgreSQL and SQLite, and `comparator.String` for MySQL's string tenant. The suite assigns it to
+  `NoteFilter.WorkspaceID`, so a generator that picked another comparator fails to compile.
+  Shown on MySQL by declaring it `*comparator.ID`: `cannot use models.TenantEq(theirs) (value of
+  type *comparator.ID) as *comparator.String value`.
+- **Registry:** 13 rows gain their Features citations ahead of the example citations, which stay
+  until 33.8: the seven `tenant-event.*` §29.6 rows, `tenancy-pk.match-proceeds`,
+  `tenancy-pk.skip-tenancy`, `tenancy-hooks.affected-pks-tenant` (these three widened from
+  `sqlite` to `all`), `nested.unlink-tenant-mismatch`, `nested.m2m-create-shared-column-mismatch`
+  and `gen.tenancy.filter-comparator-follows-type`. Each shows `pass` on the four Features
+  targets. No `client-methods × composite-pk` cell is set: the core `*.composite-pk` rows already
+  claim them (design §6.1 updated).
+- **Fail first (generated-code mutations, restored with `git checkout`):** all on
+  `features_sqlite` except the last. Stamping from `mc.Tenant` failed the 16 stamp leaves and the
+  required-false and listed-key leaves. Formatting with `%q` failed those plus the PK-stamp leaf.
+  Stamping `memberships` from `Member` failed the PK-stamp and listed-key leaves. Counting an
+  unmatched `UpdateMany` item as written failed only the listed-key leaf. Inverting the
+  `memberships` verify-match failed the five match leaves, and further leaves whose paths call
+  those methods. Ignoring `SkipTenancy` in those five methods failed the five `SkipTenancy` leaves
+  and the PK-stamp leaf (its writes run under `SkipTenancy`). Zeroing the tenant in `memberships`
+  `AffectedPKs` failed the ten `AffectedPKs` leaves and the two PK-stamp readers. Turning off the
+  shared-parent unlink comparison failed the two mismatch leaves (`UpdateWithRelated`,
+  `UpsertWithRelated`). Making it refuse agreeing tenants failed the `writes` and `no-op` leaves.
+  Turning off the created-row comparison failed only the M2M create leaf. Dropping `NoteFilter`'s
+  tenant condition failed only the filter leaf. On `features_mysql`, a wrong pre-read tenant in
+  `notes` and `tasks` `captureAffectedTenants` failed the ten stamp leaves whose writes use it and
+  the listed-key leaf.
+- **Findings:** none. Every case passed on all four targets at first run.
+- **Runs:** each Features target passes under `-race` (SQLite 3.51.3, PostgreSQL 16.16 pgx and
+  stdlib, MySQL 8.0.46). `make lint-conformance` 0 issues. `make req-check` ok (6342
+  requirements). `make conformance`: 6257 pass, 0 fail, 0 skip, 0 not run, 85 untested.
+  `make report-delta` against HEAD and against `a46e9e95`: 0 rows changed, none left `pass`.
+- **Tests:** `make check` green. No path in the diff is on the `check-examples` trigger list;
+  `make conformance` ran every example anyway, all passing.
+- **Auto-review:** 0 high-confidence issues; the ports keep every check of the example tests
+  they replace. Its own fail-first check (both shared-parent unlink comparisons off) failed only
+  the two mismatch leaves. Fixed inline: STATUS said four nested cases (five), and
+  `tenant-event.stamp-percent-v` now also cites the listed-key leaf, which the `%q` mutation
+  fails. The `Increment` leaves now seed 2 seats and expect 5, so a write that set the column
+  would fail. Kept: the six unlink-mismatch cases run in one leaf's loop, not as subtests, so the
+  registry cites one leaf; the first failing case stops the leaf.
 
 ## 33.6 Cache — invalidation and event-driven receive
 

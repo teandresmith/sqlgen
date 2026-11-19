@@ -647,7 +647,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| gen.tenancy.filter-comparator-follows-type | The tenant column's filter comparator follows the resolved tenant Go type, not the SQL type: a `uuid.UUID` tenant filters through `comparator.ID` | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter`; `example: tenancy: TestIsolation_FilterOnTenantColumn` | all |  |
+| gen.tenancy.filter-comparator-follows-type | The tenant column's filter comparator follows the resolved tenant Go type, not the SQL type: a `uuid.UUID` tenant filters through `comparator.ID` | `conformance: Features/Tenancy/GetMany/a filter on the tenant column selects that tenant's rows`; `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter`; `example: tenancy: TestIsolation_FilterOnTenantColumn` | all |  |
 | artifacts.model-struct.tenanted | `tenancy.type` resolves the tenant column itself, so the row struct spells the tenant column in the resolved tenant type | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantColumn` | all | generated-artifacts: model-struct × tenanted |
 | artifacts.filter-struct.tenanted | The filter spells the tenant column through the same resolution as the row struct, CreateInput and PK struct | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter` | all | generated-artifacts: filter-struct × tenanted |
 
