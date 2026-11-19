@@ -203,6 +203,12 @@ func TestConformance(t *testing.T) {
 // featuresRepo is reportRepo with a Features suite, one Features target and a row citing it.
 func featuresRepo(t *testing.T) string {
 	t.Helper()
+	return writeRepo(t, featuresFiles(t))
+}
+
+// featuresFiles are featuresRepo's files.
+func featuresFiles(t *testing.T) map[string]string {
+	t.Helper()
 	f := reportFiles(t)
 	edit(f, "docs/conformance/client.md", "| mysql | |\n",
 		"| mysql | |\n| features.publish | A create publishes one event | `conformance: Features/Events/publishes one event` | all | |\n")
@@ -210,7 +216,7 @@ func featuresRepo(t *testing.T) string {
 	f[reqcheck.FeaturesSuiteDir+"/run.go"] = reportFeaturesSuite
 	f[featSqliteDir+"/go.mod"] = "module features_sqlite\n"
 	f[featSqliteDir+"/conformance_test.go"] = featuresDialectTest
-	return writeRepo(t, f)
+	return f
 }
 
 // event is one go test -json line; dir is the package's repository directory.
@@ -488,6 +494,19 @@ func TestBuildReportTargets(t *testing.T) {
 		_, err := reqcheck.BuildReport(writeRepo(t, f), results(t))
 		if err == nil || !strings.Contains(err.Error(), pgDir+": its tests import no conformance suite") {
 			t.Errorf("BuildReport() error = %v, want one naming %s and the missing suite import", err, pgDir)
+		}
+	})
+
+	t.Run("a module that imports two suites is an error", func(t *testing.T) {
+		f := featuresFiles(t)
+		core := "\t\"" + reqcheck.RepoModule + "/" + reqcheck.ConformanceSuiteDir + "\"\n"
+		edit(f, featSqliteDir+"/conformance_test.go", "\"testing\"\n", "\"testing\"\n\n"+core)
+		_, err := reqcheck.BuildReport(writeRepo(t, f), results(t))
+		want := []string{featSqliteDir + ": its tests import more than one conformance suite", reqcheck.ConformanceSuiteDir, reqcheck.FeaturesSuiteDir}
+		for _, w := range want {
+			if err == nil || !strings.Contains(err.Error(), w) {
+				t.Errorf("BuildReport() error = %v, want one containing %q", err, w)
+			}
 		}
 	})
 

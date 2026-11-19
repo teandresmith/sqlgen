@@ -5,9 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"uuid"
 
 	"github.com/teandresmith/sqlgen/database"
+	"github.com/teandresmith/sqlgen/event"
 	"github.com/teandresmith/sqlgen/hook"
+	"github.com/teandresmith/sqlgen/tenancy"
 )
 
 // ClientOption configures the unified Client during construction.
@@ -15,10 +18,14 @@ type ClientOption func(*clientOptions)
 
 // clientOptions holds configuration set via ClientOption functions.
 type clientOptions struct {
-	callbackMode  database.CallbackMode
-	panicHandler  func(ctx context.Context, r any, table hook.TableName, op string) error
-	mutationHooks []hook.MutationHook
-	queryHooks    []hook.QueryHook
+	callbackMode   database.CallbackMode
+	panicHandler   func(ctx context.Context, r any, table hook.TableName, op string) error
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	eventPublisher event.Publisher
+	eventConfig    event.Config
+	cache          *Cache
+	tenantResolver tenancy.TenantResolver[uuid.UUID]
 }
 
 // WithCallbackMode sets the callback execution mode for transactions.
@@ -54,13 +61,43 @@ func WithQueryHook(h hook.QueryHook) ClientOption {
 	}
 }
 
+// WithCache wires a *Cache into the client — shorthand for registering both
+// its QueryHook and MutationHook. Cache is the outermost hook in the chain so
+// hits short-circuit before any user hook or event hook runs.
+func WithCache(c *Cache) ClientOption {
+	return func(o *clientOptions) {
+		o.cache = c
+	}
+}
+
+// WithTenantResolver wires the request-scoped tenant resolver into the client.
+// All generated reads and mutations on tenanted tables call this resolver at
+// method entry and apply the resolved tenant as a WHERE filter / INSERT value.
+func WithTenantResolver(r tenancy.TenantResolver[uuid.UUID]) ClientOption {
+	return func(o *clientOptions) {
+		o.tenantResolver = r
+	}
+}
+
 // Client is the unified entry point for all database operations.
 // All entity clients share the same querier and configuration.
 // The Client is safe for concurrent use after construction.
 type Client struct {
-	querier database.Querier
-	opts    clientOptions
-	note    *noteClient
+	querier      database.Querier
+	opts         clientOptions
+	activeTask   *activeTaskClient
+	board        *boardClient
+	boardTag     *boardTagClient
+	bulletin     *bulletinClient
+	card         *cardClient
+	membership   *membershipClient
+	note         *noteClient
+	region       *regionClient
+	tag          *tagClient
+	task         *taskClient
+	template     *templateClient
+	templateNote *templateNoteClient
+	templateTag  *templateTagClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -73,21 +110,161 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		o(&options)
 	}
 
-	c := &Client{
-		querier: querier,
-		opts:    options,
-		note:    newNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+	// Prepend event hooks as outermost hooks (before user hooks)
+	if options.eventPublisher != nil {
+		eventHooks := buildEventHooks(options.eventPublisher, options.eventConfig)
+		options.mutationHooks = append(eventHooks, options.mutationHooks...)
 	}
+
+	// Prepend cache hooks as the outermost hooks so a hit short-circuits before
+	// any event or user hook runs.
+	if options.cache != nil {
+		options.mutationHooks = append([]hook.MutationHook{options.cache.MutationHook()}, options.mutationHooks...)
+		options.queryHooks = append([]hook.QueryHook{options.cache.QueryHook()}, options.queryHooks...)
+	}
+
+	c := &Client{
+		querier:      querier,
+		opts:         options,
+		activeTask:   newActiveTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		board:        newBoardClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		boardTag:     newBoardTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		bulletin:     newBulletinClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		card:         newCardClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		membership:   newMembershipClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		note:         newNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		region:       newRegionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		tag:          newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		task:         newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		template:     newTemplateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateNote: newTemplateNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateTag:  newTemplateTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+	}
+
+	// Thread the tenant resolver into every entity client that needs one. That
+	// is a UNION of four conditions, not just "detected as tenanted"
+	// (TableContext.NeedsTenantResolver, resolved in finalizeTenancyWiring):
+	// the entity is itself tenanted; it has a tenanted O2O child whose filter
+	// the parent appends at GetMany time; one of its relationship filters can
+	// reach a tenanted target, so compiling it into an EXISTS needs the
+	// target's tenant predicate inside the subquery; or it carries a
+	// nested-mutation edge writing through a tenanted client, and hoists that
+	// write's single resolve.
+	//
+	// So a client for a NON-tenanted table can legitimately carry a
+	// tenantResolver — the field on the entity client is gated on the same
+	// union, so field and assignment cannot disagree. Carrying
+	// it does not scope that table's own reads: the outer-query tenant filter
+	// is emitted only under `and .Tenancy .Tenancy.Tenanted`.
+	//
+	// Nor does carrying it make such a client fail closed. filterOptions
+	// resolves only when the filter it was handed actually sets a relationship
+	// member, so a shared table stays readable before any tenant is selected
+	// even against a resolver that reports a missing tenant as an error.
+	// Past that gate, resolveTenant is emitted in its required:false form, so
+	// a zero resolver return leaves the subquery unscoped rather than
+	// erroring — a resolver error still propagates.
+	c.activeTask.tenantResolver = options.tenantResolver
+	c.board.tenantResolver = options.tenantResolver
+	c.boardTag.tenantResolver = options.tenantResolver
+	c.bulletin.tenantResolver = options.tenantResolver
+	c.card.tenantResolver = options.tenantResolver
+	c.membership.tenantResolver = options.tenantResolver
+	c.note.tenantResolver = options.tenantResolver
+	c.tag.tenantResolver = options.tenantResolver
+	c.task.tenantResolver = options.tenantResolver
+	c.template.tenantResolver = options.tenantResolver
+	c.templateNote.tenantResolver = options.tenantResolver
+	c.templateTag.tenantResolver = options.tenantResolver
+
+	// Push the configured CallbackMode down to every entity client that can
+	// carry a nested-mutation surface: the nested methods open the transaction
+	// the whole nested write runs in and pass this mode to it, so
+	// deferred events and cache invalidation flush the way the client was
+	// configured rather than on NewTransaction's default.
+	c.board.callbackMode = options.callbackMode
+	c.tag.callbackMode = options.callbackMode
+	c.template.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
+	c.board.cardClient = c.card
+	c.board.tagClient = c.tag
+	c.board.boardTagClient = c.boardTag
+	c.tag.boardClient = c.board
+	c.tag.templateClient = c.template
+	c.tag.boardTagClient = c.boardTag
+	c.tag.templateTagClient = c.templateTag
+	c.template.templateNoteClient = c.templateNote
+	c.template.tagClient = c.tag
+	c.template.templateTagClient = c.templateTag
 
 	return c
+}
+
+// ActiveTask returns the ActiveTaskClient for ActiveTask operations.
+func (c *Client) ActiveTask() ActiveTaskClient {
+	return c.activeTask
+}
+
+// Boards returns the BoardClient for Board operations.
+func (c *Client) Boards() BoardClient {
+	return c.board
+}
+
+// BoardTags returns the BoardTagClient for BoardTag operations.
+func (c *Client) BoardTags() BoardTagClient {
+	return c.boardTag
+}
+
+// Bulletins returns the BulletinClient for Bulletin operations.
+func (c *Client) Bulletins() BulletinClient {
+	return c.bulletin
+}
+
+// Cards returns the CardClient for Card operations.
+func (c *Client) Cards() CardClient {
+	return c.card
+}
+
+// Memberships returns the MembershipClient for Membership operations.
+func (c *Client) Memberships() MembershipClient {
+	return c.membership
 }
 
 // Notes returns the NoteClient for Note operations.
 func (c *Client) Notes() NoteClient {
 	return c.note
+}
+
+// Regions returns the RegionClient for Region operations.
+func (c *Client) Regions() RegionClient {
+	return c.region
+}
+
+// Tags returns the TagClient for Tag operations.
+func (c *Client) Tags() TagClient {
+	return c.tag
+}
+
+// Tasks returns the TaskClient for Task operations.
+func (c *Client) Tasks() TaskClient {
+	return c.task
+}
+
+// Templates returns the TemplateClient for Template operations.
+func (c *Client) Templates() TemplateClient {
+	return c.template
+}
+
+// TemplateNotes returns the TemplateNoteClient for TemplateNote operations.
+func (c *Client) TemplateNotes() TemplateNoteClient {
+	return c.templateNote
+}
+
+// TemplateTags returns the TemplateTagClient for TemplateTag operations.
+func (c *Client) TemplateTags() TemplateTagClient {
+	return c.templateTag
 }
 
 // Begin starts a new transaction with the given name.
@@ -153,6 +330,7 @@ func (c *Client) Querier(ctx context.Context) database.Querier {
 	return database.Conn(ctx, c.querier)
 }
 
+// sqlgen: raw query bypasses tenancy
 // Raw executes a raw query and passes the result set to fn. The rows are
 // closed when fn returns, so fn must finish reading them before it does.
 // Raw does not wrap an error returned by fn, though a global hook may.
@@ -180,6 +358,7 @@ func (c *Client) Raw(ctx context.Context, rawSQL string, args []any, fn func(dat
 	return err
 }
 
+// sqlgen: raw query bypasses tenancy
 // RawExec executes a raw statement and returns the result.
 // Global hooks (tracing, auth) are applied; entity-specific hooks are not.
 // Panic recovery always wraps the call.
@@ -214,12 +393,22 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // Close closes all closeable dependencies held by the client.
+// Besides the querier, it closes the cache and the event publisher, when
+// configured.
 // If a dependency does not implement io.Closer, it is silently skipped.
 // All close errors are collected and returned as a joined error.
 func (c *Client) Close() error {
 	var errs []error
 	if closer, ok := c.querier.(io.Closer); ok {
 		errs = append(errs, closer.Close())
+	}
+	if c.opts.cache != nil {
+		errs = append(errs, c.opts.cache.Close())
+	}
+	if c.opts.eventPublisher != nil {
+		if closer, ok := c.opts.eventPublisher.(io.Closer); ok {
+			errs = append(errs, closer.Close())
+		}
 	}
 	return errors.Join(errs...)
 }

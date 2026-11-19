@@ -262,27 +262,27 @@ Completed 2026-11-18 on `feat/conformance-variants`.
 
 **PRD Reference:** Sections 27, 28, 29 (configuration under test); `CONFORMANCE.md` §4
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `features_suite/`: `Run(t, *Harness)` wrapping `t.Run("Features", …)`; a harness with
+- [x] `features_suite/`: `Run(t, *Harness)` wrapping `t.Run("Features", …)`; a harness with
   `Client`, `Querier`, `Caps`, `Reset`, a `memorybus`, a memory cache and a counting
   `TenantResolver`, and constructors for a client with or without cache and publisher.
-- [ ] Features schema in each dialect's DDL, one table per carrier shape (design §5.1):
+- [x] Features schema in each dialect's DDL, one table per carrier shape (design §5.1):
   - tenant outside the PK on a database-generated key
   - tenant inside a composite PK
   - a tenanted soft delete
   - a tenanted O2M child and a tenant junction
   - an untenanted cached table
   - a cached view
-- [ ] `sqlgen.yml` per target with `events`, `cache` and `tenancy` enabled. Generate and commit
+- [x] `sqlgen.yml` per target with `events`, `cache` and `tenancy` enabled. Generate and commit
   `models/` declaring `…/conformance/features/models`. Generation on all four targets is the
   probe design §7 did not run: a failure is a finding.
-- [ ] `features_postgres`, `features_postgres_stdlib`, `features_mysql`, `features_sqlite`: a
+- [x] `features_postgres`, `features_postgres_stdlib`, `features_mysql`, `features_sqlite`: a
   `TestConformance` per target (containers as the core targets), capabilities set per target.
-- [ ] Replace 33.2's stub.
-- [ ] `reqcheck` `readTarget`: a module whose tests import more than one conformance suite fails
+- [x] Replace 33.2's stub.
+- [x] `reqcheck` `readTarget`: a module whose tests import more than one conformance suite fails
   the report, naming the module and the suites, as importing none does (user ruling,
   2026-11-18; today the last import wins).
 
@@ -293,15 +293,77 @@ Completed 2026-11-18 on `feat/conformance-variants`.
 
 ### Tests Required
 
-- [ ] A stale Features `models/` fails `make conformance-fresh` (shown once by editing a
+- [x] A stale Features `models/` fails `make conformance-fresh` (shown once by editing a
   generated file), and the fresh tree passes.
-- [ ] `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportTargets/a module that imports two suites
+- [x] `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportTargets/a module that imports two suites
   is an error` fails before the change (the last import wins), passes after.
-- [ ] 33.1's report-delta check: no row leaves `pass`.
+- [x] 33.1's report-delta check: no row leaves `pass`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-18 on `feat/conformance-variants`.
+
+- **Files:** `cmd/sqlgen/testdata/conformance/features_suite/{harness.go,querier.go,go.mod,go.sum}`;
+  `features_{postgres,postgres_stdlib,mysql,sqlite}/` (`conformance_test.go`, `go.mod`, `go.sum`,
+  `sqlgen.yml`, committed `models/` with a handwritten `conformance.go`; `schema.sql` and
+  `views/active_tasks.sql` except in `features_postgres_stdlib`, which reads the pgx module's);
+  `cmd/sqlgen/internal/reqcheck/{report.go,report_test.go}`; `docs/conformance/REPORT.md`
+  (regenerated); `docs/design/CONFORMANCE_VARIANTS.md` §6.1.
+- **Schema:** `notes` (tenant outside the PK, generated key, a unique `(workspace_id, slug)` for
+  Upsert's update branch and a `views` counter for `Increment`), `memberships` (tenant inside a
+  composite PK, a `seats` counter for `Increment`), `tasks` (tenanted soft delete), `boards` with an O2M child `cards` and a tenant
+  junction `board_tags` through `tags` (composite tenant FKs into the tenanted parent), the
+  shared parent `templates` with an O2M child `template_notes` and a junction `template_tags`
+  (children take `workspace_id` from the untenanted `owner_workspace`, as in `tenancy_postgres`),
+  `bulletins` (`tenancy.required: false`), `regions` (untenanted) and the cached, tenanted view
+  `active_tasks` (`invalidate_on: [tasks]`). 12 tables, 1 view.
+- **Tenant type (user rulings, 2026-11-18):** `uuid.UUID` on PostgreSQL (`UUID`) and SQLite
+  (`BLOB` overridden), a `CHAR(36)` string on MySQL, where a `uuid.UUID` tenant type fails the
+  PRD §29.2.4 SQL-type check (all 10 tenanted tables and the view refused, measured).
+  `models/conformance.go` aliases it per dialect as `models.Tenant` with `NewTenant()`, as the
+  core models alias the soft-delete type. The tenant column's filter comparator follows the type
+  (`comparator.ID`, or `comparator.String` for MySQL's tenant outside the primary key), so a suite test that
+  filters on it directly needs a per-dialect alias too; that is 33.5's
+  `gen.tenancy.filter-comparator-follows-type`. The rest of the generated API (`go doc -all`, 3474
+  lines) matches across the four targets apart from the PostgreSQL `Table*` values, the aliased
+  timestamp and soft-delete types, and SQLite's `TemplateFilter.OwnerWorkspace` comparator
+  (backlog).
+- **Generation probe:** all four targets generate with events, cache, tenancy and nested
+  mutations on. Finding: none for the generator; the MySQL type check above is PRD behavior.
+  Adjacent: SQLite gives the overridden `owner_workspace` a `*comparator.String` filter
+  (backlog, 2026-11-18).
+- **Harness:** `Harness{Dialect, Driver, Database, Querier, Base, Caps, Reset}` with
+  `Require`/`Lacks` on `RowLocks` and `CaseInsensitiveText`. `NewEnv(t, WithCache(),
+  WithPublisher())` builds a client on `Base` with a fresh `CountingResolver` (the tenant comes
+  from `WithTenant(ctx, …)`), a memory-backed `Cache` and a `memorybus`; `Client(t)` is the plain
+  one. `CountingQuerier` is a copy of the core suite's: importing the core suite would give each
+  Features target two suite imports, which the report rejects. `Run` checks the wiring first
+  (every table and the view count zero for one tenant after `Reset`) and then runs an empty
+  `Features` tree. The postgres pgx target routes through a batching querier, as the core one
+  does. The MySQL target splits its DDL on `;`, so no comment in it may contain one.
+- **Dependencies:** each target's `go.mod` is seeded from its core counterpart before `go mod
+  tidy`, so indirect versions match the core modules (an unseeded tidy picked newer `genproto`).
+- **Two-suite import:** `TestBuildReportTargets/a module that imports two suites is an error`
+  failed first (nil error, the last import won), then passed. `readTarget` collects the distinct
+  suites a module's tests import and fails on zero or more than one.
+- **Fresh gate:** appending a line to `features_mysql/models/client_gen.go` failed `make
+  conformance-fresh` (`models/ is stale`); restored, it passes.
+- **Runs:** `make lint-conformance` 0 issues on all ten modules. Each Features target passes
+  under `-race` (SQLite 3.51.3, PostgreSQL 16.16 twice, MySQL 8.0.46). `make conformance`: 6257
+  pass, 0 fail, 0 skip, 0 not run, 85 untested, the four Features targets listed with their
+  versions. `make report-delta` against `a46e9e95` and against HEAD: 0 rows changed.
+- **Tests:** `make check` green. No path in the diff is on the `check-examples` trigger list;
+  `make conformance` ran every example and conformance module anyway, all passing.
+- **Auto-review:** fail-first on the two-suite error confirmed. It found four carrier shapes
+  33.4–33.5 would need (counter, natural unique key, shared-parent nested tables, a
+  `required: false` table), added here by user ruling so `models/` regenerate once. Fixed
+  inline: the `Run` comment, this record's FK wording, and the two-suite test now asserts both
+  suite directories. `cache.invalidate.mutations-by-key` stays on the `cache` example (ruling;
+  design §3.2 and 33.6 updated).
+- **Verify:** fail-first on the two-suite error confirmed again. It found `memberships` had no
+  counter, so the `Increment` halves of `tenancy-pk.match-proceeds` and `.skip-tenancy` had no
+  carrier: `seats` added and `models/` regenerated. Fixed inline: the tenanted-table count, the
+  comparator and API-parity wording here, design §3.2's count (48) and §5.1's shape list.
 
 ## 33.4 Events — per operation and input
 
@@ -397,6 +459,8 @@ _Filled in when complete: files changed, commit references, notes._
 ### Acceptance Criteria
 
 - Every cache carrier-dependent row (design §3.2) passes on all four targets.
+  `cache.invalidate.mutations-by-key` is not among them: it stays on the `cache` example (user
+  ruling, 2026-11-18).
 
 ### Tests Required
 

@@ -195,7 +195,7 @@ func loadTargets(root string, results *Results) ([]Target, error) {
 // they set on the harness.
 func readTarget(root, dir string) (Target, error) {
 	t := Target{Dir: dir}
-	imported := false
+	var imported []Suite
 	files, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(dir), "*_test.go"))
 	if err != nil {
 		return t, fmt.Errorf("listing %s tests: %w", dir, err)
@@ -206,36 +206,20 @@ func readTarget(root, dir string) (Target, error) {
 		if err != nil {
 			return t, fmt.Errorf("parsing %s: %w", name, err)
 		}
-		for _, imp := range f.Imports {
-			p, _ := strconv.Unquote(imp.Path.Value)
-			for _, s := range Suites {
-				if p == RepoModule+"/"+s.Dir {
-					t.Suite, imported = s.Name, true
-				}
+		for _, s := range suiteImports(f) {
+			if !slices.Contains(imported, s) {
+				imported = append(imported, s)
 			}
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			kv, ok := n.(*ast.KeyValueExpr)
-			if !ok {
-				return true
-			}
-			key, ok := kv.Key.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			if v, ok := stringLit(kv.Value); ok {
-				switch key.Name {
-				case "Dialect":
-					t.Dialect = v
-				case "Driver":
-					t.Driver = v
-				}
-			}
-			return true
-		})
+		readHarnessLiterals(f, &t)
 	}
-	if !imported {
-		return t, fmt.Errorf("conformance module %s: its tests import no conformance suite (%s)", dir, suiteDirs())
+	switch len(imported) {
+	case 0:
+		return t, fmt.Errorf("conformance module %s: its tests import no conformance suite (%s)", dir, suiteDirs(Suites))
+	case 1:
+		t.Suite = imported[0].Name
+	default:
+		return t, fmt.Errorf("conformance module %s: its tests import more than one conformance suite (%s); a module runs one", dir, suiteDirs(imported))
 	}
 	if t.Dialect == "" || t.Driver == "" {
 		return t, fmt.Errorf("conformance module %s: its tests set no string-literal Dialect and Driver on the harness", dir)
@@ -243,9 +227,46 @@ func readTarget(root, dir string) (Target, error) {
 	return t, nil
 }
 
-func suiteDirs() string {
-	dirs := make([]string, len(Suites))
-	for i, s := range Suites {
+// readHarnessLiterals sets t's Dialect and Driver from the string-literal fields f sets.
+func readHarnessLiterals(f *ast.File, t *Target) {
+	ast.Inspect(f, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if v, ok := stringLit(kv.Value); ok {
+			switch key.Name {
+			case "Dialect":
+				t.Dialect = v
+			case "Driver":
+				t.Driver = v
+			}
+		}
+		return true
+	})
+}
+
+// suiteImports returns the conformance suites f imports.
+func suiteImports(f *ast.File) []Suite {
+	var out []Suite
+	for _, imp := range f.Imports {
+		p, _ := strconv.Unquote(imp.Path.Value)
+		for _, s := range Suites {
+			if p == RepoModule+"/"+s.Dir {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+func suiteDirs(suites []Suite) string {
+	dirs := make([]string, len(suites))
+	for i, s := range suites {
 		dirs[i] = s.Dir
 	}
 	return strings.Join(dirs, ", ")

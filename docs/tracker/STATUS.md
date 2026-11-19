@@ -39,9 +39,11 @@
 | 30 | Database Introspection — CLI Wiring & Introspector Parity | 13 | 13 | Complete (closed 2026-10-08; design docs `docs/design/INTROSPECTION.md` and `docs/design/CONFIG_ENV.md` SYNCED — superseded by PRD §4.1.1/§4.2/§4.3/§5.2/§6.1/§6.3/§30.7; 11 FIXes resolved at closure, 19 carried forward vetted ready) |
 | 31 | Introspection Examples — `source: database` and `both` End to End | 5 | 5 | Complete (closed 2026-10-12; design doc `docs/design/INTROSPECTION_EXAMPLES.md` SYNCED — superseded by PRD §8.1.7 and `guidelines/TESTING.md` §10) |
 | 32 | Composite Foreign-Key Relationships | 9 | 9 | Complete (closed 2026-11-17; design doc `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` SYNCED — superseded by PRD §4.6/§4.8/§4.13/§5.3/§8.2/§8.6/§9.9/§13.1/§13.4/§25.1/§29.10/§30/Appendix A; 10 FIXes originated in the phase and were resolved within it, none carried forward) |
-| 33 | Conformance Variant Suite and Core-Suite Ports | 9 | 3 | In Progress (33.0–33.2 complete 2026-11-18; broken down 2026-11-18; design doc `docs/design/CONFORMANCE_VARIANTS.md`, rulings Q1–Q4 in its §11) |
+| 33 | Conformance Variant Suite and Core-Suite Ports | 9 | 4 | In Progress (33.0–33.3 complete 2026-11-18; broken down 2026-11-18; design doc `docs/design/CONFORMANCE_VARIANTS.md`, rulings Q1–Q4 in its §11) |
 
 ## Current Focus
+
+**33.3 complete (2026-11-18):** the Features modules. `features_suite` has the harness (counting querier and tenant resolver, memory cache, memorybus, `NewEnv` with or without cache and publisher), and `features_{postgres,postgres_stdlib,mysql,sqlite}` generate one schema with events, cache and tenancy on (one table per carrier shape plus a cached view) and run an empty `Features` tree under `-race`. `make conformance-fresh` covers their `models/`. `reqcheck` now also rejects a module importing two suites. `make conformance`: 6257 pass, 85 untested, the four Features targets listed. **Next:** `/implement 33.4`.
 
 **33.2 complete (2026-11-18):** `reqcheck` knows a second suite. A `conformance: Features/…` citation is checked against `features_suite` and joined only with Features targets; the orphan check walks both trees. Targets record the suite their test imports, and the report lists `Features sqlite/stdlib` (a stub target, replaced by 33.3) after the core four. The Makefile and CI drop `features_suite` from the dialect modules. `make conformance`: 6257 pass, 85 untested, no row changed. The phase's report-delta base is now the 33.2 commit. **Next:** `/implement 33.3`.
 

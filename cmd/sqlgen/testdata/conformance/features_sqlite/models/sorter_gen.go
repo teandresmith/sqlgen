@@ -5,6 +5,126 @@ import (
 	"github.com/teandresmith/sqlgen/sql"
 )
 
+// BoardSorter provides type-safe sort helpers for the Board entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BoardSorter struct{}
+
+// NewBoardSorter returns a new BoardSorter.
+func NewBoardSorter() BoardSorter { return BoardSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s BoardSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s BoardSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s BoardSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// BoardTagSorter provides type-safe sort helpers for the BoardTag entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BoardTagSorter struct{}
+
+// NewBoardTagSorter returns a new BoardTagSorter.
+func NewBoardTagSorter() BoardTagSorter { return BoardTagSorter{} }
+
+// BoardID returns a sort for the board_id column in the given direction.
+func (s BoardTagSorter) BoardID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "board_id", Direction: direction}
+}
+
+// TagID returns a sort for the tag_id column in the given direction.
+func (s BoardTagSorter) TagID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "tag_id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s BoardTagSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// BulletinSorter provides type-safe sort helpers for the Bulletin entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BulletinSorter struct{}
+
+// NewBulletinSorter returns a new BulletinSorter.
+func NewBulletinSorter() BulletinSorter { return BulletinSorter{} }
+
+// Body returns a sort for the body column in the given direction.
+func (s BulletinSorter) Body(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "body", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s BulletinSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s BulletinSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// CardSorter provides type-safe sort helpers for the Card entity.
+// Each method returns a sql.Sort for the corresponding column.
+type CardSorter struct{}
+
+// NewCardSorter returns a new CardSorter.
+func NewCardSorter() CardSorter { return CardSorter{} }
+
+// BoardID returns a sort for the board_id column in the given direction.
+func (s CardSorter) BoardID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "board_id", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s CardSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Title returns a sort for the title column in the given direction.
+func (s CardSorter) Title(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "title", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s CardSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// MembershipSorter provides type-safe sort helpers for the Membership entity.
+// Each method returns a sql.Sort for the corresponding column.
+type MembershipSorter struct{}
+
+// NewMembershipSorter returns a new MembershipSorter.
+func NewMembershipSorter() MembershipSorter { return MembershipSorter{} }
+
+// Member returns a sort for the member column in the given direction.
+func (s MembershipSorter) Member(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "member", Direction: direction}
+}
+
+// Role returns a sort for the role column in the given direction.
+func (s MembershipSorter) Role(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "role", Direction: direction}
+}
+
+// Seats returns a sort for the seats column in the given direction.
+func (s MembershipSorter) Seats(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "seats", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s MembershipSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
 // NoteSorter provides type-safe sort helpers for the Note entity.
 // Each method returns a sql.Sort for the corresponding column.
 type NoteSorter struct{}
@@ -20,4 +140,156 @@ func (s NoteSorter) Body(direction sql.SortDirection) sql.Sort {
 // ID returns a sort for the id column in the given direction.
 func (s NoteSorter) ID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Slug returns a sort for the slug column in the given direction.
+func (s NoteSorter) Slug(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "slug", Direction: direction}
+}
+
+// Views returns a sort for the views column in the given direction.
+func (s NoteSorter) Views(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "views", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s NoteSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// RegionSorter provides type-safe sort helpers for the Region entity.
+// Each method returns a sql.Sort for the corresponding column.
+type RegionSorter struct{}
+
+// NewRegionSorter returns a new RegionSorter.
+func NewRegionSorter() RegionSorter { return RegionSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s RegionSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s RegionSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// TagSorter provides type-safe sort helpers for the Tag entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TagSorter struct{}
+
+// NewTagSorter returns a new TagSorter.
+func NewTagSorter() TagSorter { return TagSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s TagSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s TagSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TagSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// TaskSorter provides type-safe sort helpers for the Task entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TaskSorter struct{}
+
+// NewTaskSorter returns a new TaskSorter.
+func NewTaskSorter() TaskSorter { return TaskSorter{} }
+
+// DeletedAt returns a sort for the deleted_at column in the given direction.
+func (s TaskSorter) DeletedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "deleted_at", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s TaskSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Title returns a sort for the title column in the given direction.
+func (s TaskSorter) Title(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "title", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TaskSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// TemplateSorter provides type-safe sort helpers for the Template entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TemplateSorter struct{}
+
+// NewTemplateSorter returns a new TemplateSorter.
+func NewTemplateSorter() TemplateSorter { return TemplateSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s TemplateSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s TemplateSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// OwnerWorkspace returns a sort for the owner_workspace column in the given direction.
+func (s TemplateSorter) OwnerWorkspace(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "owner_workspace", Direction: direction}
+}
+
+// TemplateNoteSorter provides type-safe sort helpers for the TemplateNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TemplateNoteSorter struct{}
+
+// NewTemplateNoteSorter returns a new TemplateNoteSorter.
+func NewTemplateNoteSorter() TemplateNoteSorter { return TemplateNoteSorter{} }
+
+// Body returns a sort for the body column in the given direction.
+func (s TemplateNoteSorter) Body(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "body", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s TemplateNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// TemplateID returns a sort for the template_id column in the given direction.
+func (s TemplateNoteSorter) TemplateID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "template_id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TemplateNoteSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// TemplateTagSorter provides type-safe sort helpers for the TemplateTag entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TemplateTagSorter struct{}
+
+// NewTemplateTagSorter returns a new TemplateTagSorter.
+func NewTemplateTagSorter() TemplateTagSorter { return TemplateTagSorter{} }
+
+// TagID returns a sort for the tag_id column in the given direction.
+func (s TemplateTagSorter) TagID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "tag_id", Direction: direction}
+}
+
+// TemplateID returns a sort for the template_id column in the given direction.
+func (s TemplateTagSorter) TemplateID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "template_id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TemplateTagSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
 }

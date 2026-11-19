@@ -6,5 +6,17 @@ import (
 )
 
 const (
-	TableNotes hook.TableName = "notes"
+	TableBoardTags     hook.TableName = "board_tags"
+	TableBoards        hook.TableName = "boards"
+	TableBulletins     hook.TableName = "bulletins"
+	TableCards         hook.TableName = "cards"
+	TableMemberships   hook.TableName = "memberships"
+	TableNotes         hook.TableName = "notes"
+	TableRegions       hook.TableName = "regions"
+	TableTags          hook.TableName = "tags"
+	TableTasks         hook.TableName = "tasks"
+	TableTemplateNotes hook.TableName = "template_notes"
+	TableTemplateTags  hook.TableName = "template_tags"
+	TableTemplates     hook.TableName = "templates"
+	TableActiveTasks   hook.TableName = "active_tasks"
 )

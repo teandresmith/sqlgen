@@ -115,7 +115,7 @@ precise eviction for `UpdateMany`, `UpdateWhere` and `SoftDelete`, and per-row e
 MySQL. Nothing checks MySQL `Upsert`, `UpsertMany`, `Increment` or `Create` `LastInsertId` events,
 the `rowMatches` path, MySQL `HardDeleteWhere`, or any PostgreSQL event.
 
-### 3.2 Carrier-dependent rows (need every target): 49
+### 3.2 Carrier-dependent rows (need every target): 48
 
 Their outcome depends on the carriers of §3.1:
 
@@ -131,10 +131,11 @@ Their outcome depends on the carriers of §3.1:
 - **Tenant stamps** (§29.6): `tenant-event.every-tenanted-event`, `.stamp-row-derived`,
   `.stamp-from-pk`, `.skip-tenancy-stamped`, `.required-false-zero-stamped`,
   `.unmatched-key-no-event`, `.stamp-percent-v`.
-- **Cache invalidation** (§27.5, §27.7, §27.9, §29.5): `cache.invalidate.mutations-by-key`,
-  `cache.invalidate.many-and-where-by-key`, `cache.create.write-through`,
-  `cache.mutation.unbuildable-key-reported`, `cache-key.tenant-per-row-invalidation`;
-  `edge.noop-skips-view-invalidation` (`client.md`).
+- **Cache invalidation** (§27.5, §27.7, §27.9, §29.5): `cache.invalidate.many-and-where-by-key`,
+  `cache.create.write-through`, `cache.mutation.unbuildable-key-reported`, `cache-key.tenant-per-row-invalidation`;
+  `edge.noop-skips-view-invalidation` (`client.md`). `cache.invalidate.mutations-by-key` stays on
+  the `cache` example: it is stated for a package with no tenanted table, which the Features
+  package is not (user ruling, 2026-11-18).
 - **Event-driven invalidation** (§28.11, PostgreSQL key segment): `event.cache-receive.tenant-stamp-precise`,
   `.tenant-in-pk-precise`, `.tenant-less-fallback`.
 - **Tenant in the PK** (§29.7, §29.9): `tenancy-pk.match-proceeds`, `tenancy-pk.skip-tenancy`,
@@ -245,12 +246,20 @@ New top-level modules beside the core ones, so the existing one-level globs keep
 
 The Features schema has one table per carrier shape:
 
-- tenant outside the PK, database-generated key (`LastInsertId` on MySQL)
-- tenant inside a composite PK
+- tenant outside the PK, database-generated key (`LastInsertId` on MySQL), with a natural unique
+  key (Upsert's update branch) and a counter (`Increment`)
+- tenant inside a composite PK, with a counter (`Increment`)
 - tenanted soft delete
 - a tenanted O2M child and a tenant junction (nested tenancy rows)
-- an untenanted cached table (`mutations-by-key`)
+- a shared untenanted parent whose O2M child and junction take the tenant from it (nested
+  tenant-mismatch rows)
+- a tenanted table with `tenancy.required: false`
+- an untenanted cached table
 - one cached view (`event.cache-receive` view fallbacks)
+
+The tenant is `uuid.UUID` on PostgreSQL and SQLite and a `CHAR(36)` string on MySQL, where a
+`uuid.UUID` tenant type fails the PRD §29.2.4 SQL-type check. Each `models/conformance.go`
+aliases it as `models.Tenant` (ruled 2026-11-18).
 
 ### 5.2 `reqcheck`
 
@@ -302,7 +311,7 @@ PRD, since the PRD does not specify repository tooling.
 | tool.suite-citation | A `conformance: Features/…` citation resolves against the Features suite tree and is joined only with Features targets; a core citation never reaches a Features target | CONFORMANCE.md §5.3 (proposed in §8) | all | `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportJoin/a suite-rooted citation joins only that suite's targets` | — | passing |
 | tool.suite-orphans | An unclaimed leaf in the Features tree fails `req-check` as one in the core tree does | CONFORMANCE.md §5.3 | all | `unit: cmd/sqlgen/internal/reqcheck: TestCheck/an unclaimed Features subtest is an orphan` | — | passing |
 | tool.suite-targets | The report lists the four Features targets beside the four core ones, each with its database version | CONFORMANCE.md §5.5 | all | `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportTargets/variant modules are targets of their suite` | — | passing |
-| tool.features-fresh | A stale Features `models/` fails `make conformance-fresh` | CONFORMANCE.md §4.2 | all | `golden: conformance features_*` (the `sqlgen diff --quiet` gate) | — | planned |
+| tool.features-fresh | A stale Features `models/` fails `make conformance-fresh` | CONFORMANCE.md §4.2 | all | `golden: conformance features_*` (the `sqlgen diff --quiet` gate) | — | passing |
 | events.per-op | Each §28.4 operation publishes the events its row states on every target | §28.4 | all | `conformance: Features/Events/<Method>/publishes one event per affected row` | — | planned |
 | events.input | Each §28.6 input row holds on every target | §28.6 | all | `conformance: Features/Events/<Method>/the event carries the documented input` | — | planned |
 | events.tenant-stamp | Each §29.6 stamp row holds on every target | §29.6 | all | `conformance: Features/Tenancy/<Method>/each event is stamped with its row's tenant` | — | planned |
