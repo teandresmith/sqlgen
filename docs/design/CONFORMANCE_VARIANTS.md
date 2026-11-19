@@ -315,8 +315,8 @@ PRD, since the PRD does not specify repository tooling.
 | events.per-op | Each §28.4 operation publishes the events its row states on every target | §28.4 | all | `conformance: Features/Events/<Method>/publishes one event per affected row` | — | passing |
 | events.input | Each §28.6 input row holds on every target | §28.6 | all | `conformance: Features/Events/<Method>/the event carries the documented input` | — | passing |
 | events.tenant-stamp | Each §29.6 stamp row holds on every target | §29.6 | all | `conformance: Features/Tenancy/<Method>/each event is stamped with its row's tenant` | — | passing |
-| cache.invalidation | Each §27.5 / §27.7 / §27.9 / §29.5 invalidation row in §3.2 holds on every target | §27.5, §27.7, §27.9, §29.5 | all | `conformance: Features/Cache/<Method>/evicts each affected row's key` | `cache-keys: entity × tenanted` | planned |
-| cache.receive | Each §28.11 receive row holds on every target, PostgreSQL's `public` key segment included | §28.11 | all | `conformance: Features/Cache/event-driven invalidation/<case>` | `cache-keys: tenant-table-pattern × schema` | planned |
+| cache.invalidation | Each §27.5 / §27.7 / §27.9 / §29.5 invalidation row in §3.2 holds on every target | §27.5, §27.7, §27.9, §29.5 | all | `conformance: Features/Cache/<Method>/evicts each affected row's key` | — (the `cache-key.*` unit rows claim those cells; see §6.3) | passing |
+| cache.receive | Each §28.11 receive row holds on every target, PostgreSQL's `public` key segment included | §28.11 | all | `conformance: Features/Cache/event-driven invalidation/<case>` | — (see §6.3) | passing |
 | tenancy.pk-carriers | `tenancy-pk.match-proceeds`, `tenancy-pk.skip-tenancy` and `tenancy-hooks.affected-pks-tenant` hold on every target | §29.7, §29.9 | all | `conformance: Features/Tenancy/<Method>/a matching PK tenant proceeds` and siblings | — (the core `composite-pk` rows claim those cells) | passing |
 | tenancy.nested | `nested.unlink-tenant-mismatch` and `nested.m2m-create-shared-column-mismatch` hold on every target | §9.9 | all | `conformance: Features/Tenancy/UpdateWithRelated/<case>` | — | passing |
 | relabel.neutral | The seven §3.3 `sqlite` rows apply to `all`, and every §3.3 row carries a note naming its dialect-free code | CONFORMANCE.md §5.1 (proposed in §8) | all | `make req-check` over the widened rows and the notes under each table (ruled 2026-11-18: the note is prose, so no `reqcheck` test) | — | planned |
@@ -357,10 +357,18 @@ with the one committed at `REPORT_BASE` and fails when a row leaves `pass`.
 
 #### cache-keys (runtime/cache.md)
 
+The `cache-key.*` unit rows already claim these cells, so 33.6 sets none. It adds Features
+citations to the two rows whose shape a Features test builds on every target:
+`cache-key.entity.tenanted` (each evicted, written or received key is checked against the §29.5
+grammar, PostgreSQL's `public` segment included) and `cache-key.table-pattern.tenanted` (the
+tenant-less receive clears every tenant). No mutation or receive path builds a tenant table
+pattern: the capture-gap fallback uses `BuildTablePattern`. The `schema` cells keep their unit citations; the
+Features check of PostgreSQL's `public` segment rides on `cache-key.entity.tenanted`.
+
 | Key shape | tenanted | schema |
 |---|---|---|
 | `entity` | cache.invalidation | cache.receive |
-| `tenant-table-pattern` | cache.receive | cache.receive |
+| `table-pattern` | cache.receive | cache.receive |
 
 #### relationships (cli/gen.md)
 

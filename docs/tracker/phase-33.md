@@ -558,19 +558,19 @@ Completed 2026-11-19 on `feat/conformance-variants`.
 
 **PRD Reference:** Sections 27.5, 27.7, 27.9, 28.11, 29.5
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `Features/Cache/<Method>` cases for each §27.5 / §27.7 / §27.9 / §29.5 carrier-dependent
+- [x] `Features/Cache/<Method>` cases for each §27.5 / §27.7 / §27.9 / §29.5 carrier-dependent
   row: key-based invalidation for single-row, `*Many` and `*Where` writes; write-through on
   `Create` / `CreateMany`; an unbuildable key reported once; per-row tenanted eviction.
-- [ ] Event-driven receive cases (§28.11): a tenant-stamped event, a tenant-in-PK event with no
+- [x] Event-driven receive cases (§28.11): a tenant-stamped event, a tenant-in-PK event with no
   stamp, a tenant-less event's fallback. Assert the key each target builds, PostgreSQL's
   `public` segment included (`context_cache.go:253-261`).
-- [ ] A no-op write invalidates no view pattern on every target
+- [x] A no-op write invalidates no view pattern on every target
   (`edge.noop-skips-view-invalidation`), the MySQL pre-read paths included.
-- [ ] Move each row's citation and widen it to `all`. Fill the `cache-keys` matrix cells the
+- [x] Move each row's citation and widen it to `all`. Fill the `cache-keys` matrix cells the
   design §6.3 names.
 
 ### Acceptance Criteria
@@ -581,15 +581,78 @@ Completed 2026-11-19 on `feat/conformance-variants`.
 
 ### Tests Required
 
-- [ ] `conformance: Features/Cache/<Method>/evicts each affected row's key`, per row, on all four
+- [x] `conformance: Features/Cache/<Method>/evicts each affected row's key`, per row, on all four
   targets: fails before, passes after.
-- [ ] `conformance: Features/Cache/event-driven invalidation/<case>`, per §28.11 row, on all four
+- [x] `conformance: Features/Cache/event-driven invalidation/<case>`, per §28.11 row, on all four
   targets: fails before, passes after.
-- [ ] 33.1's report-delta check: no row leaves `pass`.
+- [x] 33.1's report-delta check: no row leaves `pass`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-19 on `feat/conformance-variants`.
+
+- **Files:** `cmd/sqlgen/testdata/conformance/features_suite/{cache.go,cacherecord.go,harness.go}`;
+  `features_{postgres,postgres_stdlib}/conformance_test.go` (`KeySchema: "public"`);
+  `docs/conformance/{client.md,runtime/cache.md,runtime/events.md}`, `docs/conformance/REPORT.md`
+  (regenerated); `docs/design/CONFORMANCE_VARIANTS.md` §6.1 (`cache.invalidation`, `cache.receive`
+  now `passing`) and §6.3.
+- **Harness:** `RecordingBackend` records each backend call over the memory backend;
+  `CacheErrors` records `OnErrorFunc` reports (installed by `WithCache`); `HandlerResults` wraps an
+  `InvalidationSource` and records what the cache's handler returns. New options
+  `WithCacheOptions`, `WithEventPublisher` and `WithClientOption`; more than one publisher option
+  fails the test. `Capabilities.KeySchema` is the key's schema segment (`public` on PostgreSQL).
+- **Tree (`Features/Cache/…`, 23 leaves):** `Create` and `CreateMany` `writes the created row
+  through under its own key`. 15 writes (`Update` through `RestoreWhere`, `UpsertMany` included)
+  `evicts each affected row's key` on `notes` and `tasks`. Each runs under the resolved tenant and
+  under `SkipTenancy` over rows of two other tenants; the evicted keys must equal the rows' own
+  tenant keys in one backend `InvalidateMany` per write, nothing written through, no pattern but the `active_tasks` view
+  for `tasks`, no `OnErrorFunc` report, and a bystander row still a hit. Every written, read or
+  evicted key is checked against the §29.5 grammar with `KeySchema`. Two `an unbuildable key is
+  reported once …` leaves (outside a transaction, inside a sync one) on the untenanted `regions`:
+  one `invalidate_many` report, no backend invalidation, the write returns nil. `a write that affects no
+  row invalidates no key and no view pattern`: 14 `tasks` writes, no backend invalidation.
+  `event-driven invalidation/` holds the three §28.11 cases, with a writer that has no cache and a
+  receiver fed by `FromEventSubscriber`: the tenant-stamped event (written under `SkipTenancy`)
+  evicts that key only; a tenant-in-PK `memberships` event stripped of its stamp evicts that PK's
+  key only; a tenant-less `notes` event clears `sqlgen:{schema.}notes:*`, reports one
+  `invalidate_tenant_fallback`, and the handler returns nil.
+- **Registry:** 10 rows gain Features citations ahead of the example citations, which stay until
+  33.8: `cache.create.write-through`, `cache.invalidate.many-and-where-by-key`,
+  `cache.mutation.unbuildable-key-reported`, `cache-key.tenant-per-row-invalidation`,
+  `edge.noop-skips-view-invalidation`, the three `event.cache-receive.*`, and the cell rows
+  `cache-key.entity.tenanted` and `cache-key.table-pattern.tenanted`. All were already `all`; each
+  now shows `pass` on the four Features targets. No `cache-keys` cell is set: the unit rows claim
+  them. Design §6.3 named `tenant-table-pattern` cells, but no mutation or receive path builds a
+  tenant pattern (the fallback uses `BuildTablePattern`); corrected to `table-pattern`.
+- **Fail first (generated-code mutations, restored with `git checkout`):** on `features_sqlite`,
+  building `notes` keys from the first row's tenant failed the five two-tenant `notes` `*Many` /
+  `*Where` eviction leaves; the same on `tasks` failed its four. Dropping the `Create` write-through
+  failed only `Create`; one tenant for every `CreateMany` row failed only `CreateMany`. Dropping the
+  view no-op guard failed only the no-row leaf. Not reporting the unbuildable key failed only the two
+  unbuildable leaves. Routing `notes` mutations to the table-pattern fallback failed the nine
+  `notes` eviction leaves. On receive: ignoring the `notes` stamp failed only the stamped leaf;
+  ignoring the `memberships` PK tenant only the tenant-in-PK leaf; a fallback that returns an error,
+  or a tenant-less signal sent to `InvalidateMany`, only the tenant-less leaf. On
+  `features_postgres_stdlib`, a `notes` key without `public` failed the 11 `notes` write leaves and
+  the two `notes` receive leaves. On `features_mysql`, a wrong tenant from the by-key pre-read
+  failed the six `notes` by-key and `*Many` leaves and the stamped receive leaf; from the `*Where`
+  pre-read, only `UpdateWhere` and `HardDeleteWhere`.
+- **Findings:** none. Every case passed on all four targets once the tests were right. Test
+  corrections during bring-up: a read-through miss reads its key twice (the singleflight
+  re-check), and `Upsert`'s two calls make two `InvalidateMany` calls.
+- **Runs:** each Features target passes under `-race` (SQLite 3.51.3, PostgreSQL 16 pgx and
+  stdlib, MySQL 8.0). `make lint-conformance` 0 issues. `make req-check` ok (6342 requirements).
+  `make conformance`: 6257 pass, 0 fail, 0 skip, 0 not run, 85 untested. `make report-delta`
+  against HEAD and against `a46e9e95`: 0 rows changed, none left `pass`.
+- **Tests:** `make check` green. No path in the diff is on the `check-examples` trigger list;
+  `make conformance` ran every example anyway, all passing.
+- **Auto-review:** 0 high-confidence issues; the Features leaves keep or tighten every check of
+  the example tests whose rows they cite. Its own fail-first check (`notes` keys from the first
+  row's tenant) failed only the five two-tenant `notes` `*Many` / `*Where` leaves. Fixed inline:
+  the unbuildable-key leaves now require no backend invalidation of any kind (the record claimed
+  it); every eviction leaf now requires nothing written through (it was `UpsertMany` only); design
+  §6.3 says the `schema` cells keep their unit citations. Kept: the no-row leaf accepts nil or
+  `ErrNotFound` from each write, as the events no-row leaf does.
 
 ## 33.7 Core-suite ports — views, relationship filters, comparators
 

@@ -61,7 +61,7 @@ func TestConformance(t *testing.T) {
 		Database: "PostgreSQL " + version,
 		Querier:  q,
 		Base:     q,
-		Caps:     featuressuite.Capabilities{RowLocks: true},
+		Caps:     featuressuite.Capabilities{RowLocks: true, KeySchema: "public"},
 		Reset: func(t *testing.T) {
 			if _, err := db.ExecContext(ctx, "TRUNCATE template_tags, template_notes, templates, board_tags, cards, tags, boards, tasks, memberships, notes, bulletins, regions RESTART IDENTITY"); err != nil {
 				t.Fatal(err)

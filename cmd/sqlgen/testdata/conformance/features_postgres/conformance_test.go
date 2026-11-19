@@ -61,7 +61,7 @@ func TestConformance(t *testing.T) {
 		Database: "PostgreSQL " + version,
 		Querier:  q,
 		Base:     batchingQuerier{CountingQuerier: q, batcher: adapter.(batcher)},
-		Caps:     featuressuite.Capabilities{RowLocks: true},
+		Caps:     featuressuite.Capabilities{RowLocks: true, KeySchema: "public"},
 		Reset: func(t *testing.T) {
 			if _, err := pool.Exec(ctx, "TRUNCATE template_tags, template_notes, templates, board_tags, cards, tags, boards, tasks, memberships, notes, bulletins, regions RESTART IDENTITY"); err != nil {
 				t.Fatal(err)

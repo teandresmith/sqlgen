@@ -14,6 +14,7 @@ import (
 
 	cachememory "github.com/teandresmith/sqlgen/cache/memory"
 	"github.com/teandresmith/sqlgen/database"
+	"github.com/teandresmith/sqlgen/event"
 	"github.com/teandresmith/sqlgen/event/memorybus"
 	"github.com/teandresmith/sqlgen/hook"
 
@@ -51,6 +52,9 @@ type Capabilities struct {
 	// CaseInsensitiveText: the Features schema's text columns compare
 	// case-insensitively.
 	CaseInsensitiveText bool
+	// KeySchema is the schema segment of a cache key: "public" on
+	// PostgreSQL, empty on MySQL and SQLite (PRD §27.5).
+	KeySchema string
 }
 
 // Capability names one Capabilities field.
@@ -93,9 +97,12 @@ func (h *Harness) has(c Capability) bool {
 type Env struct {
 	Client   *models.Client
 	Resolver *CountingResolver
-	// Cache and Backend are nil unless the client was built WithCache.
-	Cache   *models.Cache
-	Backend *cachememory.Backend
+	// Cache, Backend and CacheErrors are nil unless the client was built
+	// WithCache or WithCacheOptions. CacheErrors records the cache's
+	// OnErrorFunc reports.
+	Cache       *models.Cache
+	Backend     *RecordingBackend
+	CacheErrors *CacheErrors
 	// Bus is nil unless the client was built WithPublisher.
 	Bus *memorybus.Bus
 	// Recorder is nil unless the client was built WithRecorder.
@@ -107,11 +114,24 @@ type Option func(*envConfig)
 
 type envConfig struct {
 	cache, publisher, recorder bool
+	cacheOpts                  []models.CacheOption
+	eventPublishers            []event.Publisher
 	mutationHooks              []hook.MutationHook
+	clientOpts                 []models.ClientOption
 }
 
-// WithCache builds the client with a cache on a fresh memory backend.
+// WithCache builds the client with a cache on a fresh RecordingBackend over a
+// memory backend.
 func WithCache() Option { return func(c *envConfig) { c.cache = true } }
+
+// WithCacheOptions builds the client WithCache and passes opts to NewCache,
+// after the option that records OnErrorFunc reports.
+func WithCacheOptions(opts ...models.CacheOption) Option {
+	return func(c *envConfig) {
+		c.cache = true
+		c.cacheOpts = append(c.cacheOpts, opts...)
+	}
+}
 
 // WithPublisher builds the client with a fresh memorybus as its event
 // publisher.
@@ -120,6 +140,17 @@ func WithPublisher() Option { return func(c *envConfig) { c.publisher = true } }
 // WithRecorder builds the client with a fresh Recorder as its event
 // publisher. It cannot be combined with WithPublisher.
 func WithRecorder() Option { return func(c *envConfig) { c.recorder = true } }
+
+// WithEventPublisher builds the client with p as its event publisher. It
+// cannot be combined with WithPublisher or WithRecorder.
+func WithEventPublisher(p event.Publisher) Option {
+	return func(c *envConfig) { c.eventPublishers = append(c.eventPublishers, p) }
+}
+
+// WithClientOption adds o to the client's options, after the others.
+func WithClientOption(o models.ClientOption) Option {
+	return func(c *envConfig) { c.clientOpts = append(c.clientOpts, o) }
+}
 
 // WithMutationHook adds h to the client's mutation hooks, inside the event
 // hook.
@@ -143,16 +174,27 @@ func (h *Harness) NewEnv(t *testing.T, opts ...Option) *Env {
 			t.Fatalf("cachememory.New() unexpected error: %v", err)
 		}
 		t.Cleanup(func() { _ = backend.Close() })
-		c, err := models.NewCache(backend)
+		env.Backend, env.CacheErrors = &RecordingBackend{Inner: backend}, &CacheErrors{}
+		cacheOpts := append([]models.CacheOption{models.WithOnError(env.CacheErrors.OnError)}, cfg.cacheOpts...)
+		c, err := models.NewCache(env.Backend, cacheOpts...)
 		if err != nil {
 			t.Fatalf("NewCache() unexpected error: %v", err)
 		}
 		t.Cleanup(func() { _ = c.Close() })
-		env.Cache, env.Backend = c, backend
+		env.Cache = c
 		clientOpts = append(clientOpts, models.WithCache(c))
 	}
-	if cfg.publisher && cfg.recorder {
-		t.Fatal("NewEnv: WithPublisher and WithRecorder both set a publisher")
+	publishers := len(cfg.eventPublishers)
+	for _, set := range []bool{cfg.publisher, cfg.recorder} {
+		if set {
+			publishers++
+		}
+	}
+	if publishers > 1 {
+		t.Fatal("NewEnv: more than one option sets the event publisher")
+	}
+	for _, p := range cfg.eventPublishers {
+		clientOpts = append(clientOpts, models.WithEventPublisher(p))
 	}
 	if cfg.publisher {
 		env.Bus = memorybus.New()
@@ -166,6 +208,7 @@ func (h *Harness) NewEnv(t *testing.T, opts ...Option) *Env {
 	for _, mh := range cfg.mutationHooks {
 		clientOpts = append(clientOpts, models.WithMutationHook(mh))
 	}
+	clientOpts = append(clientOpts, cfg.clientOpts...)
 	env.Client = models.New(h.Base, clientOpts...)
 	return env
 }
@@ -206,6 +249,7 @@ func Run(t *testing.T, h *Harness) {
 	t.Run("Features", func(t *testing.T) {
 		t.Run("Events", func(t *testing.T) { events(t, h) })
 		t.Run("Tenancy", func(t *testing.T) { tenancy(t, h) })
+		t.Run("Cache", func(t *testing.T) { cacheTree(t, h) })
 	})
 }
 

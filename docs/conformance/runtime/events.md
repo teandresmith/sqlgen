@@ -147,9 +147,9 @@ tenanted table's signal.
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| event.cache-receive.tenant-stamp-precise | A tenant-stamped event for a tenanted table evicts the receiving cache's entry for that row and tenant, leaves another tenant's entry cached, and takes no table-wide fallback | `example: tenancy: TestEventDrivenInvalidation_TenantedPreciseReceive` | all |  |
-| event.cache-receive.tenant-in-pk-precise | On a tenant-in-PK table an event with no stamp evicts the receiving cache's entry for the PK's tenant only, without the table-wide fallback | `example: tenancy: TestEventDrivenInvalidation_TenantInPKPreciseWithoutStamp` | all |  |
-| event.cache-receive.tenant-less-fallback | A tenant-less event for any other tenanted table clears the table across tenants and returns no error | `example: tenancy: TestEventDrivenInvalidation_TenantAbsentFallsBackToTablePattern`; `example: tenancy: TestEventDrivenInvalidation_HandlerReturnsNoError` | all |  |
+| event.cache-receive.tenant-stamp-precise | A tenant-stamped event for a tenanted table evicts the receiving cache's entry for that row and tenant, leaves another tenant's entry cached, and takes no table-wide fallback | `conformance: Features/Cache/event-driven invalidation/a tenant-stamped event evicts that row's key in its tenant only`; `example: tenancy: TestEventDrivenInvalidation_TenantedPreciseReceive` | all |  |
+| event.cache-receive.tenant-in-pk-precise | On a tenant-in-PK table an event with no stamp evicts the receiving cache's entry for the PK's tenant only, without the table-wide fallback | `conformance: Features/Cache/event-driven invalidation/a tenant-in-PK event with no stamp evicts that PK's key only`; `example: tenancy: TestEventDrivenInvalidation_TenantInPKPreciseWithoutStamp` | all |  |
+| event.cache-receive.tenant-less-fallback | A tenant-less event for any other tenanted table clears the table across tenants and returns no error | `conformance: Features/Cache/event-driven invalidation/a tenant-less event clears the table across tenants and returns nil`; `example: tenancy: TestEventDrivenInvalidation_TenantAbsentFallsBackToTablePattern`; `example: tenancy: TestEventDrivenInvalidation_HandlerReturnsNoError` | all |  |
 
 ## §29.6 Event Metadata
 <!-- prd: 29.6 sha256: 451a081517626c58 -->
