@@ -369,19 +369,19 @@ Completed 2026-11-18 on `feat/conformance-variants`.
 
 **PRD Reference:** Sections 28.4, 28.6
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `Features/Events/<Method>` trees for the 16 operations §28.4 lists, plus batch, fire-and-forget
+- [x] `Features/Events/<Method>` trees for the 16 operations §28.4 lists, plus batch, fire-and-forget
   PK and the failed-mutation case.
-- [ ] Input cases for each §28.6 row.
-- [ ] Cover the MySQL paths design §3.1 lists as untested: `Create` via `LastInsertId`, `Upsert`
+- [x] Input cases for each §28.6 row.
+- [x] Cover the MySQL paths design §3.1 lists as untested: `Create` via `LastInsertId`, `Upsert`
   with its tenant read-back, `Increment`, `HardDeleteWhere`, and the `rowMatches`
   matched-but-unchanged row.
-- [ ] A no-op write on every target publishes nothing (`gen.events.empty-affected-publishes-nothing`),
+- [x] A no-op write on every target publishes nothing (`gen.events.empty-affected-publishes-nothing`),
   the MySQL pre-read `*Many` / `*Where` paths included.
-- [ ] Move each row's citation to its Features test and widen it to `all`.
+- [x] Move each row's citation to its Features test and widen it to `all`.
 
 ### Acceptance Criteria
 
@@ -389,16 +389,63 @@ Completed 2026-11-18 on `feat/conformance-variants`.
 
 ### Tests Required
 
-- [ ] `conformance: Features/Events/<Method>/publishes one event per affected row`, one per §28.4
+- [x] `conformance: Features/Events/<Method>/publishes one event per affected row`, one per §28.4
   operation, on all four targets: fails before the change (a broken assertion or a generated-code
   mutation), passes after.
-- [ ] `conformance: Features/Events/<Method>/the event carries the documented input`, per §28.6
+- [x] `conformance: Features/Events/<Method>/the event carries the documented input`, per §28.6
   row, on all four targets: fails before, passes after.
-- [ ] 33.1's report-delta check: no row leaves `pass`.
+- [x] 33.1's report-delta check: no row leaves `pass`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-19 on `feat/conformance-variants`.
+
+- **Files:** `cmd/sqlgen/testdata/conformance/features_suite/{events.go,recorder.go,harness.go}`;
+  `docs/conformance/runtime/events.md`, `docs/conformance/cli/gen.md`,
+  `docs/conformance/REPORT.md` (regenerated); `docs/design/CONFORMANCE_VARIANTS.md` §6.1
+  (`events.per-op`, `events.input` now `passing`).
+- **Harness:** `Recorder`, an `event.Publisher` that records each `PublishBatch` call and each
+  `Publish`, and two `NewEnv` options, `WithRecorder()` and `WithMutationHook(h)`.
+  `WithRecorder` with `WithPublisher` fails the test.
+- **Tree (`Features/Events/…`, 37 leaves):** for each of the 16 §28.4 methods, `publishes one
+  event per affected row` and `the event carries the documented input`. The writes run on
+  `notes` (database-generated key, unique `(workspace_id, slug)` for Upsert's update branch,
+  `views` for Increment) and `tasks` (soft delete). `*Many` / `*Where` writes list or match
+  two of three rows, and `UpdateMany` includes a missing key, so its input leaf checks the
+  written items 0 and 2. Five more leaves: `Update/an update that leaves the row unchanged
+  publishes its event` (MySQL's `rowMatches`), `Create/a fire-and-forget create carries the
+  generated key` (MySQL `LastInsertId`), `a batch mutation hands every event to one PublishBatch
+  call`, `a failed mutation publishes nothing`, and `a write that affects no row publishes
+  nothing` (15 writes: missing keys, zero-match `*Where`, `SoftDeleteWhere` over a soft-deleted
+  row and `RestoreWhere` over a live row; no `PublishBatch` call).
+- **Test correction:** the first draft expected by-key `SoftDelete` of a soft-deleted row and
+  `Restore` of a live row to publish nothing. PRD §9.8 (exclude_deleted exceptions) says by-key
+  methods address their keys directly, so the event is correct; those cases became the
+  `*Where` ones above.
+- **Registry:** 27 rows gain their Features citation ahead of the example citations, which stay
+  until 33.8: the 16 `event.op.*`, `event.batch.one-publish-batch`, `event.pk.fire-and-forget`,
+  `event.hook.failed-mutation-no-event`, the 7 `event.input.*` and
+  `gen.events.empty-affected-publishes-nothing`. All were already `all`. Each now shows `pass`
+  on the four Features targets.
+- **Fail first (generated-code mutations, restored with `git checkout`):** on `features_sqlite`,
+  stringifying each event's `PK` failed the 16 `publishes …` leaves plus fire-and-forget,
+  unchanged-update and the `CreateMany` / `UpdateMany` input leaves (PK alignment).
+  Stringifying `Input` failed all 16 input leaves. Dropping the empty-`AffectedPKs` guard
+  failed only the no-row leaf. One `PublishBatch` per event failed only the batch leaf.
+  Publishing after a failed `next` failed only the failed-mutation leaf. On `features_mysql`,
+  `rowMatches` returning false failed only the unchanged-update leaf. Emptying the pre-read
+  `AffectedPKs` failed the 8 `UpdateWhere` / `SoftDeleteWhere` / `RestoreWhere` /
+  `HardDeleteWhere` leaves.
+- **Runs:** each Features target passes under `-race` (SQLite 3.51.3, PostgreSQL 16.16 pgx and
+  stdlib, MySQL 8.0.46). `make lint-conformance` 0 issues. `make req-check` ok (6342
+  requirements). `make conformance`: 6257 pass, 0 fail, 0 skip, 0 not run, 85 untested.
+  `make report-delta` against HEAD and against `a46e9e95`: 0 rows changed, none left `pass`.
+- **Tests:** `make check` green. No path in the diff is on the `check-examples` trigger list;
+  `make conformance` ran every example anyway, all passing.
+- **Auto-review:** 0 high-confidence issues. Its own fail-first check (the empty-`AffectedPKs`
+  guard removed) confirmed that only the no-row leaf fails. Fixed inline: the write count here
+  (15) and the STATUS overview row. The event's tenant stamp on MySQL's Upsert update branch is
+  checked in 33.5 (`tenant-event.*`).
 
 ## 33.5 Tenancy carriers — stamps, tenant in the PK, nested tenancy
 

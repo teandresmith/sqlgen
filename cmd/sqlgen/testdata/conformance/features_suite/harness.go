@@ -15,6 +15,7 @@ import (
 	cachememory "github.com/teandresmith/sqlgen/cache/memory"
 	"github.com/teandresmith/sqlgen/database"
 	"github.com/teandresmith/sqlgen/event/memorybus"
+	"github.com/teandresmith/sqlgen/hook"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/features/models"
 )
@@ -97,12 +98,17 @@ type Env struct {
 	Backend *cachememory.Backend
 	// Bus is nil unless the client was built WithPublisher.
 	Bus *memorybus.Bus
+	// Recorder is nil unless the client was built WithRecorder.
+	Recorder *Recorder
 }
 
 // Option adds a collaborator to an Env's client.
 type Option func(*envConfig)
 
-type envConfig struct{ cache, publisher bool }
+type envConfig struct {
+	cache, publisher, recorder bool
+	mutationHooks              []hook.MutationHook
+}
 
 // WithCache builds the client with a cache on a fresh memory backend.
 func WithCache() Option { return func(c *envConfig) { c.cache = true } }
@@ -110,6 +116,16 @@ func WithCache() Option { return func(c *envConfig) { c.cache = true } }
 // WithPublisher builds the client with a fresh memorybus as its event
 // publisher.
 func WithPublisher() Option { return func(c *envConfig) { c.publisher = true } }
+
+// WithRecorder builds the client with a fresh Recorder as its event
+// publisher. It cannot be combined with WithPublisher.
+func WithRecorder() Option { return func(c *envConfig) { c.recorder = true } }
+
+// WithMutationHook adds h to the client's mutation hooks, inside the event
+// hook.
+func WithMutationHook(h hook.MutationHook) Option {
+	return func(c *envConfig) { c.mutationHooks = append(c.mutationHooks, h) }
+}
 
 // NewEnv builds a client on h.Base with a fresh CountingResolver and the
 // collaborators opts name. They are closed when t ends.
@@ -135,10 +151,20 @@ func (h *Harness) NewEnv(t *testing.T, opts ...Option) *Env {
 		env.Cache, env.Backend = c, backend
 		clientOpts = append(clientOpts, models.WithCache(c))
 	}
+	if cfg.publisher && cfg.recorder {
+		t.Fatal("NewEnv: WithPublisher and WithRecorder both set a publisher")
+	}
 	if cfg.publisher {
 		env.Bus = memorybus.New()
 		t.Cleanup(func() { _ = env.Bus.Close() })
 		clientOpts = append(clientOpts, models.WithEventPublisher(env.Bus))
+	}
+	if cfg.recorder {
+		env.Recorder = &Recorder{}
+		clientOpts = append(clientOpts, models.WithEventPublisher(env.Recorder))
+	}
+	for _, mh := range cfg.mutationHooks {
+		clientOpts = append(clientOpts, models.WithMutationHook(mh))
 	}
 	env.Client = models.New(h.Base, clientOpts...)
 	return env
@@ -177,7 +203,9 @@ func Run(t *testing.T, h *Harness) {
 	// make conformance reads this line into the report header; keep its prefix.
 	t.Logf("conformance harness: database %s", h.Database)
 	checkWiring(t, h)
-	t.Run("Features", func(t *testing.T) {})
+	t.Run("Features", func(t *testing.T) {
+		t.Run("Events", func(t *testing.T) { events(t, h) })
+	})
 }
 
 func checkWiring(t *testing.T, h *Harness) {
