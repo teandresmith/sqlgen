@@ -275,6 +275,8 @@ func paginate(t *testing.T, h *Harness) {
 			}
 		}
 	})
+
+	paginateView(t, h)
 }
 
 // connection: Connection returns a Relay page of the matching rows in cursor-key order.
@@ -632,6 +634,8 @@ func connection(t *testing.T, h *Harness) {
 			t.Errorf("composite backward HasNextPage, HasPreviousPage (-want +got):\n%s", diff)
 		}
 	})
+
+	connectionView(t, h)
 }
 
 // pagSeedTie seeds the products the cursor-order subtests walk. cursor_keys

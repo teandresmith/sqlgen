@@ -89,11 +89,13 @@ CREATE TABLE author_profiles (
 
 -- One-to-many on a nullable foreign key, so every verb is generated. The CHECK
 -- is a constraint a nested create can violate, and a soft-deleted post is a
--- connect target the visibility read hides.
+-- connect target the visibility read hides. kind is the discriminator of the
+-- Drafts edge. A post written without it is on no such edge.
 CREATE TABLE posts (
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
     author_id  BIGINT NULL,
     title      VARCHAR(64) NOT NULL CHECK (title <> ''),
+    kind       VARCHAR(16) NULL,
     deleted_at TIMESTAMP(6) NULL,
     FOREIGN KEY (author_id) REFERENCES authors(id)
 );

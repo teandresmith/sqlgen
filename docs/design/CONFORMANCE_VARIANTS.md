@@ -292,10 +292,12 @@ aliases it as `models.Tenant` (ruled 2026-11-18).
   `@pk` annotation. View reads (`Get`, `GetMany`, `Count`, `Paginate`, `Connection`) go under the
   existing method trees (`GetMany/a view …`).
 - **Relationship filters:** O2M and M2M exact row sets, composition with a column filter, and the
-  discriminator filter, under `GetMany`, on the existing `authors` / `posts` / `tags` edges.
-- **Comparators:** each `comparators` matrix operator run against the database under `GetMany`,
-  on `products` columns. Each fills that operator's per-target cells, which today cite unit tests
-  only.
+  discriminator filter, under `GetMany`, on the existing `authors` / `posts` / `tags` edges. The
+  discriminator runs on a `Drafts` edge from `authors` into `posts` over a nullable `posts.kind`
+  (ruled 2026-11-19), so no existing `Post` value changes.
+- **Comparators:** the `Number`, `String` and `Time` `In` / `Nin` operators on `products` columns
+  and `ID` on `labels`, run against the database under `GetMany` (ruled 2026-11-19, §6.3). The
+  other operators keep their unit citations.
 
 ## 6. Behavior contract
 
@@ -320,9 +322,9 @@ PRD, since the PRD does not specify repository tooling.
 | tenancy.pk-carriers | `tenancy-pk.match-proceeds`, `tenancy-pk.skip-tenancy` and `tenancy-hooks.affected-pks-tenant` hold on every target | §29.7, §29.9 | all | `conformance: Features/Tenancy/<Method>/a matching PK tenant proceeds` and siblings | — (the core `composite-pk` rows claim those cells) | passing |
 | tenancy.nested | `nested.unlink-tenant-mismatch` and `nested.m2m-create-shared-column-mismatch` hold on every target | §9.9 | all | `conformance: Features/Tenancy/UpdateWithRelated/<case>` | — | passing |
 | relabel.neutral | The seven §3.3 `sqlite` rows apply to `all`, and every §3.3 row carries a note naming its dialect-free code | CONFORMANCE.md §5.1 (proposed in §8) | all | `make req-check` over the widened rows and the notes under each table (ruled 2026-11-18: the note is prose, so no `reqcheck` test) | — | planned |
-| views.reads | A view's `Get` (with a declared key), `GetMany`, `Count`, `Paginate` and `Connection` return the rows its query selects, on every target | §16.4 | all | `conformance: GetMany/a view returns the rows its query selects` and siblings | `client-methods: GetMany × view` | planned |
-| relfilter.exact | O2M and M2M relationship filters return exactly the parents with a matching child, compose with a column filter, and honor a discriminator | §11.1, §13.7 | all | `conformance: GetMany/an O2M relationship filter returns exactly the parents with a matching child` and siblings | `relationships: o2m × filter`, `relationships: m2m × filter` | planned |
-| comparators.db | Each operator of the `comparators` matrix returns the rows its PRD semantics select, on every target | §11.2 | all | `conformance: GetMany/<operator> selects the rows its semantics state` | `comparators: <operator> × <target>` | planned |
+| views.reads | A view's `Get` (with a declared key), `GetMany`, `Count`, `Paginate` and `Connection` return the rows its query selects, on every target | §16.4 | all | `conformance: GetMany/a view returns the rows its query selects` and siblings | `client-methods: GetMany × view` | passing |
+| relfilter.exact | O2M and M2M relationship filters return exactly the parents with a matching child, compose with a column filter, and honor a discriminator | §11.1, §13.7 | all | `conformance: GetMany/an O2M relationship filter returns exactly the parents with a matching child` and siblings | `relationships: o2m × filter`, `relationships: m2m × filter`, `relationships: polymorphic × filter` | passing |
+| comparators.db | Each `comparators` matrix operator whose generated API is the same on every target (`Number`, `String`, `Time`, `ID` × `In`, `Nin`; §6.3) returns the rows its PRD semantics select, on every target | §11.2 | all | `conformance: GetMany/<operator> selects the rows its semantics state` | `comparators: <operator> × <target>` | passing |
 | ports.deleted | Each example copy whose port passes on every target is deleted in the porting commit | CONFORMANCE.md §9 ruling 6 | all | `make req-check` (no citation points at a deleted test) | — | planned |
 
 ### 6.2 Regression guards
@@ -353,7 +355,14 @@ with the one committed at `REPORT_BASE` and fails when a row leaves `pass`.
 
 | Operator | postgres-pgx | postgres-stdlib | mysql | sqlite |
 |---|---|---|---|---|
-| every declared operator | comparators.db | comparators.db | comparators.db | comparators.db |
+| `Number`, `String`, `Time`, `ID` × `In`, `Nin` | comparators.db | comparators.db | comparators.db | comparators.db |
+| `Enum`, `Opaque`, `JSON`, `JSONB`, `Slice` | unit citations | unit citations | unit citations | unit citations |
+
+Ruled 2026-11-19 (33.7): the core suite runs the operators whose generated API is the same on
+every target. `Number`, `String` and `Time` run on `products`, and `ID` on `labels`, whose text
+key is `ID` on all four. The core schema has no enum or bytes column. SQLite has no enum column type,
+and `JSON`, `JSONB` and `Slice` generate a different filter field per dialect, so the shared
+suite cannot name them. Those cells keep their unit citations, and their `n/a` cells stand.
 
 #### cache-keys (runtime/cache.md)
 

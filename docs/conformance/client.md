@@ -625,11 +625,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| view.get | A view with a declared key (`@pk`) returns from `Get` the row its query selects for that key | | all | client-methods: Get × view |
-| view.get-many | A view's `GetMany` returns the rows its query selects | | all | client-methods: GetMany × view |
-| view.count | A view's `Count` returns the number of rows its query selects | | all | client-methods: Count × view |
-| view.paginate | A view's `Paginate` pages through the rows its query selects | | all | client-methods: Paginate × view |
-| view.connection | A view's `Connection` pages through the rows its query selects | | all | client-methods: Connection × view |
+| view.get | A view with a declared key (`@pk`) returns from `Get` the row its query selects for that key | `conformance: Get/a view with a declared key returns the row its query selects` | all | client-methods: Get × view |
+| view.get-many | A view's `GetMany` returns the rows its query selects | `conformance: GetMany/a view returns the rows its query selects` | all | client-methods: GetMany × view |
+| view.count | A view's `Count` returns the number of rows its query selects | `conformance: Count/a view counts the rows its query selects` | all | client-methods: Count × view |
+| view.paginate | A view's `Paginate` pages through the rows its query selects | `conformance: Paginate/a view pages through the rows its query selects` | all | client-methods: Paginate × view |
+| view.connection | A view's `Connection` pages through the rows its query selects | `conformance: Connection/a view pages through the rows its query selects` | all | client-methods: Connection × view |
 
 ## §16.5.1 Dialect Scope
 <!-- prd: 16.5.1 sha256: 4231f90c985c79ec -->

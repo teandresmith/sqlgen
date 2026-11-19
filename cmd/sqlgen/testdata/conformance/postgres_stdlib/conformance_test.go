@@ -42,12 +42,14 @@ func TestConformance(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 	// The pgx module's DDL: this module differs from it only in the driver.
-	schema, err := os.ReadFile("../postgres/schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, string(schema)); err != nil {
-		t.Fatal(err)
+	for _, file := range []string{"../postgres/schema.sql", "../postgres/views/premium_products.sql"} {
+		ddl, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, string(ddl)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var version string
 	if err := db.QueryRowContext(ctx, "SHOW server_version").Scan(&version); err != nil {

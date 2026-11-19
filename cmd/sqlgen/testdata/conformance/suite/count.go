@@ -153,6 +153,8 @@ func count(t *testing.T, h *Harness) {
 		}
 		cntAssertOneQueryHook(t, seen(), hook.OpCount, filter)
 	})
+
+	countView(t, h)
 }
 
 // existsWhere: ExistsWhere reports whether any row matches the filter.

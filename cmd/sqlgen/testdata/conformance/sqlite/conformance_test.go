@@ -20,12 +20,14 @@ func TestConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	schema, err := os.ReadFile("schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(string(schema)); err != nil {
-		t.Fatal(err)
+	for _, file := range []string{"schema.sql", "views/premium_products.sql"} {
+		ddl, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(ddl)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var version string
 	if err := db.QueryRow("SELECT sqlite_version()").Scan(&version); err != nil {

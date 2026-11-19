@@ -58,39 +58,40 @@ func WithQueryHook(h hook.QueryHook) ClientOption {
 // All entity clients share the same querier and configuration.
 // The Client is safe for concurrent use after construction.
 type Client struct {
-	querier       database.Querier
-	opts          clientOptions
-	author        *authorClient
-	authorProfile *authorProfileClient
-	authorTag     *authorTagClient
-	bay           *bayClient
-	counter       *counterClient
-	crate         *crateClient
-	crateItem     *crateItemClient
-	crateSeal     *crateSealClient
-	depot         *depotClient
-	document      *documentClient
-	itemNote      *itemNoteClient
-	itemReceipt   *itemReceiptClient
-	itemStation   *itemStationClient
-	label         *labelClient
-	locker        *lockerClient
-	orderItem     *orderItemClient
-	parcel        *parcelClient
-	permit        *permitClient
-	post          *postClient
-	product       *productClient
-	revision      *revisionClient
-	route         *routeClient
-	seal          *sealClient
-	shelf         *shelfClient
-	slot          *slotClient
-	station       *stationClient
-	tag           *tagClient
-	tool          *toolClient
-	van           *vanClient
-	vanPermit     *vanPermitClient
-	vanTool       *vanToolClient
+	querier        database.Querier
+	opts           clientOptions
+	author         *authorClient
+	authorProfile  *authorProfileClient
+	authorTag      *authorTagClient
+	bay            *bayClient
+	counter        *counterClient
+	crate          *crateClient
+	crateItem      *crateItemClient
+	crateSeal      *crateSealClient
+	depot          *depotClient
+	document       *documentClient
+	itemNote       *itemNoteClient
+	itemReceipt    *itemReceiptClient
+	itemStation    *itemStationClient
+	label          *labelClient
+	locker         *lockerClient
+	orderItem      *orderItemClient
+	parcel         *parcelClient
+	permit         *permitClient
+	post           *postClient
+	premiumProduct *premiumProductClient
+	product        *productClient
+	revision       *revisionClient
+	route          *routeClient
+	seal           *sealClient
+	shelf          *shelfClient
+	slot           *slotClient
+	station        *stationClient
+	tag            *tagClient
+	tool           *toolClient
+	van            *vanClient
+	vanPermit      *vanPermitClient
+	vanTool        *vanToolClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -104,39 +105,40 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	}
 
 	c := &Client{
-		querier:       querier,
-		opts:          options,
-		author:        newAuthorClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		authorProfile: newAuthorProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		authorTag:     newAuthorTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		bay:           newBayClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		counter:       newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		crate:         newCrateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		crateItem:     newCrateItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		crateSeal:     newCrateSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		depot:         newDepotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		itemNote:      newItemNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		itemReceipt:   newItemReceiptClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		itemStation:   newItemStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		label:         newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		locker:        newLockerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		orderItem:     newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		parcel:        newParcelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		permit:        newPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		post:          newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		product:       newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		revision:      newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		route:         newRouteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		seal:          newSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		shelf:         newShelfClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		slot:          newSlotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		station:       newStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		tag:           newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		tool:          newToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		van:           newVanClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		vanPermit:     newVanPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		vanTool:       newVanToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		querier:        querier,
+		opts:           options,
+		author:         newAuthorClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		authorProfile:  newAuthorProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		authorTag:      newAuthorTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		bay:            newBayClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		counter:        newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		crate:          newCrateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		crateItem:      newCrateItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		crateSeal:      newCrateSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		depot:          newDepotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		document:       newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		itemNote:       newItemNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		itemReceipt:    newItemReceiptClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		itemStation:    newItemStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		label:          newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		locker:         newLockerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		orderItem:      newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		parcel:         newParcelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		permit:         newPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		post:           newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		premiumProduct: newPremiumProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		product:        newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		revision:       newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		route:          newRouteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		seal:           newSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		shelf:          newShelfClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		slot:           newSlotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		station:        newStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		tag:            newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		tool:           newToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		van:            newVanClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		vanPermit:      newVanPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		vanTool:        newVanToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 	}
 
 	// Push the configured CallbackMode down to every entity client that can
@@ -289,6 +291,11 @@ func (c *Client) Permits() PermitClient {
 // Posts returns the PostClient for Post operations.
 func (c *Client) Posts() PostClient {
 	return c.post
+}
+
+// PremiumProduct returns the PremiumProductClient for PremiumProduct operations.
+func (c *Client) PremiumProduct() PremiumProductClient {
+	return c.premiumProduct
 }
 
 // Products returns the ProductClient for Product operations.

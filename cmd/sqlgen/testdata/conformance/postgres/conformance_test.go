@@ -41,12 +41,14 @@ func TestConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	schema, err := os.ReadFile("schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, string(schema)); err != nil {
-		t.Fatal(err)
+	for _, file := range []string{"schema.sql", "views/premium_products.sql"} {
+		ddl, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, string(ddl)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var version string
 	if err := pool.QueryRow(ctx, "SHOW server_version").Scan(&version); err != nil {

@@ -121,40 +121,41 @@ func (c *mysqlVersionCache) get(ctx context.Context) (mysqlVersion, error) {
 // All entity clients share the same querier and configuration.
 // The Client is safe for concurrent use after construction.
 type Client struct {
-	querier       database.Querier
-	opts          clientOptions
-	mysqlVersion  *mysqlVersionCache
-	author        *authorClient
-	authorProfile *authorProfileClient
-	authorTag     *authorTagClient
-	bay           *bayClient
-	counter       *counterClient
-	crate         *crateClient
-	crateItem     *crateItemClient
-	crateSeal     *crateSealClient
-	depot         *depotClient
-	document      *documentClient
-	itemNote      *itemNoteClient
-	itemReceipt   *itemReceiptClient
-	itemStation   *itemStationClient
-	label         *labelClient
-	locker        *lockerClient
-	orderItem     *orderItemClient
-	parcel        *parcelClient
-	permit        *permitClient
-	post          *postClient
-	product       *productClient
-	revision      *revisionClient
-	route         *routeClient
-	seal          *sealClient
-	shelf         *shelfClient
-	slot          *slotClient
-	station       *stationClient
-	tag           *tagClient
-	tool          *toolClient
-	van           *vanClient
-	vanPermit     *vanPermitClient
-	vanTool       *vanToolClient
+	querier        database.Querier
+	opts           clientOptions
+	mysqlVersion   *mysqlVersionCache
+	author         *authorClient
+	authorProfile  *authorProfileClient
+	authorTag      *authorTagClient
+	bay            *bayClient
+	counter        *counterClient
+	crate          *crateClient
+	crateItem      *crateItemClient
+	crateSeal      *crateSealClient
+	depot          *depotClient
+	document       *documentClient
+	itemNote       *itemNoteClient
+	itemReceipt    *itemReceiptClient
+	itemStation    *itemStationClient
+	label          *labelClient
+	locker         *lockerClient
+	orderItem      *orderItemClient
+	parcel         *parcelClient
+	permit         *permitClient
+	post           *postClient
+	premiumProduct *premiumProductClient
+	product        *productClient
+	revision       *revisionClient
+	route          *routeClient
+	seal           *sealClient
+	shelf          *shelfClient
+	slot           *slotClient
+	station        *stationClient
+	tag            *tagClient
+	tool           *toolClient
+	van            *vanClient
+	vanPermit      *vanPermitClient
+	vanTool        *vanToolClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -169,40 +170,41 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 
 	mysqlVersion := newMySQLVersionCache(querier)
 	c := &Client{
-		querier:       querier,
-		opts:          options,
-		mysqlVersion:  mysqlVersion,
-		author:        newAuthorClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		authorProfile: newAuthorProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		authorTag:     newAuthorTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		bay:           newBayClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		counter:       newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		crate:         newCrateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		crateItem:     newCrateItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		crateSeal:     newCrateSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		depot:         newDepotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		itemNote:      newItemNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		itemReceipt:   newItemReceiptClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		itemStation:   newItemStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		label:         newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		locker:        newLockerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		orderItem:     newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		parcel:        newParcelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		permit:        newPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		post:          newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		product:       newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		revision:      newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		route:         newRouteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		seal:          newSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		shelf:         newShelfClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		slot:          newSlotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		station:       newStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		tag:           newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		tool:          newToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		van:           newVanClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		vanPermit:     newVanPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		vanTool:       newVanToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		querier:        querier,
+		opts:           options,
+		mysqlVersion:   mysqlVersion,
+		author:         newAuthorClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		authorProfile:  newAuthorProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		authorTag:      newAuthorTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		bay:            newBayClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		counter:        newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		crate:          newCrateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		crateItem:      newCrateItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		crateSeal:      newCrateSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		depot:          newDepotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		document:       newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		itemNote:       newItemNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		itemReceipt:    newItemReceiptClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		itemStation:    newItemStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		label:          newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		locker:         newLockerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		orderItem:      newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		parcel:         newParcelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		permit:         newPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		post:           newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		premiumProduct: newPremiumProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		product:        newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		revision:       newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		route:          newRouteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		seal:           newSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		shelf:          newShelfClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		slot:           newSlotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		station:        newStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		tag:            newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		tool:           newToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		van:            newVanClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		vanPermit:      newVanPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		vanTool:        newVanToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 	}
 
 	// Push the configured CallbackMode down to every entity client that can
@@ -355,6 +357,11 @@ func (c *Client) Permits() PermitClient {
 // Posts returns the PostClient for Post operations.
 func (c *Client) Posts() PostClient {
 	return c.post
+}
+
+// PremiumProduct returns the PremiumProductClient for PremiumProduct operations.
+func (c *Client) PremiumProduct() PremiumProductClient {
+	return c.premiumProduct
 }
 
 // Products returns the ProductClient for Product operations.

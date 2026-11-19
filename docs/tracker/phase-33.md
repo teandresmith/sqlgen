@@ -658,42 +658,92 @@ Completed 2026-11-19 on `feat/conformance-variants`.
 
 **PRD Reference:** Sections 11.1, 11.2, 13.7, 16.4
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add one regular view over `products`, with a `@pk` annotation, to each core schema and
+- [x] Add one regular view over `products`, with a `@pk` annotation, to each core schema and
   `sqlgen.yml`; regenerate the four core `models/`.
-- [ ] View reads under the existing method trees: `Get` (keyed), `GetMany`, `Count`, `Paginate`,
+- [x] View reads under the existing method trees: `Get` (keyed), `GetMany`, `Count`, `Paginate`,
   `Connection`. Fill the new `view` column cells.
-- [ ] Relationship filters under `GetMany` on the `authors` / `posts` / `tags` edges: O2M and M2M
+- [x] Relationship filters under `GetMany` on the `authors` / `posts` / `tags` edges: O2M and M2M
   exact row sets, composition with a column filter, a discriminator.
-- [ ] Comparator semantics under `GetMany` on `products` columns, one case per `comparators`
+- [x] Comparator semantics under `GetMany` on `products` columns, one case per `comparators`
   matrix operator, filling its per-target cells.
-- [ ] Register new rows only where the PRD states a behavior no row records yet. A pinned behavior
+- [x] Register new rows only where the PRD states a behavior no row records yet. A pinned behavior
   the PRD does not state goes in the PRD gaps table.
 
 ### Acceptance Criteria
 
 - Adding the view changes no existing core-suite result.
-- The §16.4 view reads, the relationship-filter rows and every `comparators` operator pass on all
-  four targets.
+- The §16.4 view reads, the relationship-filter rows and every `comparators` operator in scope
+  under the 2026-11-19 ruling (`Number`, `String`, `Time`, `ID` × `In` / `Nin`) pass on all four
+  targets.
 
 ### Tests Required
 
-- [ ] Regression guard: `make conformance` on the core targets, where every existing row keeps its
+- [x] Regression guard: `make conformance` on the core targets, where every existing row keeps its
   status after the view is added.
-- [ ] `conformance: GetMany/a view returns the rows its query selects` and the `Get`, `Count`,
+- [x] `conformance: GetMany/a view returns the rows its query selects` and the `Get`, `Count`,
   `Paginate` and `Connection` siblings (§16.4), on all four targets: fail before, pass after.
-- [ ] `conformance: GetMany/an O2M relationship filter returns exactly the parents with a matching
+- [x] `conformance: GetMany/an O2M relationship filter returns exactly the parents with a matching
   child` and siblings (§11.1, §13.7), on all four targets: fail before, pass after.
-- [ ] `conformance: GetMany/<operator> selects the rows its semantics state`, one per operator
+- [x] `conformance: GetMany/<operator> selects the rows its semantics state`, one per operator
   (§11.2), on all four targets: fails before, passes after.
-- [ ] 33.1's report-delta check: no row leaves `pass`.
+- [x] 33.1's report-delta check: no row leaves `pass`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-19 on `feat/conformance-variants`.
+
+- **Rulings (user, 2026-11-19):** (1) the core suite runs only the comparators whose generated API
+  is the same on every target: `Number`, `String`, `Time` × `In` / `Nin` on `products`, and `ID` ×
+  `In` / `Nin` on `labels`. The cells for `Enum` (no SQLite form, no core column), `Opaque` (no
+  core bytes column), and `JSON` / `JSONB` / `Slice` (a different filter field per dialect) keep
+  their unit citations. (2) The discriminator case runs on a new `Drafts` O2M edge from `authors`
+  into `posts`, with `discriminator: {column: kind, value: draft}` over a new nullable `posts.kind`.
+  Design §5.5, §6.1 (`comparators.db` text) and §6.3 record both.
+- **Files:** `cmd/sqlgen/testdata/conformance/{postgres,mysql,sqlite}/views/premium_products.sql`
+  (`@pk: id`, `WHERE price >= 200`); the three `schema.sql` (`posts.kind`); four `sqlgen.yml`
+  (`input.views`, the `Drafts` edge); four `conformance_test.go` (run the view DDL); four
+  regenerated `models/` (new `views_gen.go`) and their `conformance.go` (`TimestampAt`);
+  `suite/{view.go,filter.go}` (new), called from `get.go`, `count.go` and `pagination.go`;
+  `docs/conformance/{client.md,cli/gen.md,runtime/sql.md}`, `REPORT.md` (regenerated);
+  `docs/design/CONFORMANCE.md` §4.1 (the view and the edge); `docs/design/CONFORMANCE_VARIANTS.md`.
+- **Regression guard:** after the view, the column and the edge were added and the models
+  regenerated, the unchanged core suite passed on all four targets before any new test was written.
+- **Tree (17 leaves):** `Get/a view with a declared key returns the row its query selects` (and a
+  row the view's `WHERE` drops is `ErrNotFound`); `GetMany/a view returns the rows its query
+  selects`; `Count/a view counts …`; `Paginate/a view pages through …`; `Connection/a view pages
+  through …`. Under `GetMany`: the O2M and M2M exact-set leaves (an unparented post, two matching
+  children returned once, a tag no author holds, and the inverse `Tags` → `Authors` edge), `a
+  relationship filter composes with column filters and with and / or`, `a discriminator
+  relationship filter matches only the children carrying its value`, and eight `<Family>.<In|Nin>
+  selects the rows its semantics state` leaves.
+- **Registry:** citations added to `view.get`, `.get-many`, `.count`, `.paginate`, `.connection`
+  (now `pass`, filling the `view` column), `rel.o2m.filter`, `rel.m2m.filter`,
+  `rel.polymorphic.filter`, and the 32 `comparator.set.{number,string,time,id}-{in,nin}.<target>`
+  rows. One new row, `gen.filter.rel-composes` (§11.1: "a relationship filter combines freely
+  with column filters and with `and` / `or`", which no row recorded). No PRD gap added.
+- **Fail first (generated-code mutations on every target, models restored from a copy):** the view
+  client reading `products` failed only the five view leaves. Dropping the target's inner `WHERE`
+  from the `Posts` `EXISTS` failed only the O2M, composition and discriminator leaves (the latter
+  through its `Posts` contrast case). Dropping it from the `Tags` `EXISTS` failed only the M2M leaf.
+  Dropping the discriminator term failed only the discriminator leaf. Swapping `In` and `Nin` in
+  the `ProductFilter` / `LabelFilter` comparators failed only the eight comparator leaves. On
+  SQLite, ignoring `AuthorFilter.Or` failed only the composition leaf.
+- **Findings:** none. Every new leaf passed on all four targets at first run.
+- **Runs:** each core target passes under `-race` (SQLite 3.51.3, PostgreSQL 16 pgx and stdlib,
+  MySQL 8.0). `make lint-conformance` 0 issues. `make req-check` ok (6343 requirements).
+  `make conformance`: 6263 pass, 0 fail, 0 skip, 0 not run, 80 untested. `make report-delta`
+  against HEAD and against `a46e9e95`: 6 rows changed (the five view rows untested → pass, the new
+  row absent → pass), none left `pass`.
+- **Auto-review:** 0 high-confidence issues. Its own fail-first check (the discriminator term
+  removed) failed only the discriminator leaf. Fixed inline: the STATUS phase row (8 of 9), design
+  §5.5's comparator bullet and §6.3's Enum wording follow the ruling, §6.1 `relfilter.exact` names
+  the `polymorphic × filter` cell, and the Acceptance Criteria name the in-scope operators.
+- **Tests:** `make check` green. No path in the diff is on the `check-examples` trigger list;
+  `make conformance` ran every example anyway, all passing.
 
 ## 33.8 Delete ported example copies — ruling 6
 

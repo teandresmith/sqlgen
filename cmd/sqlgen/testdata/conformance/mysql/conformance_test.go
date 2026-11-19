@@ -39,10 +39,6 @@ func TestConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	schema, err := os.ReadFile("schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
 	// The driver runs one statement per call unless the DSN allows several.
 	exec := func(t *testing.T, stmts ...string) {
 		t.Helper()
@@ -52,9 +48,15 @@ func TestConformance(t *testing.T) {
 			}
 		}
 	}
-	for stmt := range strings.SplitSeq(string(schema), ";") {
-		if body := stripComments(stmt); body != "" {
-			exec(t, body)
+	for _, file := range []string{"schema.sql", "views/premium_products.sql"} {
+		ddl, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for stmt := range strings.SplitSeq(string(ddl), ";") {
+			if body := stripComments(stmt); body != "" {
+				exec(t, body)
+			}
 		}
 	}
 	var version string
