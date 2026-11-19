@@ -6,7 +6,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/tenancy"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/tenancy/models"
@@ -232,34 +231,5 @@ func TestIsolation_NilResolverFailsClosed(t *testing.T) {
 	}
 	if got := envNil.counter.totalDBOps(); got != 0 {
 		t.Errorf("DB ops issued on nil-resolver Create: %d, want 0 (fail-closed before round-trip)", got)
-	}
-}
-
-// TestIsolation_FilterOnTenantColumn filters on the tenant column directly.
-// Its filter field takes the tenant Go type's comparator (comparator.ID for
-// uuid.UUID), and an explicit tenant filter under SkipTenancy selects exactly
-// that tenant's rows.
-func TestIsolation_FilterOnTenantColumn(t *testing.T) {
-	resetDB(t)
-
-	envA := newEnv(t, withResolver(staticResolver(tenantA)))
-	envB := newEnv(t, withResolver(staticResolver(tenantB)))
-	ctx := context.Background()
-
-	if _, err := envA.client.Products().Create(ctx, &models.CreateProductInput{Name: "a", SKU: "FA1", Price: 1}); err != nil {
-		t.Fatalf("create A: %v", err)
-	}
-	if _, err := envB.client.Products().Create(ctx, &models.CreateProductInput{Name: "b", SKU: "FB1", Price: 1}); err != nil {
-		t.Fatalf("create B: %v", err)
-	}
-
-	got, err := envA.client.Products().GetMany(ctx, &models.GetProductsInput{
-		Filter: &models.ProductFilter{WorkspaceID: &comparator.ID{Eq: new(tenantB.String())}},
-	}, func(o *models.CallOptions[models.ProductFieldOptions]) { o.SkipTenancy = true })
-	if err != nil {
-		t.Fatalf("GetMany: %v", err)
-	}
-	if len(got) != 1 || got[0].WorkspaceID != tenantB {
-		t.Errorf("GetMany filtered on tenant B = %+v, want the one tenant B row", got)
 	}
 }

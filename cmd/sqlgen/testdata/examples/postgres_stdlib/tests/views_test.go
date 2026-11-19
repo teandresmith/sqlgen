@@ -169,47 +169,6 @@ func TestViewCount(t *testing.T) {
 	}
 }
 
-func TestViewPaginate(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	var ids []uuid.UUID
-	var cleanups []func()
-	for i := range 5 {
-		id, cleanup := seedProductForView(t, ctx, client, fmt.Sprintf("Pag%d", i), float64(i+1)*10.0, 0)
-		ids = append(ids, id)
-		cleanups = append(cleanups, cleanup)
-	}
-	t.Cleanup(func() {
-		for _, c := range cleanups {
-			c()
-		}
-	})
-
-	result, err := client.ProductSummary().Paginate(ctx, models.PaginateInput[models.ProductSummaryFilter]{
-		Filter: &models.ProductSummaryFilter{
-			ID: &comparator.ID{In: idStrings(ids)},
-		},
-		Limit:  2,
-		Offset: 0,
-	})
-	if err != nil {
-		t.Fatalf("Paginate page 1: %v", err)
-	}
-	if len(result.Items) != 2 {
-		t.Errorf("Page 1 items = %d, want 2", len(result.Items))
-	}
-	if result.TotalCount != 5 {
-		t.Errorf("TotalCount = %d, want 5", result.TotalCount)
-	}
-	if !result.HasMore {
-		t.Error("Page 1 should have more pages")
-	}
-	if result.Offset != 0 {
-		t.Errorf("Page 1 Offset = %d, want 0", result.Offset)
-	}
-}
-
 func TestViewConnection(t *testing.T) {
 	ctx := context.Background()
 	client := newClient()

@@ -14,21 +14,10 @@ import (
 // events. The generated terminal sets MutationContext.AffectedPKs [...] The
 // event hook iterates AffectedPKs to build one event per entity."
 //
-// Existing event_test.go covers the cardinality (N inputs → N events) for
-// CreateMany / UpdateMany / SoftDeleteMany / HardDeleteMany / RestoreMany.
-// This file strengthens coverage on two axes the existing tests do NOT pin:
-//
-//  1. **Ordering.** Events fire in insertion order. Existing TestEvent_CreateMany
-//     asserts set membership (map keyed by PK) which would pass even if the
-//     event hook shuffled outputs — a regression that reordered events
-//     (e.g., switched to a concurrent map during iteration) would slip
-//     through. The task bullet "event order matches entity insertion order"
-//     is explicit in §14.11.
-//
-//  2. **Per-entity PK uniqueness.** A batch must not emit duplicate PKs or
-//     skip any input. The §28.4 invariant "1 event per entity in the batch"
-//     is loudly violated by dedup / skip bugs. We assert each event's PK
-//     maps 1:1 with the input at the same index.
+// The conformance suite checks the cardinality (N inputs → N events) as a
+// set. These tests pin what a set comparison misses: events fire in the
+// order of the input slice, and each event's PK maps 1:1 to the input at
+// the same index.
 
 // TestEventBatch_CreateMany_OrderMatchesInsertion verifies that the N events
 // fanned out from a CreateMany arrive in the same order as the input slice.
@@ -145,59 +134,6 @@ func TestEventBatch_UpdateMany_OrderMatchesInsertion(t *testing.T) {
 			t.Errorf("event[%d].PK = %d, want %d (events must follow items order, not sorted)",
 				i, pk, items[i].ID)
 		}
-	}
-}
-
-// TestEventBatch_CreateMany_DistinctPKs verifies each event in a CreateMany
-// fan-out has a distinct PK. A dedup bug (e.g., map-keyed-by-PK-in-hook)
-// would emit fewer than N events or repeat one.
-func TestEventBatch_CreateMany_DistinctPKs(t *testing.T) {
-	ctx := context.Background()
-	client, bus := newClientWithBus(t)
-
-	const n = 7
-	inputs := make([]*models.CreateProductInput, n)
-	for i := range n {
-		inputs[i] = &models.CreateProductInput{
-			Name:  "BatchDist",
-			SKU:   "EV-BATCH-DIST-" + string(rune('A'+i)),
-			Price: 1,
-		}
-	}
-
-	got := subscribe(t, bus, event.SubscribeOptions{
-		Tables:  []string{"products"},
-		Actions: []event.Action{event.Create},
-	})
-
-	created, err := client.Products().CreateMany(ctx, inputs)
-	if err != nil {
-		t.Fatalf("CreateMany: %v", err)
-	}
-	t.Cleanup(func() {
-		ids := make([]int64, len(created))
-		for i, p := range created {
-			ids[i] = p.ID
-		}
-		_ = client.Products().HardDeleteMany(ctx, ids)
-	})
-
-	events := got.snapshot()
-	if len(events) != n {
-		t.Fatalf("got %d events, want %d", len(events), n)
-	}
-
-	seen := make(map[int64]bool, n)
-	for i, e := range events {
-		pk, ok := e.PK.(int64)
-		if !ok {
-			t.Errorf("event[%d].PK type = %T, want int64", i, e.PK)
-			continue
-		}
-		if seen[pk] {
-			t.Errorf("event[%d].PK = %d already seen — duplicate PK across batch events", i, pk)
-		}
-		seen[pk] = true
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -337,74 +336,6 @@ func TestTx_FailedInvalidationIsRetriedOnce(t *testing.T) {
 			}
 			if got.Name != tt.wantName {
 				t.Errorf("Get served %q, want %q", got.Name, tt.wantName)
-			}
-		})
-	}
-}
-
-// A key the mutation hook cannot build (an AffectedPKs element of the wrong
-// type) involves no backend call, so it is reported through the error policy
-// by the hook itself, and still never fails the write.
-func TestMutation_UnbuildableKeyIsReportedNotReturned(t *testing.T) {
-	tests := []struct {
-		name string
-		inTx bool
-	}{
-		{name: "outside a transaction", inTx: false},
-		{name: "inside a sync transaction", inTx: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			env := newEnv(t)
-			p, err := env.client.Products().Create(ctx, &models.CreateProductInput{
-				Name: "Before", SKU: uniqueSku(t, "bad-key"), Price: 1.0,
-			})
-			if err != nil {
-				t.Fatalf("Create: %v", err)
-			}
-			t.Cleanup(func() { _ = env.client.Products().HardDelete(ctx, p.ID) })
-
-			var reported []string
-			c, err := models.NewCache(env.backend, models.WithOnError(func(_ context.Context, op, _ string, table hook.TableName, err error) {
-				reported = append(reported, op+" "+string(table)+": "+err.Error())
-			}))
-			if err != nil {
-				t.Fatalf("NewCache: %v", err)
-			}
-			t.Cleanup(func() { _ = c.Close() })
-			// Runs inside the cache hook: after the write, it swaps each
-			// affected PK for one of the wrong type.
-			corrupt := hook.OnMutation(func(next hook.MutationHandler) hook.MutationHandler {
-				return func(ctx context.Context, m *hook.MutationContext) (any, error) {
-					res, err := next(ctx, m)
-					for i, pk := range m.AffectedPKs {
-						m.AffectedPKs[i] = int32(pk.(int64))
-					}
-					return res, err
-				}
-			}, hook.OpUpdate)
-			client := models.New(env.counter,
-				models.WithCache(c),
-				models.WithMutationHook(corrupt),
-				models.WithCallbackMode(database.CallbackSync),
-			)
-
-			update := func(ctx context.Context) error {
-				_, err := client.Products().Update(ctx, p.ID, &models.UpdateProductInput{Name: omittable.Set("After")})
-				return err
-			}
-			if tt.inTx {
-				err = client.WithTx(ctx, "bad-key", update)
-			} else {
-				err = update(ctx)
-			}
-			if err != nil {
-				t.Fatalf("write returned %v, want nil", err)
-			}
-			want := []string{`invalidate_many products: cache: InvalidateMany("products"): cache: pk at index 0: expected int64, got int32`}
-			if !slices.Equal(reported, want) {
-				t.Errorf("OnErrorFunc reports = %q, want %q", reported, want)
 			}
 		})
 	}

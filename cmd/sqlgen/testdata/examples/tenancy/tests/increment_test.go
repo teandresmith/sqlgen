@@ -171,44 +171,6 @@ func TestIncrement_CompositePK_ZeroTenantOnPK_ShortCircuits(t *testing.T) {
 	}
 }
 
-// TestIncrement_CompositePK_SkipTenancy_Succeeds verifies that SkipTenancy
-// drops the verify-match check on composite-PK tables too; the caller owns
-// the tenant value on the PK, and it is used verbatim in the WHERE.
-func TestIncrement_CompositePK_SkipTenancy_Succeeds(t *testing.T) {
-	resetDB(t)
-
-	envA := newEnv(t, withResolver(staticResolver(tenantA)))
-	envB := newEnv(t, withResolver(staticResolver(tenantB)))
-	ctx := context.Background()
-
-	item := createOrderItem(t, envA, ctx, tenantA, 1, 10, 2)
-
-	// envB increments tenant A's row via SkipTenancy + explicit PK.
-	err := envB.client.OrderItems().Increment(ctx, models.OrderItemPK{
-		WorkspaceID: tenantA,
-		OrderID:     item.OrderID,
-		ProductID:   item.ProductID,
-	}, models.IncrementInput[models.OrderItemIncrementColumn]{
-		Column: models.OrderItemIncrementQuantity,
-		Amount: 5,
-	}, func(o *models.CallOptions[models.OrderItemFieldOptions]) { o.SkipTenancy = true })
-	if err != nil {
-		t.Fatalf("SkipTenancy Increment on composite PK: %v", err)
-	}
-
-	got, err := envA.client.OrderItems().Get(ctx, models.OrderItemPK{
-		WorkspaceID: tenantA,
-		OrderID:     item.OrderID,
-		ProductID:   item.ProductID,
-	})
-	if err != nil {
-		t.Fatalf("Get item in tenant A: %v", err)
-	}
-	if got.Quantity != 7 {
-		t.Errorf("quantity after SkipTenancy Increment: got %d, want 7", got.Quantity)
-	}
-}
-
 // Ensures the tenancy-resolver-missing path fires on Increment too (§29.3.1
 // fail-closed): required resolver returns ErrMissing → Increment propagates.
 func TestIncrement_TenantMissing_FailsClosed(t *testing.T) {

@@ -749,16 +749,16 @@ Completed 2026-11-19 on `feat/conformance-variants`.
 
 **PRD Reference:** none (`CONFORMANCE.md` §9 ruling 6)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] For each of the 52 unclaimed test functions copied across the core dialect examples (design
+- [x] For each of the 52 unclaimed test functions copied across the core dialect examples (design
   §1.1), and each variant example test whose rows moved in 33.4–33.6, decide whether it is
   covered by a suite test that passes on every target. Re-derive the list at HEAD.
-- [ ] Delete each covered copy in the same commit as its citation move. Keep a test that also
+- [x] Delete each covered copy in the same commit as its citation move. Keep a test that also
   covers a config combination or a dialect-only feature, and say why in the Completion Record.
-- [ ] Regenerate `docs/conformance/REPORT.md` (`make conformance`).
+- [x] Regenerate `docs/conformance/REPORT.md` (`make conformance`).
 
 ### Acceptance Criteria
 
@@ -769,10 +769,77 @@ Completed 2026-11-19 on `feat/conformance-variants`.
 
 ### Tests Required
 
-- [ ] `make req-check` passes after the deletions.
-- [ ] `make check-examples` passes after the deletions.
-- [ ] 33.1's report-delta check against the phase's base report: no row leaves `pass`.
+- [x] `make req-check` passes after the deletions.
+- [x] `make check-examples` passes after the deletions.
+- [x] 33.1's report-delta check against the phase's base report: no row leaves `pass`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-19 on `feat/conformance-variants`.
+
+- **Candidates, re-derived at HEAD:** 70 test functions copied across two or more of the
+  `postgres`, `postgres_stdlib`, `mysql` and `sqlite` examples with no registry citation (design
+  §1.1 counted 52 at `5b24d6ba`), and 72 variant example tests cited by a row that also cites
+  `conformance: Features/…`. A copy was deleted only when a suite leaf passing on every target
+  makes each of its assertions; partial overlap kept it.
+- **Deleted (83 functions):**
+  - Core examples: `TestViewPaginate` (all four); `TestViewCount`, `TestViewConnection` (mysql,
+    sqlite); `TestRelationshipFilter_O2MExactRowSet`, `_M2MExactRowSet`,
+    `_ComposesWithColumnFilter` (postgres, mysql, sqlite); `TestCategoryCRUD`,
+    `TestRelationshipO2M`, `TestRelationshipM2M` (sqlite); `TestRelationshipO2O`,
+    `TestRelationshipO2M_UsersOrders` (mysql, sqlite); `TestSluggedRows_PKTargetDoesNotFireOnAnotherUnique`
+    (postgres).
+  - `events`: 31 tests (`TestEvent_*` per operation, `TestEventInput_*` single-op and
+    `CreateMany` / `UpdateMany`, the `TestWhereMutation_*` file, `TestEventBatch_CreateMany_DistinctPKs`,
+    `TestEventConfig_FireAndForgetCreateCarriesGeneratedPK`).
+  - `cache`: `TestMutation_UnbuildableKeyIsReportedNotReturned`,
+    `TestViewInvalidation_NoOpWriteDoesNotFireViewPattern`.
+  - `tenancy`: 20 tests (composite-PK match and `SkipTenancy`, event stamps and metadata,
+    event-driven invalidation, hooks `AffectedPKs`, tenant-column filter, nil-tenant eviction).
+  - `tenancy_postgres`: the five `UpdateWithRelated` / `UpsertWithRelated` unlink and
+    shared-column tests.
+  - Seven files left with no test or used helper were removed; the helpers `assertEventPKs`,
+    `newRemoteInstance`, `mkLinkedTemplate` and `linkedRows` lost their last caller and went too.
+- **Kept, and why:**
+  - A schema or config the suite lacks: `TestViewGetMany` / `TestViewGetByPK` (join and aggregate
+    view columns), `TestViewNullableAnnotation`, the `TestCategoryStats*` no-PK aggregate view,
+    `TestDiscriminatorRelationshipFilter` (enum discriminator, sibling edge),
+    `TestSubCategorizedPolymorphism*`, `TestFilterComparators` and
+    `TestFilterNumericAndIntegerComparators` (operators and column types outside the 33.7
+    ruling), the decimal and KSUID override tests, every CRUD copy with a UUID, enum, decimal,
+    REAL, array, JSON or domain column, boolean soft delete, 3-column keys, key-only,
+    default-only and slugged tables, the link-table upsert, multi-schema and manifest tests.
+  - A stricter assertion: `TestViewCount` and `TestViewConnection` on postgres and
+    postgres_stdlib (zero-match count on a view; backward paging), `TestArticleSoftDelete_Timestamp`
+    (recent `DeletedAt`), the cursor byte-equality test, `TestUpsertMany_UnsuppliedConflictTargetRefused`
+    (error text), the slugged copies on mysql and sqlite (GraphQL `CONFLICT`).
+  - `TestCategoryCRUD`, `TestRelationshipO2M` and `TestRelationshipM2M` on mysql: an `INT` (int32)
+    key, which the core schema never has.
+  - `TestViewNoMutationMethods`: a unit test checks the absence, not a suite leaf.
+  - `events`: list order on `*Many` (`TestEventInput_SoftDeleteMany` / `_HardDeleteMany`,
+    `TestEvent_RestoreMany`, `TestEventBatch_SoftDeleteMany_OrderMatchesInsertion`),
+    `Event.Schema` and timestamp (`TestEvent_Create`, which is also the only citation of
+    `event.outside-tx-immediate`, and `TestEventBatch_CreateMany_PerEventActionAndTable`),
+    redaction config (`TestEventRedaction_UnredactedTableKeepsSamePointer`) and
+    `strict_updates: false` (`TestEvent_MissingKeyPublishesNothing`).
+  - `cache`: the untenanted write-through and `keysFor` eviction branch, which no Features leaf
+    runs (`TestMutation_CreateSetsCache`, `_CreateManySetsCache`, `_UpdateManyInvalidatesBatch`,
+    `_UpsertManyInvalidatesBatch`; backlog entry added), and `TestMutation_WhereMutationsInvalidateByKey`
+    (the 2026-11-18 ruling).
+  - `tenancy`: `TestCompositePK_Get_MatchSucceeds`, the only citation of
+    `gotype.uuid.stdlib.database-sql-bytes`.
+- **Registry:** 45 rows in `client.md`, `cli/gen.md`, `runtime/cache.md` and
+  `runtime/events.md` lost their citations of the deleted tests. One of them,
+  `edge.batch-records-written-keys`, cited `TestEvent_BatchPublishesOnlyWrittenKeys` with no
+  Features citation; it now cites
+  `conformance: Features/Tenancy/a listed key that matched no row publishes no event`. Header
+  comments in `events/tests/{batch,input_field}_test.go` and `tenancy/tests/event_metadata_test.go`
+  no longer describe removed tests.
+- **Runs:** `make req-check` ok (6343 requirements). `make check` green. `make conformance`:
+  6263 pass, 0 fail, 0 skip, 0 not run, 80 untested. `make report-delta`: 0 rows changed against
+  HEAD; against `a46e9e95`, the six 33.7 rows (untested or absent → pass), none left `pass`.
+  Every §3.2 row keeps its Features citations, so each still passes on four targets.
+  `make check-examples` green (every example and conformance module). Auto-review: no deletion
+  lost an assertion, and every §3.2 row passes on all four Features targets. Fixed inline: the
+  45-row count, the backlog template range, and a stale `Increment` note in
+  `events/tests/input_field_test.go`.

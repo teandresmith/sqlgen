@@ -36,34 +36,6 @@ func wantUniqueViolation(t *testing.T, op string, err error) {
 	}
 }
 
-// TestSluggedRows_PKTargetDoesNotFireOnAnotherUnique: an upsert on the PK
-// target whose insert collides on a different unique column is a unique
-// violation (23505), and the row holding that value is untouched.
-func TestSluggedRows_PKTargetDoesNotFireOnAnotherUnique(t *testing.T) {
-	resetSluggedRows(t)
-	ctx := context.Background()
-	c := newClient().SluggedRows()
-
-	victim, err := c.Create(ctx, &models.CreateSluggedRowInput{Name: omittable.Set("victim")})
-	if err != nil {
-		t.Fatalf("Create(victim): %v", err)
-	}
-
-	got, err := c.Upsert(ctx, &models.CreateSluggedRowInput{Name: omittable.Set("other")}, models.SluggedRowConflictPK)
-	if err == nil {
-		t.Errorf("Upsert(PK target, colliding slug) = %+v, want a unique violation", got)
-	}
-	wantUniqueViolation(t, "Upsert(PK target, colliding slug)", err)
-
-	row, err := c.Get(ctx, victim.ID)
-	if err != nil {
-		t.Fatalf("Get(%d): %v", victim.ID, err)
-	}
-	if row.Name != "victim" {
-		t.Errorf("Get(%d).Name = %q, want %q", victim.ID, row.Name, "victim")
-	}
-}
-
 // TestSluggedRows_ZeroUpsertIsPlainInsert pins the zero-Upsert rule end to end
 // (PRD 9.5): a zero Upsert emits no conflict clause, so the second one
 // collides on the default slug as a unique violation (23505).

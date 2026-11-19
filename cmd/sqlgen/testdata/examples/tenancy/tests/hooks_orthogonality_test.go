@@ -10,7 +10,6 @@ import (
 	"github.com/teandresmith/sqlgen/comparator"
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 	"github.com/teandresmith/sqlgen/hook"
-	"github.com/teandresmith/sqlgen/omittable"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/tenancy/models"
 )
@@ -71,40 +70,5 @@ func TestHooks_QueryInputCarriesNoTenantCondition(t *testing.T) {
 	// Unexported fields included: an internal condition counts as a change.
 	if diff := gocmp.Diff(want, *seen[0], gocmp.AllowUnexported(models.GetProductsInput{})); diff != "" {
 		t.Errorf("input the query hook saw (-want +got):\n%s", diff)
-	}
-}
-
-// On a table whose primary key holds the tenant column, a mutation hook's
-// AffectedPKs are full PK values, tenant component included.
-func TestHooks_AffectedPKsCarryTheTenantComponent(t *testing.T) {
-	resetDB(t)
-	ctx := context.Background()
-	var affected [][]any
-	record := func(next hook.MutationHandler) hook.MutationHandler {
-		return func(ctx context.Context, m *hook.MutationContext) (any, error) {
-			res, err := next(ctx, m)
-			if m.Table == models.TableOrderItems {
-				affected = append(affected, m.AffectedPKs)
-			}
-			return res, err
-		}
-	}
-	client := models.New(dbstdlib.New(testDB),
-		models.WithTenantResolver(staticResolver(tenantA)),
-		models.WithMutationHook(record),
-	)
-	pk := models.OrderItemPK{WorkspaceID: tenantA, OrderID: 1, ProductID: 10}
-	if _, err := client.OrderItems().Create(ctx, &models.CreateOrderItemInput{WorkspaceID: tenantA, OrderID: 1, ProductID: 10, Quantity: 1, UnitPrice: 1}); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if _, err := client.OrderItems().Update(ctx, pk, &models.UpdateOrderItemInput{Quantity: omittable.Set(int64(2))}); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-	if err := client.OrderItems().HardDelete(ctx, pk); err != nil {
-		t.Fatalf("HardDelete: %v", err)
-	}
-	want := [][]any{{pk}, {pk}, {pk}}
-	if diff := gocmp.Diff(want, affected); diff != "" {
-		t.Errorf("AffectedPKs of Create, Update, HardDelete (-want +got):\n%s", diff)
 	}
 }

@@ -5,63 +5,10 @@ import (
 	"testing"
 
 	"github.com/teandresmith/sqlgen/comparator"
-	"github.com/teandresmith/sqlgen/omittable"
 	"github.com/teandresmith/sqlgen/types"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models"
 )
-
-func TestRelationshipO2O(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	user, err := client.Users().Create(ctx, &models.CreateUserInput{
-		Email: "o2o@example.com", Name: "O2OUser", Balance: 0,
-	})
-	if err != nil {
-		t.Fatalf("Create user: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Users().HardDelete(ctx, user.ID) })
-
-	github := "o2ouser"
-	profile, err := client.Profiles().Create(ctx, &models.CreateProfileInput{
-		UserID:       user.ID,
-		GithubHandle: omittable.Set(&github),
-	})
-	if err != nil {
-		t.Fatalf("Create profile: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Profiles().HardDelete(ctx, profile.ID) })
-
-	// Load user with profile (O2O via LEFT JOIN)
-	id := user.ID
-	users, err := client.Users().GetMany(ctx, &models.GetUsersInput{
-		Filter: &models.UserFilter{
-			ID: &comparator.Number[int64]{Eq: &id},
-		},
-	}, func(o *models.CallOptions[models.UserFieldOptions]) {
-		o.FieldOptions = &models.UserFieldOptions{
-			ID:   true,
-			Name: true,
-			Profile: &models.ProfileFieldOptions{
-				ID:           true,
-				GithubHandle: true,
-			},
-		}
-	})
-	if err != nil {
-		t.Fatalf("GetMany with O2O: %v", err)
-	}
-	if len(users) != 1 {
-		t.Fatalf("GetMany returned %d users, want 1", len(users))
-	}
-	if users[0].Profile == nil {
-		t.Fatal("User.Profile is nil, expected profile to be loaded")
-	}
-	if users[0].Profile.ID != profile.ID {
-		t.Errorf("Profile.ID = %d, want %d", users[0].Profile.ID, profile.ID)
-	}
-}
 
 // TestRelationshipO2O_ChainAliasesAreNotKeywords is a regression pin. O2O JOIN aliases are written bare in SQL (PRD §13.2), and the generator
 // used to spell each one as the shortest unused prefix of the edge name, so
@@ -181,64 +128,6 @@ func TestRelationshipO2M(t *testing.T) {
 	}
 	if len(categories[0].Products) != 2 {
 		t.Errorf("Category.Products count = %d, want 2", len(categories[0].Products))
-	}
-}
-
-func TestRelationshipO2M_UsersOrders(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	user, err := client.Users().Create(ctx, &models.CreateUserInput{
-		Email: "o2m-orders@example.com", Name: "O2MOrdersUser", Balance: 0,
-	})
-	if err != nil {
-		t.Fatalf("Create user: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Users().HardDelete(ctx, user.ID) })
-
-	o1, err := client.Orders().Create(ctx, &models.CreateOrderInput{
-		UserID: user.ID, Status: omittable.Set(models.OrdersStatusEnumPending), Total: 50.00,
-	})
-	if err != nil {
-		t.Fatalf("Create order 1: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Orders().HardDelete(ctx, o1.ID) })
-
-	o2, err := client.Orders().Create(ctx, &models.CreateOrderInput{
-		UserID: user.ID, Status: omittable.Set(models.OrdersStatusEnumShipped), Total: 75.00,
-	})
-	if err != nil {
-		t.Fatalf("Create order 2: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Orders().HardDelete(ctx, o2.ID) })
-
-	// Load user with orders (O2M)
-	id := user.ID
-	users, err := client.Users().GetMany(ctx, &models.GetUsersInput{
-		Filter: &models.UserFilter{
-			ID: &comparator.Number[int64]{Eq: &id},
-		},
-	}, func(o *models.CallOptions[models.UserFieldOptions]) {
-		o.FieldOptions = &models.UserFieldOptions{
-			ID:   true,
-			Name: true,
-			Orders: &models.OrderRelationshipOptions{
-				FieldOptions: &models.OrderFieldOptions{
-					ID:     true,
-					Status: true,
-					Total:  true,
-				},
-			},
-		}
-	})
-	if err != nil {
-		t.Fatalf("GetMany with O2M users→orders: %v", err)
-	}
-	if len(users) != 1 {
-		t.Fatalf("GetMany returned %d users, want 1", len(users))
-	}
-	if len(users[0].Orders) != 2 {
-		t.Errorf("User.Orders count = %d, want 2", len(users[0].Orders))
 	}
 }
 

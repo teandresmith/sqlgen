@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/teandresmith/sqlgen/comparator"
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 	"github.com/teandresmith/sqlgen/event"
 	"github.com/teandresmith/sqlgen/event/memorybus"
@@ -248,41 +247,5 @@ func TestEventConfig_SkipEventsInsideTransaction(t *testing.T) {
 	}
 	if events[0].PK != publishedID {
 		t.Errorf("event PK = %v, want the unskipped row %d (skipped row was %d)", events[0].PK, publishedID, skippedID)
-	}
-}
-
-// A fire-and-forget Create (empty FieldOptions) returns no entity, but the
-// event still carries the database-generated PK.
-func TestEventConfig_FireAndForgetCreateCarriesGeneratedPK(t *testing.T) {
-	ctx := context.Background()
-	client, bus := newClientWithBus(t)
-	got := subscribe(t, bus, event.SubscribeOptions{Actions: []event.Action{event.Create}})
-
-	p, err := client.Products().Create(ctx, &models.CreateProductInput{
-		Name: "FireForget", SKU: "EV-FF-1", Price: 1,
-	}, func(o *models.CallOptions[models.ProductFieldOptions]) {
-		o.FieldOptions = &models.ProductFieldOptions{}
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if p != nil {
-		t.Fatalf("fire-and-forget Create returned %+v, want nil", p)
-	}
-	sku := "EV-FF-1"
-	rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{
-		Filter: &models.ProductFilter{SKU: &comparator.String{Eq: &sku}},
-	})
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("GetMany by SKU = %v, %v; want one row", rows, err)
-	}
-	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, rows[0].ID) })
-
-	events := got.snapshot()
-	if len(events) != 1 {
-		t.Fatalf("got %d events, want 1", len(events))
-	}
-	if events[0].PK != rows[0].ID {
-		t.Errorf("event PK = %v (%T), want the generated ID %d", events[0].PK, events[0].PK, rows[0].ID)
 	}
 }
