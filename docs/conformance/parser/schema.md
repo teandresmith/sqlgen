@@ -365,7 +365,7 @@ the format.
 | parser.sort.before-generation | The schema is sorted before generation | `unit: cmd/sqlgen/cli: TestParseSchema_SortedBeforeGeneration/postgres`; `unit: cmd/sqlgen/cli: TestParseSchema_SortedBeforeGeneration/mysql` | all |  |
 
 ## §16.1 Annotation Files (File-Sourced Views)
-<!-- prd: 16.1 sha256: 838a0c6951fff8ae -->
+<!-- prd: 16.1 sha256: 8ad83014f4347359 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -399,6 +399,7 @@ the format.
 | parser.viewfile.sqlite-full-join-error | On SQLite a `FULL` join in a view query is a parse error | `unit: parser/sqlite: TestParseViewSQL_RightAndFullJoinRejected` | sqlite |  |
 | parser.viewfile.directives-before-create-view | Directives are read from the SQL line comments before the `CREATE VIEW` statement | `unit: parser: TestViewAnnotationFile_DirectiveRules/directives come from the comments before CREATE VIEW` | all |  |
 | parser.viewfile.unknown-directive-ignored | An unrecognized directive is ignored | `unit: parser: TestParseViewAnnotations_UnrecognizedDirectives/one unknown directive`; `unit: parser: TestParseViewAnnotations_UnrecognizedDirectives/a word that starts with @type`; `unit: cmd/sqlgen/cli: TestGenerate_UnrecognizedViewDirectiveWarns/generate` | all |  |
+| parser.viewfile.colon-less-line-is-prose | A comment line without `:` is prose, not a directive, and is neither applied nor warned about, even when it names a known directive | `unit: parser: TestParseViewAnnotations_UnrecognizedDirectives/prose mentioning a directive without a colon`; `unit: parser: TestParseViewAnnotations_UnrecognizedDirectives/prose mentioning an unknown directive without a colon` | all |  |
 | parser.viewfile.unknown-directive-warning | An unrecognized directive produces a warning | `unit: cmd/sqlgen/cli: TestGenerate_UnrecognizedViewDirectiveWarns/generate`; `unit: cmd/sqlgen/cli: TestGenerate_UnrecognizedViewDirectiveWarns/validate`; `unit: parser: TestParseViewAnnotations_UnrecognizedDirectives/two unknown directives in order` | all |  |
 | parser.viewfile.pk-marks-columns | `@pk` marks the named columns as the view's primary key | `unit: parser: TestParseViewAnnotations_Basic`; `unit: parser: TestBuildView_TypeResolution` | all |  |
 | parser.viewfile.pk-comma-separated | `@pk` takes comma-separated column names | `unit: parser: TestViewAnnotationFile_DirectiveRules/@pk takes a comma-separated list`; `unit: parser: TestViewAnnotationFile_DirectiveRules/@pk list without spaces after the commas` | all |  |

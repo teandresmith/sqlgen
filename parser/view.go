@@ -149,7 +149,13 @@ func ParseViewAnnotations(content string) (*ViewAnnotations, error) {
 			continue
 		}
 
-		directive, value, _ := strings.Cut(body, ":")
+		// A directive is `@<name>: <value>` (PRD §16.1). A line without the
+		// colon is prose that happens to start with `@`, such as a comment
+		// describing the directives, so it is skipped rather than reported.
+		directive, value, ok := strings.Cut(body, ":")
+		if !ok {
+			continue
+		}
 		directive = strings.TrimSpace(directive)
 		value = strings.TrimSpace(value)
 
@@ -186,12 +192,14 @@ func ParseViewAnnotations(content string) (*ViewAnnotations, error) {
 
 // parseOtherDirective handles a directive that is neither @pk nor @nullable:
 // `@type <col>` is a type override, and any other directive is recorded as
-// unrecognized.
+// unrecognized, by its name alone.
 func parseOtherDirective(annotations *ViewAnnotations, directive, value string) error {
 	if colName, ok := strings.CutPrefix(directive, "@type"); ok && (colName == "" || colName[0] == ' ' || colName[0] == '\t') {
 		return parseTypeDirective(annotations, strings.TrimSpace(colName), value)
 	}
-	annotations.Unrecognized = append(annotations.Unrecognized, directive)
+	name, _, _ := strings.Cut(directive, " ")
+	name, _, _ = strings.Cut(name, "\t")
+	annotations.Unrecognized = append(annotations.Unrecognized, name)
 	return nil
 }
 

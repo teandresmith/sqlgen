@@ -9439,7 +9439,7 @@ Since the file contains valid SQL, it can be executed directly against a databas
 
 #### Directives
 
-Annotations are SQL line comments (`-- @<directive>: <value>`) that appear before the `CREATE VIEW` statement. Unrecognized directives are ignored with a warning.
+Annotations are SQL line comments (`-- @<directive>: <value>`) that appear before the `CREATE VIEW` statement. A comment line without the `:` is prose, not a directive, so a comment describing `@pk` is read as neither. Unrecognized directives are ignored with a warning that names the directive.
 
 | Directive | Syntax | Value | Effect | Multiplicity |
 |-----------|--------|-------|--------|:------------:|

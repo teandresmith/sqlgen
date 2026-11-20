@@ -474,7 +474,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | gen.sorter.tables-only | Sorters are generated for tables only; views and materialized views get none, and their `GetMany` takes `sql.Sort` directly | `unit: cmd/sqlgen/gen: TestGenerate_SortersAreForTablesOnly/postgres`; `unit: cmd/sqlgen/gen: TestGenerate_SortersAreForTablesOnly/mysql`; `unit: cmd/sqlgen/gen: TestGenerate_SortersAreForTablesOnly/sqlite` | all |  |
 
 ## §16 Views
-<!-- prd: 16 sha256: 171313b688234ca3 -->
+<!-- prd: 16 sha256: 015420fc1b5a9dac -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

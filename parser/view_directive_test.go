@@ -10,7 +10,8 @@ import (
 
 // TestParseViewAnnotations_UnrecognizedDirectives pins that a directive the
 // parser does not know is ignored and listed, in file order, for the caller
-// to warn about, and that a known directive is not listed.
+// to warn about by its name alone, that a known directive is not listed, and
+// that a comment line with no colon is prose, not a directive.
 func TestParseViewAnnotations_UnrecognizedDirectives(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -20,7 +21,9 @@ func TestParseViewAnnotations_UnrecognizedDirectives(t *testing.T) {
 	}{
 		{name: "known directives only", content: "-- @pk: id\n-- @type n: int32\n-- @nullable: n\nCREATE VIEW v AS SELECT id, n FROM t;"},
 		{name: "one unknown directive", content: "-- @pk: id\n-- @primary: id\nCREATE VIEW v AS SELECT id FROM t;", want: []string{"@primary"}},
-		{name: "a word that starts with @type", content: "-- @typeface n: int32\nCREATE VIEW v AS SELECT n FROM t;", want: []string{"@typeface n"}, wantNoTypeFor: "face n"},
+		{name: "a word that starts with @type", content: "-- @typeface n: int32\nCREATE VIEW v AS SELECT n FROM t;", want: []string{"@typeface"}, wantNoTypeFor: "face n"},
+		{name: "prose mentioning a directive without a colon", content: "-- Directives:\n--   @pk       marks the primary key so a Get(ctx, pk) method is generated.\n-- @pk: id\nCREATE VIEW v AS SELECT id FROM t;"},
+		{name: "prose mentioning an unknown directive without a colon", content: "-- @see the migration\n-- @pk: id\nCREATE VIEW v AS SELECT id FROM t;"},
 		{name: "two unknown directives in order", content: "-- @b: x\n-- @a: y\nCREATE VIEW v AS SELECT id FROM t;", want: []string{"@b", "@a"}},
 	}
 	for _, tt := range tests {
