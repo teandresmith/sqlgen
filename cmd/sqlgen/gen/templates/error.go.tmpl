@@ -44,8 +44,12 @@ var (
 
 	// ErrAlreadyRelated is returned when a nested `connect` names a target
 	// already parented to a different row and the edge does not set
-	// allow_reparent, or when a has-one `create` or `connect` finds the parent
-	// already holding a different child.
+	// allow_reparent; when a `connect` on a multi-column key names a target
+	// whose pinned member, one the edge takes from the parent rather than
+	// writes (such as a tenant column), differs from the parent's, which
+	// allow_reparent does not reach even when the target has no parent; or
+	// when a has-one `create` or `connect` finds the parent already holding a
+	// different child.
 	ErrAlreadyRelated = database.ErrAlreadyRelated
 
 	// ErrNestedVerbConflict is returned before any statement on the edge runs when one

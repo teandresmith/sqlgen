@@ -66,9 +66,12 @@ var (
 
 	// ErrAlreadyRelated is returned when a nested write would relate a row
 	// that is already related elsewhere: a `connect` names a target already
-	// parented to a different row and the edge does not set allow_reparent,
-	// or a has-one `create` or `connect` finds the parent already holding a
-	// different child. Use errors.As to extract the *NestedMutationError for
+	// parented to a different row and the edge does not set allow_reparent;
+	// a `connect` on a multi-column key names a target whose pinned member,
+	// one the edge takes from the parent rather than writes (such as a
+	// tenant column), differs from the parent's, which allow_reparent does
+	// not reach even when the target has no parent; or a has-one `create` or
+	// `connect` finds the parent already holding a different child. Use errors.As to extract the *NestedMutationError for
 	// the edge, verb and id. See PRD §9.9.
 	ErrAlreadyRelated = errors.New("sqlgen: already related to another row")
 
