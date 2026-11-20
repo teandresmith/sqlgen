@@ -31,6 +31,13 @@ func TestSchemaV1_fieldValueTypes(t *testing.T) {
 			keyword: "type",
 		},
 		{
+			name:    "api.graphql.server_scaffold given a string",
+			good:    "api:\n  graphql:\n    server_scaffold: false\n",
+			bad:     "api:\n  graphql:\n    server_scaffold: \"no\"\n",
+			at:      "/api/graphql/server_scaffold",
+			keyword: "type",
+		},
+		{
 			name:    "enums given an array",
 			good:    "enums:\n  status:\n    struct_name: Status\n",
 			bad:     "enums: [status]\n",

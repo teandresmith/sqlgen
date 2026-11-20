@@ -123,7 +123,7 @@ exists.
 
 **Config.** Add `ServerScaffold *bool \`yaml:"server_scaffold"\`` to `GraphQLAPIConfig`. When it's
 unset, it defaults to `true` in the same `applyDefaults` block as `max_depth` and
-`max_complexity` (`config.go:1914-1919`). A tri-state pointer keeps "unset" distinguishable, as
+`max_complexity` (`config.go:1919-1924`). A tri-state pointer keeps "unset" distinguishable, as
 the cache and tenancy `enabled` fields already do. Add the key to `v1.json`'s `graphql`
 properties as `boolean`. There's no validation rule: the key is a plain boolean with no
 interaction with other keys.
@@ -151,7 +151,7 @@ deletes it (§2.2).
 | scaffold.off-existing-kept | With `api.graphql.server_scaffold: false`, an existing `server.go` is left byte-for-byte unchanged | §26.5.6 (proposed in §8) | all | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false leaves an existing server.go untouched` | api-generation: `graph/server.go` × single PK | planned |
 | scaffold.default-true | An unset `api.graphql.server_scaffold` behaves as `true` | §26.3 API config table (proposed in §8) | all | `unit: cmd/sqlgen/config: TestLoad_GraphQLServerScaffoldDefault` | config-fields: `api.graphql.server_scaffold` × default | planned |
 | scaffold.diff-not-proposed | With `api.graphql.server_scaffold: false` and no `server.go` on disk, `sqlgen diff` reports no `server.go` change | §23 `diff` coverage + §26.5.6 (proposed in §8) | all | `unit: cmd/sqlgen/cli: TestDiff_ServerScaffoldOffProposesNoServer` | commands: `diff` × success × output | planned |
-| scaffold.schema-accepts | The JSON Schema accepts `api.graphql.server_scaffold` as a boolean and rejects a non-boolean | §26.3 (proposed in §8) | all | `unit: cmd/sqlgen/config: TestSchemaV1_fieldValueTypes/api.graphql.server_scaffold` | config-fields: `api.graphql.server_scaffold` × schema | planned |
+| scaffold.schema-accepts | The JSON Schema accepts `api.graphql.server_scaffold` as a boolean and rejects a non-boolean | §26.3 (proposed in §8) | all | `unit: cmd/sqlgen/config: TestSchemaV1_fieldValueTypes/api.graphql.server_scaffold given a string` | config-fields: `api.graphql.server_scaffold` × schema | planned |
 
 ### 6.2 Regression guards
 

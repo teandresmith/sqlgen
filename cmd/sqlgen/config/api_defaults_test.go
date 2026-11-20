@@ -121,3 +121,32 @@ func TestAPIDefaults(t *testing.T) {
 		}
 	})
 }
+
+// TestLoad_GraphQLServerScaffoldDefault pins api.graphql.server_scaffold's
+// §26.3 default: unset resolves to true, and an explicit value is kept.
+func TestLoad_GraphQLServerScaffoldDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		apiBlock string
+		want     bool
+	}{
+		{name: "unset defaults to true", apiBlock: "api:\n  enabled: true\n  graphql:\n    enabled: true\n", want: true},
+		{name: "explicit false is kept", apiBlock: "api:\n  enabled: true\n  graphql:\n    enabled: true\n    server_scaffold: false\n", want: false},
+		{name: "explicit true is kept", apiBlock: "api:\n  enabled: true\n  graphql:\n    enabled: true\n    server_scaffold: true\n", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tscLoadAPI(t, tt.apiBlock)
+			if cfg.API == nil || cfg.API.GraphQL == nil {
+				t.Fatal("api.graphql not loaded")
+			}
+			got := cfg.API.GraphQL.ServerScaffold
+			if got == nil {
+				t.Fatalf("api.graphql.server_scaffold = nil, want %t", tt.want)
+			}
+			if *got != tt.want {
+				t.Errorf("api.graphql.server_scaffold = %t, want %t", *got, tt.want)
+			}
+		})
+	}
+}

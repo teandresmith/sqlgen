@@ -104,15 +104,15 @@ PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 **PRD Reference:** Sections 26.3 (API config table), 4.14
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add `ServerScaffold *bool \`yaml:"server_scaffold"\`` to `GraphQLAPIConfig` (`cmd/sqlgen/config/config.go`), with a doc comment citing §26.5.6.
-- [ ] Default an unset value to `true` in the `api.graphql` defaults block, next to `max_depth` / `max_complexity`.
-- [ ] Add `server_scaffold` to the `graphql` object in `cmd/sqlgen/config/schema/v1.json`: `{"type": "boolean", "default": true, "description": …}`.
-- [ ] Add a `fieldValueTypes` case for the key.
-- [ ] Fill the Tests cells of `api.config.server-scaffold-default` and `api.config.server-scaffold-schema` in `docs/conformance/cli/api-schema.md`.
+- [x] Add `ServerScaffold *bool \`yaml:"server_scaffold"\`` to `GraphQLAPIConfig` (`cmd/sqlgen/config/config.go`), with a doc comment citing §26.5.6.
+- [x] Default an unset value to `true` in the `api.graphql` defaults block, next to `max_depth` / `max_complexity`.
+- [x] Add `server_scaffold` to the `graphql` object in `cmd/sqlgen/config/schema/v1.json`: `{"type": "boolean", "default": true, "description": …}`.
+- [x] Add a `fieldValueTypes` case for the key.
+- [x] Fill the Tests cells of `api.config.server-scaffold-default` and `api.config.server-scaffold-schema` in `docs/conformance/cli/api-schema.md`.
 
 ### Acceptance Criteria
 
@@ -122,14 +122,34 @@ PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/config: TestLoad_GraphQLServerScaffoldDefault` (unset → `true`, explicit `false` → `false`): fails before the change, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/config: TestSchemaV1_fieldValueTypes/api.graphql.server_scaffold`: fails before the change, passes after.
-- [ ] Guard: `unit: cmd/sqlgen/config: TestSchemaV1_noDriftFromConfigStructs` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/config: TestSchemaV1_acceptsExampleConfigs` still passes.
+- [x] `unit: cmd/sqlgen/config: TestLoad_GraphQLServerScaffoldDefault` (unset → `true`, explicit `false` → `false`): fails before the change, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/config: TestSchemaV1_fieldValueTypes/api.graphql.server_scaffold given a string`: fails before the change, passes after.
+- [x] Guard: `unit: cmd/sqlgen/config: TestSchemaV1_noDriftFromConfigStructs` still passes.
+- [x] Guard: `unit: cmd/sqlgen/config: TestSchemaV1_acceptsExampleConfigs` still passes.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.**
+
+- **Config:** `GraphQLAPIConfig.ServerScaffold *bool \`yaml:"server_scaffold"\`` (`cmd/sqlgen/config/config.go`), resolved to `new(true)` in `applyAPIDefaults` when unset. This follows the existing default-true `*bool` fields (`IncludeExamples`, `Breadcrumbs.ClaudeMD`).
+- **Schema:** `server_scaffold` in `cmd/sqlgen/config/schema/v1.json`'s `graphql` object: `boolean`, `default: true`, with a description.
+- **Tests:**
+  - `TestLoad_GraphQLServerScaffoldDefault` (`config/api_defaults_test.go`) has three cases: unset → true, explicit false, explicit true.
+  - `TestSchemaV1_fieldValueTypes/api.graphql.server_scaffold given a string` (`config/schema_fields_test.go`).
+- **Fail first:**
+  - The default test failed to build before the change (`ServerScaffold undefined`).
+  - The schema case failed with `additionalProperties 'server_scaffold' not allowed` on its good instance.
+  - Both pass after the change.
+- **Guards:** `TestSchemaV1_noDriftFromConfigStructs`, `TestSchemaV1_acceptsExampleConfigs` and `TestAPIDefaults` pass.
+- **Registry:** filled the Tests cells of `api.config.server-scaffold-default` and `api.config.server-scaffold-schema`.
+- **Checks:** `make check` passes, and so does `make check-examples`. The examples run was triggered because the config struct shape changed (the trigger table's `config/types.go` is `config/config.go` in this tree).
+  - Its first run failed `conformance-fresh`. All 8 conformance modules were stale in comment lines from the earlier `ErrAlreadyRelated` and nested-create comment commits, which regenerated the example goldens but not the conformance modules.
+  - They are regenerated in `1f65fbda`, comment lines only, and the rerun passes.
+- **Not yet wired:** gen doesn't read the key until 34.3, so `server_scaffold: false` has no effect yet.
+- **Review (sqlgen-reviewer):** PRD 4/4, fail-first confirmed independently, no defects. Applied:
+  - design §5's `config.go` line ref;
+  - design §6.1's schema test name;
+  - a 34.3 task note: read a nil `ServerScaffold` as `true` for the hand-built test fixtures.
 
 ## 34.3 Gen — skip the scaffold when `server_scaffold` is false; docs
 
@@ -139,7 +159,7 @@ _Filled in when complete: files changed, commit references, notes._
 
 ### Tasks
 
-- [ ] Pass the resolved `server_scaffold` into `generateAPIServerFiles` / `generateAPIServerFile` (`cmd/sqlgen/gen/orchestrate.go`, `cmd/sqlgen/gen/api_limits.go`). When it's `false`, return `"", nil` before the `os.Stat` check.
+- [ ] Pass the resolved `server_scaffold` into `generateAPIServerFiles` / `generateAPIServerFile` (`cmd/sqlgen/gen/orchestrate.go`, `cmd/sqlgen/gen/api_limits.go`). When it's `false`, return `"", nil` before the `os.Stat` check. Read a nil `ServerScaffold` as `true` (`g.ServerScaffold == nil || *g.ServerScaffold`): about 20 test fixtures build `GraphQLAPIConfig` by hand without `applyAPIDefaults`.
 - [ ] Leave `generateAPILimitsFile` unchanged.
 - [ ] `docs/configuration.md` § `api.graphql`: add the `server_scaffold` row, and change the "deleting it doesn't stick" sentence to name the key. Say that a hand-written server calls `ApplyQueryLimits` and wraps its handler in `WithCallOptionsMiddleware`.
 - [ ] Move each design §6.1 registry row from planned to its test.
