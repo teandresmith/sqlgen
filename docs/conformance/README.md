@@ -78,13 +78,15 @@ against:
   names.
 - **Requirement**: one statement a test can fail on, stated by the PRD. A behavior the PRD does
   not state is not a requirement.
-- **Tests**: entries separated by `;`. Each is `conformance: Method/subtest`,
-  `unit: <dir>: TestName/subtest`, `integration: <dir>: TestName`,
-  `example: <example>: TestName` or `golden: <example>`. `<dir>` is relative to the repository
+- **Tests**: entries separated by `;`. Each is `conformance: Method/subtest` (core suite),
+  `conformance: Features/Method/subtest` (Features suite), `unit: <dir>: TestName/subtest`,
+  `integration: <dir>: TestName`, `example: <example>: TestName` or `golden: <example>`. `<dir>` is relative to the repository
   root. An empty cell means the requirement is not yet tested.
 - **Applies to**: `all`, or a comma-separated list of `postgres`, `mysql`, `sqlite`, `pgx`,
   `stdlib`. Dialects and drivers combine: `postgres, stdlib` is Postgres through `stdlib`
-  only, and `mysql, sqlite` is either dialect on any driver.
+  only, and `mysql, sqlite` is either dialect on any driver. A row whose code has no dialect
+  branch may be proven on one target. A note under its table names that code (`path:line`). Any
+  narrowing below `all` still needs a PRD basis.
 - **Matrix cell**: `<matrix>: <row> × <column>`, naming a matrix the file declares. Leave it empty
   when no matrix covers the row.
 

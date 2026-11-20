@@ -1,10 +1,11 @@
 MODULES = . parser cmd/sqlgen event/natsbus cache/memory cache/redis cache/msgpack metrics/otel
 EXAMPLE_MODULES = $(wildcard cmd/sqlgen/testdata/examples/*/go.mod)
 EXAMPLE_DIRS = $(dir $(EXAMPLE_MODULES))
-# The cross-dialect conformance suite (docs/design/CONFORMANCE.md §4.2): a suite
-# library module plus one module per dialect, each generating its own models/.
+# The cross-dialect conformance suites (docs/design/CONFORMANCE.md §4.2): the core
+# and Features suite library modules, plus one module per dialect and suite, each
+# generating its own models/.
 CONFORMANCE_DIRS = $(dir $(wildcard cmd/sqlgen/testdata/conformance/*/go.mod))
-CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/,$(CONFORMANCE_DIRS))
+CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/ %/features_suite/,$(CONFORMANCE_DIRS))
 
 # Timeout for the slow suites. Deliberately generous: a test timeout exists to
 # catch a hang, not to bound a normal run. It was sized when `cmd/sqlgen/cli`
@@ -15,7 +16,7 @@ CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/,$(CONFORMANCE_DIRS))
 # detector, not a budget. The example suites keep their own tighter bound.
 TEST_TIMEOUT ?= 30m
 
-.PHONY: refs-check req-check req-rehash test test-integration test-examples build-generated test-conformance conformance-fresh conformance check-conformance lint-conformance static-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
+.PHONY: refs-check req-check req-rehash report-delta test test-integration test-examples build-generated test-conformance conformance-fresh conformance check-conformance lint-conformance static-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
 
 ## Testing
 
@@ -215,6 +216,13 @@ req-check: ## Check the PRD requirement registry (docs/conformance) against the 
 
 req-rehash: ## Record that changed PRD sections were reviewed: SECTIONS=9.4c,4.13 (default: every changed anchor)
 	@cd cmd/sqlgen && go run ./internal/cmd/reqcheck -root ../.. -rehash $(if $(SECTIONS),-sections $(SECTIONS))
+
+# Compares docs/conformance/REPORT.md, as the last `make conformance` left it, with the report
+# committed at REPORT_BASE. Fails when a row that passed there no longer passes or is gone.
+REPORT_BASE ?= HEAD
+
+report-delta: ## Compare docs/conformance/REPORT.md with the one at REPORT_BASE (default HEAD); fails when a row leaves pass
+	@git show $(REPORT_BASE):docs/conformance/REPORT.md | (cd cmd/sqlgen && go run ./internal/cmd/reqcheck -root ../.. -delta -)
 
 ## Combined Checks
 

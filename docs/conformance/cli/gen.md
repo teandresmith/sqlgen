@@ -307,8 +307,8 @@
 | gen.filter.to-conditions-explicit | `ToConditions(dialect)` converts the filter without reflection, by one explicit nil check per comparator field | `unit: cmd/sqlgen/gen: TestFilterTemplate_toConditionsPerFieldNilCheck` | all | |
 | gen.filter.nil-receiver | A nil filter receiver contributes no conditions (`if f == nil { return nil }`) | `unit: cmd/sqlgen/gen: TestFilterTemplate_toConditionsNilReceiverGuard`; `unit: cmd/sqlgen/gen: TestFilterTemplate_goldenFile` | all |  |
 | gen.filter.no-implicit-soft-delete | `ToConditions` produces only the conditions the caller set; it injects no default soft-delete condition | `unit: cmd/sqlgen/gen: TestFilterTemplate_softDeleteAsRegularComparator` | all | |
-| rel.o2m.filter | Each O2M relationship contributes one `*{Target}Filter` member; a non-nil value compiles to a correlated `EXISTS` on the target's FK columns whose `WHERE` is the target's own `ToConditions` | `unit: cmd/sqlgen/gen: TestRelationshipFilters_ListRelationshipsOnly`; `unit: cmd/sqlgen/gen: TestRelationshipFilters_O2MJoinMetadata`; `unit: cmd/sqlgen/gen: TestFilterTemplate_O2MEmitsCorrelatedExists` | all | relationships: o2m × filter |
-| rel.m2m.filter | Each M2M relationship contributes one `*{Target}Filter` member, compiled to one `EXISTS` over the junction joined to the target, correlating on the junction's local key | `unit: cmd/sqlgen/gen: TestRelationshipFilters_M2MJoinMetadata`; `unit: cmd/sqlgen/gen: TestFilterTemplate_M2MEmitsJunctionJoin` | all | relationships: m2m × filter |
+| rel.o2m.filter | Each O2M relationship contributes one `*{Target}Filter` member; a non-nil value compiles to a correlated `EXISTS` on the target's FK columns whose `WHERE` is the target's own `ToConditions` | `unit: cmd/sqlgen/gen: TestRelationshipFilters_ListRelationshipsOnly`; `unit: cmd/sqlgen/gen: TestRelationshipFilters_O2MJoinMetadata`; `unit: cmd/sqlgen/gen: TestFilterTemplate_O2MEmitsCorrelatedExists`; `conformance: GetMany/an O2M relationship filter returns exactly the parents with a matching child` | all | relationships: o2m × filter |
+| rel.m2m.filter | Each M2M relationship contributes one `*{Target}Filter` member, compiled to one `EXISTS` over the junction joined to the target, correlating on the junction's local key | `unit: cmd/sqlgen/gen: TestRelationshipFilters_M2MJoinMetadata`; `unit: cmd/sqlgen/gen: TestFilterTemplate_M2MEmitsJunctionJoin`; `conformance: GetMany/an M2M relationship filter returns exactly the parents with a matching child` | all | relationships: m2m × filter |
 | rel.self.filter | A self-referential list relationship gets a member typed as its own table's filter, so the filter nests into itself | `golden: postgres` | all | relationships: self × filter |
 | rel.circular.filter | In a cycle of list relationships (A→B, B→A), each table carries a member typed as the other's filter | `golden: postgres` | all | relationships: circular × filter |
 | gen.filter.to-one-no-member | A to-one relationship (O2O belongs-to or has-one) contributes no filter member | `unit: cmd/sqlgen/gen: TestRelationshipFilters_ListRelationshipsOnly` | all | |
@@ -318,6 +318,7 @@
 | gen.filter.rel-target-tenant | When the target is tenanted, its tenant predicate is injected inside the `EXISTS` as a bound parameter; an untenanted target gets none | `unit: cmd/sqlgen/gen: TestRelationshipFilters_TargetTenantColumnAttached`; `unit: cmd/sqlgen/gen: TestFilterTemplate_SoftDeleteAndTenantInsideSubquery` | all | |
 | gen.filter.rel-unqualified-correlation | The generator emits the structured `Exists` condition carrying only the parent-side correlation columns, with no qualifier baked in | `unit: cmd/sqlgen/gen: TestFilterTemplate_O2MEmitsCorrelatedExists` | all | |
 | gen.filter.rel-nil-member | A nil relationship member contributes no SQL | `unit: cmd/sqlgen/gen: TestFilterTemplate_NilRelationshipMemberContributesNoSQL` | all | |
+| gen.filter.rel-composes | A relationship filter member combines with column filters, with another member and with `and` / `or`: each non-nil member is one conjunct of its filter | `conformance: GetMany/a relationship filter composes with column filters and with and / or` | all | |
 | gen.filter.option-signature | `ToConditions` takes `opts ...FilterOption` only when the package has at least one relationship filter member; otherwise it keeps the bare `ToConditions(dialect)` signature and no option plumbing | `unit: cmd/sqlgen/gen: TestFilterTemplate_NoRelationshipsKeepsBareSignature`; `unit: cmd/sqlgen/gen: TestFilterTemplate_O2MEmitsCorrelatedExists` | all | |
 | gen.filter.option-uniform | When the option parameter is emitted, every filter in the package carries it, views included | `unit: cmd/sqlgen/gen: TestRelationshipFilters_NoneWithoutTenancy`; `golden: postgres` | all | |
 | gen.filter.option-with-filter-tenant | The package exports `WithFilterTenant(tenant T)`, and generated read and filter-accepting mutation methods pass it from the same resolution the outer `WHERE` uses | `unit: cmd/sqlgen/gen: TestRelationshipFilters_SharedParentRendersTenantedClient`; `golden: tenancy` | all | |
@@ -325,6 +326,10 @@
 | gen.filter.member-any-key | Every list relationship gets a member whatever its key: a composite-PK parent, an edge whose key references a UNIQUE constraint, and an M2M into a composite-PK target each contribute one | `unit: cmd/sqlgen/gen: TestRelationshipFilters_MemberForAnyKey/composite-PK parent`; `unit: cmd/sqlgen/gen: TestRelationshipFilters_MemberForAnyKey/edge into a unique key`; `unit: cmd/sqlgen/gen: TestRelationshipFilters_MemberForAnyKey/m2m into a composite-PK target` | all | relationships: composite-m2m × filter |
 | gen.filter.member-column-wins | A relationship whose Go field name a column comparator already takes gets no member; the column wins | `unit: cmd/sqlgen/gen: TestRelationshipFilters_ColumnComparatorKeepsItsFieldName` | all | |
 | gen.filter.tenant-reaches-nested-member | A parent whose relationship filters reach a tenanted table only through untenanted intermediates is treated as having a tenanted relationship filter, so its methods pass the resolved tenant down to the nested member; a parent that reaches no tenanted table is not | `unit: cmd/sqlgen/gen: TestGenerate_RelationshipFilterTenantReachesNestedMember/rendered methods/postgres`; `unit: cmd/sqlgen/gen: TestGenerate_RelationshipFilterTenantReachesNestedMember/rendered methods/mysql`; `unit: cmd/sqlgen/gen: TestGenerate_RelationshipFilterTenantReachesNestedMember/rendered methods/sqlite`; `unit: cmd/sqlgen/gen: TestGenerate_RelationshipFilterTenantReachesNestedMember/generated reads` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `gen.filter.view-target-member`: `cmd/sqlgen/gen/context_relfilter.go:55-60`
 
 ## §12.1 FieldOptions Struct
 <!-- prd: 12.1 sha256: ab07f217cdc476b5 -->
@@ -412,7 +417,7 @@
 | gen.manual.joins-primary-key | A manual relationship joins the referenced table's primary key | `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_fkOnTargetParentPKName` | all | |
 | gen.manual.exclude-relationships | `exclude_relationships` disables an auto-detected relationship by name, whether the bare (base) name or the disambiguated plural form | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_ExcludeByBaseName` | all | |
 | gen.manual.replaces-inferred | A manual relationship whose resolved Go field name matches an auto-detected one replaces it, with a non-fatal warning naming both sides and the field | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared name collides with inferred edge`; `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/exclude_relationships alongside the declaration`; `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared name distinct from inferred edge`; `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverCompositeFK` | all | |
-| rel.polymorphic.filter | A polymorphic list edge's filter member carries the edge's predicate inside the `EXISTS`: a `discriminator:` value bound into the subquery's own arguments with a dialect-quoted identifier, a `filter:` wrapped in parentheses as one conjunct | `unit: cmd/sqlgen/gen: TestDiscriminator_RelationshipFilterBindsTheValue`; `unit: cmd/sqlgen/gen: TestRelationshipStaticFilter_NoAliasTokenSurvives` | all | relationships: polymorphic × filter |
+| rel.polymorphic.filter | A polymorphic list edge's filter member carries the edge's predicate inside the `EXISTS`: a `discriminator:` value bound into the subquery's own arguments with a dialect-quoted identifier, a `filter:` wrapped in parentheses as one conjunct | `unit: cmd/sqlgen/gen: TestDiscriminator_RelationshipFilterBindsTheValue`; `unit: cmd/sqlgen/gen: TestRelationshipStaticFilter_NoAliasTokenSurvives`; `conformance: GetMany/a discriminator relationship filter matches only the children carrying its value` | all | relationships: polymorphic × filter |
 | gen.discriminator.loader-binds | On the `o2m` / `m2m` loader, a discriminator compiles to an `AND` on the target-table query with the value bound as a parameter and the identifier quoted through the dialect | `unit: cmd/sqlgen/gen: TestDiscriminator_LoaderBindsTheValue`; `unit: cmd/sqlgen/gen: TestDiscriminator_M2MLoaderBindsTheValue` | all | |
 | gen.discriminator.o2o-interpolated | On the `o2o` JOIN `ON` clause a discriminator is interpolated, byte-identical to the equivalent `filter:` on every dialect, a string single-quoted with embedded quotes doubled | `unit: cmd/sqlgen/gen: TestDiscriminator_O2OJoinByteIdenticalToFilter`; `unit: cmd/sqlgen/gen: TestDiscriminatorLiterals` | all | |
 | gen.discriminator.create-sets-and-elides | A nested `create` sets the discriminator column to the declared value, and the column is elided from the nested child input (rules 1 and 2) | `unit: cmd/sqlgen/gen: TestNestedTemplate_DiscriminatorIsSetAndElided` | all | |
@@ -629,16 +634,21 @@
 | gen.event-hooks.upsert-many-action | `OpUpsertMany` maps to the existing `event.Upsert` action | `unit: cmd/sqlgen/gen: TestEventHooks_upsertMany_sharesBatchCreateArm` | all | |
 | gen.event-hooks.upsert-many-per-row | `UpsertMany` sets `mc.Input` to a slice. Each fanned-out event carries its own row's input, redacted per row, never the whole batch | `unit: cmd/sqlgen/gen: TestEventHooks_upsertMany_sharesBatchCreateArm`; `unit: cmd/sqlgen/gen: TestEventHooks_upsertManyWithoutCreateMany_stillDeclaresBatchLocals`; `unit: cmd/sqlgen/gen: TestEventHooks_redactedTable_emitsRedactHelpers` | all | |
 | gen.event-hooks.upsert-many-deduped | The slice `UpsertMany` publishes is the deduped one, index-aligned with `AffectedPKs`, not the caller's | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_usesOwnMutationOp`; `example: events: TestEventUpsertMany_PerRowInputAfterDedupe` | all | |
-| gen.events.empty-affected-publishes-nothing | A mutation with no affected row publishes nothing; `PublishBatch` is never called with an empty batch | `golden: events`; `example: events: TestEvent_MissingKeyPublishesNothing`; `example: events: TestWhereMutation_ZeroMatch_NoEvents`; `example: events: TestEvent_NoAffectedRowCallsNoPublishBatch` | all | |
+| gen.events.empty-affected-publishes-nothing | A mutation with no affected row publishes nothing; `PublishBatch` is never called with an empty batch | `conformance: Features/Events/a write that affects no row publishes nothing`; `golden: events`; `example: events: TestEvent_MissingKeyPublishesNothing` | all | |
 | gen.events.hook-config-resolved-once | `buildEventHooks` resolves `event.Config` once (`OnError` through its default, and `MetadataFunc`) and passes both to each per-entity hook | `golden: postgres` | all |  |
 | gen.events.metadata-at-hook-entry | Each per-entity hook calls `MetadataFunc` once at hook entry and merges its result into every event's `Metadata`, shallow-cloned per event, with the tenant stamp applied last (§28.3) | `unit: cmd/sqlgen/gen: TestEventHooks_metadataFunc_mergedAtHookEntry` | all | |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `gen.event-hooks.prepended-outermost`: `cmd/sqlgen/gen/templates/client.go.tmpl:167-168`
+- `gen.event-hooks.upsert-many-deduped`: `cmd/sqlgen/gen/templates/table/upsert_many.go.tmpl:333,343`
 
 ## §29.2 Configuration
 <!-- prd: 29.2 sha256: cbf6770c2c1d9d4a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| gen.tenancy.filter-comparator-follows-type | The tenant column's filter comparator follows the resolved tenant Go type, not the SQL type: a `uuid.UUID` tenant filters through `comparator.ID` | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter`; `example: tenancy: TestIsolation_FilterOnTenantColumn` | all |  |
+| gen.tenancy.filter-comparator-follows-type | The tenant column's filter comparator follows the resolved tenant Go type, not the SQL type: a `uuid.UUID` tenant filters through `comparator.ID` | `conformance: Features/Tenancy/GetMany/a filter on the tenant column selects that tenant's rows`; `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter` | all |  |
 | artifacts.model-struct.tenanted | `tenancy.type` resolves the tenant column itself, so the row struct spells the tenant column in the resolved tenant type | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantColumn` | all | generated-artifacts: model-struct × tenanted |
 | artifacts.filter-struct.tenanted | The filter spells the tenant column through the same resolution as the row struct, CreateInput and PK struct | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter` | all | generated-artifacts: filter-struct × tenanted |
 
@@ -657,6 +667,10 @@
 | artifacts.tenant-scoping.tenanted | On a tenanted table `GetMany` appends `AND <tenant> = $N` to the user-composed WHERE | `unit: cmd/sqlgen/gen: TestTenancyTemplate_getMany_emitsTenantFilter`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_sharedTableInTenancyProjectHasNoFilter` | all | generated-artifacts: tenant-scoping × tenanted |
 | artifacts.count.tenanted | A tenanted table's `Count` appends the tenant predicate, as `GetMany` does | `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/postgres`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/mysql`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/sqlite`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/generated counts` | all | generated-artifacts: count × tenanted |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `artifacts.soft-delete.tenanted`: `cmd/sqlgen/gen/templates/table/delete.go.tmpl:28-50`
+
 ## §29.7 Composite Primary Keys
 <!-- prd: 29.7 sha256: e64916d685aa78d0 -->
 
@@ -670,6 +684,10 @@
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | artifacts.tenant-scoping.soft-delete | On a tenanted soft-delete table reads AND the tenant and soft-delete filters (`WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`) | `unit: cmd/sqlgen/gen: TestGenerate_TenantedSoftDeleteTable/postgres/reads AND the tenant and soft-delete filters`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedSoftDeleteTable/mysql/reads AND the tenant and soft-delete filters`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedSoftDeleteTable/sqlite/reads AND the tenant and soft-delete filters`; `example: tenancy: TestSoftDelete_TenantedGetANDsTenantAndSoftDeleteFilters` | all | generated-artifacts: tenant-scoping × soft-delete |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `artifacts.tenant-scoping.soft-delete`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:201-218`
 
 ## Not applicable
 

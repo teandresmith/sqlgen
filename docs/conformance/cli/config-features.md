@@ -102,6 +102,19 @@ against the global block (`feature-resolution`). The runtime behavior of each fe
 | config.events.id.one-library | The event-hooks file imports the package's one selected UUID library and no other | `unit: cmd/sqlgen/gen: TestGenerate_StdlibEventsPackageImportsOneUUIDLibrary`; `unit: cmd/sqlgen/gen: TestBuildEventHooksContext_PerIntegration` | all |  |
 | config.events.id.stdlib-fallback | A package with no `uuid` column selects no integration and generates event IDs with the standard library, so enabling events adds no module dependency | `unit: cmd/sqlgen/gen: TestGenerate_EventsOnlyPackageSelectsStdlib` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `config.events.enabled.table-wins`: `cmd/sqlgen/config/config.go:2385`
+- `config.event-config.on-error-called`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:67-86`
+- `config.event-config.metadata-func-nil`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:51-54`
+- `config.event-config.metadata-func-merged`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:282`
+- `config.event-config.metadata-func-hook-entry`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:114-116`
+- `config.event-config.metadata-func-once`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:114-116`
+- `config.event-config.metadata-shallow-clone`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:55-57`
+- `config.event-config.tenant-key-reserved`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:57`
+- `config.event-config.other-keys-consumer`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:56`
+- `config.event-config.other-keys-consumer.traceparent`: `cmd/sqlgen/gen/templates/event_hooks.go.tmpl:56`
+
 | Matrix cell | Reason | Accepted |
 |---|---|---|
 | feature-resolution: events.enabled × view-wins | §4.9: ViewConfig has no `events` field (a view emits no events) | |
@@ -169,6 +182,12 @@ against the global block (`feature-resolution`). The runtime behavior of each fe
 | config.tenancy.view.call-options-parity | A tenanted view honors `CallOptions.SkipTenancy` and `CallOptions.Tenant` with a table's precedence | `example: tenancy: TestViewTenancy_SkipTenancy`; `example: tenancy: TestViewTenancy_ExplicitTenant`; `example: tenancy_postgres: TestViewTenancy_SkipTenancyAndExplicitTenant`; `example: tenancy_mysql: TestViewTenancy_SkipTenancyAndExplicitTenant` | all |  |
 | config.tenancy.view.cache-unchanged | Making a view tenanted does not extend the §29.5 key grammar, add an affected-tenant carrier or change the view fingerprint | `unit: cmd/sqlgen/gen: TestGenerate_TenantedViewLeavesCacheOutputUnchanged` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `config.tenancy.required.true-fails-closed`: `cmd/sqlgen/gen/templates/table/client.go.tmpl:346-347`
+- `config.tenancy.required.false-skips-filter`: `cmd/sqlgen/gen/templates/table/client.go.tmpl:349`, `cmd/sqlgen/gen/templates/table/get.go.tmpl:216`
+- `config.tenancy.enabled.view-wins`: `cmd/sqlgen/config/tenancy.go:109`
+
 ## §29.11 Constraints
 <!-- prd: 29.11 sha256: 764a48a1507c0353 -->
 
@@ -181,6 +200,14 @@ against the global block (`feature-resolution`). The runtime behavior of each fe
 | config.tenancy.constraint.cache-per-logical-op | The resolved-tenant ctx cache is scoped to one logical operation and never outlives it: two sequential operations on the same ctx resolve twice | `example: tenancy: TestTx_Resolver_SequentialOpsResolveIndependently` | all |  |
 | config.tenancy.constraint.nested-resolves-once | A nested mutation and the inner writes it fans out to share one resolve |  | all |  |
 | config.tenancy.constraint.err-missing-names-table | `ErrMissing` fires at the first tenanted call, with the table and the resolver named | `example: tenancy: TestErrMissing_FirstTenantedCallNamesTableAndResolver` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `config.tenancy.constraint.no-mid-tx-switch-detection`: `cmd/sqlgen/gen/templates/table/client.go.tmpl:383`
+- `config.tenancy.constraint.resolver-per-operation`: `cmd/sqlgen/gen/templates/table/client.go.tmpl:374-383`
+- `config.tenancy.constraint.chain-resolves-once`: `cmd/sqlgen/gen/templates/table/create.go.tmpl:55-56`, `cmd/sqlgen/gen/templates/table/client.go.tmpl:376`
+- `config.tenancy.constraint.cache-per-logical-op`: `tenancy/tenancy.go:89`
+- `config.tenancy.constraint.err-missing-names-table`: `cmd/sqlgen/gen/templates/table/client.go.tmpl:347`, `cmd/sqlgen/gen/templates/table/create.go.tmpl:46,204`
 
 ## PRD gaps
 

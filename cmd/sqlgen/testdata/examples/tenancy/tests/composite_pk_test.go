@@ -238,29 +238,3 @@ func TestCompositePK_Increment_MismatchReturnsErrMismatch(t *testing.T) {
 		t.Errorf("DB ops issued on Increment PK mismatch: %d, want 0", got)
 	}
 }
-
-func TestCompositePK_SkipTenancy_AdminCrossTenantGet(t *testing.T) {
-	// §29.4.4: SkipTenancy:true bypasses the verify-match — the caller supplies
-	// the tenant value explicitly; the resolver is not consulted. This is the
-	// only grep-able / lint-able way to read across tenants by PK.
-	resetDB(t)
-
-	envA := newEnv(t, withResolver(staticResolver(tenantA)))
-	envB := newEnv(t, withResolver(staticResolver(tenantB)))
-	ctx := context.Background()
-
-	item := createOrderItem(t, envA, ctx, tenantA, 1, 10, 2)
-
-	// envB (resolver → tenantB) reads A's row explicitly via SkipTenancy.
-	got, err := envB.client.OrderItems().Get(ctx, models.OrderItemPK{
-		WorkspaceID: tenantA,
-		OrderID:     item.OrderID,
-		ProductID:   item.ProductID,
-	}, func(o *models.CallOptions[models.OrderItemFieldOptions]) { o.SkipTenancy = true })
-	if err != nil {
-		t.Fatalf("admin Get with SkipTenancy across tenants: %v", err)
-	}
-	if got.WorkspaceID != tenantA {
-		t.Errorf("admin cross-tenant Get: workspace_id = %v, want %v", got.WorkspaceID, tenantA)
-	}
-}

@@ -3,6 +3,8 @@ input:
   dialect: postgres
   paths:
     - ./schema.sql
+  views:
+    - ./views/
 output:
   driver: pgx
   dir: ./models
@@ -43,6 +45,15 @@ tables:
         type: one_to_one
         table: author_profiles
         fk: author_id
+      # A second edge into posts on the same key, told apart by its
+      # discriminator, so a relationship filter's predicate is observable.
+      - name: Drafts
+        type: one_to_many
+        table: posts
+        fk: author_id
+        discriminator:
+          column: kind
+          value: draft
     # Listed out of the byte order of their Go field names, which is the order
     # the edges are processed in, so that order is observable.
     nested_mutations:

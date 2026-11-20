@@ -438,6 +438,11 @@ func (s PostSorter) ID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "id", Direction: direction}
 }
 
+// Kind returns a sort for the kind column in the given direction.
+func (s PostSorter) Kind(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "kind", Direction: direction}
+}
+
 // Title returns a sort for the title column in the given direction.
 func (s PostSorter) Title(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "title", Direction: direction}

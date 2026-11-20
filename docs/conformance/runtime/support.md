@@ -19,6 +19,10 @@ PRD text states is the `gap.types.datetime-surface` entry below.
 | tenancy.err-mismatch-text | `tenancy.ErrMismatch`'s text is `tenancy: tenant on mutation input does not match resolved tenant; use CallOptions.SkipTenancy to override` | `unit: tenancy: TestErrMismatch` | all |  |
 | tenancy.resolver-concrete-type | With tenancy enabled, the unified client emits `WithTenantResolver(r tenancy.TenantResolver[T]) ClientOption` and holds a concrete `tenantResolver tenancy.TenantResolver[T]` field, where `T` is the resolved Go type of the tenant column | `unit: cmd/sqlgen/gen: TestBuildClientContext_tenancyEnabledProducesResolverWiring`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_clientRawHasBypassComment`; `example: tenancy: TestWithTenantResolver_TakesTheTenantColumnType`; `example: tenancy_mysql: TestWithTenantResolver_TakesTheTenantColumnType` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `tenancy.resolver-concrete-type`: `cmd/sqlgen/gen/templates/client.go.tmpl:20,72`
+
 The `comparable` constraint is not rowed: only a test that fails to build could show a
 non-comparable `T` is rejected. The zero-value sentence ("Returning the zero value for T with required: true causes every
 tenanted operation to error with ErrMissing before hitting the DB") is
@@ -33,12 +37,22 @@ tenanted operation to error with ErrMissing before hitting the DB") is
 | tenancy.wiring-request-scoped | One long-lived client serves every tenant: the resolver reads the tenant from each call's `ctx`, so calls on one client with two tenants' contexts each reach only their own tenant's rows | `example: tenancy: TestIsolation_TenantValueViaCtxResolver` | all |  |
 | tenancy.wiring-resolver-error | The resolver's error is returned from the operation, matchable with `errors.Is`, so the example's `return uuid.UUID{}, tenancy.ErrMissing` fails the call with `tenancy.ErrMissing` | `example: tenancy: TestRequiredFalse_ResolverError_Propagates` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `tenancy.wiring-composes`: `cmd/sqlgen/gen/templates/client.go.tmpl:72,167,176`
+- `tenancy.wiring-request-scoped`: `cmd/sqlgen/gen/templates/table/client.go.tmpl:383`
+- `tenancy.wiring-resolver-error`: `cmd/sqlgen/gen/templates/table/client.go.tmpl:342-343`
+
 ## §29.3.3 Type-safe by construction
 <!-- prd: 29.3.3 sha256: 77c75e30ea152593 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | tenancy.typed-by-construction | The resolver returns, the model's tenant field holds and the create input's tenant field carries one concrete `T`, so a resolver returning any other type does not compile | `example: tenancy: TestWithTenantResolver_TakesTheTenantColumnType`; `example: tenancy_mysql: TestWithTenantResolver_TakesTheTenantColumnType` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `tenancy.typed-by-construction`: `cmd/sqlgen/gen/templates/client.go.tmpl:72`
 
 The "Reads / mutations" and "Mismatch check" bullets describe the generated code's shape (no type
 assertion, `==` with no reflection) and are informative; their behavior is the §29.4 rows in

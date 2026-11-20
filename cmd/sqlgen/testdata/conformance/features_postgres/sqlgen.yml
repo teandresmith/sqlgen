@@ -1,0 +1,44 @@
+version: v1
+input:
+  dialect: postgres
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+output:
+  driver: pgx
+  dir: ./models
+  package: models
+events:
+  enabled: true
+cache:
+  enabled: true
+  key_prefix: sqlgen
+tenancy:
+  enabled: true
+  column: workspace_id
+  required: true
+  type:
+    type: uuid.UUID
+    import: uuid
+overrides:
+  types:
+    uuid:
+      type: uuid.UUID
+      import: uuid
+generation:
+  nested_mutations:
+    enabled: true
+views:
+  active_tasks:
+    cache:
+      enabled: true
+    invalidate_on:
+      - tasks
+tables:
+  bulletins:
+    tenancy:
+      required: false
+  regions:
+    tenancy:
+      enabled: false

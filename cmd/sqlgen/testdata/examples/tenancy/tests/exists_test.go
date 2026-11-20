@@ -180,30 +180,6 @@ func TestExists_CompositePK_ZeroTenantOnPK_ShortCircuits(t *testing.T) {
 	}
 }
 
-// TestExists_CompositePK_SkipTenancy_Succeeds verifies that SkipTenancy drops
-// the verify-match on composite-PK tables too.
-func TestExists_CompositePK_SkipTenancy_Succeeds(t *testing.T) {
-	resetDB(t)
-
-	envA := newEnv(t, withResolver(staticResolver(tenantA)))
-	envB := newEnv(t, withResolver(staticResolver(tenantB)))
-	ctx := context.Background()
-
-	item := createOrderItem(t, envA, ctx, tenantA, 1, 10, 2)
-
-	exists, err := envB.client.OrderItems().Exists(ctx, models.OrderItemPK{
-		WorkspaceID: tenantA,
-		OrderID:     item.OrderID,
-		ProductID:   item.ProductID,
-	}, func(o *models.CallOptions[models.OrderItemFieldOptions]) { o.SkipTenancy = true })
-	if err != nil {
-		t.Fatalf("Exists with SkipTenancy + PK tenantA: %v", err)
-	}
-	if !exists {
-		t.Error("Exists(tenant A PK, tenant B client, SkipTenancy) = false, want true")
-	}
-}
-
 // TestExists_TenantMissing_FailsClosed verifies the §29.3.1 fail-closed
 // contract on Exists: a required resolver that returns ErrMissing propagates
 // out as tenancy.ErrMissing, no SQL round-trip.

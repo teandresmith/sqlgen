@@ -72,12 +72,16 @@ func hardDeleteMany(t *testing.T) {
 }
 `
 
-// dialectTest is a conformance dialect module's test: the report reads only the harness's
-// Dialect and Driver literals from it.
+// dialectTest is a conformance dialect module's test: the report reads only the suite it
+// imports and the harness's Dialect and Driver literals.
 func dialectTest(dialect, driver string) string {
 	return `package ` + dialect + `
 
-import "testing"
+import (
+	"testing"
+
+	"` + reqcheck.RepoModule + "/" + reqcheck.ConformanceSuiteDir + `"
+)
 
 func TestConformance(t *testing.T) {
 	suite.Run(t, &suite.Harness{Dialect: "` + dialect + `", Driver: "` + driver + `"})
@@ -97,6 +101,12 @@ const (
 // whose rows name conformance tests, and a cli file whose rows name a unit test and a golden.
 func reportRepo(t *testing.T) string {
 	t.Helper()
+	return writeRepo(t, reportFiles(t))
+}
+
+// reportFiles are reportRepo's files.
+func reportFiles(t *testing.T) map[string]string {
+	t.Helper()
 	prd, err := reqcheck.ParsePRD(reportPRD)
 	if err != nil {
 		t.Fatalf("ParsePRD() unexpected error: %v", err)
@@ -105,7 +115,7 @@ func reportRepo(t *testing.T) string {
 		s, _ := prd.Section(key)
 		return s.Hash
 	}
-	return writeRepo(t, map[string]string{
+	return map[string]string{
 		"docs/PRD.md":                reportPRD,
 		"docs/conformance/README.md": reportMap,
 		"docs/conformance/client.md": `# Client
@@ -157,7 +167,56 @@ func reportRepo(t *testing.T) string {
 		pgDir + "/conformance_test.go":                     dialectTest("postgres", "pgx"),
 		sqliteDir + "/go.mod":                              "module sqlite\n",
 		sqliteDir + "/conformance_test.go":                 dialectTest("sqlite", "stdlib"),
+	}
+}
+
+const featSqliteDir = "cmd/sqlgen/testdata/conformance/features_sqlite"
+
+const reportFeaturesSuite = `package featuressuite
+
+import "testing"
+
+func Run(t *testing.T) {
+	t.Run("Features", func(t *testing.T) {
+		t.Run("Events", func(t *testing.T) {
+			t.Run("publishes one event", func(t *testing.T) {})
+		})
 	})
+}
+`
+
+// featuresDialectTest is a variant module's test: it runs the Features suite, which its import
+// names.
+const featuresDialectTest = `package features_sqlite
+
+import (
+	"testing"
+
+	featuressuite "` + reqcheck.RepoModule + `/cmd/sqlgen/testdata/conformance/features_suite"
+)
+
+func TestConformance(t *testing.T) {
+	featuressuite.Run(t, &featuressuite.Harness{Dialect: "sqlite", Driver: "stdlib"})
+}
+`
+
+// featuresRepo is reportRepo with a Features suite, one Features target and a row citing it.
+func featuresRepo(t *testing.T) string {
+	t.Helper()
+	return writeRepo(t, featuresFiles(t))
+}
+
+// featuresFiles are featuresRepo's files.
+func featuresFiles(t *testing.T) map[string]string {
+	t.Helper()
+	f := reportFiles(t)
+	edit(f, "docs/conformance/client.md", "| mysql | |\n",
+		"| mysql | |\n| features.publish | A create publishes one event | `conformance: Features/Events/publishes one event` | all | |\n")
+	f[reqcheck.FeaturesSuiteDir+"/go.mod"] = "module featuressuite\n"
+	f[reqcheck.FeaturesSuiteDir+"/run.go"] = reportFeaturesSuite
+	f[featSqliteDir+"/go.mod"] = "module features_sqlite\n"
+	f[featSqliteDir+"/conformance_test.go"] = featuresDialectTest
+	return f
 }
 
 // event is one go test -json line; dir is the package's repository directory.
@@ -375,6 +434,40 @@ func TestBuildReportJoin(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("a suite-rooted citation joins only that suite's targets", func(t *testing.T) {
+		const featuresCase = "TestConformance/Features/Events/publishes_one_event"
+		// Every target reports both names, so only the routing decides which result a row takes.
+		var events []event
+		for _, dir := range []string{pgDir, sqliteDir, featSqliteDir} {
+			events = join(events, passed(dir, emptyCase), passed(dir, featuresCase))
+		}
+		rep, err := reqcheck.BuildReport(featuresRepo(t), results(t, events...))
+		if err != nil {
+			t.Fatalf("BuildReport() unexpected error: %v", err)
+		}
+		got := map[string]reqcheck.RowReport{}
+		for _, f := range rep.Files {
+			for _, r := range f.Rows {
+				got[r.ID] = r
+			}
+		}
+		want := map[string]reqcheck.RowReport{
+			"delete.empty": {
+				ID: "delete.empty", Anchor: "9.3", Cell: "client-methods: HardDeleteMany × happy-path",
+				Targets: []reqcheck.Outcome{pass, pass, na}, Tests: na, Status: reqcheck.StatusPass,
+			},
+			"features.publish": {
+				ID: "features.publish", Anchor: "9.3",
+				Targets: []reqcheck.Outcome{na, na, pass}, Tests: na, Status: reqcheck.StatusPass,
+			},
+		}
+		for id, w := range want {
+			if diff := cmp.Diff(w, got[id]); diff != "" {
+				t.Errorf("row %s mismatch (-want +got):\n%s", id, diff)
+			}
+		}
+	})
 }
 
 func TestBuildReportTargets(t *testing.T) {
@@ -394,6 +487,55 @@ func TestBuildReportTargets(t *testing.T) {
 	if diff := cmp.Diff(want, rep.Targets); diff != "" {
 		t.Errorf("Targets mismatch (-want +got):\n%s", diff)
 	}
+
+	t.Run("a module that imports no suite is an error", func(t *testing.T) {
+		f := reportFiles(t)
+		edit(f, pgDir+"/conformance_test.go", "\t\""+reqcheck.RepoModule+"/"+reqcheck.ConformanceSuiteDir+"\"\n", "")
+		_, err := reqcheck.BuildReport(writeRepo(t, f), results(t))
+		if err == nil || !strings.Contains(err.Error(), pgDir+": its tests import no conformance suite") {
+			t.Errorf("BuildReport() error = %v, want one naming %s and the missing suite import", err, pgDir)
+		}
+	})
+
+	t.Run("a module that imports two suites is an error", func(t *testing.T) {
+		f := featuresFiles(t)
+		core := "\t\"" + reqcheck.RepoModule + "/" + reqcheck.ConformanceSuiteDir + "\"\n"
+		edit(f, featSqliteDir+"/conformance_test.go", "\"testing\"\n", "\"testing\"\n\n"+core)
+		_, err := reqcheck.BuildReport(writeRepo(t, f), results(t))
+		want := []string{featSqliteDir + ": its tests import more than one conformance suite", reqcheck.ConformanceSuiteDir, reqcheck.FeaturesSuiteDir}
+		for _, w := range want {
+			if err == nil || !strings.Contains(err.Error(), w) {
+				t.Errorf("BuildReport() error = %v, want one containing %q", err, w)
+			}
+		}
+	})
+
+	t.Run("variant modules are targets of their suite", func(t *testing.T) {
+		res := results(t, event{
+			action: "output", dir: featSqliteDir, test: "TestConformance",
+			output: "    harness.go:30: conformance harness: database SQLite 3.51.3\n",
+		})
+		rep, err := reqcheck.BuildReport(featuresRepo(t), res)
+		if err != nil {
+			t.Fatalf("BuildReport() unexpected error: %v", err)
+		}
+		// The core targets come first, then each variant suite's.
+		want := []reqcheck.Target{
+			{Dir: pgDir, Dialect: "postgres", Driver: "pgx"},
+			{Dir: sqliteDir, Dialect: "sqlite", Driver: "stdlib"},
+			{Dir: featSqliteDir, Suite: "Features", Dialect: "sqlite", Driver: "stdlib", Database: "SQLite 3.51.3"},
+		}
+		if diff := cmp.Diff(want, rep.Targets); diff != "" {
+			t.Errorf("Targets mismatch (-want +got):\n%s", diff)
+		}
+		labels := make([]string, 0, len(rep.Targets))
+		for _, tg := range rep.Targets {
+			labels = append(labels, tg.Label())
+		}
+		if diff := cmp.Diff([]string{"postgres/pgx", "sqlite/stdlib", "Features sqlite/stdlib"}, labels); diff != "" {
+			t.Errorf("Label() mismatch (-want +got):\n%s", diff)
+		}
+	})
 }
 
 func TestBuildReportRejectsFailingRegistry(t *testing.T) {

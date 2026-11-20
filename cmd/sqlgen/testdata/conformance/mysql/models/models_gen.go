@@ -4356,6 +4356,8 @@ type Author struct {
 	Name      string     `db:"name" json:"name"`
 	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at"`
 
+	// Drafts - one-to-many relationship with the posts table.
+	Drafts []*Post `db:"-" json:"drafts"`
 	// Profile - one-to-one relationship with the author_profiles table.
 	Profile *AuthorProfile `db:"-" json:"profile"`
 	// Posts - one-to-many relationship with the posts table.
@@ -4517,6 +4519,7 @@ type authorClient struct {
 	panicHandler        hook.PanicHandler
 	callbackMode        database.CallbackMode
 	mysqlVersion        *mysqlVersionCache
+	draftsDefaultSort   []sql.Sort
 	postsDefaultSort    []sql.Sort
 	tagsDefaultSort     []sql.Sort
 	postClient          *postClient
@@ -4873,6 +4876,9 @@ func (c *authorClient) GetMany(ctx context.Context, input *GetAuthorsInput, opts
 // loadRelationships maps every child back through a.ID, which
 // an unselected column would leave at its zero value.
 func (fo *AuthorFieldOptions) loadsRelationships() bool {
+	if fo.Drafts != nil {
+		return true
+	}
 	if fo.Posts != nil {
 		return true
 	}
@@ -4908,6 +4914,97 @@ func (fo *AuthorFieldOptions) loadsRelationships() bool {
 func (c *authorClient) loadRelationships(ctx context.Context, conn database.Querier, authors []*Author, options CallOptions[AuthorFieldOptions]) error {
 	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Drafts != nil {
+		g.Go(func() error {
+			// Collect parent FK values
+			authorIDs := make([]int64, len(authors))
+			for idx, a := range authors {
+				authorIDs[idx] = a.ID
+			}
+
+			sorts := fo.Drafts.Sorts
+			if len(sorts) == 0 {
+				sorts = c.draftsDefaultSort
+			}
+
+			// Load via related entity client, 32767 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (authors) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+			var relatedDrafts []*Post
+			for start := 0; start < len(authorIDs); start += 32767 {
+				chunk := authorIDs[start:min(start+32767, len(authorIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &PostFilter{
+					AuthorID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: chunk}},
+				}
+				if fo.Drafts.Filter != nil {
+					filter.And = append(filter.And, fo.Drafts.Filter)
+				}
+
+				loaded, err := c.postClient.GetMany(ctx, &GetPostsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// Same predicate from the relationship's config
+					// `discriminator:`. The structured form is
+					// column-and-value rather than opaque SQL, so the value binds
+					// as a parameter and the column is quoted by the dialect.
+					conditions: []sql.Condition{sql.Raw(c.dialect.QuoteIdentifier("kind")+" = $", "draft")},
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"author_id"},
+				}, func(co *CallOptions[PostFieldOptions]) {
+					co.FieldOptions = fo.Drafts.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load author posts: %w", err)
+				}
+				relatedDrafts = append(relatedDrafts, loaded...)
+			}
+
+			// Map results back to parent entities by FK. The FK column on the
+			// child table may be nullable and resolved to a Null-wrapper struct
+			// (e.g., uuid.NullUUID) — fkLoadGuard skips invalid rows and
+			// fkLoadKey unwraps the underlying scalar before stringifying.
+			byFK := make(map[string][]*Post)
+			for _, r := range relatedDrafts {
+				if !(r.AuthorID != nil) {
+					continue
+				}
+				key := fmt.Sprint((*r.AuthorID))
+				byFK[key] = append(byFK[key], r)
+			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
+			for i := range authors {
+				key := fmt.Sprint(authors[i].ID)
+				rs, ok := byFK[key]
+				authors[i].Drafts = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load author posts: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
+			}
+			return nil
+		})
+	}
 
 	if fo.Posts != nil {
 		g.Go(func() error {
@@ -6935,6 +7032,7 @@ type AuthorPostsUpdateNested struct {
 // overwritten.
 type AuthorPostsCreateInput struct {
 	Title     string                      `json:"title"`
+	Kind      omittable.Value[*string]    `json:"kind,omitzero"`
 	DeletedAt omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
 }
 
@@ -7060,6 +7158,7 @@ func authorNestedParentFieldOptions(fo *AuthorFieldOptions) *AuthorFieldOptions 
 		return nil
 	}
 	scalars := *fo
+	scalars.Drafts = nil
 	scalars.Profile = nil
 	scalars.Posts = nil
 	scalars.Tags = nil
@@ -7075,7 +7174,7 @@ func authorNestedSelectsRelationship(fo *AuthorFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.Profile != nil || fo.Posts != nil || fo.Tags != nil
+	return fo.Drafts != nil || fo.Profile != nil || fo.Posts != nil || fo.Tags != nil
 }
 
 // CreateWithRelated creates a author together with rows on its nested
@@ -7392,6 +7491,7 @@ func (c *authorClient) applyAuthorPostsNested(ctx context.Context, parent *Autho
 			inputs = append(inputs, &CreatePostInput{
 				AuthorID:  omittable.Set(&parent.ID),
 				Title:     n.Title,
+				Kind:      n.Kind,
 				DeletedAt: n.DeletedAt,
 			})
 		}
@@ -8596,6 +8696,7 @@ type AuthorFilter struct {
 	DeletedAt *comparator.NullableTime  `json:"deleted_at"`
 	ID        *comparator.Number[int64] `json:"id"`
 	Name      *comparator.String        `json:"name"`
+	Drafts    *PostFilter               `json:"drafts"`
 	Posts     *PostFilter               `json:"posts"`
 	Tags      *TagFilter                `json:"tags"`
 	And       []*AuthorFilter           `json:"and"`
@@ -8627,6 +8728,10 @@ func (f *AuthorFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) [
 
 	if f.Name != nil {
 		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Drafts != nil {
+		conds = append(conds, authorDraftsFilterExists(f.Drafts, dialect, opts))
 	}
 
 	if f.Posts != nil {
@@ -8666,6 +8771,58 @@ func (f *AuthorFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) [
 	}
 
 	return conds
+}
+
+// authorDraftsFilterExists compiles a PostFilter set on the
+// Drafts relationship into a correlated EXISTS over posts.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func authorDraftsFilterExists(f *PostFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "posts"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("author_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// Same predicate from the relationship's config `discriminator:`, and
+	// here for the same reason the `filter:` form is: without it a
+	// relationship filter would match rows belonging to a sibling
+	// sub-category. The structured form carries a column and a value rather
+	// than opaque SQL, so the identifier is quoted by the dialect and the
+	// value binds into subArgs instead of being spliced into the statement.
+	subSQL += " AND (" + tgt + "." + dialect.QuoteIdentifier("kind") + " = $)"
+	subArgs = append(subArgs, "draft")
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	// The target's soft-delete rule applies inside the subquery, on the same
+	// terms as its own read path: the default is injected unless
+	// the caller set the comparator on the target filter.
+	if f.DeletedAt == nil {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier("deleted_at") + " IS NULL"
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
 // authorPostsFilterExists compiles a PostFilter set on the
@@ -8755,6 +8912,7 @@ type AuthorFieldOptions struct {
 	ID        bool                       `json:"id"`
 	Name      bool                       `json:"name"`
 	DeletedAt bool                       `json:"deleted_at"`
+	Drafts    *PostRelationshipOptions   `json:"drafts"`
 	Profile   *AuthorProfileFieldOptions `json:"profile"`
 	Posts     *PostRelationshipOptions   `json:"posts"`
 	Tags      *TagRelationshipOptions    `json:"tags"`
@@ -8795,6 +8953,9 @@ func (fo *AuthorFieldOptions) HasSelectedColumns() bool {
 		return true
 	}
 	if fo.DeletedAt {
+		return true
+	}
+	if fo.Drafts != nil {
 		return true
 	}
 	if fo.Profile != nil {
@@ -48116,6 +48277,7 @@ type Post struct {
 	ID        int64      `db:"id" json:"id"`
 	AuthorID  *int64     `db:"author_id" json:"author_id"`
 	Title     string     `db:"title" json:"title"`
+	Kind      *string    `db:"kind" json:"kind"`
 	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at"`
 }
 
@@ -48304,7 +48466,7 @@ func (c *postClient) rowMatches(ctx context.Context, conn database.Querier, cond
 }
 
 // postAllColumns is the column list for full-entity reads, sorted for determinism.
-var postAllColumns = []string{"author_id", "deleted_at", "id", "title"}
+var postAllColumns = []string{"author_id", "deleted_at", "id", "kind", "title"}
 
 // scanPosts scans rows into Post entities using a column-name switch.
 // Handles both scan target shapes (direct, wrapped) without reflection.
@@ -48322,6 +48484,8 @@ func scanPosts(rows database.Rows, columns []string) ([]*Post, error) {
 				targets[idx] = &p.AuthorID
 			case "title":
 				targets[idx] = &p.Title
+			case "kind":
+				targets[idx] = &p.Kind
 			case "deleted_at":
 				targets[idx] = &p.DeletedAt
 			}
@@ -48547,6 +48711,11 @@ func (c *postClient) Create(ctx context.Context, input *CreatePostInput, opts ..
 			args = append(args, v)
 		}
 
+		if v, ok := input.Kind.Get(); ok {
+			columns = append(columns, "kind")
+			args = append(args, v)
+		}
+
 		if v, ok := input.DeletedAt.Get(); ok {
 			columns = append(columns, "deleted_at")
 			args = append(args, v)
@@ -48624,12 +48793,16 @@ func (c *postClient) CreateMany(ctx context.Context, inputs []*CreatePostInput, 
 			end := min(start+c.batchSize, len(inputs))
 			batch := inputs[start:end]
 
-			columns := []string{"author_id", "title", "deleted_at"}
+			columns := []string{"author_id", "title", "kind", "deleted_at"}
 			var valueRows [][]any
 			for _, input := range batch {
 				var authorID any = sql.Default
 				if v, ok := input.AuthorID.Get(); ok {
 					authorID = v
+				}
+				var kind any = sql.Default
+				if v, ok := input.Kind.Get(); ok {
+					kind = v
 				}
 				var deletedAt any = sql.Default
 				if v, ok := input.DeletedAt.Get(); ok {
@@ -48639,6 +48812,7 @@ func (c *postClient) CreateMany(ctx context.Context, inputs []*CreatePostInput, 
 				valueRows = append(valueRows, []any{
 					authorID,
 					input.Title,
+					kind,
 					deletedAt,
 				})
 			}
@@ -48779,6 +48953,9 @@ func (c *postClient) Update(ctx context.Context, id int64, input *UpdatePostInpu
 		}
 		if v, ok := input.Title.Get(); ok {
 			setClauses["title"] = v
+		}
+		if v, ok := input.Kind.Get(); ok {
+			setClauses["kind"] = v
 		}
 		if v, ok := input.DeletedAt.Get(); ok {
 			setClauses["deleted_at"] = v
@@ -48940,6 +49117,9 @@ func (c *postClient) UpdateMany(ctx context.Context, items []UpdatePostItem, opt
 					if v, ok := item.Input.Title.Get(); ok {
 						setClauses["title"] = v
 					}
+					if v, ok := item.Input.Kind.Get(); ok {
+						setClauses["kind"] = v
+					}
 					if v, ok := item.Input.DeletedAt.Get(); ok {
 						setClauses["deleted_at"] = v
 					}
@@ -49054,6 +49234,9 @@ func (c *postClient) UpdateWhere(ctx context.Context, filter *PostFilter, input 
 		}
 		if v, ok := input.Title.Get(); ok {
 			setClauses["title"] = v
+		}
+		if v, ok := input.Kind.Get(); ok {
+			setClauses["kind"] = v
 		}
 		if v, ok := input.DeletedAt.Get(); ok {
 			setClauses["deleted_at"] = v
@@ -49835,6 +50018,11 @@ func (c *postClient) Upsert(ctx context.Context, input *CreatePostInput, target 
 			args = append(args, v)
 		}
 
+		if v, ok := input.Kind.Get(); ok {
+			columns = append(columns, "kind")
+			args = append(args, v)
+		}
+
 		if v, ok := input.DeletedAt.Get(); ok {
 			columns = append(columns, "deleted_at")
 			args = append(args, v)
@@ -49973,7 +50161,7 @@ func (c *postClient) UpsertMany(ctx context.Context, inputs []*CreatePostInput, 
 		// the OK packet, and after a batch that packet names at most one row.
 		// Nothing here reads LastInsertId, so requesting it would
 		// only add a misleading assignment to the SET list.
-		columns := []string{"author_id", "title", "deleted_at"}
+		columns := []string{"author_id", "title", "kind", "deleted_at"}
 		conflictColumns := postConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
@@ -49992,6 +50180,10 @@ func (c *postClient) UpsertMany(ctx context.Context, inputs []*CreatePostInput, 
 			if v, ok := input.AuthorID.Get(); ok {
 				authorID = v
 			}
+			var kind any = sql.Default
+			if v, ok := input.Kind.Get(); ok {
+				kind = v
+			}
 			var deletedAt any = sql.Default
 			if v, ok := input.DeletedAt.Get(); ok {
 				deletedAt = v
@@ -50000,6 +50192,7 @@ func (c *postClient) UpsertMany(ctx context.Context, inputs []*CreatePostInput, 
 			valueRows = append(valueRows, []any{
 				authorID,
 				input.Title,
+				kind,
 				deletedAt,
 			})
 			rowInputs = append(rowInputs, input)
@@ -50214,6 +50407,8 @@ func postColumnValue(p *Post, column string) any {
 		return p.AuthorID
 	case "title":
 		return p.Title
+	case "kind":
+		return p.Kind
 	case "deleted_at":
 		return p.DeletedAt
 	}
@@ -50519,6 +50714,8 @@ func encodePostCursor(keys []string, p *Post) (string, error) {
 			out["author_id"] = p.AuthorID
 		case "title":
 			out["title"] = p.Title
+		case "kind":
+			out["kind"] = p.Kind
 		case "deleted_at":
 			out["deleted_at"] = p.DeletedAt
 		}
@@ -50569,6 +50766,7 @@ type StreamPostFieldOptions struct {
 	ID        bool `json:"id"`
 	AuthorID  bool `json:"author_id"`
 	Title     bool `json:"title"`
+	Kind      bool `json:"kind"`
 	DeletedAt bool `json:"deleted_at"`
 }
 
@@ -50584,6 +50782,9 @@ func (fo *StreamPostFieldOptions) Columns() []string {
 	}
 	if fo.Title {
 		cols = append(cols, "title")
+	}
+	if fo.Kind {
+		cols = append(cols, "kind")
 	}
 	if fo.DeletedAt {
 		cols = append(cols, "deleted_at")
@@ -50601,6 +50802,9 @@ func (fo *StreamPostFieldOptions) HasSelectedColumns() bool {
 		return true
 	}
 	if fo.Title {
+		return true
+	}
+	if fo.Kind {
 		return true
 	}
 	if fo.DeletedAt {
@@ -50623,6 +50827,8 @@ func scanPostRow(rows database.Rows, columns []string) (*Post, error) {
 			targets[idx] = &p.AuthorID
 		case "title":
 			targets[idx] = &p.Title
+		case "kind":
+			targets[idx] = &p.Kind
 		case "deleted_at":
 			targets[idx] = &p.DeletedAt
 		}
@@ -50759,6 +50965,7 @@ type PostFilter struct {
 	AuthorID  *comparator.NullableNumber[int64] `json:"author_id"`
 	DeletedAt *comparator.NullableTime          `json:"deleted_at"`
 	ID        *comparator.Number[int64]         `json:"id"`
+	Kind      *comparator.NullableString        `json:"kind"`
 	Title     *comparator.String                `json:"title"`
 	And       []*PostFilter                     `json:"and"`
 	Or        []*PostFilter                     `json:"or"`
@@ -50789,6 +50996,10 @@ func (f *PostFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []s
 
 	if f.ID != nil {
 		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Kind != nil {
+		conds = append(conds, f.Kind.Parse(dialect.QuoteIdentifier("kind"), dialect)...)
 	}
 
 	if f.Title != nil {
@@ -50831,6 +51042,7 @@ type PostFieldOptions struct {
 	ID        bool `json:"id"`
 	AuthorID  bool `json:"author_id"`
 	Title     bool `json:"title"`
+	Kind      bool `json:"kind"`
 	DeletedAt bool `json:"deleted_at"`
 }
 
@@ -50847,6 +51059,9 @@ func (fo *PostFieldOptions) Columns() []string {
 	if fo.Title {
 		cols = append(cols, "title")
 	}
+	if fo.Kind {
+		cols = append(cols, "kind")
+	}
 	if fo.DeletedAt {
 		cols = append(cols, "deleted_at")
 	}
@@ -50860,6 +51075,7 @@ func (fo *PostFieldOptions) ColumnMap() map[string]string {
 		"ID":        "id",
 		"AuthorID":  "author_id",
 		"Title":     "title",
+		"Kind":      "kind",
 		"DeletedAt": "deleted_at",
 	}
 }
@@ -50875,6 +51091,9 @@ func (fo *PostFieldOptions) HasSelectedColumns() bool {
 	if fo.Title {
 		return true
 	}
+	if fo.Kind {
+		return true
+	}
 	if fo.DeletedAt {
 		return true
 	}
@@ -50885,6 +51104,7 @@ func (fo *PostFieldOptions) HasSelectedColumns() bool {
 type CreatePostInput struct {
 	AuthorID  omittable.Value[*int64]     `json:"author_id,omitzero"`
 	Title     string                      `json:"title"`
+	Kind      omittable.Value[*string]    `json:"kind,omitzero"`
 	DeletedAt omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
 }
 
@@ -50893,6 +51113,7 @@ type CreatePostInput struct {
 type UpdatePostInput struct {
 	AuthorID  omittable.Value[*int64]     `json:"author_id,omitzero"`
 	Title     omittable.Value[string]     `json:"title,omitzero"`
+	Kind      omittable.Value[*string]    `json:"kind,omitzero"`
 	DeletedAt omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
 }
 

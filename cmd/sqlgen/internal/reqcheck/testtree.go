@@ -25,8 +25,33 @@ const (
 // Directories the homes resolve under, relative to the repository root.
 const (
 	ConformanceSuiteDir = "cmd/sqlgen/testdata/conformance/suite"
+	FeaturesSuiteDir    = "cmd/sqlgen/testdata/conformance/features_suite"
 	ExamplesDir         = "cmd/sqlgen/testdata/examples"
 )
+
+// Suite is a conformance suite library. A variant suite wraps its tree in one subtest named
+// after it, so its citations start with that name (CONFORMANCE.md §4.2).
+type Suite struct {
+	Name string // the root segment; empty for the core suite
+	Dir  string
+}
+
+// Suites lists the conformance suites, the core suite first.
+var Suites = []Suite{
+	{Dir: ConformanceSuiteDir},
+	{Name: "Features", Dir: FeaturesSuiteDir},
+}
+
+// suiteFor returns the suite a conformance test path belongs to: the variant suite its first
+// segment names, otherwise the core suite.
+func suiteFor(path []string) Suite {
+	for _, s := range Suites[1:] {
+		if len(path) > 0 && path[0] == s.Name {
+			return s
+		}
+	}
+	return Suites[0]
+}
 
 // conformanceRoot is the suite function whose subtests are the conformance test paths.
 const conformanceRoot = "Run"
@@ -41,8 +66,9 @@ type TestRef struct {
 	Raw  string
 }
 
-// ParseTestRef parses `conformance: Method/subtest`, `unit: <dir>: TestX/sub`,
-// `integration: <dir>: TestX`, `example: <example>: TestX` or `golden: <example>`.
+// ParseTestRef parses `conformance: Method/subtest` (`Features/…` for that suite),
+// `unit: <dir>: TestX/sub`, `integration: <dir>: TestX`, `example: <example>: TestX` or
+// `golden: <example>`.
 func ParseTestRef(s string) (TestRef, error) {
 	home, rest, ok := strings.Cut(s, ":")
 	if !ok {
@@ -52,7 +78,8 @@ func ParseTestRef(s string) (TestRef, error) {
 	ref := TestRef{Home: home, Raw: s}
 	switch home {
 	case HomeConformance:
-		ref.Dir, ref.Path = ConformanceSuiteDir, splitPath(rest)
+		ref.Path = splitPath(rest)
+		ref.Dir = suiteFor(ref.Path).Dir
 	case HomeGolden:
 		if rest == "" || strings.Contains(rest, ":") {
 			return TestRef{}, fmt.Errorf("test %q: a golden home names one example, `golden: <example>`", s)

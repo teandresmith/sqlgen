@@ -1,0 +1,39 @@
+version: v1
+input:
+  dialect: mysql
+  paths:
+    - ./schema.sql
+  views:
+    - ./views/
+output:
+  driver: stdlib
+  dir: ./models
+  package: models
+events:
+  enabled: true
+cache:
+  enabled: true
+  key_prefix: sqlgen
+tenancy:
+  enabled: true
+  column: workspace_id
+  # No tenancy.type: a uuid.UUID tenant on a CHAR column fails the PRD §29.2.4
+  # SQL-type check, so the tenant is the inferred string. models/conformance.go
+  # aliases it as models.Tenant, as the other targets alias uuid.UUID.
+  required: true
+generation:
+  nested_mutations:
+    enabled: true
+views:
+  active_tasks:
+    cache:
+      enabled: true
+    invalidate_on:
+      - tasks
+tables:
+  bulletins:
+    tenancy:
+      required: false
+  regions:
+    tenancy:
+      enabled: false

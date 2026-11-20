@@ -602,24 +602,40 @@ func (c *checker) checkUniqueIDs() {
 	}
 }
 
-// checkConformanceOrphans is check 2 for the suite: every behavior subtest (two or more levels
-// under Run) is claimed by a requirement. It runs once the suite exists.
+// checkConformanceOrphans is check 2 for each suite that exists: every behavior subtest (two or
+// more levels under the suite's root, which for a variant suite is its named subtest) is claimed
+// by a requirement.
 func (c *checker) checkConformanceOrphans() {
-	abs := filepath.Join(c.root, filepath.FromSlash(ConformanceSuiteDir))
-	if _, err := os.Stat(abs); err != nil {
+	for _, s := range Suites {
+		c.checkSuiteOrphans(s)
+	}
+}
+
+func (c *checker) checkSuiteOrphans(s Suite) {
+	if _, err := os.Stat(filepath.Join(c.root, filepath.FromSlash(s.Dir))); err != nil {
 		return
 	}
-	tree, err := c.tree(ConformanceSuiteDir, true)
+	tree, err := c.tree(s.Dir, true)
 	if err != nil {
-		c.fail(ConformanceSuiteDir, 0, "%v", err)
+		c.fail(s.Dir, 0, "%v", err)
 		return
 	}
 	root := tree[conformanceRoot]
 	if root == nil {
-		c.fail(ConformanceSuiteDir, 0, "the suite has no %s function", conformanceRoot)
+		c.fail(s.Dir, 0, "the suite has no %s function", conformanceRoot)
 		return
 	}
-	claims := c.claimed[ConformanceSuiteDir][conformanceRoot]
+	depth := 2
+	if s.Name != "" {
+		depth++
+		// A subtest beside the root segment would be cited without it, which routes to the core suite.
+		for _, ch := range root.children {
+			if ch.name != s.Name {
+				c.fail(s.Dir, 0, "%s subtest %s is outside %s; every subtest of this suite sits under %s", conformanceRoot, ch.name, s.Name, s.Name)
+			}
+		}
+	}
+	claims := c.claimed[s.Dir][conformanceRoot]
 	var visit func(n *testNode, path []string)
 	visit = func(n *testNode, path []string) {
 		if n.computed {
@@ -627,11 +643,11 @@ func (c *checker) checkConformanceOrphans() {
 			if where == "" {
 				where = conformanceRoot
 			}
-			c.fail(ConformanceSuiteDir, 0, "subtest names under %s are computed, so they cannot be claimed; name each behavior with a string literal", where)
+			c.fail(s.Dir, 0, "subtest names under %s are computed, so they cannot be claimed; name each behavior with a string literal", where)
 		}
-		if len(n.children) == 0 && len(path) >= 2 {
-			if !slices.ContainsFunc(claims, func(p []string) bool { return len(p) >= 2 && hasPrefixPath(path, p) }) {
-				c.fail(ConformanceSuiteDir, 0, "conformance subtest %s is claimed by no requirement", strings.Join(path, "/"))
+		if len(n.children) == 0 && len(path) >= depth {
+			if !slices.ContainsFunc(claims, func(p []string) bool { return len(p) >= depth && hasPrefixPath(path, p) }) {
+				c.fail(s.Dir, 0, "conformance subtest %s is claimed by no requirement", strings.Join(path, "/"))
 			}
 			return
 		}

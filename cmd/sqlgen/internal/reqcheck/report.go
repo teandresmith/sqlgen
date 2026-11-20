@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -63,16 +64,23 @@ type Outcome struct {
 	Msg    string
 }
 
-// Target is one conformance dialect module: one run of the suite.
+// Target is one conformance dialect module: one run of a suite.
 type Target struct {
-	Dir      string // relative to the repository root
+	Dir string // relative to the repository root
+	// Suite is the root segment of the suite the module runs, empty for the core suite.
+	Suite    string
 	Dialect  string
 	Driver   string
 	Database string // what the harness logged; empty when the suite did not run
 }
 
-// Label names the target in the report.
-func (t Target) Label() string { return t.Dialect + "/" + t.Driver }
+// Label names the target in the report; a variant suite's target is prefixed with the suite.
+func (t Target) Label() string {
+	if t.Suite != "" {
+		return t.Suite + " " + t.Dialect + "/" + t.Driver
+	}
+	return t.Dialect + "/" + t.Driver
+}
 
 // Report is the registry joined with test results (CONFORMANCE.md §5.5).
 type Report struct {
@@ -154,8 +162,9 @@ func BuildReport(root string, results *Results) (*Report, error) {
 }
 
 // loadTargets lists the conformance dialect modules: each directory under ConformanceDir with a
-// go.mod, except the suite. The dialect and driver are the string literals its test passes to
-// the harness, so a target is known even when its suite did not run.
+// go.mod, except the suites, the core suite's targets first. The dialect and driver are the
+// string literals its test passes to the harness, so a target is known even when its suite did
+// not run.
 func loadTargets(root string, results *Results) ([]Target, error) {
 	mods, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(ConformanceDir), "*", "go.mod"))
 	if err != nil {
@@ -165,7 +174,7 @@ func loadTargets(root string, results *Results) ([]Target, error) {
 	var targets []Target
 	for _, mod := range mods {
 		dir := ConformanceDir + "/" + filepath.Base(filepath.Dir(mod))
-		if dir == ConformanceSuiteDir {
+		if slices.ContainsFunc(Suites, func(s Suite) bool { return s.Dir == dir }) {
 			continue
 		}
 		t, err := readTarget(root, dir)
@@ -175,12 +184,18 @@ func loadTargets(root string, results *Results) ([]Target, error) {
 		t.Database = results.database(dir)
 		targets = append(targets, t)
 	}
+	slices.SortStableFunc(targets, func(a, b Target) int {
+		return slices.IndexFunc(Suites, func(s Suite) bool { return s.Name == a.Suite }) -
+			slices.IndexFunc(Suites, func(s Suite) bool { return s.Name == b.Suite })
+	})
 	return targets, nil
 }
 
-// readTarget reads the Dialect and Driver fields a dialect module's tests set on the harness.
+// readTarget reads the suite a dialect module's tests import and the Dialect and Driver fields
+// they set on the harness.
 func readTarget(root, dir string) (Target, error) {
 	t := Target{Dir: dir}
+	var imported []Suite
 	files, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(dir), "*_test.go"))
 	if err != nil {
 		return t, fmt.Errorf("listing %s tests: %w", dir, err)
@@ -191,30 +206,70 @@ func readTarget(root, dir string) (Target, error) {
 		if err != nil {
 			return t, fmt.Errorf("parsing %s: %w", name, err)
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			kv, ok := n.(*ast.KeyValueExpr)
-			if !ok {
-				return true
+		for _, s := range suiteImports(f) {
+			if !slices.Contains(imported, s) {
+				imported = append(imported, s)
 			}
-			key, ok := kv.Key.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			if v, ok := stringLit(kv.Value); ok {
-				switch key.Name {
-				case "Dialect":
-					t.Dialect = v
-				case "Driver":
-					t.Driver = v
-				}
-			}
-			return true
-		})
+		}
+		readHarnessLiterals(f, &t)
+	}
+	switch len(imported) {
+	case 0:
+		return t, fmt.Errorf("conformance module %s: its tests import no conformance suite (%s)", dir, suiteDirs(Suites))
+	case 1:
+		t.Suite = imported[0].Name
+	default:
+		return t, fmt.Errorf("conformance module %s: its tests import more than one conformance suite (%s); a module runs one", dir, suiteDirs(imported))
 	}
 	if t.Dialect == "" || t.Driver == "" {
 		return t, fmt.Errorf("conformance module %s: its tests set no string-literal Dialect and Driver on the harness", dir)
 	}
 	return t, nil
+}
+
+// readHarnessLiterals sets t's Dialect and Driver from the string-literal fields f sets.
+func readHarnessLiterals(f *ast.File, t *Target) {
+	ast.Inspect(f, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if v, ok := stringLit(kv.Value); ok {
+			switch key.Name {
+			case "Dialect":
+				t.Dialect = v
+			case "Driver":
+				t.Driver = v
+			}
+		}
+		return true
+	})
+}
+
+// suiteImports returns the conformance suites f imports.
+func suiteImports(f *ast.File) []Suite {
+	var out []Suite
+	for _, imp := range f.Imports {
+		p, _ := strconv.Unquote(imp.Path.Value)
+		for _, s := range Suites {
+			if p == RepoModule+"/"+s.Dir {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+func suiteDirs(suites []Suite) string {
+	dirs := make([]string, len(suites))
+	for i, s := range suites {
+		dirs[i] = s.Dir
+	}
+	return strings.Join(dirs, ", ")
 }
 
 // joinRow joins a row's tests with the results. Conformance tests run once per target the row
@@ -242,8 +297,9 @@ func joinRow(id string, tests, appliesTo []string, targets []Target, results *Re
 			continue
 		}
 		conformance = true
+		suite := suiteFor(ref.Path).Name
 		for i, t := range targets {
-			if applies(appliesTo, t) {
+			if t.Suite == suite && applies(appliesTo, t) {
 				perTarget[i] = append(perTarget[i], results.outcome(t.Dir, conformanceTest+"/"+goTestPath(ref.Path)))
 			}
 		}

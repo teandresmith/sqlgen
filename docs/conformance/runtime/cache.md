@@ -44,6 +44,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.redis.scan-not-keys | The Redis backend's `InvalidatePattern` walks the keyspace with paginated `SCAN` and deletes each page with one bounded `DEL`; it never sends `KEYS` | `integration: cache/redis: TestInvalidatePatternWith10KKeysUsesSCANAndBatchedDELs` | all |  |
 | cache.redis.close-owned-client | The Redis backend's `Close` closes the Redis client only when the backend was built with `WithOwnedClient()`; by default the client stays usable | `integration: cache/redis: TestCloseDefaultIsNoOpClientStaysUsable`; `integration: cache/redis: TestCloseOwnedClientClosesClient` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.facade.close-probes-closer`: `cmd/sqlgen/gen/templates/cache.go.tmpl:1133`
+
 ## §27.4 Injection via Hooks
 <!-- prd: 27.4 sha256: 7a57b9dc63f77f85 -->
 
@@ -52,6 +56,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.facade.hooks | The generated `Cache` exposes `QueryHook() hook.QueryHook` and `MutationHook() hook.MutationHook`, the hooks it injects into the client | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsQueryAndMutationHooks` | all |  |
 | cache.facade.options | The generated package declares the runtime options `WithInvalidationSource`, `WithMetricsRecorder`, `WithSerializer`, `WithCircuitBreaker` and `WithOnError`, each returning `CacheOption` with the parameter type the PRD gives | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsOptionsAPI` | all |  |
 | cache.facade.with-cache-outermost | `WithCache` puts the cache query hook outside every hook registered with `WithQueryHook`, whichever option comes first: a cache hit returns before a user query hook runs | `example: cache: TestWithCache_OutermostWhateverTheOptionOrder/WithCache before the user hook`; `example: cache: TestWithCache_OutermostWhateverTheOptionOrder/WithCache after the user hook` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.facade.with-cache-outermost`: `cmd/sqlgen/gen/templates/client.go.tmpl:176-177`
 
 ## §27.5 Cache Key Generation
 <!-- prd: 27.5 sha256: c21af87fbe355014 -->
@@ -78,6 +86,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache-key.table-pattern.no-schema | With no schema, `BuildTablePattern` returns `{prefix}:{table}:*` | `unit: cache: TestBuildTablePattern/mysql empty schema` | mysql, sqlite | cache-keys: table-pattern × no-schema |
 | cache-key.table-pattern.generations | A table pattern matches the table's keys under any fingerprint, and no key of a table whose name extends it or of the same table in another schema | `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern matches an earlier fingerprint generation`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern does not match a table whose name extends it`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern does not match the same table in another schema` | all |  |
 
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache-key.time-utc-instant`: `cache/key.go:177-178`
+
 ## §27.6 Cache Invariant
 <!-- prd: 27.6 sha256: ae8265d73e0a67e9 -->
 
@@ -85,6 +97,10 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 |---|---|---|---|---|
 | cache.relationship-bypass | A `Get` with any relationship flag set on `FieldOptions` bypasses the cache: the query hook checks for it before dispatching to read-through | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookPreservesBypassGates`; `example: cache: TestSkip_RelationshipBypass` | all |  |
 | cache.create.field-options-not-cached | A `Create` or `CreateMany` call that carries `FieldOptions` writes nothing to the cache | `unit: cmd/sqlgen/gen: TestCacheTemplate_createCachingSkipsWhenFieldOptionsSet` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.relationship-bypass`: `cmd/sqlgen/gen/templates/cache.go.tmpl:802`
 
 ## §27.7 Cache Behavior by Operation
 <!-- prd: 27.7 sha256: 98d0918d8dbb9798 -->
@@ -97,10 +113,18 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.partial.hydration-off-bypass | With hydration off, a partial `Get` (column flags only) passes through to the database with no cache read or write | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookBypassesPartialWhenHydrationOff` | all |  |
 | cache.partial.hydration-on | With hydration on, a partial `Get` that misses returns the partial database result and starts background hydration; the partial result never reaches the cache-set path | `unit: cmd/sqlgen/gen: TestCacheTemplate_readThroughPartialTriggersHydrate`; `example: cache: TestHydration_PartialFetchHydratesBackground` | all |  |
 | cache.hydration.one-per-key | At most one hydration runs per `(table, pk)` at a time | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsHydrateHelper` | all |  |
-| cache.create.write-through | `Create` and `CreateMany` write each returned entity to the cache under its own key | `unit: cmd/sqlgen/gen: TestCacheTemplate_dispatchMutationSetsOnCreate`; `unit: cmd/sqlgen/gen: TestCacheTemplate_dispatchMutationSetsOnCreateMany`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSetHelperSinglePK`; `unit: cmd/sqlgen/gen: TestCacheTemplate_mutationHookForwardsResult`; `example: cache: TestMutation_CreateSetsCache`; `example: cache: TestMutation_CreateManySetsCache` | all |  |
-| cache.invalidate.many-and-where-by-key | `UpsertMany`, `UpdateMany`, `SoftDeleteMany`, `HardDeleteMany`, `RestoreMany` and the four `*Where` mutations share one key-based invalidation arm | `unit: cmd/sqlgen/gen: TestCacheTemplate_whereOpsShareKeyBasedArm`; `example: cache: TestMutation_UpdateManyInvalidatesBatch`; `example: cache: TestMutation_UpsertManyInvalidatesBatch`; `example: cache: TestMutation_WhereMutationsInvalidateByKey` | all |  |
+| cache.create.write-through | `Create` and `CreateMany` write each returned entity to the cache under its own key | `conformance: Features/Cache/Create/writes the created row through under its own key`; `conformance: Features/Cache/CreateMany/writes the created row through under its own key`; `unit: cmd/sqlgen/gen: TestCacheTemplate_dispatchMutationSetsOnCreate`; `unit: cmd/sqlgen/gen: TestCacheTemplate_dispatchMutationSetsOnCreateMany`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSetHelperSinglePK`; `unit: cmd/sqlgen/gen: TestCacheTemplate_mutationHookForwardsResult`; `example: cache: TestMutation_CreateSetsCache`; `example: cache: TestMutation_CreateManySetsCache` | all |  |
+| cache.invalidate.many-and-where-by-key | `UpsertMany`, `UpdateMany`, `SoftDeleteMany`, `HardDeleteMany`, `RestoreMany` and the four `*Where` mutations share one key-based invalidation arm | `conformance: Features/Cache/UpsertMany/evicts each affected row's key`; `conformance: Features/Cache/UpdateMany/evicts each affected row's key`; `conformance: Features/Cache/SoftDeleteMany/evicts each affected row's key`; `conformance: Features/Cache/HardDeleteMany/evicts each affected row's key`; `conformance: Features/Cache/RestoreMany/evicts each affected row's key`; `conformance: Features/Cache/UpdateWhere/evicts each affected row's key`; `conformance: Features/Cache/SoftDeleteWhere/evicts each affected row's key`; `conformance: Features/Cache/HardDeleteWhere/evicts each affected row's key`; `conformance: Features/Cache/RestoreWhere/evicts each affected row's key`; `unit: cmd/sqlgen/gen: TestCacheTemplate_whereOpsShareKeyBasedArm`; `example: cache: TestMutation_UpdateManyInvalidatesBatch`; `example: cache: TestMutation_UpsertManyInvalidatesBatch`; `example: cache: TestMutation_WhereMutationsInvalidateByKey` | all |  |
 | cache.invalidate.uncached-table-guard | The mutation invalidation arm returns before any backend call for a table that is not cached | `unit: cmd/sqlgen/gen: TestCacheTemplate_whereOpsShareKeyBasedArm`; `example: cache: TestWhereMutation_NonCachedTable_InvalidatesNothing` | all |  |
 | cache.skip-cache.read | A `Get` with `CallOptions.SkipCache: true` does not read through the cache | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookPreservesBypassGates`; `example: cache: TestSkip_CacheOnGet` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.read-through.dispatch`: `cmd/sqlgen/gen/templates/cache.go.tmpl:813-835`, `cmd/sqlgen/gen/templates/cache.go.tmpl:263-271`
+- `cache.read-through.singleflight-recheck`: `cmd/sqlgen/gen/templates/cache.go.tmpl:320-334`
+- `cache.partial.hydration-on`: `cmd/sqlgen/gen/templates/cache.go.tmpl:306-317`
+- `cache.invalidate.uncached-table-guard`: `cmd/sqlgen/gen/templates/cache.go.tmpl:979-981`
+- `cache.skip-cache.read`: `cmd/sqlgen/gen/templates/cache.go.tmpl:798`
 
 ## §27.8 Hydration
 <!-- prd: 27.8 sha256: 1940f10057dfe00e -->
@@ -132,7 +156,7 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.tx.rollback-discards | A rolled-back transaction performs none of its cache invalidations | `example: cache: TestTx_RollbackDiscardsInvalidation` | all |  |
 | cache.tx.committed-write-survives | With sync callbacks, a cache invalidation that fails on commit does not reach `WithTx`: the write commits and `WithTx` returns nil (async callbacks never report to `WithTx`) | `example: cache: TestTx_CommittedWriteSurvivesInvalidationFailure/sync callbacks` | all |  |
 | cache.tx.retry-once | A cache invalidation that fails on commit runs once more: a backend that fails only the first call still evicts the stale entry | `example: cache: TestTx_FailedInvalidationIsRetriedOnce` | all |  |
-| cache.mutation.unbuildable-key-reported | A mutation whose affected PK cannot build a key reports the error to the `OnErrorFunc` under op `invalidate_many`, once, and the write still returns nil, inside a transaction or not | `example: cache: TestMutation_UnbuildableKeyIsReportedNotReturned/outside a transaction`; `example: cache: TestMutation_UnbuildableKeyIsReportedNotReturned/inside a sync transaction` | all |  |
+| cache.mutation.unbuildable-key-reported | A mutation whose affected PK cannot build a key reports the error to the `OnErrorFunc` under op `invalidate_many`, once, and the write still returns nil, inside a transaction or not | `conformance: Features/Cache/an unbuildable key is reported once outside a transaction`; `conformance: Features/Cache/an unbuildable key is reported once inside a sync transaction` | all |  |
 | cache.breaker.trips-at-threshold | In `Closed`, the breaker opens on the `failure_threshold`-th consecutive failure and not before, and a success resets the count | `unit: cache: TestBreaker_NthFailureTripsAndFiresStateChange`; `unit: cache: TestBreaker_ClosedAdvancesToNMinusOneWithoutTripping`; `unit: cache: TestBreaker_ClosedRecordSuccessResetsCounter` | all |  |
 | cache.breaker.probe-interval | An open breaker refuses calls until `probe_interval` has elapsed; the next call then moves it to `HalfOpen` and is admitted as a probe | `unit: cache: TestBreaker_OpenAllowReturnsFalseUntilProbeIntervalElapses`; `unit: cache: TestBreaker_AllowPostProbeIntervalTransitionsToHalfOpen` | all |  |
 | cache.breaker.half-open-success | A probe success in `HalfOpen` closes the breaker and resets the failure count | `unit: cache: TestBreaker_HalfOpenSuccessReturnsToClosed` | all |  |
@@ -144,6 +168,17 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.breaker.reports-to-recorder | The breaker `NewCache` builds from the config reports its transitions to the `WithMetricsRecorder` recorder as `CircuitBreakerStateChange(from, to)` | `example: cache: TestBreaker_DefaultBreakerReportsToMetricsRecorder` | all |  |
 | cache.error-policy.order | The error policy records `MetricsRecorder.Error` with the backend's own error, then calls the `OnErrorFunc`, then `breaker.RecordFailure()`, in that order | `unit: cache: TestRouteError_ThreeChannelOrdering` | all |  |
 | cache.error-policy.logger-cannot-mask | A panicking `OnErrorFunc` does not stop the breaker feedback | `unit: cache: TestRouteError_PanickingOnErrorDoesNotSkipBreaker` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache.breaker.open-skips`: `cmd/sqlgen/gen/templates/cache.go.tmpl:271`, `cmd/sqlgen/gen/templates/cache.go.tmpl:343`, `cmd/sqlgen/gen/templates/cache.go.tmpl:391`
+- `cache.direct-invalidate.tenanted-error`: `cmd/sqlgen/gen/templates/cache.go.tmpl:582`
+- `cache.tx.event-before-cache`: `cmd/sqlgen/gen/templates/client.go.tmpl:168,176`, `database/transaction.go:215`
+- `cache.tx.rollback-discards`: `cmd/sqlgen/gen/templates/cache.go.tmpl:1027-1028`, `database/transaction.go:604,612`
+- `cache.tx.committed-write-survives`: `cmd/sqlgen/gen/templates/cache.go.tmpl:1062-1068`
+- `cache.tx.retry-once`: `cmd/sqlgen/gen/templates/cache.go.tmpl:1064-1065`
+- `cache.breaker.read-through-releases-probe`: `cmd/sqlgen/gen/templates/cache.go.tmpl:330`
+- `cache.breaker.reports-to-recorder`: `cmd/sqlgen/gen/templates/cache.go.tmpl:100-104`
 
 ## §27.10 Serialization
 <!-- prd: 27.10 sha256: 384ffadc196b96c4 -->
@@ -196,7 +231,7 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | fingerprint.tenanted-marker | Making a table tenanted changes its fingerprint (the tenanted fact is a fingerprint input) | `unit: cmd/sqlgen/gen: TestFingerprint_tenancyStructuralMarker_changesFingerprint` | all |  |
-| cache-key.tenant-per-row-invalidation | A tenanted table's mutation invalidation, `*Where` included, evicts per row from the captured tenants rather than by pattern | `unit: cmd/sqlgen/gen: TestCacheTemplate_tenantedWhereOpsStayPerRow`; `example: tenancy: TestNilTenant_WhereAndManyEvictPrecisely` | all |  |
+| cache-key.tenant-per-row-invalidation | A tenanted table's mutation invalidation, `*Where` included, evicts per row from the captured tenants rather than by pattern | `conformance: Features/Cache/Update/evicts each affected row's key`; `conformance: Features/Cache/UpdateMany/evicts each affected row's key`; `conformance: Features/Cache/UpdateWhere/evicts each affected row's key`; `conformance: Features/Cache/Upsert/evicts each affected row's key`; `conformance: Features/Cache/UpsertMany/evicts each affected row's key`; `conformance: Features/Cache/Increment/evicts each affected row's key`; `conformance: Features/Cache/SoftDelete/evicts each affected row's key`; `conformance: Features/Cache/SoftDeleteMany/evicts each affected row's key`; `conformance: Features/Cache/SoftDeleteWhere/evicts each affected row's key`; `conformance: Features/Cache/HardDelete/evicts each affected row's key`; `conformance: Features/Cache/HardDeleteMany/evicts each affected row's key`; `conformance: Features/Cache/HardDeleteWhere/evicts each affected row's key`; `conformance: Features/Cache/Restore/evicts each affected row's key`; `conformance: Features/Cache/RestoreMany/evicts each affected row's key`; `conformance: Features/Cache/RestoreWhere/evicts each affected row's key`; `unit: cmd/sqlgen/gen: TestCacheTemplate_tenantedWhereOpsStayPerRow` | all |  |
 | cache-key.tenant-fallback-table-pattern | When a captured tenant is missing, invalidation falls back to the cross-tenant `BuildTablePattern` clear built from the table's schema and bare name | `unit: cmd/sqlgen/gen: TestCacheTemplate_tenantedWhereOpsStayPerRow`; `example: tenancy: TestNilTenant_ForcedCaptureGapFallsBackSafely` | all |  |
 | cache-key.tenant-capture-update-returning | On PostgreSQL and SQLite, a tenanted table's (tenant outside the PK) `Update`, `UpdateMany` and `UpdateWhere` capture each affected row's tenant by widening the statement's `RETURNING` projection into `MutationContext.AffectedTenants`, with no pre-read | `unit: cmd/sqlgen/gen: TestTenantCapture_update_returningDialects` | postgres, sqlite |  |
 | cache-key.tenant-capture-delete-increment-upsert-returning | On PostgreSQL, a tenanted table's (tenant outside the PK) `HardDelete` family, `Increment` and `Upsert` capture the affected row's tenant by widening the statement's `RETURNING` projection (the tenant column, or the PK and the tenant) into `MutationContext.AffectedTenants` | `unit: cmd/sqlgen/gen: TestTenantCapture_delete_acrossDialects/postgres returning`; `unit: cmd/sqlgen/gen: TestTenantCapture_increment_acrossDialects/postgres returning`; `unit: cmd/sqlgen/gen: TestTenantCapture_upsert_capturesRowTenant/postgres returning` | postgres |  |
@@ -205,12 +240,16 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache-key.tenant-capture-create | `Create` and `CreateMany` on a tenanted table (tenant outside the PK) record the tenant value they wrote (the resolved tenant, or the caller's value when tenancy is skipped) into `MutationContext.AffectedTenants`, one element per created row | `unit: cmd/sqlgen/gen: TestTenantCapture_create_capturesInsertedValue` | all |  |
 | cache-key.tenant-capture-composite-pk | On a composite-PK table whose tenant column is outside the PK, the capture projection carries every PK column and the tenant: PostgreSQL's `UpdateMany` widens `RETURNING` to the PK columns and the tenant, and MySQL's `UpdateWhere` widens `collectAffectedPKs` to return the tenants | `unit: cmd/sqlgen/gen: TestTenantCapture_compositeTenantOutsidePK` | postgres, mysql |  |
 | cache-key.tenant-in-pk-no-capture | On a table whose tenant column is part of the primary key, no mutation runs an extra tenant capture: `Create`, `Update`, the delete family and the client emit no `AffectedTenants`, `captureAffectedTenants` or `capturedTenant` | `unit: cmd/sqlgen/gen: TestTenantCapture_tenantInPK_noCarrier` | postgres |  |
-| cache-key.entity.tenanted | A tenanted table's key is `{prefix}:{schema}.{table}:tenant:{tenant}:fingerprint:v{fingerprint}:pk:{pk}`, with the tenant formatted by `%v` and placed before `fingerprint:`, composite keys included; two tenants give two keys | `unit: cache: TestBuildTenantKey/postgres tenanted with schema`; `unit: cache: TestBuildTenantKey/mysql tenanted empty schema`; `unit: cache: TestBuildTenantKey/sqlite tenanted empty schema uuid pk`; `unit: cache: TestBuildTenantKey/integer tenant`; `unit: cache: TestBuildTenantKeyLabelOrdering`; `unit: cache: TestBuildCompositeTenantKey/postgres two-column composite tenanted`; `unit: cache: TestBuildCompositeTenantKey/three-column composite tenanted`; `unit: cache: TestBuildTenantKeyDifferentTenantsDistinctKeys` | all | cache-keys: entity × tenanted |
-| cache-key.table-pattern.tenanted | A tenanted table's `BuildTablePattern` matches every tenant's keys, composite keys included | `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern matches every tenant of a tenanted table`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern matches a second tenant of the same table`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern matches a composite tenanted key` | all | cache-keys: table-pattern × tenanted |
+| cache-key.entity.tenanted | A tenanted table's key is `{prefix}:{schema}.{table}:tenant:{tenant}:fingerprint:v{fingerprint}:pk:{pk}`, with the tenant formatted by `%v` and placed before `fingerprint:`, composite keys included; two tenants give two keys | `conformance: Features/Cache/Update/evicts each affected row's key`; `conformance: Features/Cache/event-driven invalidation/a tenant-in-PK event with no stamp evicts that PK's key only`; `unit: cache: TestBuildTenantKey/postgres tenanted with schema`; `unit: cache: TestBuildTenantKey/mysql tenanted empty schema`; `unit: cache: TestBuildTenantKey/sqlite tenanted empty schema uuid pk`; `unit: cache: TestBuildTenantKey/integer tenant`; `unit: cache: TestBuildTenantKeyLabelOrdering`; `unit: cache: TestBuildCompositeTenantKey/postgres two-column composite tenanted`; `unit: cache: TestBuildCompositeTenantKey/three-column composite tenanted`; `unit: cache: TestBuildTenantKeyDifferentTenantsDistinctKeys` | all | cache-keys: entity × tenanted |
+| cache-key.table-pattern.tenanted | A tenanted table's `BuildTablePattern` matches every tenant's keys, composite keys included | `conformance: Features/Cache/event-driven invalidation/a tenant-less event clears the table across tenants and returns nil`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern matches every tenant of a tenanted table`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern matches a second tenant of the same table`; `unit: cache: TestPatternsMatchTheKeysTheyCover/table pattern matches a composite tenanted key` | all | cache-keys: table-pattern × tenanted |
 | cache-key.tenant-pattern.schema | `BuildTenantTablePattern(prefix, schema, table, tenant)` returns `{prefix}:{schema}.{table}:tenant:{tenant}:*`, with one trailing wildcard and no `fingerprint:` or `pk:` segment | `unit: cache: TestBuildTenantTablePattern/postgres tenanted with schema`; `unit: cache: TestBuildTenantTablePattern/integer tenant` | all | cache-keys: tenant-table-pattern × schema |
 | cache-key.tenant-pattern.no-schema | With no schema, `BuildTenantTablePattern` returns `{prefix}:{table}:tenant:{tenant}:*` | `unit: cache: TestBuildTenantTablePattern/mysql tenanted empty schema` | mysql, sqlite | cache-keys: tenant-table-pattern × no-schema |
 | cache-key.tenant-pattern.tenanted | A tenant pattern matches its tenant's keys under any fingerprint, composite keys included, and no key of another tenant, including a tenant whose value extends it | `unit: cache: TestPatternsMatchTheKeysTheyCover/tenant pattern matches its tenant under any fingerprint`; `unit: cache: TestPatternsMatchTheKeysTheyCover/tenant pattern matches its tenant's composite keys`; `unit: cache: TestPatternsMatchTheKeysTheyCover/tenant pattern does not match another tenant`; `unit: cache: TestPatternsMatchTheKeysTheyCover/tenant pattern does not match a tenant whose value extends it` | all | cache-keys: tenant-table-pattern × tenanted |
 | cache-key.pattern-builder-signatures | `BuildTablePattern(prefix, schema, table string) string` and `BuildTenantTablePattern(prefix, schema, table string, tenant any) string` have the PRD's signatures | `unit: cache: TestPatternBuilderSignatures` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `cache-key.tenant-fallback-table-pattern`: `cmd/sqlgen/gen/templates/cache.go.tmpl:665-673`
 
 ## Not applicable
 

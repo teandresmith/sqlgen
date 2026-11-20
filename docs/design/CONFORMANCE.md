@@ -213,7 +213,8 @@ of key or feature:
 | `flags` | Soft delete (bool) |
 | `audit_rows` | No PK: no PK methods generated (§9.4b) |
 | `counters` | `Increment`; `strict_updates: false`; a UNIQUE `name`, a CHECK on `hits`, and a NOT NULL `updated_at` with no DEFAULT that an insert can leave out |
-| `authors` / `posts` / `author_profiles` / `tags` / `author_tags` | Nested mutations: one parent with an edge of each nestable shape, O2M on a nullable FK (every verb), a config-declared has-one on a UNIQUE nullable FK, and M2M through a pure junction; a UNIQUE `authors.name` conflict target, CHECK and UNIQUE constraints on the children, and soft delete on the parent and on `posts` |
+| `authors` / `posts` / `author_profiles` / `tags` / `author_tags` | Nested mutations: one parent with an edge of each nestable shape, O2M on a nullable FK (every verb), a config-declared has-one on a UNIQUE nullable FK, and M2M through a pure junction; a UNIQUE `authors.name` conflict target, CHECK and UNIQUE constraints on the children, and soft delete on the parent and on `posts`; a `Drafts` edge into `posts` with a `discriminator:` on the nullable `posts.kind` |
+| `premium_products` | A regular view over `products` (`input.views`, `@pk: id`) whose `WHERE` leaves rows out: the §16.4 view reads |
 
 One `sqlgen.yml` per dialect, kept as close to identical as each dialect allows, so the generated
 Go API is the same everywhere apart from §7.2 type differences. Variants that change the API
@@ -272,6 +273,13 @@ whichever dialect is running. No source is copied.
   - Timestamps are `time.Time` on Postgres and `types.DateTime` on SQLite, which §7.2 requires.
     **Absorbed** by a hand-written `models/conformance.go` per dialect that declares
     `type Timestamp = …` and `func Now() Timestamp`. The suite names only `models.Timestamp`.
+
+**Variant modules.** A variant suite enables features the core schema leaves off (§4.1). It uses
+the same layout beside the core modules. The Features suite (`docs/design/CONFORMANCE_VARIANTS.md`)
+is the shared module `features_suite/` plus one module per target (`features_postgres`,
+`features_postgres_stdlib`, `features_mysql`, `features_sqlite`), each declaring
+`…/conformance/features/models`. Its `Run` wraps its tree in `t.Run("Features", …)`, so every
+Features subtest path starts with the `Features` root segment.
 
 ### 4.3 Harness
 
@@ -497,6 +505,9 @@ computed: a unit test itself can still be claimed, but a path below it fails wit
 saying the names are computed. In the suite, a computed name fails outright, because every
 suite subtest must be claimable.
 
+A `conformance:` citation whose first segment names a suite (`Features`) is checked against that
+suite's tree and joined only with its targets.
+
 ### 5.4 Coverage ratchet
 
 Seeding hundreds of rows takes time, so coverage is reported before it is enforced. Each registry
@@ -530,7 +541,9 @@ event's package path is `github.com/teandresmith/sqlgen/<dir>` for every module 
 so a reference's `<dir>` names its package directly. Names match as `go test` reports them, with
 spaces as underscores, the same rule `req-check` resolves with. A `conformance:` reference becomes
 `TestConformance/<Method>/<subtest>` in each dialect module, the targets, whose dialect and driver
-are the string literals its test sets on the harness. The suite logs a `conformance harness:
+are the string literals its test sets on the harness. A target runs the suite its test imports (a module
+importing none fails the report), and a citation joins only the targets of its own suite (§5.3). A variant suite's targets follow the core
+ones, labeled with the suite name (`Features sqlite/stdlib`). The suite logs a `conformance harness:
 database …` line, which gives the header its database versions.
 
 - **Not run is never pass.** A test with no result of its own is `not run`, with the reason: its
@@ -544,6 +557,10 @@ database …` line, which gives the header its database versions.
 - **Matrices** are rendered whole, one line per matrix row; a filled cell shows its row's status.
 - **`make conformance` exits non-zero** after writing the report when any `go test` run failed. A
   stale `models/` aborts it before anything runs.
+
+**Report delta.** `make report-delta` compares the working-tree report with the one committed at
+`REPORT_BASE` (default `HEAD`). It prints the totals per status and every row that changed,
+appeared or disappeared, and fails when a row that passed there no longer passes or is gone.
 
 `make check` doesn't regenerate the report, because that needs Docker. It is regenerated and
 committed by `/close-phase` (§6) and by a deliberate `make conformance` run. It is not rewritten
@@ -2331,8 +2348,7 @@ database versions it ran against.
 
 ## 8. Follow-ons (not part of this design)
 
-- **Variant suites:** tenancy (§29) and cache (§27) suites on the §4 plumbing, each with its own
-  schema and harness, registered in `client.md`.
+- **Variant suite:** Features (tenancy, cache, events), `docs/design/CONFORMANCE_VARIANTS.md`.
 - **The schema fuzzer** (`SCHEMAFUZZ.md`, design-frozen 2026-05-15, never scheduled). Its
   metamorphic invariants (`Count == len(GetMany)`, `Insert → Get` round-trip) run over random
   schemas. The matrices test specific behaviors on known inputs, and the fuzzer tests general

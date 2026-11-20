@@ -423,6 +423,7 @@ func get(t *testing.T, h *Harness) {
 	})
 
 	getCompositeKey(t, h)
+	getView(t, h)
 }
 
 // getMany: GetMany returns the rows a filter matches, sorted and paged.
@@ -1127,6 +1128,9 @@ func getMany(t *testing.T, h *Harness) {
 	})
 
 	getManyCompositeKey(t, h)
+	getManyView(t, h)
+	getManyRelationshipFilters(t, h)
+	getManyComparators(t, h)
 }
 
 // exists: Exists reports whether a live row has the given key.

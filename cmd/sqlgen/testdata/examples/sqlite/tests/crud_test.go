@@ -88,27 +88,6 @@ func TestUserCRUD(t *testing.T) {
 
 // --- CRUD: Categories ---
 
-func TestCategoryCRUD(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{
-		Name: "Electronics",
-	})
-	if err != nil {
-		t.Fatalf("Create category: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
-
-	got, err := client.Categories().Get(ctx, cat.ID)
-	if err != nil {
-		t.Fatalf("Get category: %v", err)
-	}
-	if got.Name != "Electronics" {
-		t.Errorf("Get category name = %q, want %q", got.Name, "Electronics")
-	}
-}
-
 // --- CRUD: Profiles ---
 
 func TestProfileCRUD(t *testing.T) {
