@@ -1,6 +1,6 @@
 # Phase 34: GraphQL Server Scaffold Opt-Out
 
-Status: In Progress
+Status: Complete (closure pending)
 PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 > **Design.** `docs/design/SERVER_SCAFFOLD.md`, approved 2026-11-20, is the source for every
@@ -155,14 +155,14 @@ PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 **PRD Reference:** Sections 23 (`diff`), 26.5.6, 26.6
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Pass the resolved `server_scaffold` into `generateAPIServerFiles` / `generateAPIServerFile` (`cmd/sqlgen/gen/orchestrate.go`, `cmd/sqlgen/gen/api_limits.go`). When it's `false`, return `"", nil` before the `os.Stat` check. Read a nil `ServerScaffold` as `true` (`g.ServerScaffold == nil || *g.ServerScaffold`): about 20 test fixtures build `GraphQLAPIConfig` by hand without `applyAPIDefaults`.
-- [ ] Leave `generateAPILimitsFile` unchanged.
-- [ ] `docs/configuration.md` § `api.graphql`: add the `server_scaffold` row, and change the "deleting it doesn't stick" sentence to name the key. Say that a hand-written server calls `ApplyQueryLimits` and wraps its handler in `WithCallOptionsMiddleware`.
-- [ ] Move each design §6.1 registry row from planned to its test.
+- [x] Skip the scaffold when `server_scaffold` is `false`: `generateAPIServerFiles` (`cmd/sqlgen/gen/orchestrate.go`) returns after writing `limits_gen.go`. A nil `ServerScaffold` reads as `true`, because about 20 test fixtures build `GraphQLAPIConfig` by hand without `applyAPIDefaults`. (Done in the caller rather than in `generateAPIServerFile`; see the Completion Record.)
+- [x] Leave `generateAPILimitsFile` unchanged.
+- [x] `docs/configuration.md` § `api.graphql`: add the `server_scaffold` row, and change the "deleting it doesn't stick" sentence to name the key. Say that a hand-written server calls `ApplyQueryLimits` and wraps its handler in `WithCallOptionsMiddleware`.
+- [x] Move each design §6.1 registry row from planned to its test.
 
 ### Acceptance Criteria
 
@@ -172,18 +172,40 @@ PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false writes no server.go`: fails before the change, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false still writes the limits file`: fails before 34.2 (the strict loader rejects the unknown key), passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false leaves an existing server.go untouched`: fails before 34.2 (the unknown key), passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/cli: TestDiff_ServerScaffoldOffProposesNoServer`: fails before the change, passes after. All dialects.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server.go is written when absent` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/an existing server.go is left untouched` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/the limits file is regenerated with new values on a second run` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLServerCarriesQueryLimits` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` still passes.
-- [ ] Guard: `example: graphql: TestQueryLimits`, `golden: graphql` and `golden: graphql_top_level` are unchanged.
-- [ ] Sweep: `make check` and `make check-examples` are green.
+- [x] `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false writes no server.go`: fails before the change, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false still writes the limits file`: fails before 34.2 (the strict loader rejects the unknown key), passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false leaves an existing server.go untouched`: fails before 34.2 (the unknown key), passes after. All dialects.
+- [x] `unit: cmd/sqlgen/cli: TestDiff_ServerScaffoldOffProposesNoServer`: fails before the change, passes after. All dialects.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server.go is written when absent` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/an existing server.go is left untouched` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/the limits file is regenerated with new values on a second run` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLServerCarriesQueryLimits` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` still passes.
+- [x] Guard: `example: graphql: TestQueryLimits`, `golden: graphql` and `golden: graphql_top_level` are unchanged.
+- [x] Sweep: `make check` and `make check-examples` are green.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.**
+
+- **Gen:** `generateAPIServerFiles` (`cmd/sqlgen/gen/orchestrate.go`) returns after writing `limits_gen.go` when `ServerScaffold` is explicitly false, and a nil value reads as on. `generateAPIServerFile` and `generateAPILimitsFile` are unchanged.
+  - The skip sits in the caller rather than inside `generateAPIServerFile`, as the task first said. The effect is the same, and `generateAPIServerFile` keeps taking no config.
+- **Tests:**
+  - Three subtests on `TestGenerate_GraphQLQueryLimits` (`gen/api_query_limits_test.go`).
+  - `TestDiff_ServerScaffoldOffProposesNoServer` (`cli/diff_promises_test.go`). It generates with the key off, removes any `server.go` (as an app that never wanted it would), and runs `diff`.
+  - `diffProjectOptions` gains `graphqlExtra` for keys under `api.graphql`.
+- **Fail first:**
+  - `server_scaffold false writes no server.go` failed: generate wrote `server.go`.
+  - `TestDiff_ServerScaffoldOffProposesNoServer` failed: diff exited 1 and named `server.go`.
+  - `server_scaffold false still writes the limits file` and `server_scaffold false leaves an existing server.go untouched` already passed. Once 34.2 made the key loadable, they characterize behavior the change must keep (the limits file and the existence check were already unconditional). The plan's "fails before 34.2" wording held only before 34.2 landed.
+  - All pass after the change, and so do the five existing `TestGenerate_GraphQLQueryLimits` guards, `TestGenerate_GraphQLServerCarriesQueryLimits` and every `TestDiff_*`.
+- **Review (sqlgen-reviewer):** PRD 5/5, fail-first confirmed independently, no defects. Applied:
+  - design §5 "Gen" reworded to the caller-side skip;
+  - this sub-item's first task reworded to match;
+  - the `TestDiff_ServerScaffoldOffProposesNoServer` comment shortened;
+  - the `STATUS.md` entry.
+  
+  Design §1.2's `orchestrate.go:1197-1213` is left as is: it describes the code before the change.
+- **Docs:** `docs/configuration.md` § `api.graphql` gains the `server_scaffold` row. The closing paragraph names the key and both helpers a hand-written server needs: `ApplyQueryLimits` and `WithCallOptionsMiddleware`.
+- **Registry:** filled the Tests cells of `api.artifacts.server-go-scaffold-off`, `…-scaffold-off-kept`, `…-scaffold-off-diff` and `api.complexity.scaffold-off-limits-written`.
+- **Checks:** `make check` and `make check-examples` pass (the examples run was triggered by `cmd/sqlgen/gen/**`). No goldens changed: every example leaves the key unset.

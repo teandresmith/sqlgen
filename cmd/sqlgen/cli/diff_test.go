@@ -76,7 +76,7 @@ output:
     schema_dir: ./internal/graph
     resolver_dir: ./internal/graph
     package: graph
-`
+` + opts.graphqlExtra
 	}
 
 	cfgPath := filepath.Join(dir, "sqlgen.yml")
@@ -89,6 +89,8 @@ type diffProjectOptions struct {
 	layout    string
 	manifest  bool
 	noGraphQL bool
+	// graphqlExtra is appended under api.graphql (keys indented four spaces).
+	graphqlExtra string
 }
 
 func orDefault(v, fallback string) string {

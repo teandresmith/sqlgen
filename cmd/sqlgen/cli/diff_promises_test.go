@@ -224,3 +224,27 @@ func TestDiff_KeepsExistingServerGo(t *testing.T) {
 		t.Errorf("server.go = %q, want it left as %q", got, own)
 	}
 }
+
+// With server_scaffold false and no server.go on disk, diff reports the
+// project current.
+func TestDiff_ServerScaffoldOffProposesNoServer(t *testing.T) {
+	cfgPath := setupDiffProject(t, diffProjectOptions{graphqlExtra: "    server_scaffold: false\n"})
+	generateForDiff(t, cfgPath)
+
+	server := filepath.Join("internal", "graph", "server.go")
+	if err := os.Remove(server); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("removing %s: %v", server, err)
+	}
+
+	stdout, code := runDiff(t, cfgPath)
+
+	if code != ExitSuccess {
+		t.Errorf("diff exit code = %d, want 0; stdout:\n%s", code, stdout)
+	}
+	if strings.Contains(stdout, "server.go") {
+		t.Errorf("diff stdout names server.go:\n%s", stdout)
+	}
+	if _, err := os.Stat(server); !os.IsNotExist(err) {
+		t.Errorf("%s exists after diff (stat error = %v)", server, err)
+	}
+}

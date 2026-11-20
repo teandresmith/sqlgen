@@ -1195,13 +1195,17 @@ func generateAPI(tmpl *template.Template, plan *apiPlan, cfg *config.RootConfig,
 }
 
 // generateAPIServerFiles emits the regenerated query-limits file and the
-// one-shot server.go that applies it (written only when absent).
+// one-shot server.go that applies it, written only when absent and while
+// server_scaffold is on. A nil server_scaffold is on (PRD §26.3).
 func generateAPIServerFiles(tmpl *template.Template, plan *apiPlan, g *config.GraphQLAPIConfig, version string) ([]string, error) {
 	limitsFile, err := generateAPILimitsFile(tmpl, plan.ctx, g, plan.sqlgenResolverDir, version)
 	if err != nil {
 		return nil, err
 	}
 	files := []string{limitsFile}
+	if g.ServerScaffold != nil && !*g.ServerScaffold {
+		return files, nil
+	}
 	serverFile, err := generateAPIServerFile(tmpl, plan.ctx, g.Package, plan.resolverDir, plan.writeDirs[plan.resolverDir])
 	if err != nil {
 		return nil, err

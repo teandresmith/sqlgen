@@ -662,9 +662,9 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.artifacts.gqlgen-models-file | gqlgen (via the wrapper) writes `graph/model/models_gen.go` after each wrapper run | `golden: graphql` | all | |
 | api.artifacts.server-go | sqlgen writes `graph/server.go` when it is missing and `api.graphql.server_scaffold` is unset or `true` | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server.go is written when absent` | all | |
 | api.artifacts.server-go-kept | An existing `graph/server.go` is left untouched | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/an existing server.go is left untouched` | all | |
-| api.artifacts.server-go-scaffold-off | With `api.graphql.server_scaffold: false`, `generate` writes no `graph/server.go` and does not list it among the files it wrote |  | all | |
-| api.artifacts.server-go-scaffold-off-kept | With `api.graphql.server_scaffold: false`, an existing `graph/server.go` is left unchanged |  | all | |
-| api.artifacts.server-go-scaffold-off-diff | With `api.graphql.server_scaffold: false` and no `server.go` on disk, `sqlgen diff` reports no `server.go` change |  | all | |
+| api.artifacts.server-go-scaffold-off | With `api.graphql.server_scaffold: false`, `generate` writes no `graph/server.go` and does not list it among the files it wrote | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false writes no server.go` | all | |
+| api.artifacts.server-go-scaffold-off-kept | With `api.graphql.server_scaffold: false`, an existing `graph/server.go` is left unchanged | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false leaves an existing server.go untouched` | all | |
+| api.artifacts.server-go-scaffold-off-diff | With `api.graphql.server_scaffold: false` and no `server.go` on disk, `sqlgen diff` reports no `server.go` change | `unit: cmd/sqlgen/cli: TestDiff_ServerScaffoldOffProposesNoServer` | all | |
 | api.artifacts.limits-file | sqlgen regenerates `graph/sqlgenresolver/limits_gen.go` each run | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/the limits file is regenerated with new values on a second run`; `golden: graphql` | all | |
 
 
@@ -731,7 +731,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.complexity.server-config | The depth and complexity protections are generated as gqlgen server configuration (`ApplyQueryLimits` on the `*handler.Server`), not custom middleware | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLServerCarriesQueryLimits`; `golden: graphql` | all | |
 | api.complexity.limits-file-regenerated | `limits_gen.go` carries the configured values and is regenerated each run, so a later edit reaches an existing server | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/the limits file is regenerated with new values on a second run` | all | |
 | api.complexity.server-applies-limits | The one-shot `server.go` applies the limits | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLServerCarriesQueryLimits` | all | |
-| api.complexity.scaffold-off-limits-written | With `api.graphql.server_scaffold: false`, `limits_gen.go` is still written with the configured `max_depth` and `max_complexity` |  | all | |
+| api.complexity.scaffold-off-limits-written | With `api.graphql.server_scaffold: false`, `limits_gen.go` is still written with the configured `max_depth` and `max_complexity` | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false still writes the limits file` | all | |
 
 ## §26.7 GraphQL Authorization
 <!-- prd: 26.7 sha256: 2aea2747be9687dc -->

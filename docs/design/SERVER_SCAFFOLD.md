@@ -128,8 +128,9 @@ the cache and tenancy `enabled` fields already do. Add the key to `v1.json`'s `g
 properties as `boolean`. There's no validation rule: the key is a plain boolean with no
 interaction with other keys.
 
-**Gen.** `generateAPIServerFiles` passes the resolved boolean, and `generateAPIServerFile`
-returns `"", nil` before its `os.Stat` when it's `false`. `limits_gen.go` is unchanged.
+**Gen.** `generateAPIServerFiles` returns after writing `limits_gen.go` when `server_scaffold` is
+`false`, and a nil value reads as on. `generateAPIServerFile` and `generateAPILimitsFile` are
+unchanged.
 
 **CLI.** No change. `diff` reads the same files `generate` writes, so it stops proposing
 `server.go` too.

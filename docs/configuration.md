@@ -515,6 +515,7 @@ api:
 | `package` | from `resolver_dir` | Go package name for the resolver code. |
 | `max_depth` | `5` | Maximum relationship nesting depth. Only relationship fields count toward it. |
 | `max_complexity` | `1000` | gqlgen complexity limit. Queries over it are rejected before execution. |
+| `server_scaffold` | `true` | Write the one-time `server.go` into `resolver_dir` when it's missing. Set `false` if your application builds its own `handler.Server`. |
 | `field_casing` | `camel_case` | `camel_case` or `snake_case` for emitted field names. |
 | `gqlgen_config` | `./gqlgen.yml` | Your `gqlgen.yml`. sqlgen merges its entries into a temporary copy and never edits this file. |
 | `gqlgen_bin` | `go run github.com/99designs/gqlgen` | How to invoke gqlgen. The default uses your `go.mod` pin. |
@@ -525,10 +526,15 @@ Per table, `tables.<t>.api` sets `enabled` and `operations`.
 **The query limits and `server.go`.** `max_depth` and `max_complexity` are written to the regenerated
 `<resolver_dir>/sqlgenresolver/limits_gen.go`, whose `ApplyQueryLimits(*handler.Server)` installs
 them. sqlgen also writes `<resolver_dir>/server.go`, a starter `NewServer` that calls
-`ApplyQueryLimits`. It's yours to edit, and sqlgen never overwrites it. sqlgen does write it again
-whenever the file is missing, though, so deleting it doesn't stick. If you build your own
-`handler.Server`, call `sqlgenresolver.ApplyQueryLimits(srv)` on it so the limits in `sqlgen.yml` are
-the ones the server enforces.
+`ApplyQueryLimits`. It's yours to edit, and sqlgen never overwrites it. While `server_scaffold` is
+`true`, sqlgen writes it again whenever the file is missing. If your application builds its own
+`handler.Server`, set `server_scaffold: false`: sqlgen then never writes `server.go` and leaves any
+existing one alone. Your server should then do what the scaffold does:
+
+- Call `sqlgenresolver.ApplyQueryLimits(srv)`, so the limits in `sqlgen.yml` are the ones it
+  enforces.
+- Wrap the handler in `sqlgenresolver.WithCallOptionsMiddleware`, so the per-call headers
+  (`Cache-Control: no-cache`, `X-Skip-Events`, `X-Skip-Hooks`) keep working.
 
 ## Worked examples
 
