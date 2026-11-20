@@ -1,6 +1,6 @@
 # Belongs-To Detection
 
-> **Status:** draft (2026-11-20). Verified against source at `f5dac70c`. Detection gives a
+> **Status:** approved (2026-11-20). Verified against source at `f5dac70c`. Detection gives a
 > non-unique foreign key only its list edge, on the referenced table, so a row can't reach its
 > parent: `Project.tasks` is generated, `Task.project` isn't. This note proposes detecting the
 > to-one (belongs-to) edge of every foreign key on a table that isn't a junction, with
