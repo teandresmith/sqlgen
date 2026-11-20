@@ -422,7 +422,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | rename.constraint.o2m | A manual `o2m` edge whose key equals a FOREIGN KEY's column pairs names that constraint in its manifest `fk.constraint` | | all | relationships: o2m × struct-field |
 | rename.constraint.belongs-to | A manual belongs-to `o2o` edge names the FOREIGN KEY on this table that its key is | | all | relationships: belongs-to × struct-field |
 | rename.constraint.has-one | A manual has-one `o2o` edge names the FOREIGN KEY on the related table that its key is | | all | relationships: has-one × struct-field |
-| rename.constraint.m2m | A manual `m2m` edge names each junction key's FOREIGN KEY in `local_fk.constraint` and `target_fk.constraint` | | all | relationships: composite-m2m × struct-field |
+| rename.constraint.m2m | A manual `m2m` edge names each junction key's FOREIGN KEY in `local_fk.constraint` and `target_fk.constraint` | | all | relationships: m2m × struct-field |
 | rename.constraint.composite | A manual composite key matches its FOREIGN KEY by column pairs, in any listed order | | all | relationships: composite-o2m × struct-field |
 | rename.constraint.pairs-not-set | A manual key with the same columns as a FOREIGN KEY but different pairs names no constraint | | all | relationships: composite-belongs-to × struct-field |
 | rename.constraint.filtered | A manual `filter:` or `discriminator:` edge over a FOREIGN KEY names that constraint, and the detected edge over the same key is still emitted | | all | relationships: polymorphic × struct-field |
@@ -430,7 +430,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | rename.takeover.belongs-to | A manual belongs-to `o2o` edge over exactly a detected edge's key into the same target takes its place | | all | relationships: belongs-to × struct-field |
 | rename.takeover.m2m | A manual `m2m` edge over the same junction and both junction keys as a detected edge takes its place | | all | relationships: m2m × struct-field |
 | rename.takeover.composite | A manual composite key takes a detected edge's place when its column pairs equal the detected key's, in any listed order | | all | relationships: composite-o2m × struct-field |
-| rename.takeover.self-m2m | A manual self-referential `m2m` edge takes over only the direction whose junction keys it matches | | all | relationships: circular × struct-field |
+| rename.takeover.self-m2m | A manual self-referential `m2m` edge takes over only the direction whose junction keys it matches | | all | relationships: self × struct-field |
 | rename.takeover.no-warning | A takeover reports no warning | | all | relationships: o2m × struct-field |
 | rename.takeover.distinct-name | A manual edge under another name over a detected edge's key takes its place rather than adding a second field | | all | relationships: o2m × struct-field |
 | rename.takeover.only-same-key | When several detected edges join the same two tables, a manual edge takes the place of the one over its key only, and the others keep their disambiguated names | | all | relationships: o2m × struct-field |

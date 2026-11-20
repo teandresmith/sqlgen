@@ -381,7 +381,7 @@ later can still rename it. Option C (§4.3) is the guard for that, and it stays 
 | rename.takeover.belongs-to | The same holds for a declared belongs-to O2O edge | §13.4 (proposed) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/belongs-to` | relationships: belongs-to × struct-field | planned |
 | rename.takeover.m2m | The same holds for a declared M2M edge over the same junction and both junction keys | §13.4 (proposed) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/m2m` | relationships: m2m × struct-field | planned |
 | rename.takeover.composite | The same holds for a composite key, with the pairs listed in any order | §13.4 (proposed) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/composite o2m` | relationships: composite-o2m × struct-field | planned |
-| rename.takeover.self-m2m | A declared self-referential M2M edge takes over only the direction whose junction keys it matches | §13.4 (proposed) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/self-referential m2m direction` | relationships: circular × struct-field | planned |
+| rename.takeover.self-m2m | A declared self-referential M2M edge takes over only the direction whose junction keys it matches | §13.4 (proposed) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/self-referential m2m direction` | relationships: self × struct-field | planned |
 | rename.takeover.no-warning | A takeover reports no warning | §13.4 (proposed; §11 Q2) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared name collides with inferred edge` (expectation changes) | relationships: o2m × struct-field | planned |
 | rename.takeover.distinct-name | A declared edge under another name over the detected key no longer adds a second field | §13.4 (proposed; §11 Q1) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared name distinct from inferred edge` (expectation changes); `golden: sqlite` | relationships: o2m × struct-field | planned |
 | rename.takeover.clears-collision | When two detected edges keep one name after rule 6, declaring one of them over its key clears the collision error without `exclude_relationships` | §5.3 rule 6, §4.13 (proposed) | all | `unit: cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionClearedByDeclaringOneEdge` | config-validation: relationship-name-duplicate × fires | planned |
@@ -421,12 +421,13 @@ behavior it guards doesn't change.
 | `o2m` | rename.takeover.o2m | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
 | `belongs-to` | rename.takeover.belongs-to | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
 | `has-one` | rename.constraint.has-one (takeover n/a: detection gives no has-one edge, §5.3 rule 5) | n/a: no detected has-one edge to take over | n/a: same | n/a: same |
-| `m2m` | rename.takeover.m2m | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
+| `m2m` | rename.takeover.m2m, rename.constraint.m2m | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
 | `composite-o2m` | rename.takeover.composite | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
 | `composite-belongs-to` | rename.constraint.pairs-not-set | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
 | `composite-has-one` | n/a: no detected has-one edge (§5.3 rule 5) | n/a: same | n/a: same | n/a: same |
-| `composite-m2m` | rename.constraint.m2m | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
-| `circular` | rename.takeover.self-m2m | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
+| `composite-m2m` | n/a: each junction key matches as a pair set (rename.constraint.m2m, rename.takeover.m2m), so a composite key adds no case | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
+| `self` | rename.takeover.self-m2m | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
+| `circular` | n/a: a cycle A→B→A is two edges, each covered by its own kind's row | guard.exclude-plus-declare | guard.exclude-plus-declare | guard.exclude-plus-declare |
 | `polymorphic` | rename.constraint.filtered (takeover n/a: a `filter:` / `discriminator:` edge never takes over, §13.7.3) | n/a: never takes over | n/a: same | n/a: same |
 
 A takeover keeps the declared context exactly as exclude-and-declare builds it today, so the
