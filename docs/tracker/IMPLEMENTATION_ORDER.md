@@ -3744,7 +3744,7 @@ Closure is `/close-phase 32`, with no sub-item of its own. It flips the design d
 
 ## Phase 33: Conformance Variant Suite and Core-Suite Ports
 
-> **Status: Not started (design approved 2026-11-18).** Design doc `docs/design/CONFORMANCE_VARIANTS.md` (rulings Q1–Q4 settled 2026-11-18, §11). Task file `docs/tracker/phase-33.md`.
+> **Status: Complete (closed 2026-11-19).** Design doc `docs/design/CONFORMANCE_VARIANTS.md` (Implemented 2026-11-19; rulings Q1–Q4 settled 2026-11-18, §11). Task file `docs/tracker/phase-33.md`.
 
 **Why.**
 - **About 120 tenancy, cache and events requirements are proven on one dialect.** Their tests live only in the `tenancy`, `cache` and `events` examples (all SQLite) or in `tenancy_postgres` / `tenancy_mysql`, and the report counts one passing target as `pass` (design §1.1).

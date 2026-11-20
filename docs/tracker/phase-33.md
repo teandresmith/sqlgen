@@ -1,6 +1,6 @@
 # Phase 33: Conformance Variant Suite and Core-Suite Ports
 
-Status: In Progress
+Status: Complete (closed 2026-11-19)
 PRD Sections: 9.9, 11.1, 11.2, 13.7, 16.4, 20.2, 22.3, 27.5, 27.7, 27.9, 28.4, 28.6, 28.11, 29.6, 29.7, 29.9
 
 > **Design.** `docs/design/CONFORMANCE_VARIANTS.md`, approved 2026-11-18, is the source for every

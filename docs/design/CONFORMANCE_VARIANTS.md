@@ -1,6 +1,6 @@
 # Conformance Variant Suite and Core-Suite Ports
 
-> **Status:** draft (2026-11-18), rulings Q1–Q4 settled 2026-11-18 (§11). Verified against source at `5b24d6ba`. About 120 requirement
+> **Status:** Implemented — closed 2026-11-19 (Phase 33); no PRD change, normative for the conformance tooling. Rulings Q1–Q4 settled 2026-11-18 (§11). Verified against source at `5b24d6ba`. About 120 requirement
 > rows for tenancy (§29), cache (§27) and events (§28) are tested only in example modules, each on
 > one dialect, mostly SQLite. The report shows them as `pass`, and ten of them are narrowed to
 > `sqlite` with no PRD basis. This note adds one variant suite (tenancy, cache and events
@@ -321,11 +321,11 @@ PRD, since the PRD does not specify repository tooling.
 | cache.receive | Each §28.11 receive row holds on every target, PostgreSQL's `public` key segment included | §28.11 | all | `conformance: Features/Cache/event-driven invalidation/<case>` | — (see §6.3) | passing |
 | tenancy.pk-carriers | `tenancy-pk.match-proceeds`, `tenancy-pk.skip-tenancy` and `tenancy-hooks.affected-pks-tenant` hold on every target | §29.7, §29.9 | all | `conformance: Features/Tenancy/<Method>/a matching PK tenant proceeds` and siblings | — (the core `composite-pk` rows claim those cells) | passing |
 | tenancy.nested | `nested.unlink-tenant-mismatch` and `nested.m2m-create-shared-column-mismatch` hold on every target | §9.9 | all | `conformance: Features/Tenancy/UpdateWithRelated/<case>` | — | passing |
-| relabel.neutral | The seven §3.3 `sqlite` rows apply to `all`, and every §3.3 row carries a note naming its dialect-free code | CONFORMANCE.md §5.1 (proposed in §8) | all | `make req-check` over the widened rows and the notes under each table (ruled 2026-11-18: the note is prose, so no `reqcheck` test) | — | planned |
+| relabel.neutral | The seven §3.3 `sqlite` rows apply to `all`, and every §3.3 row carries a note naming its dialect-free code | CONFORMANCE.md §5.1 (proposed in §8) | all | `make req-check` over the widened rows and the notes under each table (ruled 2026-11-18: the note is prose, so no `reqcheck` test) | — | passing |
 | views.reads | A view's `Get` (with a declared key), `GetMany`, `Count`, `Paginate` and `Connection` return the rows its query selects, on every target | §16.4 | all | `conformance: GetMany/a view returns the rows its query selects` and siblings | `client-methods: GetMany × view` | passing |
 | relfilter.exact | O2M and M2M relationship filters return exactly the parents with a matching child, compose with a column filter, and honor a discriminator | §11.1, §13.7 | all | `conformance: GetMany/an O2M relationship filter returns exactly the parents with a matching child` and siblings | `relationships: o2m × filter`, `relationships: m2m × filter`, `relationships: polymorphic × filter` | passing |
 | comparators.db | Each `comparators` matrix operator whose generated API is the same on every target (`Number`, `String`, `Time`, `ID` × `In`, `Nin`; §6.3) returns the rows its PRD semantics select, on every target | §11.2 | all | `conformance: GetMany/<operator> selects the rows its semantics state` | `comparators: <operator> × <target>` | passing |
-| ports.deleted | Each example copy whose port passes on every target is deleted in the porting commit | CONFORMANCE.md §9 ruling 6 | all | `make req-check` (no citation points at a deleted test) | — | planned |
+| ports.deleted | Each example copy whose port passes on every target is deleted in the porting commit | CONFORMANCE.md §9 ruling 6 | all | `make req-check` (no citation points at a deleted test) | — | passing |
 
 ### 6.2 Regression guards
 
