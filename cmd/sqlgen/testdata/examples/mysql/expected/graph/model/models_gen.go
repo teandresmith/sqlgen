@@ -17,6 +17,7 @@ import (
 )
 
 type ArticleFilter struct {
+	ID        *NumericComparator        `json:"id,omitempty"`
 	Title     *StringComparator         `json:"title,omitempty"`
 	Body      *NullableStringComparator `json:"body,omitempty"`
 	Author    *StringComparator         `json:"author,omitempty"`
@@ -45,8 +46,10 @@ type AssetAttachmentsUpdateNested struct {
 }
 
 type AssetDocumentLinkFilter struct {
-	And []*AssetDocumentLinkFilter `json:"and,omitempty"`
-	Or  []*AssetDocumentLinkFilter `json:"or,omitempty"`
+	AssetID    *NumericComparator         `json:"assetID,omitempty"`
+	DocumentID *NumericComparator         `json:"documentID,omitempty"`
+	And        []*AssetDocumentLinkFilter `json:"and,omitempty"`
+	Or         []*AssetDocumentLinkFilter `json:"or,omitempty"`
 }
 
 type AssetDocumentLinkSort struct {
@@ -67,15 +70,16 @@ type AssetDocumentsUpdateNested struct {
 }
 
 type AssetFilter struct {
-	Name              *StringComparator `json:"name,omitempty"`
-	CreatedAt         *TimeComparator   `json:"createdAt,omitempty"`
-	Attachments       *DocumentFilter   `json:"attachments,omitempty"`
-	Documents         *DocumentFilter   `json:"documents,omitempty"`
-	Invoices          *DocumentFilter   `json:"invoices,omitempty"`
-	LinkedAttachments *DocumentFilter   `json:"linkedAttachments,omitempty"`
-	PhotoAttachments  *DocumentFilter   `json:"photoAttachments,omitempty"`
-	And               []*AssetFilter    `json:"and,omitempty"`
-	Or                []*AssetFilter    `json:"or,omitempty"`
+	ID                *NumericComparator `json:"id,omitempty"`
+	Name              *StringComparator  `json:"name,omitempty"`
+	CreatedAt         *TimeComparator    `json:"createdAt,omitempty"`
+	Attachments       *DocumentFilter    `json:"attachments,omitempty"`
+	Documents         *DocumentFilter    `json:"documents,omitempty"`
+	Invoices          *DocumentFilter    `json:"invoices,omitempty"`
+	LinkedAttachments *DocumentFilter    `json:"linkedAttachments,omitempty"`
+	PhotoAttachments  *DocumentFilter    `json:"photoAttachments,omitempty"`
+	And               []*AssetFilter     `json:"and,omitempty"`
+	Or                []*AssetFilter     `json:"or,omitempty"`
 }
 
 type AssetInvoicesCreateInput struct {
@@ -110,13 +114,16 @@ type AssetSort struct {
 }
 
 type BinFilter struct {
-	Label    *StringComparator `json:"label,omitempty"`
-	BinItems *BinItemFilter    `json:"binItems,omitempty"`
-	And      []*BinFilter      `json:"and,omitempty"`
-	Or       []*BinFilter      `json:"or,omitempty"`
+	Aisle    *IDComparator      `json:"aisle,omitempty"`
+	Slot     *NumericComparator `json:"slot,omitempty"`
+	Label    *StringComparator  `json:"label,omitempty"`
+	BinItems *BinItemFilter     `json:"binItems,omitempty"`
+	And      []*BinFilter       `json:"and,omitempty"`
+	Or       []*BinFilter       `json:"or,omitempty"`
 }
 
 type BinItemFilter struct {
+	ID    *NumericComparator         `json:"id,omitempty"`
 	Aisle *NullableStringComparator  `json:"aisle,omitempty"`
 	Slot  *NullableNumericComparator `json:"slot,omitempty"`
 	Name  *StringComparator          `json:"name,omitempty"`
@@ -151,6 +158,7 @@ type BoolKeyedBoolKeyedNotesUpdateNested struct {
 }
 
 type BoolKeyedFilter struct {
+	K              *BooleanComparator   `json:"k,omitempty"`
 	Label          *StringComparator    `json:"label,omitempty"`
 	BoolKeyedNotes *BoolKeyedNoteFilter `json:"boolKeyedNotes,omitempty"`
 	And            []*BoolKeyedFilter   `json:"and,omitempty"`
@@ -158,6 +166,7 @@ type BoolKeyedFilter struct {
 }
 
 type BoolKeyedNoteFilter struct {
+	ID     *NumericComparator         `json:"id,omitempty"`
 	KeyedK *NullableBooleanComparator `json:"keyedK,omitempty"`
 	Note   *StringComparator          `json:"note,omitempty"`
 	And    []*BoolKeyedNoteFilter     `json:"and,omitempty"`
@@ -181,6 +190,7 @@ type BooleanComparator struct {
 }
 
 type CategoryFilter struct {
+	ID          *NumericComparator        `json:"id,omitempty"`
 	Name        *StringComparator         `json:"name,omitempty"`
 	Description *NullableStringComparator `json:"description,omitempty"`
 	Products    *ProductFilter            `json:"products,omitempty"`
@@ -448,6 +458,7 @@ type DecimalComparator struct {
 }
 
 type DefaultOnlyRowFilter struct {
+	ID     *NumericComparator      `json:"id,omitempty"`
 	Label  *StringComparator       `json:"label,omitempty"`
 	Hits   *NumericComparator      `json:"hits,omitempty"`
 	Active *BooleanComparator      `json:"active,omitempty"`
@@ -473,6 +484,7 @@ type DocumentAssetsUpdateNested struct {
 }
 
 type DocumentFilter struct {
+	ID         *NumericComparator                 `json:"id,omitempty"`
 	EntityID   *NumericComparator                 `json:"entityID,omitempty"`
 	EntityType *DocumentsEntityTypeEnumComparator `json:"entityType,omitempty"`
 	Name       *StringComparator                  `json:"name,omitempty"`
@@ -494,12 +506,24 @@ type DocumentsEntityTypeEnumComparator struct {
 	Nin []models.DocumentsEntityTypeEnum `json:"nin,omitempty"`
 }
 
+type IDComparator struct {
+	Eq  *string  `json:"eq,omitempty"`
+	Neq *string  `json:"neq,omitempty"`
+	Gt  *string  `json:"gt,omitempty"`
+	Gte *string  `json:"gte,omitempty"`
+	Lt  *string  `json:"lt,omitempty"`
+	Lte *string  `json:"lte,omitempty"`
+	In  []string `json:"in,omitempty"`
+	Nin []string `json:"nin,omitempty"`
+}
+
 type JSONComparator struct {
 	Contains types.JSON `json:"contains,omitempty"`
 	HasKey   *string    `json:"hasKey,omitempty"`
 }
 
 type KeyOnlyRowFilter struct {
+	ID  *NumericComparator  `json:"id,omitempty"`
 	And []*KeyOnlyRowFilter `json:"and,omitempty"`
 	Or  []*KeyOnlyRowFilter `json:"or,omitempty"`
 }
@@ -613,6 +637,7 @@ type NumericRange struct {
 }
 
 type OrderFilter struct {
+	ID         *NumericComparator          `json:"id,omitempty"`
 	UserID     *NumericComparator          `json:"userID,omitempty"`
 	Status     *OrdersStatusEnumComparator `json:"status,omitempty"`
 	Total      *NumericComparator          `json:"total,omitempty"`
@@ -624,6 +649,7 @@ type OrderFilter struct {
 }
 
 type OrderItemFilter struct {
+	ID        *NumericComparator `json:"id,omitempty"`
 	OrderID   *NumericComparator `json:"orderID,omitempty"`
 	ProductID *NumericComparator `json:"productID,omitempty"`
 	Quantity  *NumericComparator `json:"quantity,omitempty"`
@@ -664,6 +690,7 @@ type OrdersStatusEnumComparator struct {
 }
 
 type ProductFilter struct {
+	ID               *NumericComparator         `json:"id,omitempty"`
 	CategoryID       *NumericComparator         `json:"categoryID,omitempty"`
 	Title            *StringComparator          `json:"title,omitempty"`
 	Price            *NumericComparator         `json:"price,omitempty"`
@@ -698,6 +725,7 @@ type ProductSort struct {
 }
 
 type ProductSummaryFilter struct {
+	ID           *NumericComparator        `json:"id,omitempty"`
 	Title        *NullableStringComparator `json:"title,omitempty"`
 	Price        *NumericComparator        `json:"price,omitempty"`
 	CategoryName *StringComparator         `json:"categoryName,omitempty"`
@@ -712,6 +740,9 @@ type ProductSummarySort struct {
 }
 
 type ProductTagLabelFilter struct {
+	ProductID   *NumericComparator        `json:"productID,omitempty"`
+	TagName     *IDComparator             `json:"tagName,omitempty"`
+	Label       *IDComparator             `json:"label,omitempty"`
 	Description *NullableStringComparator `json:"description,omitempty"`
 	And         []*ProductTagLabelFilter  `json:"and,omitempty"`
 	Or          []*ProductTagLabelFilter  `json:"or,omitempty"`
@@ -723,6 +754,7 @@ type ProductTagLabelSort struct {
 }
 
 type ProfileFilter struct {
+	ID           *NumericComparator        `json:"id,omitempty"`
 	UserID       *NumericComparator        `json:"userID,omitempty"`
 	Website      *NullableStringComparator `json:"website,omitempty"`
 	GithubHandle *NullableStringComparator `json:"githubHandle,omitempty"`
@@ -741,6 +773,7 @@ type Query struct {
 }
 
 type SluggedRowFilter struct {
+	ID   *NumericComparator  `json:"id,omitempty"`
 	Name *StringComparator   `json:"name,omitempty"`
 	Slug *StringComparator   `json:"slug,omitempty"`
 	And  []*SluggedRowFilter `json:"and,omitempty"`
@@ -769,6 +802,7 @@ type StringComparator struct {
 }
 
 type TagFilter struct {
+	ID        *NumericComparator `json:"id,omitempty"`
 	Name      *StringComparator  `json:"name,omitempty"`
 	IsDeleted *BooleanComparator `json:"isDeleted,omitempty"`
 	And       []*TagFilter       `json:"and,omitempty"`
@@ -794,6 +828,7 @@ type TimeComparator struct {
 }
 
 type TimeKeyedFilter struct {
+	At             *TimeComparator      `json:"at,omitempty"`
 	Label          *StringComparator    `json:"label,omitempty"`
 	TimeKeyedNotes *TimeKeyedNoteFilter `json:"timeKeyedNotes,omitempty"`
 	And            []*TimeKeyedFilter   `json:"and,omitempty"`
@@ -801,6 +836,7 @@ type TimeKeyedFilter struct {
 }
 
 type TimeKeyedNoteFilter struct {
+	ID      *NumericComparator      `json:"id,omitempty"`
 	KeyedAt *NullableTimeComparator `json:"keyedAt,omitempty"`
 	Note    *StringComparator       `json:"note,omitempty"`
 	And     []*TimeKeyedNoteFilter  `json:"and,omitempty"`
@@ -1110,9 +1146,11 @@ type UpsertUserWithRelatedInput struct {
 }
 
 type UserCategoryFilter struct {
-	Slot *NullableNumericComparator `json:"slot,omitempty"`
-	And  []*UserCategoryFilter      `json:"and,omitempty"`
-	Or   []*UserCategoryFilter      `json:"or,omitempty"`
+	UserID     *NumericComparator         `json:"userID,omitempty"`
+	CategoryID *NumericComparator         `json:"categoryID,omitempty"`
+	Slot       *NullableNumericComparator `json:"slot,omitempty"`
+	And        []*UserCategoryFilter      `json:"and,omitempty"`
+	Or         []*UserCategoryFilter      `json:"or,omitempty"`
 }
 
 type UserCategorySort struct {
@@ -1121,6 +1159,7 @@ type UserCategorySort struct {
 }
 
 type UserEventFilter struct {
+	ID     *NumericComparator         `json:"id,omitempty"`
 	UserID *NullableNumericComparator `json:"userID,omitempty"`
 	Action *StringComparator          `json:"action,omitempty"`
 	And    []*UserEventFilter         `json:"and,omitempty"`
@@ -1133,6 +1172,7 @@ type UserEventSort struct {
 }
 
 type UserFilter struct {
+	ID          *NumericComparator         `json:"id,omitempty"`
 	Name        *StringComparator          `json:"name,omitempty"`
 	Email       *StringComparator          `json:"email,omitempty"`
 	Role        *UsersRoleEnumComparator   `json:"role,omitempty"`
@@ -1219,6 +1259,7 @@ type UsersRoleEnumComparator struct {
 }
 
 type WarehouseFilter struct {
+	ID            *NumericComparator         `json:"id,omitempty"`
 	ExternalID    *StringComparator          `json:"externalID,omitempty"`
 	Name          *StringComparator          `json:"name,omitempty"`
 	Price         *DecimalComparator         `json:"price,omitempty"`

@@ -131,6 +131,17 @@ input NullableTimeComparator {
   isNull:   Boolean
 }
 
+input IDComparator {
+  eq:  ID
+  neq: ID
+  gt:  ID
+  gte: ID
+  lt:  ID
+  lte: ID
+  in:  [ID!]
+  nin: [ID!]
+}
+
 input NullableIDComparator {
   eq:     ID
   neq:    ID

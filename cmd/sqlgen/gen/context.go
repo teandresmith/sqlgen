@@ -306,10 +306,13 @@ type RelationshipContext struct {
 	TargetStructName string
 	// FKColumn is the foreign key column name (O2O/O2M).
 	FKColumn string
-	// Constraints names the FOREIGN KEY constraints a detected edge comes
-	// from: its own for O2O / O2M, the junction's two for M2M. Empty for a
-	// declared edge.
+	// Constraints names the FOREIGN KEY constraints an edge's keys are: its
+	// own for O2O / O2M, the junction's two for M2M. A declared edge names
+	// the constraint whose pairs equal its key, and "" where none does.
 	Constraints []string
+	// Declared reports an edge from `tables.<t>.relationships` rather than
+	// from detection.
+	Declared bool
 	// Key is an O2O / O2M edge's pairs in the FK's declared order, each an FK
 	// column and the column it references: the FK's referenced columns for a
 	// detected edge, the referenced table's primary key for a declared one

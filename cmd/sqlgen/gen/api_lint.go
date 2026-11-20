@@ -21,7 +21,7 @@ import (
 // It checks both halves of the input:
 //
 //   - Columns. Schema side is `Fields` under the template's own gate
-//     (`not $f.PrimaryKey` and `$f.Filterable`); translator side is
+//     (`$f.Filterable`); translator side is
 //     `FilterFields`.
 //   - Relationship members (§26.4, §11.1). Both emitters read one
 //     `FilterRelationships` slice, so the drift a column pair can suffer is
@@ -50,7 +50,7 @@ func ValidateAPIFilterCompleteness(src APIEntity, apiTable APITableContext) erro
 	// applies to the `input <T>Filter` block.
 	schemaCols := make(map[string]APIFieldContext, len(apiTable.Fields))
 	for _, f := range apiTable.Fields {
-		if f.PrimaryKey || !f.Filterable {
+		if !f.Filterable {
 			continue
 		}
 		schemaCols[f.GraphQLName] = f
@@ -65,7 +65,7 @@ func ValidateAPIFilterCompleteness(src APIEntity, apiTable APITableContext) erro
 	// case). Iterating Fields rather than the map keeps the report in column
 	// order.
 	for _, f := range apiTable.Fields {
-		if f.PrimaryKey || !f.Filterable {
+		if !f.Filterable {
 			continue
 		}
 		// Gated INTO the input block with no input type resolved renders

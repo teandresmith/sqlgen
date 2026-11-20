@@ -3777,6 +3777,52 @@ Closure is `/close-phase 33`, with no sub-item of its own. It flips the design d
 
 **Out of scope (design §2.2):** the GraphQL / REST / gRPC rows, dialect-specific example tests, golden and consumer-build coverage, event transports, and any PRD or generated-API change.
 
+## Phase 34: GraphQL Server Scaffold Opt-Out
+
+> **Status: Complete (closed 2026-11-20).** Design doc `docs/design/SERVER_SCAFFOLD.md` (SYNCED 2026-11-20; rulings Q1–Q2 settled 2026-11-20, §11). Task file `docs/tracker/phase-34.md`. All 4 sub-items (34.0–34.3) landed. Full sweep clean under `-race` (check 220s / static-examples 19s / conformance 779s, 6272 pass / 80 untested of 6352 rows), no flakes. No FIX originated in the phase. Source: `sqlgen-example` v0.1.2 findings, #4.
+
+**Why.**
+- **`server.go` can't be removed.** `generate` writes `<resolver_dir>/server.go` whenever it's missing (`cmd/sqlgen/gen/api_limits.go:79-113`), so an app that builds its own `handler.Server` keeps getting a file it never uses (design §1).
+
+**Normative spec:** design doc §5. 34.0 writes it into PRD §26.3 (API config table), §26.5.6 and §26.6, `docs/configuration.md` and `v1.json` (design §8).
+
+**Depends on:** nothing open. Independent of Phase 35.
+
+**Sub-items** (`docs/tracker/phase-34.md`), design §9:
+- **34.0** — **PRD sync.** No code. *Blocks every other sub-item.*
+- **34.1** — **Regression guard:** `sqlgen diff` does not propose a `server.go` the consumer already owns. Passes on today's code.
+- **34.2** — **Config key, default and JSON Schema.** `api.graphql.server_scaffold` (`*bool`, default `true`). *Depends on 34.0.*
+- **34.3** — **Gen skips the scaffold; docs.** `limits_gen.go` unchanged. *Depends on 34.2.*
+
+Closure is `/close-phase 34`, with no sub-item of its own. It flips the design doc to SYNCED.
+
+**Tests required:** the design §6.1 rows (fail first), the §6.2 guards, no golden churn, and `make check` / `make check-examples` green.
+
+**Out of scope (design §2.2):** changing `limits_gen.go`, deleting an existing `server.go`, depth-semantics reconciliation, and the `server.go` backlog lines.
+
+## Phase 35: Renaming a Detected Relationship
+
+> **Status: Complete (closed 2026-11-20).** Design doc `docs/design/DETECTED_EDGE_RENAME.md` (SYNCED 2026-11-20; rulings Q1–Q4 settled 2026-11-20, §11). Task file `docs/tracker/phase-35.md`. All 4 sub-items (35.0–35.3) landed. Full sweep clean under `-race` (check 223s / static-examples 20s / conformance 794s, 6292 pass / 80 untested of 6372 rows), no flakes. No FIX originated in the phase. Source: `sqlgen-example` v0.1.2 findings, #5.
+
+**Why.**
+- **Renaming a detected edge loses facts or duplicates fields.** Declaring the edge alone emits two fields over one foreign key. Excluding and declaring it drops the manifest `constraint` (design §1.1).
+
+**Normative spec:** design doc §5. 35.0 writes it into PRD §4.8, §4.13, §13.4 and §30.4.2, plus `docs/configuration.md` (design §8).
+
+**Depends on:** nothing open. Independent of Phase 34.
+
+**Sub-items** (`docs/tracker/phase-35.md`), design §9:
+- **35.0** — **PRD sync, `configuration.md`, registry rows.** No code. *Blocks every other sub-item.*
+- **35.1** — **Regression guards:** filtered-edge and other-kind coexistence; move the `ColumnComparatorKeepsItsFieldName` fixture to an undeclared key. Pass on today's code.
+- **35.2** — **Constraint naming.** Export `parser.ForeignKeyName`, add the `Declared` flag, switch the collision check to it, add `declaredKeyConstraints`. Manifest goldens gain `constraint` in `graphql`, `mysql` and `postgres`. *Depends on 35.1.*
+- **35.3** — **Takeover.** `sameKeyInferred` in `mergeDeclaredRelationships`. The `sqlite` golden loses `BinaryKeyEvents`. *Depends on 35.2.*
+
+Closure is `/close-phase 35`, with no sub-item of its own. It flips the design doc to SYNCED.
+
+**Tests required:** the design §6.1 rows (fail first), the §6.2 guards, a `sqlgen-example` probe (design §10 item 6), and `make check` / `make check-examples` green.
+
+**Out of scope (design §2.2):** a rename map, a rename-drift warning, changes to detection naming, and declared edges into non-PK UNIQUE keys.
+
 ## Deferred Features
 
 These remain deferred until consumer demand justifies the implementation cost. Phase 15 establishes the unified client surface as feature-complete for direct Go consumers; Phase 16 extends it to GraphQL consumers. The deferred items below extend further or address adjacent surfaces.

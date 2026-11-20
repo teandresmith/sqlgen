@@ -14,6 +14,7 @@ import (
 )
 
 type CategoryFilter struct {
+	ID          *NumericComparator        `json:"id,omitempty"`
 	Name        *StringComparator         `json:"name,omitempty"`
 	Description *NullableStringComparator `json:"description,omitempty"`
 	CreatedAt   *TimeComparator           `json:"createdAt,omitempty"`
@@ -49,6 +50,17 @@ type DecimalComparator struct {
 	Lte *decimal.Decimal   `json:"lte,omitempty"`
 	In  []*decimal.Decimal `json:"in,omitempty"`
 	Nin []*decimal.Decimal `json:"nin,omitempty"`
+}
+
+type IDComparator struct {
+	Eq  *string  `json:"eq,omitempty"`
+	Neq *string  `json:"neq,omitempty"`
+	Gt  *string  `json:"gt,omitempty"`
+	Gte *string  `json:"gte,omitempty"`
+	Lt  *string  `json:"lt,omitempty"`
+	Lte *string  `json:"lte,omitempty"`
+	In  []string `json:"in,omitempty"`
+	Nin []string `json:"nin,omitempty"`
 }
 
 type Mutation struct {
@@ -90,6 +102,7 @@ type NumericRange struct {
 }
 
 type ProductFilter struct {
+	ID         *IDComparator      `json:"id,omitempty"`
 	Name       *StringComparator  `json:"name,omitempty"`
 	Price      *DecimalComparator `json:"price,omitempty"`
 	CategoryID *NumericComparator `json:"categoryID,omitempty"`

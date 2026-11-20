@@ -46,6 +46,7 @@ type ReservedWordColumnListResult {
 }
 
 input ReservedWordColumnFilter {
+  id: NumericComparator
   type: StringComparator
   interface: StringComparator
   func: StringComparator

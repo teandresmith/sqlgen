@@ -32,6 +32,7 @@ type OwnerListResult {
 }
 
 input OwnerFilter {
+  ownerKey: NumericComparator
   name: StringComparator
   badges: BadgeFilter
   and: [OwnerFilter!]

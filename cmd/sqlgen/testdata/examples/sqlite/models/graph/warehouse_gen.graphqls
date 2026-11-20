@@ -36,6 +36,7 @@ type WarehouseListResult {
 }
 
 input WarehouseFilter {
+  id: NumericComparator
   externalID: StringComparator
   name: StringComparator
   price: DecimalComparator

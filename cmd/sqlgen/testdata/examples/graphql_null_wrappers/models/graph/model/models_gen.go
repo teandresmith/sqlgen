@@ -16,6 +16,7 @@ import (
 )
 
 type AccountFilter struct {
+	ID          *NumericComparator         `json:"id,omitempty"`
 	Name        *StringComparator          `json:"name,omitempty"`
 	ExternalRef *NumericComparator         `json:"externalRef,omitempty"`
 	Nickname    *NullableStringComparator  `json:"nickname,omitempty"`
@@ -78,6 +79,7 @@ type DecimalComparator struct {
 }
 
 type EntryFilter struct {
+	ID          *NumericComparator        `json:"id,omitempty"`
 	AccountID   *NumericComparator        `json:"accountID,omitempty"`
 	Memo        *NullableStringComparator `json:"memo,omitempty"`
 	Amount      *DecimalComparator        `json:"amount,omitempty"`

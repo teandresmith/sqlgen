@@ -32,6 +32,7 @@ type UserBadgeListResult {
 }
 
 input UserBadgeFilter {
+  id: NumericComparator
   userID: NullableIDComparator
   label: StringComparator
   and: [UserBadgeFilter!]

@@ -36,6 +36,7 @@ type DocumentListResult {
 }
 
 input DocumentFilter {
+  id: IDComparator
   entityID: IDComparator
   entityType: DocumentEntityTypeEnumComparator
   name: StringComparator

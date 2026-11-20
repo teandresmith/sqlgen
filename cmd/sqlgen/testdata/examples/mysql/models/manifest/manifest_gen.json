@@ -851,7 +851,8 @@
               ],
               "references": [
                 "id"
-              ]
+              ],
+              "constraint": "asset_document_links_ibfk_1"
             },
             "target_fk": {
               "columns": [
@@ -859,7 +860,8 @@
               ],
               "references": [
                 "id"
-              ]
+              ],
+              "constraint": "asset_document_links_ibfk_2"
             }
           },
           "filter": "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
@@ -10835,7 +10837,8 @@
             ],
             "references": [
               "id"
-            ]
+            ],
+            "constraint": "profiles_ibfk_1"
           }
         },
         {

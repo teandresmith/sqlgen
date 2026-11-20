@@ -46,6 +46,7 @@ type ProductListResult {
 }
 
 input ProductFilter {
+  id: NumericComparator
   categoryID: NumericComparator
   title: StringComparator
   price: NumericComparator

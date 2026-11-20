@@ -16,6 +16,7 @@ import (
 )
 
 type ArticleFilter struct {
+	ID        *NumericComparator        `json:"id,omitempty"`
 	Title     *StringComparator         `json:"title,omitempty"`
 	Body      *NullableStringComparator `json:"body,omitempty"`
 	Author    *StringComparator         `json:"author,omitempty"`
@@ -31,8 +32,10 @@ type ArticleSort struct {
 }
 
 type AssetDocumentLinkFilter struct {
-	And []*AssetDocumentLinkFilter `json:"and,omitempty"`
-	Or  []*AssetDocumentLinkFilter `json:"or,omitempty"`
+	AssetID    *NumericComparator         `json:"assetID,omitempty"`
+	DocumentID *NumericComparator         `json:"documentID,omitempty"`
+	And        []*AssetDocumentLinkFilter `json:"and,omitempty"`
+	Or         []*AssetDocumentLinkFilter `json:"or,omitempty"`
 }
 
 type AssetDocumentLinkSort struct {
@@ -41,16 +44,17 @@ type AssetDocumentLinkSort struct {
 }
 
 type AssetFilter struct {
-	Name                      *StringComparator `json:"name,omitempty"`
-	CreatedAt                 *TimeComparator   `json:"createdAt,omitempty"`
-	Attachments               *DocumentFilter   `json:"attachments,omitempty"`
-	Documents                 *DocumentFilter   `json:"documents,omitempty"`
-	Invoices                  *DocumentFilter   `json:"invoices,omitempty"`
-	LinkedAttachments         *DocumentFilter   `json:"linkedAttachments,omitempty"`
-	PhotoAttachments          *DocumentFilter   `json:"photoAttachments,omitempty"`
-	PrimaryOrInvoiceDocuments *DocumentFilter   `json:"primaryOrInvoiceDocuments,omitempty"`
-	And                       []*AssetFilter    `json:"and,omitempty"`
-	Or                        []*AssetFilter    `json:"or,omitempty"`
+	ID                        *NumericComparator `json:"id,omitempty"`
+	Name                      *StringComparator  `json:"name,omitempty"`
+	CreatedAt                 *TimeComparator    `json:"createdAt,omitempty"`
+	Attachments               *DocumentFilter    `json:"attachments,omitempty"`
+	Documents                 *DocumentFilter    `json:"documents,omitempty"`
+	Invoices                  *DocumentFilter    `json:"invoices,omitempty"`
+	LinkedAttachments         *DocumentFilter    `json:"linkedAttachments,omitempty"`
+	PhotoAttachments          *DocumentFilter    `json:"photoAttachments,omitempty"`
+	PrimaryOrInvoiceDocuments *DocumentFilter    `json:"primaryOrInvoiceDocuments,omitempty"`
+	And                       []*AssetFilter     `json:"and,omitempty"`
+	Or                        []*AssetFilter     `json:"or,omitempty"`
 }
 
 type AssetSort struct {
@@ -59,6 +63,7 @@ type AssetSort struct {
 }
 
 type BadgeFilter struct {
+	Code       *IDComparator     `json:"code,omitempty"`
 	Label      *StringComparator `json:"label,omitempty"`
 	BinaryKeys *BinaryKeyFilter  `json:"binaryKeys,omitempty"`
 	Owners     *OwnerFilter      `json:"owners,omitempty"`
@@ -72,13 +77,16 @@ type BadgeSort struct {
 }
 
 type BinFilter struct {
-	Label    *StringComparator `json:"label,omitempty"`
-	BinItems *BinItemFilter    `json:"binItems,omitempty"`
-	And      []*BinFilter      `json:"and,omitempty"`
-	Or       []*BinFilter      `json:"or,omitempty"`
+	Aisle    *IDComparator      `json:"aisle,omitempty"`
+	Slot     *NumericComparator `json:"slot,omitempty"`
+	Label    *StringComparator  `json:"label,omitempty"`
+	BinItems *BinItemFilter     `json:"binItems,omitempty"`
+	And      []*BinFilter       `json:"and,omitempty"`
+	Or       []*BinFilter       `json:"or,omitempty"`
 }
 
 type BinItemFilter struct {
+	ID    *NumericComparator         `json:"id,omitempty"`
 	Aisle *NullableStringComparator  `json:"aisle,omitempty"`
 	Slot  *NullableNumericComparator `json:"slot,omitempty"`
 	Name  *StringComparator          `json:"name,omitempty"`
@@ -97,8 +105,10 @@ type BinSort struct {
 }
 
 type BinaryKeyBadgeFilter struct {
-	And []*BinaryKeyBadgeFilter `json:"and,omitempty"`
-	Or  []*BinaryKeyBadgeFilter `json:"or,omitempty"`
+	BinaryKeyID *BytesComparator        `json:"binaryKeyID,omitempty"`
+	BadgeCode   *IDComparator           `json:"badgeCode,omitempty"`
+	And         []*BinaryKeyBadgeFilter `json:"and,omitempty"`
+	Or          []*BinaryKeyBadgeFilter `json:"or,omitempty"`
 }
 
 type BinaryKeyBadgeSort struct {
@@ -107,6 +117,7 @@ type BinaryKeyBadgeSort struct {
 }
 
 type BinaryKeyEventFilter struct {
+	ID          *NumericComparator      `json:"id,omitempty"`
 	BinaryKeyID *BytesComparator        `json:"binaryKeyID,omitempty"`
 	Label       *StringComparator       `json:"label,omitempty"`
 	And         []*BinaryKeyEventFilter `json:"and,omitempty"`
@@ -119,13 +130,13 @@ type BinaryKeyEventSort struct {
 }
 
 type BinaryKeyFilter struct {
-	Name            *StringComparator     `json:"name,omitempty"`
-	CreatedAt       *TimeComparator       `json:"createdAt,omitempty"`
-	Badges          *BadgeFilter          `json:"badges,omitempty"`
-	BinaryKeyEvents *BinaryKeyEventFilter `json:"binaryKeyEvents,omitempty"`
-	Events          *BinaryKeyEventFilter `json:"events,omitempty"`
-	And             []*BinaryKeyFilter    `json:"and,omitempty"`
-	Or              []*BinaryKeyFilter    `json:"or,omitempty"`
+	ID        *BytesComparator      `json:"id,omitempty"`
+	Name      *StringComparator     `json:"name,omitempty"`
+	CreatedAt *TimeComparator       `json:"createdAt,omitempty"`
+	Badges    *BadgeFilter          `json:"badges,omitempty"`
+	Events    *BinaryKeyEventFilter `json:"events,omitempty"`
+	And       []*BinaryKeyFilter    `json:"and,omitempty"`
+	Or        []*BinaryKeyFilter    `json:"or,omitempty"`
 }
 
 type BinaryKeySort struct {
@@ -134,6 +145,7 @@ type BinaryKeySort struct {
 }
 
 type BoolKeyedFilter struct {
+	K              *BooleanComparator   `json:"k,omitempty"`
 	Label          *StringComparator    `json:"label,omitempty"`
 	BoolKeyedNotes *BoolKeyedNoteFilter `json:"boolKeyedNotes,omitempty"`
 	And            []*BoolKeyedFilter   `json:"and,omitempty"`
@@ -141,6 +153,7 @@ type BoolKeyedFilter struct {
 }
 
 type BoolKeyedNoteFilter struct {
+	ID     *NumericComparator         `json:"id,omitempty"`
 	KeyedK *NullableBooleanComparator `json:"keyedK,omitempty"`
 	Note   *StringComparator          `json:"note,omitempty"`
 	And    []*BoolKeyedNoteFilter     `json:"and,omitempty"`
@@ -175,6 +188,7 @@ type BytesComparator struct {
 }
 
 type CategoryFilter struct {
+	ID          *NumericComparator        `json:"id,omitempty"`
 	Name        *StringComparator         `json:"name,omitempty"`
 	Description *NullableStringComparator `json:"description,omitempty"`
 	Products    *ProductFilter            `json:"products,omitempty"`
@@ -418,6 +432,7 @@ type DecimalComparator struct {
 }
 
 type DigitLeadingColumnFilter struct {
+	ID             *NumericComparator          `json:"id,omitempty"`
 	Col2010Revenue *NumericComparator          `json:"col2010Revenue,omitempty"`
 	Col2024Quota   *NumericComparator          `json:"col2024Quota,omitempty"`
 	Col1stPlace    *StringComparator           `json:"col1stPlace,omitempty"`
@@ -432,6 +447,7 @@ type DigitLeadingColumnSort struct {
 }
 
 type DocumentFilter struct {
+	ID         *NumericComparator `json:"id,omitempty"`
 	EntityID   *NumericComparator `json:"entityID,omitempty"`
 	EntityType *StringComparator  `json:"entityType,omitempty"`
 	Name       *StringComparator  `json:"name,omitempty"`
@@ -446,7 +462,19 @@ type DocumentSort struct {
 	Direction SortDirection     `json:"direction"`
 }
 
+type IDComparator struct {
+	Eq  *string  `json:"eq,omitempty"`
+	Neq *string  `json:"neq,omitempty"`
+	Gt  *string  `json:"gt,omitempty"`
+	Gte *string  `json:"gte,omitempty"`
+	Lt  *string  `json:"lt,omitempty"`
+	Lte *string  `json:"lte,omitempty"`
+	In  []string `json:"in,omitempty"`
+	Nin []string `json:"nin,omitempty"`
+}
+
 type KeyClassChildFilter struct {
+	ID       *NumericComparator     `json:"id,omitempty"`
 	ParentID *NullableIDComparator  `json:"parentID,omitempty"`
 	And      []*KeyClassChildFilter `json:"and,omitempty"`
 	Or       []*KeyClassChildFilter `json:"or,omitempty"`
@@ -458,6 +486,7 @@ type KeyClassChildSort struct {
 }
 
 type KeyClassParentFilter struct {
+	ID                   *NumericComparator       `json:"id,omitempty"`
 	KeyClassChildren     *KeyClassChildFilter     `json:"keyClassChildren,omitempty"`
 	KeyClassRealChildren *KeyClassRealChildFilter `json:"keyClassRealChildren,omitempty"`
 	And                  []*KeyClassParentFilter  `json:"and,omitempty"`
@@ -470,6 +499,7 @@ type KeyClassParentSort struct {
 }
 
 type KeyClassRealChildFilter struct {
+	ID       *NumericComparator         `json:"id,omitempty"`
 	ParentID *NullableNumericComparator `json:"parentID,omitempty"`
 	And      []*KeyClassRealChildFilter `json:"and,omitempty"`
 	Or       []*KeyClassRealChildFilter `json:"or,omitempty"`
@@ -481,6 +511,7 @@ type KeyClassRealChildSort struct {
 }
 
 type KeyOnlyRowFilter struct {
+	ID  *NumericComparator  `json:"id,omitempty"`
 	And []*KeyOnlyRowFilter `json:"and,omitempty"`
 	Or  []*KeyOnlyRowFilter `json:"or,omitempty"`
 }
@@ -600,6 +631,7 @@ type NumericRange struct {
 }
 
 type OrderFilter struct {
+	ID         *NumericComparator        `json:"id,omitempty"`
 	UserID     *NumericComparator        `json:"userID,omitempty"`
 	Status     *StringComparator         `json:"status,omitempty"`
 	Total      *NumericComparator        `json:"total,omitempty"`
@@ -611,6 +643,7 @@ type OrderFilter struct {
 }
 
 type OrderItemFilter struct {
+	ID        *NumericComparator `json:"id,omitempty"`
 	OrderID   *NumericComparator `json:"orderID,omitempty"`
 	ProductID *NumericComparator `json:"productID,omitempty"`
 	Quantity  *NumericComparator `json:"quantity,omitempty"`
@@ -630,8 +663,10 @@ type OrderSort struct {
 }
 
 type OwnerBadgeFilter struct {
-	And []*OwnerBadgeFilter `json:"and,omitempty"`
-	Or  []*OwnerBadgeFilter `json:"or,omitempty"`
+	OwnerID   *NumericComparator  `json:"ownerID,omitempty"`
+	BadgeCode *IDComparator       `json:"badgeCode,omitempty"`
+	And       []*OwnerBadgeFilter `json:"and,omitempty"`
+	Or        []*OwnerBadgeFilter `json:"or,omitempty"`
 }
 
 type OwnerBadgeSort struct {
@@ -640,13 +675,15 @@ type OwnerBadgeSort struct {
 }
 
 type OwnerFilter struct {
-	Name   *StringComparator `json:"name,omitempty"`
-	Badges *BadgeFilter      `json:"badges,omitempty"`
-	And    []*OwnerFilter    `json:"and,omitempty"`
-	Or     []*OwnerFilter    `json:"or,omitempty"`
+	OwnerKey *NumericComparator `json:"ownerKey,omitempty"`
+	Name     *StringComparator  `json:"name,omitempty"`
+	Badges   *BadgeFilter       `json:"badges,omitempty"`
+	And      []*OwnerFilter     `json:"and,omitempty"`
+	Or       []*OwnerFilter     `json:"or,omitempty"`
 }
 
 type OwnerProfileFilter struct {
+	ID      *NumericComparator        `json:"id,omitempty"`
 	OwnerID *NumericComparator        `json:"ownerID,omitempty"`
 	Bio     *NullableStringComparator `json:"bio,omitempty"`
 	And     []*OwnerProfileFilter     `json:"and,omitempty"`
@@ -664,6 +701,7 @@ type OwnerSort struct {
 }
 
 type ProductFilter struct {
+	ID               *NumericComparator         `json:"id,omitempty"`
 	CategoryID       *NumericComparator         `json:"categoryID,omitempty"`
 	Title            *StringComparator          `json:"title,omitempty"`
 	Price            *NumericComparator         `json:"price,omitempty"`
@@ -683,6 +721,7 @@ type ProductSort struct {
 }
 
 type ProductSummaryFilter struct {
+	ID           *NumericComparator        `json:"id,omitempty"`
 	Title        *NullableStringComparator `json:"title,omitempty"`
 	Price        *NumericComparator        `json:"price,omitempty"`
 	CategoryName *StringComparator         `json:"categoryName,omitempty"`
@@ -697,6 +736,9 @@ type ProductSummarySort struct {
 }
 
 type ProductTagLabelFilter struct {
+	ProductID   *NumericComparator        `json:"productID,omitempty"`
+	TagName     *IDComparator             `json:"tagName,omitempty"`
+	Label       *IDComparator             `json:"label,omitempty"`
 	Description *NullableStringComparator `json:"description,omitempty"`
 	And         []*ProductTagLabelFilter  `json:"and,omitempty"`
 	Or          []*ProductTagLabelFilter  `json:"or,omitempty"`
@@ -708,6 +750,7 @@ type ProductTagLabelSort struct {
 }
 
 type ProfileFilter struct {
+	ID           *NumericComparator        `json:"id,omitempty"`
 	UserID       *NumericComparator        `json:"userID,omitempty"`
 	Website      *NullableStringComparator `json:"website,omitempty"`
 	GithubHandle *NullableStringComparator `json:"githubHandle,omitempty"`
@@ -725,6 +768,7 @@ type Query struct {
 }
 
 type ReservedWordColumnFilter struct {
+	ID        *NumericComparator          `json:"id,omitempty"`
 	Type      *StringComparator           `json:"type,omitempty"`
 	Interface *StringComparator           `json:"interface,omitempty"`
 	Func      *StringComparator           `json:"func,omitempty"`
@@ -745,6 +789,7 @@ type ReservedWordColumnSort struct {
 }
 
 type SluggedRowFilter struct {
+	ID   *NumericComparator  `json:"id,omitempty"`
 	Name *StringComparator   `json:"name,omitempty"`
 	Slug *StringComparator   `json:"slug,omitempty"`
 	And  []*SluggedRowFilter `json:"and,omitempty"`
@@ -773,6 +818,7 @@ type StringComparator struct {
 }
 
 type TagFilter struct {
+	ID        *NumericComparator `json:"id,omitempty"`
 	Name      *StringComparator  `json:"name,omitempty"`
 	IsDeleted *BooleanComparator `json:"isDeleted,omitempty"`
 	And       []*TagFilter       `json:"and,omitempty"`
@@ -798,6 +844,7 @@ type TimeComparator struct {
 }
 
 type TimeKeyedFilter struct {
+	At             *TimeComparator      `json:"at,omitempty"`
 	Label          *StringComparator    `json:"label,omitempty"`
 	TimeKeyedNotes *TimeKeyedNoteFilter `json:"timeKeyedNotes,omitempty"`
 	And            []*TimeKeyedFilter   `json:"and,omitempty"`
@@ -805,6 +852,7 @@ type TimeKeyedFilter struct {
 }
 
 type TimeKeyedNoteFilter struct {
+	ID      *NumericComparator      `json:"id,omitempty"`
 	KeyedAt *NullableTimeComparator `json:"keyedAt,omitempty"`
 	Note    *StringComparator       `json:"note,omitempty"`
 	And     []*TimeKeyedNoteFilter  `json:"and,omitempty"`
@@ -1027,8 +1075,10 @@ type UpdateWarehouseInput struct {
 }
 
 type UserCategoryFilter struct {
-	And []*UserCategoryFilter `json:"and,omitempty"`
-	Or  []*UserCategoryFilter `json:"or,omitempty"`
+	UserID     *NumericComparator    `json:"userID,omitempty"`
+	CategoryID *NumericComparator    `json:"categoryID,omitempty"`
+	And        []*UserCategoryFilter `json:"and,omitempty"`
+	Or         []*UserCategoryFilter `json:"or,omitempty"`
 }
 
 type UserCategorySort struct {
@@ -1037,6 +1087,7 @@ type UserCategorySort struct {
 }
 
 type UserFilter struct {
+	ID         *NumericComparator         `json:"id,omitempty"`
 	Name       *StringComparator          `json:"name,omitempty"`
 	Email      *StringComparator          `json:"email,omitempty"`
 	Role       *StringComparator          `json:"role,omitempty"`
@@ -1061,6 +1112,7 @@ type UserSort struct {
 }
 
 type WarehouseFilter struct {
+	ID            *NumericComparator         `json:"id,omitempty"`
 	ExternalID    *StringComparator          `json:"externalID,omitempty"`
 	Name          *StringComparator          `json:"name,omitempty"`
 	Price         *DecimalComparator         `json:"price,omitempty"`

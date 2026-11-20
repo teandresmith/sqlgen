@@ -175,7 +175,8 @@
         ],
         "references": [
           "id"
-        ]
+        ],
+        "constraint": "workspace_notes_parent_id_fkey"
       }
     },
     {
@@ -190,7 +191,8 @@
         ],
         "references": [
           "id"
-        ]
+        ],
+        "constraint": "workspace_notes_parent_id_fkey"
       },
       "filter": "kind = 'draft'"
     }

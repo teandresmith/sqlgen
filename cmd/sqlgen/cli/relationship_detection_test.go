@@ -522,3 +522,37 @@ CREATE TABLE organization_users (organization_id bigint REFERENCES organizations
 		t.Errorf("generate with the name excluded: %v\nstderr: %s", err, stderr)
 	}
 }
+
+// Declaring one of two edges left one name over its key takes that edge's
+// place, which clears the collision with no exclude_relationships entry (PRD
+// §4.13, §13.4).
+func TestGenerate_DetectedNameCollisionClearedByDeclaringOneEdge(t *testing.T) {
+	const schema = `CREATE TABLE organizations (id bigint PRIMARY KEY);
+CREATE TABLE users (id bigint PRIMARY KEY, organization_id bigint,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id));
+CREATE TABLE organization_users (organization_id bigint NOT NULL, user_id bigint NOT NULL, PRIMARY KEY (organization_id, user_id),
+  FOREIGN KEY (organization_id) REFERENCES organizations(id), FOREIGN KEY (user_id) REFERENCES users(id));`
+	const declared = `tables:
+  organizations:
+    relationships:
+      - name: Members
+        type: o2m
+        table: users
+        fk: organization_id
+`
+	for _, dialect := range []string{"postgres", "mysql", "sqlite"} {
+		t.Run(dialect, func(t *testing.T) {
+			cfg := strings.Replace(tenantConfig, "dialect: postgres", "dialect: "+dialect, 1)
+			if dialect != "postgres" {
+				cfg = strings.Replace(cfg, "output:\n", "output:\n  driver: stdlib\n", 1)
+			}
+			if _, stderr, err := runCommand(t, "generate", schema, cfg); err == nil || !strings.Contains(stderr, `both named "organization_users" after disambiguation`) {
+				t.Fatalf("generate without the declaration: err = %v, stderr = %q, want the relationship name collision error", err, stderr)
+			}
+			_, stderr, err := runCommand(t, "generate", schema, cfg+declared)
+			if err != nil {
+				t.Errorf("generate with one edge declared: %v\nstderr: %s", err, stderr)
+			}
+		})
+	}
+}

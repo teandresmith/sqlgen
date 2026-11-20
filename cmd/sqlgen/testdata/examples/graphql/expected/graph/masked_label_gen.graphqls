@@ -28,6 +28,7 @@ type MaskedLabelListResult {
 }
 
 input MaskedLabelFilter {
+  id: IDComparator
   label: StringComparator
   and: [MaskedLabelFilter!]
   or:  [MaskedLabelFilter!]

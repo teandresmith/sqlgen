@@ -32,6 +32,7 @@ type LabelListResult {
 }
 
 input LabelFilter {
+  id: IDComparator
   workspaceID: IDComparator
   name: StringComparator
   tasks: TaskFilter

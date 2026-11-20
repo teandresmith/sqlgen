@@ -32,6 +32,8 @@ type WorkspaceSettingListResult {
 }
 
 input WorkspaceSettingFilter {
+  workspaceID: IDComparator
+  key: IDComparator
   value: StringComparator
   createdAt: TimeComparator
   and: [WorkspaceSettingFilter!]

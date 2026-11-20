@@ -30,6 +30,7 @@ type BoolKeyedNoteListResult {
 }
 
 input BoolKeyedNoteFilter {
+  id: NumericComparator
   keyedK: NullableBooleanComparator
   note: StringComparator
   and: [BoolKeyedNoteFilter!]

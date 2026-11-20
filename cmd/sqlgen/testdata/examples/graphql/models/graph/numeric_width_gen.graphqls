@@ -46,6 +46,7 @@ type NumericWidthListResult {
 }
 
 input NumericWidthFilter {
+  id: IDComparator
   small: NumericComparator
   smallN: NullableNumericComparator
   ratio: NumericComparator

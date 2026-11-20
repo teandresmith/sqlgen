@@ -6717,9 +6717,9 @@ type AuthorPostsUpdateNested struct {
 }
 
 // AuthorPostsCreateInput is CreatePostInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type AuthorPostsCreateInput struct {
 	Title     string                      `json:"title"`
 	Kind      omittable.Value[*string]    `json:"kind,omitzero"`
@@ -6771,9 +6771,9 @@ type AuthorProfileUpdateNested struct {
 }
 
 // AuthorProfileCreateInput is CreateAuthorProfileInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type AuthorProfileCreateInput struct {
 	Bio string `json:"bio"`
 }
@@ -10618,9 +10618,9 @@ type BayLockersUpdateNested struct {
 }
 
 // BayLockersCreateInput is CreateLockerInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type BayLockersCreateInput struct {
 	Label string `json:"label"`
 }
@@ -10670,9 +10670,9 @@ type BaySlotsUpdateNested struct {
 }
 
 // BaySlotsCreateInput is CreateSlotInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type BaySlotsCreateInput struct {
 	Label string `json:"label"`
 }
@@ -23589,9 +23589,9 @@ type DepotVansUpdateNested struct {
 }
 
 // DepotVansCreateInput is CreateVanInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type DepotVansCreateInput struct {
 	RouteID omittable.Value[*int64] `json:"route_id,omitzero"`
 	Plate   string                  `json:"plate"`
@@ -56029,9 +56029,9 @@ type RouteVansUpdateNested struct {
 }
 
 // RouteVansCreateInput is CreateVanInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type RouteVansCreateInput struct {
 	DepotID omittable.Value[*int64] `json:"depot_id,omitzero"`
 	Plate   string                  `json:"plate"`

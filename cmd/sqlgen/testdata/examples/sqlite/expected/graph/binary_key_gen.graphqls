@@ -12,8 +12,6 @@ type BinaryKey {
   events: [BinaryKeyEvent!]!
   "many-to-many relationship with the badges table."
   badges: [Badge!]!
-  "one-to-many relationship with the binary_key_events table."
-  binaryKeyEvents: [BinaryKeyEvent!]!
 }
 
 type BinaryKeyConnection {
@@ -36,10 +34,10 @@ type BinaryKeyListResult {
 }
 
 input BinaryKeyFilter {
+  id: BytesComparator
   name: StringComparator
   createdAt: TimeComparator
   badges: BadgeFilter
-  binaryKeyEvents: BinaryKeyEventFilter
   events: BinaryKeyEventFilter
   and: [BinaryKeyFilter!]
   or:  [BinaryKeyFilter!]

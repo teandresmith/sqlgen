@@ -64,6 +64,7 @@ type ScalarProbeListResult {
 }
 
 input ScalarProbeFilter {
+  id: IDComparator
   label: StringComparator
   payload: BytesComparator
   signature: NullableBytesComparator

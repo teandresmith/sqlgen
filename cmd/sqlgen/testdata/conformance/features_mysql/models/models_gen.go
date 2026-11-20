@@ -4961,9 +4961,9 @@ type BoardCardsUpdateNested struct {
 }
 
 // BoardCardsCreateInput is CreateCardInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type BoardCardsCreateInput struct {
 	Title string `json:"title"`
 }
@@ -34919,9 +34919,9 @@ type TemplateTemplateNotesUpdateNested struct {
 }
 
 // TemplateTemplateNotesCreateInput is CreateTemplateNoteInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type TemplateTemplateNotesCreateInput struct {
 	Body string `json:"body"`
 }

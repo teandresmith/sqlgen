@@ -32,6 +32,8 @@ type BinListResult {
 }
 
 input BinFilter {
+  aisle: IDComparator
+  slot: NumericComparator
   label: StringComparator
   binItems: BinItemFilter
   and: [BinFilter!]

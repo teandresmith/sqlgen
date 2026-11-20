@@ -40617,13 +40617,27 @@ func (ec *executionContext) unmarshalInputAssetDocumentLinkFilter(ctx context.Co
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"and", "or"}
+	fieldsInOrder := [...]string{"assetID", "documentID", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "assetID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("assetID"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AssetID = data
+		case "documentID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("documentID"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DocumentID = data
 		case "and":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
 			data, err := ec.unmarshalOAssetDocumentLinkFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐAssetDocumentLinkFilterᚄ(ctx, v)
@@ -40779,13 +40793,20 @@ func (ec *executionContext) unmarshalInputAssetFilter(ctx context.Context, obj a
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "declaredCategories", "primaryCategory", "createdAt", "attachments", "documents", "invoices", "linkedAttachments", "photoAttachments", "and", "or"}
+	fieldsInOrder := [...]string{"id", "name", "declaredCategories", "primaryCategory", "createdAt", "attachments", "documents", "invoices", "linkedAttachments", "photoAttachments", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -41363,13 +41384,20 @@ func (ec *executionContext) unmarshalInputCategoryFilter(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "description", "createdAt", "products", "users", "and", "or"}
+	fieldsInOrder := [...]string{"id", "name", "description", "createdAt", "products", "users", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -41435,13 +41463,20 @@ func (ec *executionContext) unmarshalInputCategoryPriceTotalFilter(ctx context.C
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"productCount", "totalPrice", "maxPrice", "and", "or"}
+	fieldsInOrder := [...]string{"categoryID", "productCount", "totalPrice", "maxPrice", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "categoryID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("categoryID"))
+			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.CategoryID = data
 		case "productCount":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("productCount"))
 			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
@@ -43798,13 +43833,20 @@ func (ec *executionContext) unmarshalInputCycleFilter(ctx context.Context, obj a
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"workspaceID", "name", "tasks", "and", "or"}
+	fieldsInOrder := [...]string{"id", "workspaceID", "name", "tasks", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -44280,13 +44322,20 @@ func (ec *executionContext) unmarshalInputDocumentFilter(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"entityID", "entityType", "name", "createdAt", "assets", "and", "or"}
+	fieldsInOrder := [...]string{"id", "entityID", "entityType", "name", "createdAt", "assets", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "entityID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("entityID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -44519,13 +44568,20 @@ func (ec *executionContext) unmarshalInputEventFilter(ctx context.Context, obj a
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"userID", "action", "occurredAt", "processedAt", "adjustment", "retryCount", "succeeded", "mac", "osName", "ioCount", "pkVal", "fkVal", "asciiArt", "csvData", "tcpPort", "utf8Body", "http2Flag", "line2ID", "address2ID", "s3URL", "and", "or"}
+	fieldsInOrder := [...]string{"id", "userID", "action", "occurredAt", "processedAt", "adjustment", "retryCount", "succeeded", "mac", "osName", "ioCount", "pkVal", "fkVal", "asciiArt", "csvData", "tcpPort", "utf8Body", "http2Flag", "line2ID", "address2ID", "s3URL", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "userID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userID"))
 			data, err := ec.unmarshalONullableIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐNullableIDComparator(ctx, v)
@@ -44733,13 +44789,20 @@ func (ec *executionContext) unmarshalInputFilterProbeFilter(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"doc", "tags", "tagsN", "flags", "weights", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"id", "doc", "tags", "tagsN", "flags", "weights", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "doc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("doc"))
 			data, err := ec.unmarshalOJSONBComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐJSONBComparator(ctx, v)
@@ -45234,13 +45297,20 @@ func (ec *executionContext) unmarshalInputKeyedCodeEntryFilter(ctx context.Conte
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"keyedCodeID", "note", "and", "or"}
+	fieldsInOrder := [...]string{"id", "keyedCodeID", "note", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "keyedCodeID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyedCodeID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -45322,13 +45392,20 @@ func (ec *executionContext) unmarshalInputKeyedCodeFilter(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"code", "name", "entries", "and", "or"}
+	fieldsInOrder := [...]string{"id", "code", "name", "entries", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "code":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("code"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -45417,13 +45494,20 @@ func (ec *executionContext) unmarshalInputLabelFilter(ctx context.Context, obj a
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"workspaceID", "name", "tasks", "and", "or"}
+	fieldsInOrder := [...]string{"id", "workspaceID", "name", "tasks", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -45679,13 +45763,20 @@ func (ec *executionContext) unmarshalInputMaskedLabelFilter(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"label", "and", "or"}
+	fieldsInOrder := [...]string{"id", "label", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "label":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -47168,13 +47259,20 @@ func (ec *executionContext) unmarshalInputNumericWidthFilter(ctx context.Context
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"small", "smallN", "ratio", "ratioN", "smalls", "scores", "bigs", "ratios", "scoresN", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"id", "small", "smallN", "ratio", "ratioN", "smalls", "scores", "bigs", "ratios", "scoresN", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "small":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("small"))
 			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
@@ -47312,13 +47410,20 @@ func (ec *executionContext) unmarshalInputOrderFilter(ctx context.Context, obj a
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"userID", "total", "notes", "createdAt", "updatedAt", "deletedAt", "orderItems", "and", "or"}
+	fieldsInOrder := [...]string{"id", "userID", "total", "notes", "createdAt", "updatedAt", "deletedAt", "orderItems", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "userID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -47398,13 +47503,20 @@ func (ec *executionContext) unmarshalInputOrderItemFilter(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"orderID", "productID", "quantity", "unitPrice", "externalRef", "sourceIP", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"id", "orderID", "productID", "quantity", "unitPrice", "externalRef", "sourceIP", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "orderID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("orderID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -47683,13 +47795,20 @@ func (ec *executionContext) unmarshalInputProductFilter(ctx context.Context, obj
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "description", "price", "stock", "categoryID", "createdAt", "updatedAt", "deletedAt", "orderItems", "and", "or"}
+	fieldsInOrder := [...]string{"id", "name", "description", "price", "stock", "categoryID", "createdAt", "updatedAt", "deletedAt", "orderItems", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -47945,13 +48064,20 @@ func (ec *executionContext) unmarshalInputProfileFilter(ctx context.Context, obj
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"userID", "bio", "avatarURL", "settings", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"id", "userID", "bio", "avatarURL", "settings", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "userID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -48054,13 +48180,20 @@ func (ec *executionContext) unmarshalInputScalarProbeFilter(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"label", "payload", "signature", "dur", "durN", "addr", "addrN", "netBlock", "netBlockN", "mac", "macN", "note", "flag", "smallCount", "midCount", "bigCount", "ratio", "observedAt", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"id", "label", "payload", "signature", "dur", "durN", "addr", "addrN", "netBlock", "netBlockN", "mac", "macN", "note", "flag", "smallCount", "midCount", "bigCount", "ratio", "observedAt", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "label":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -48426,13 +48559,20 @@ func (ec *executionContext) unmarshalInputTaskFilter(ctx context.Context, obj an
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"workspaceID", "cycleID", "title", "labels", "and", "or"}
+	fieldsInOrder := [...]string{"id", "workspaceID", "cycleID", "title", "labels", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -48491,13 +48631,34 @@ func (ec *executionContext) unmarshalInputTaskLabelFilter(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"and", "or"}
+	fieldsInOrder := [...]string{"workspaceID", "taskID", "labelID", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "workspaceID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.WorkspaceID = data
+		case "taskID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("taskID"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.TaskID = data
+		case "labelID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("labelID"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.LabelID = data
 		case "and":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
 			data, err := ec.unmarshalOTaskLabelFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐTaskLabelFilterᚄ(ctx, v)
@@ -48653,13 +48814,20 @@ func (ec *executionContext) unmarshalInputTaskReportFilter(ctx context.Context, 
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"workspaceID", "taskID", "summary", "and", "or"}
+	fieldsInOrder := [...]string{"id", "workspaceID", "taskID", "summary", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -51497,13 +51665,20 @@ func (ec *executionContext) unmarshalInputUserBadgeFilter(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"userID", "label", "and", "or"}
+	fieldsInOrder := [...]string{"id", "userID", "label", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "userID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userID"))
 			data, err := ec.unmarshalONullableIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐNullableIDComparator(ctx, v)
@@ -51724,13 +51899,27 @@ func (ec *executionContext) unmarshalInputUserCategoryFilter(ctx context.Context
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"and", "or"}
+	fieldsInOrder := [...]string{"userID", "categoryID", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "userID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userID"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.UserID = data
+		case "categoryID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("categoryID"))
+			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.CategoryID = data
 		case "and":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
 			data, err := ec.unmarshalOUserCategoryFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐUserCategoryFilterᚄ(ctx, v)
@@ -51798,13 +51987,20 @@ func (ec *executionContext) unmarshalInputUserCredentialFilter(ctx context.Conte
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"provider", "externalID", "lastLoginAt", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"userID", "provider", "externalID", "lastLoginAt", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "userID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("userID"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.UserID = data
 		case "provider":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("provider"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -52144,13 +52340,20 @@ func (ec *executionContext) unmarshalInputUserFilter(ctx context.Context, obj an
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"email", "name", "metadata", "isActive", "lastLoginAt", "ipAddr", "createdAt", "updatedAt", "deletedAt", "categories", "events", "orders", "and", "or"}
+	fieldsInOrder := [...]string{"id", "email", "name", "metadata", "isActive", "lastLoginAt", "ipAddr", "createdAt", "updatedAt", "deletedAt", "categories", "events", "orders", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "email":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("email"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -52719,13 +52922,20 @@ func (ec *executionContext) unmarshalInputWorkspaceNoteFilter(ctx context.Contex
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"workspaceID", "parentID", "body", "pinnedOrder", "kind", "labels", "createdAt", "children", "draftChildren", "and", "or"}
+	fieldsInOrder := [...]string{"id", "workspaceID", "parentID", "body", "pinnedOrder", "kind", "labels", "createdAt", "children", "draftChildren", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -52907,13 +53117,20 @@ func (ec *executionContext) unmarshalInputWorkspaceNoteSummaryFilter(ctx context
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"workspaceID", "kind", "labels", "body", "pinnedOrder", "documentCount", "and", "or"}
+	fieldsInOrder := [...]string{"id", "workspaceID", "kind", "labels", "body", "pinnedOrder", "documentCount", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
 			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
@@ -53023,13 +53240,27 @@ func (ec *executionContext) unmarshalInputWorkspaceSettingFilter(ctx context.Con
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"value", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"workspaceID", "key", "value", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "workspaceID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.WorkspaceID = data
+		case "key":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("key"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Key = data
 		case "value":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("value"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)

@@ -32,6 +32,7 @@ type CategoryPriceTotalListResult {
 }
 
 input CategoryPriceTotalFilter {
+  categoryID: NumericComparator
   productCount: NumericComparator
   totalPrice: NullableDecimalComparator
   maxPrice: NullableDecimalComparator

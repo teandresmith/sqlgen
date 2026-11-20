@@ -3119,7 +3119,7 @@ func buildAPISortBindings(ent APIEntity, apiFields []APIFieldContext) (fields []
 	return fields, enumType, inputType
 }
 
-// buildAPIFilterFields produces one APIFilterField per non-PK column that
+// buildAPIFilterFields produces one APIFilterField per column that
 // carries a filter projection with a translator (PRD §26.5.3). Side-effect:
 // each unique comparator translator referenced is registered into
 // translatorsByName so the project-wide comparator_translate_gen.go covers
@@ -3134,11 +3134,6 @@ func buildAPISortBindings(ent APIEntity, apiFields []APIFieldContext) (fields []
 // ValidateAPIFilterCompleteness (PRD §26.5.3) is the guard that says so from
 // the outside.
 func buildAPIFilterFields(ent APIEntity, fields []APIFieldContext, translatorsByName map[string]APIComparatorTranslator) []APIFilterField {
-	pkColNames := make(map[string]bool, len(ent.PKColumns))
-	for _, c := range ent.PKColumns {
-		pkColNames[c.Name] = true
-	}
-
 	projByColumn := make(map[string]APIFilterProjection, len(fields))
 	gqlNameByColumn := make(map[string]string, len(fields))
 	for _, f := range fields {
@@ -3150,9 +3145,6 @@ func buildAPIFilterFields(ent APIEntity, fields []APIFieldContext, translatorsBy
 	// so the generated translator body keeps the model filter's field order.
 	out := make([]APIFilterField, 0, len(ent.FilterFields))
 	for _, ff := range ent.FilterFields {
-		if pkColNames[ff.ColumnName] {
-			continue
-		}
 		proj := projByColumn[ff.ColumnName]
 		if proj.TranslatorFunc == "" {
 			continue
@@ -4355,17 +4347,6 @@ func registerColumnScalars(col ColumnContext, scalar APIScalarUse, filter APIFil
 	registerScalarUse(scalar, col.Import, scalarsByName)
 	usedInTable[scalar.Name] = true
 
-	if col.PrimaryKey {
-		// A PK column is excluded from the filter input on both sides
-		// (schema.graphqls.tmpl gates on `not $f.PrimaryKey`, and
-		// collectComparatorFamilies does the same), so it references no
-		// comparator input and creates no operand-scalar obligation.
-		// Registering from its projection would declare a scalar nothing
-		// names — the unused-declaration hazard the API-visibility guard
-		// above exists to avoid.
-		return
-	}
-
 	for _, op := range filter.Operators {
 		// Operand types are spelled in schema syntax; `[Time!]` names the
 		// same scalar as `Time`.
@@ -4694,13 +4675,13 @@ func graphQLFieldName(sqlName, casing string) string {
 // gqlgen would reject the schema. Deriving both from the same projections
 // keeps the declaration and the reference in step by construction.
 func collectComparatorFamilies(tables []APITableContext) []APIComparatorFamily {
-	// The schema emits a comparator only for a non-PK filterable column, so
-	// only those create a declaration obligation.
+	// The schema emits a comparator only for a filterable column, so only
+	// those create a declaration obligation.
 	referenced := make(map[string]bool)
 	operatorsByName := make(map[string][]APIComparatorOperator)
 	for _, t := range tables {
 		for _, f := range t.Fields {
-			if f.PrimaryKey || !f.Filterable || f.Filter.InputTypeName == "" {
+			if !f.Filterable || f.Filter.InputTypeName == "" {
 				continue
 			}
 			referenced[f.Filter.InputTypeName] = true

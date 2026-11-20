@@ -48,6 +48,7 @@ type AssetListResult {
 }
 
 input AssetFilter {
+  id: NumericComparator
   name: StringComparator
   createdAt: TimeComparator
   attachments: DocumentFilter

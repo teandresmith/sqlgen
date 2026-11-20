@@ -685,6 +685,7 @@
         "package": { "type": "string", "description": "Go package name for the generated graph package." },
         "max_depth": { "type": "integer", "description": "Maximum query depth accepted by the generated gate." },
         "max_complexity": { "type": "integer", "description": "Maximum query complexity accepted by the generated gate." },
+        "server_scaffold": { "type": "boolean", "default": true, "description": "Write the one-time server.go into resolver_dir when it is missing. Set false when the application builds its own handler.Server; limits_gen.go is still generated." },
         "field_casing": {
           "type": "string",
           "description": "Casing for generated GraphQL field names.",

@@ -1006,23 +1006,15 @@ func relationshipFieldNames(rels []gen.RelationshipContext) []string {
 }
 
 // TestBuildRelationshipContexts_DeclaredReplacesInferred pins the
-// PRD §4.8 / §13.4 rule that a manually declared relationship replaces the
-// auto-detected one it collides with. Appending both edges instead
-// emits `Entries []*Entry` twice on the same struct, so the models package
-// does not compile — while `sqlgen validate` and `sqlgen generate` both report
-// success.
-//
-// Collision is keyed on the resolved Go FieldName, not Name: a declared name
-// is PascalCase as written ("Entries") and an inferred one is the pluralized
-// snake form ("entries"), so nothing matches until relationshipFieldAndType
-// has run on both.
+// PRD §4.8 / §13.4 rule that a manually declared relationship over an
+// auto-detected edge's key replaces it. Appending both edges instead emits
+// the relationship twice on the same struct.
 func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 	tests := []struct {
 		name           string
 		tableCfg       config.TableConfig
 		wantFieldNames []string
 		wantNames      []string
-		wantWarning    bool
 	}{
 		{
 			// Baseline: the inferred edge alone, no config at all.
@@ -1032,9 +1024,9 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			wantNames:      []string{"entries"},
 		},
 		{
-			// The reported config. The declared entry wins and the inferred
-			// one is dropped, so the field is emitted once — surviving Name is
-			// the config's "Entries", not the inferred "entries".
+			// The declared entry is the inferred edge over the same key, so it
+			// takes its place with no warning: surviving Name is the config's
+			// "Entries", not the inferred "entries".
 			name: "declared name collides with inferred edge",
 			tableCfg: config.TableConfig{
 				Relationships: []config.TableRelationship{
@@ -1043,7 +1035,6 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			},
 			wantFieldNames: []string{"Entries"},
 			wantNames:      []string{"Entries"},
-			wantWarning:    true,
 		},
 		{
 			// The explicit form of the same intent. exclude_relationships
@@ -1060,17 +1051,16 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			wantNames:      []string{"Entries"},
 		},
 		{
-			// A declared name that resolves to a different Go field is not a
-			// collision — both edges coexist, which is the pre-existing
-			// sub-categorized-relationship behavior (§13.7).
+			// Over the same key, a declared edge under another name is the
+			// inferred edge renamed, so one field is emitted.
 			name: "declared name distinct from inferred edge",
 			tableCfg: config.TableConfig{
 				Relationships: []config.TableRelationship{
 					{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}},
 				},
 			},
-			wantFieldNames: []string{"Entries", "LedgerEntries"},
-			wantNames:      []string{"LedgerEntries", "entries"},
+			wantFieldNames: []string{"LedgerEntries"},
+			wantNames:      []string{"LedgerEntries"},
 		},
 	}
 
@@ -1091,21 +1081,230 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 				t.Errorf("relationship names (-want +got):\n%s", diff)
 			}
 
-			if !tt.wantWarning {
-				if len(warnings) != 0 {
-					t.Errorf("warnings = %v, want none", warnings)
-				}
-				return
+			if len(warnings) != 0 {
+				t.Errorf("warnings = %v, want none", warnings)
 			}
-			if len(warnings) != 1 {
-				t.Fatalf("warnings = %v, want exactly one", warnings)
+		})
+	}
+}
+
+// A declared `filter:` or `discriminator:` edge over a detected foreign key is
+// a sub-category of it, so both are emitted (PRD §13.7.3).
+func TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists(t *testing.T) {
+	tests := []struct {
+		name string
+		rel  config.TableRelationship
+	}{
+		{
+			name: "filter",
+			rel:  config.TableRelationship{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'ledger'"},
+		},
+		{
+			name: "discriminator",
+			rel: config.TableRelationship{
+				Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"},
+				Discriminator: &config.RelationshipDiscriminator{Column: "kind", Value: "ledger"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := declaredEntriesSchema()
+			schema.Tables[1].Columns = append(schema.Tables[1].Columns, parser.Column{Name: "kind", Type: "text"})
+			in := testInput(schema)
+			detectRelationships(in.Schema)
+			in.Config.Tables["accounts"] = config.TableConfig{Relationships: []config.TableRelationship{tt.rel}}
+
+			rels, warnings := accountsRelationships(t, in)
+
+			gotFields := relationshipFieldNames(rels)
+			slices.Sort(gotFields)
+			if diff := cmp.Diff([]string{"Entries", "LedgerEntries"}, gotFields); diff != "" {
+				t.Errorf("relationship field names (-want +got):\n%s", diff)
 			}
-			// The notice has to name both sides and the field they claim,
-			// otherwise a silently dropped inferred edge is untraceable.
-			for _, want := range []string{`"Entries"`, `"entries"`, "tables.accounts.relationships", "§13.4"} {
-				if !strings.Contains(warnings[0], want) {
-					t.Errorf("warning %q does not mention %s", warnings[0], want)
-				}
+			if len(warnings) != 0 {
+				t.Errorf("warnings = %v, want none", warnings)
+			}
+		})
+	}
+}
+
+// A declared edge of another kind over a detected edge's columns is another
+// edge: a has-one `o2o` beside the detected `o2m` (PRD §13.4).
+func TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists(t *testing.T) {
+	in := testInput(declaredEntriesSchema())
+	detectRelationships(in.Schema)
+	in.Config.Tables["accounts"] = config.TableConfig{Relationships: []config.TableRelationship{
+		{Name: "LatestEntry", Type: "one_to_one", Table: "entries", FK: config.KeyColumns{"account_id"}},
+	}}
+
+	rels, warnings := accountsRelationships(t, in)
+
+	type edge struct {
+		Field string
+		Type  parser.RelationshipType
+	}
+	got := make([]edge, 0, len(rels))
+	for _, r := range rels {
+		got = append(got, edge{r.FieldName, r.Type})
+	}
+	slices.SortFunc(got, func(a, b edge) int { return strings.Compare(a.Field, b.Field) })
+	want := []edge{{"Entries", parser.OneToMany}, {"LatestEntry", parser.OneToOne}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("relationships (-want +got):\n%s", diff)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none", warnings)
+	}
+}
+
+// A declared edge with the same kind, target and key as a detected edge takes
+// its place under the declared name, with no warning (PRD §13.4).
+func TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace(t *testing.T) {
+	const (
+		usersPosts = `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint NOT NULL,
+	CONSTRAINT posts_author FOREIGN KEY (author_id) REFERENCES users(id));
+`
+		userFollows = `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE follows (follower_id bigint NOT NULL, followee_id bigint NOT NULL, PRIMARY KEY (follower_id, followee_id),
+	CONSTRAINT follows_follower FOREIGN KEY (follower_id) REFERENCES users(id),
+	CONSTRAINT follows_followee FOREIGN KEY (followee_id) REFERENCES users(id));
+`
+	)
+	tests := []struct {
+		name  string
+		ddl   string
+		table string
+		rel   config.TableRelationship
+		want  []string
+	}{
+		{
+			name:  "o2m",
+			ddl:   usersPosts,
+			table: "users",
+			rel:   config.TableRelationship{Name: "Writings", Type: "o2m", Table: "posts", FK: config.KeyColumns{"author_id"}},
+			want:  []string{"Writings"},
+		},
+		{
+			name: "belongs-to",
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE profiles (id bigint PRIMARY KEY, user_id bigint NOT NULL UNIQUE,
+	CONSTRAINT profiles_user FOREIGN KEY (user_id) REFERENCES users(id));
+`,
+			table: "profiles",
+			rel:   config.TableRelationship{Name: "Owner", Type: "o2o", Table: "users", FK: config.KeyColumns{"user_id"}},
+			want:  []string{"Owner"},
+		},
+		{
+			name: "m2m",
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE tags (id bigint PRIMARY KEY);
+CREATE TABLE user_tags (user_id bigint NOT NULL, tag_id bigint NOT NULL, PRIMARY KEY (user_id, tag_id),
+	CONSTRAINT user_tags_user FOREIGN KEY (user_id) REFERENCES users(id),
+	CONSTRAINT user_tags_tag FOREIGN KEY (tag_id) REFERENCES tags(id));
+`,
+			table: "users",
+			rel: config.TableRelationship{
+				Name: "Labels", Type: "m2m", Table: "tags",
+				Junction: "user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"},
+			},
+			want: []string{"Labels"},
+		},
+		{
+			// The pairs are listed in another order than the foreign key's.
+			name: "composite o2m",
+			ddl: `
+CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT NULL, PRIMARY KEY (workspace_id, id));
+CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint NOT NULL,
+	CONSTRAINT tasks_cycle FOREIGN KEY (cycle_id, workspace_id) REFERENCES cycles(id, workspace_id));
+`,
+			table: "cycles",
+			rel:   config.TableRelationship{Name: "Work", Type: "o2m", Table: "tasks", FK: config.KeyColumns{"workspace_id", "cycle_id"}},
+			want:  []string{"Work"},
+		},
+		{
+			name:  "self-referential m2m direction",
+			ddl:   userFollows,
+			table: "users",
+			rel: config.TableRelationship{
+				Name: "Following", Type: "m2m", Table: "users",
+				Junction: "follows", JunctionLocalFK: config.KeyColumns{"follower_id"}, JunctionReferenceFK: config.KeyColumns{"followee_id"},
+			},
+			want: []string{"Following", "followers"},
+		},
+		{
+			name: "one of several edges into one target",
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint NOT NULL, editor_id bigint NOT NULL,
+	CONSTRAINT posts_author FOREIGN KEY (author_id) REFERENCES users(id),
+	CONSTRAINT posts_editor FOREIGN KEY (editor_id) REFERENCES users(id));
+`,
+			table: "users",
+			rel:   config.TableRelationship{Name: "Writings", Type: "o2m", Table: "posts", FK: config.KeyColumns{"author_id"}},
+			want:  []string{"Writings", "editor_posts"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, dialect := range []config.Dialect{config.DialectPostgres, config.DialectMySQL, config.DialectSQLite} {
+				t.Run(string(dialect), func(t *testing.T) {
+					schema := parseDDLForTest(t, dialect, tt.ddl)
+					parser.DetectRelationships(schema)
+					in := testInput(schema)
+					in.Config.Input.Dialect = dialect
+					in.Config.Tables[tt.table] = config.TableConfig{Relationships: []config.TableRelationship{tt.rel}}
+					contexts, err := gen.BuildTableContexts(in, nil)
+					if err != nil {
+						t.Fatalf("BuildTableContexts() error: %v", err)
+					}
+					i := slices.IndexFunc(contexts, func(tc gen.TableContext) bool { return tc.TableName == tt.table })
+					if i < 0 {
+						t.Fatalf("no %s context", tt.table)
+					}
+					if diff := cmp.Diff(tt.want, relationshipNames(contexts[i].Relationships)); diff != "" {
+						t.Errorf("%s relationships (-want +got):\n%s", tt.table, diff)
+					}
+					if len(in.Warnings) != 0 {
+						t.Errorf("warnings = %q, want none", in.Warnings)
+					}
+				})
+			}
+		})
+	}
+}
+
+// A declared edge that takes over one detected edge under another detected
+// edge's Go field is the duplicate-field error, not a second replacement (PRD
+// §13.4, §13.7.3).
+func TestBuildRelationshipContexts_TakeoverOntoAnotherDetectedFieldIsAnError(t *testing.T) {
+	const ddl = `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint NOT NULL, editor_id bigint NOT NULL,
+	CONSTRAINT posts_author FOREIGN KEY (author_id) REFERENCES users(id),
+	CONSTRAINT posts_editor FOREIGN KEY (editor_id) REFERENCES users(id));
+`
+	for _, dialect := range []config.Dialect{config.DialectPostgres, config.DialectMySQL, config.DialectSQLite} {
+		t.Run(string(dialect), func(t *testing.T) {
+			schema := parseDDLForTest(t, dialect, ddl)
+			parser.DetectRelationships(schema)
+			in := testInput(schema)
+			in.Config.Input.Dialect = dialect
+			in.Config.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
+				{Name: "EditorPosts", Type: "o2m", Table: "posts", FK: config.KeyColumns{"author_id"}},
+			}}
+			_, err := gen.BuildTableContexts(in, nil)
+			const want = `relationships "EditorPosts" and "editor_posts" both resolve to the Go field "EditorPosts"`
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("BuildTableContexts() error = %v, want it to contain %q", err, want)
+			}
+			if len(in.Warnings) != 0 {
+				t.Errorf("warnings = %q, want none", in.Warnings)
 			}
 		})
 	}
@@ -1138,7 +1337,12 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_i
 	if got := contexts[i].Relationships[0].Key; len(got) != 1 {
 		t.Errorf("key = %v, want the declared pair", got)
 	}
-	if !slices.ContainsFunc(in.Warnings, func(w string) bool { return strings.Contains(w, `"Tasks"`) && strings.Contains(w, "§13.4") }) {
+	// The notice names both sides and the field they claim, so a dropped
+	// detected edge leaves a trace.
+	if !slices.ContainsFunc(in.Warnings, func(w string) bool {
+		return strings.Contains(w, `"Tasks" replaces the foreign-key-inferred relationship "tasks"`) &&
+			strings.Contains(w, `the Go field "Tasks"`) && strings.Contains(w, "tables.public.cycles.relationships")
+	}) {
 		t.Errorf("warnings = %q, want the replacement notice", in.Warnings)
 	}
 }

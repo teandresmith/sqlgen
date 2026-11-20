@@ -32,6 +32,7 @@ type OwnerProfileListResult {
 }
 
 input OwnerProfileFilter {
+  id: NumericComparator
   ownerID: NumericComparator
   bio: NullableStringComparator
   and: [OwnerProfileFilter!]

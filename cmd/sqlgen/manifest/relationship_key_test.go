@@ -16,6 +16,13 @@ import (
 // returns the fk of entity's relationship rel.
 func relationshipFK(t *testing.T, dialect config.Dialect, ddl string, cfg *config.RootConfig, entity, rel string, edit func(manifest.BuildInput)) *manifest.FK {
 	t.Helper()
+	return relationshipOf(t, dialect, ddl, cfg, entity, rel, edit).FK
+}
+
+// relationshipOf builds ddl under dialect, lets edit adjust the contexts, and
+// returns entity's relationship rel.
+func relationshipOf(t *testing.T, dialect config.Dialect, ddl string, cfg *config.RootConfig, entity, rel string, edit func(manifest.BuildInput)) manifest.Relationship {
+	t.Helper()
 	in := testBuildInput(t, parseDDL(t, dialect, ddl), cfg)
 	if edit != nil {
 		edit(in)
@@ -26,16 +33,28 @@ func relationshipFK(t *testing.T, dialect config.Dialect, ddl string, cfg *confi
 	}
 	for _, r := range findEntity(t, doc, entity).Relationships {
 		if r.Name == rel {
-			return r.FK
+			return r
 		}
 	}
 	t.Fatalf("%s has no relationship %q", entity, rel)
-	return nil
+	return manifest.Relationship{}
+}
+
+// relationshipKeys is a relationship's keys as junction-key shapes: its fk, or
+// its junction's local and target keys.
+func relationshipKeys(r manifest.Relationship) []manifest.JunctionKey {
+	if r.Junction != nil {
+		return []manifest.JunctionKey{r.Junction.LocalFK, r.Junction.TargetFK}
+	}
+	if r.FK == nil {
+		return nil
+	}
+	return []manifest.JunctionKey{{Columns: r.FK.Columns, References: r.FK.References, Constraint: r.FK.Constraint}}
 }
 
 // TestBuild_RelationshipKeyShape pins PRD §30.4.2's fk shape: columns and
-// references in the FK's declared order, and the constraint the edge came
-// from, omitted for a manual relationship.
+// references in the FK's declared order, and the FOREIGN KEY constraint the
+// key is, omitted when none declares it.
 func TestBuild_RelationshipKeyShape(t *testing.T) {
 	const usersPosts = `
 CREATE TABLE users (id bigint PRIMARY KEY, email text NOT NULL UNIQUE);
@@ -102,8 +121,7 @@ CREATE TABLE drafts (id bigint PRIMARY KEY, writer_id bigint NOT NULL);
 			want: &manifest.FK{Table: "drafts", Schema: "public", Columns: []string{"writer_id"}, References: []string{"id"}},
 		},
 		{
-			// Composite-key edges stay out of the contexts until they
-			// generate, so the pairs are set on the built context.
+			// The pairs are set on the built context.
 			name:    "composite key in declared order",
 			dialect: config.DialectPostgres,
 			ddl:     usersPosts,
@@ -129,6 +147,153 @@ CREATE TABLE drafts (id bigint PRIMARY KEY, writer_id bigint NOT NULL);
 			got := relationshipFK(t, tt.dialect, tt.ddl, cfg, tt.entity, tt.rel, tt.edit)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("fk mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+
+	// A manual relationship names the FOREIGN KEY whose column pairs equal its
+	// key, in any order (PRD §13.4). Each case runs on every dialect it lists.
+	const (
+		namedPosts = `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint NOT NULL, kind text NOT NULL,
+	CONSTRAINT posts_author FOREIGN KEY (author_id) REFERENCES users(id));
+`
+		compositeTasks = `
+CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT NULL, PRIMARY KEY (workspace_id, id));
+CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint NOT NULL,
+	CONSTRAINT tasks_cycle FOREIGN KEY (cycle_id, workspace_id) REFERENCES cycles(id, workspace_id));
+`
+	)
+	allDialects := []config.Dialect{config.DialectPostgres, config.DialectMySQL, config.DialectSQLite}
+	declared := func(table string, rel config.TableRelationship) func(*config.RootConfig) {
+		return func(cfg *config.RootConfig) {
+			cfg.Tables[table] = config.TableConfig{Relationships: []config.TableRelationship{rel}}
+		}
+	}
+	manual := []struct {
+		name     string
+		dialects []config.Dialect
+		ddl      string
+		cfg      func(*config.RootConfig)
+		entity   string
+		rel      string
+		want     []manifest.JunctionKey
+	}{
+		{
+			name:     "manual relationship over a foreign key names its constraint",
+			dialects: allDialects,
+			ddl:      namedPosts,
+			cfg:      declared("users", config.TableRelationship{Name: "Writings", Type: "o2m", Table: "posts", FK: config.KeyColumns{"author_id"}}),
+			entity:   "User", rel: "Writings",
+			want: []manifest.JunctionKey{{Columns: []string{"author_id"}, References: []string{"id"}, Constraint: "posts_author"}},
+		},
+		{
+			// Of two identical keys, detection keeps the one whose name sorts
+			// first; a manual edge names that one too, whatever the order.
+			name:     "manual relationship over identical foreign keys names the one detection keeps",
+			dialects: allDialects,
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint NOT NULL,
+	CONSTRAINT posts_b FOREIGN KEY (author_id) REFERENCES users(id),
+	CONSTRAINT posts_a FOREIGN KEY (author_id) REFERENCES users(id));
+`,
+			cfg:    declared("users", config.TableRelationship{Name: "Writings", Type: "o2m", Table: "posts", FK: config.KeyColumns{"author_id"}}),
+			entity: "User", rel: "Writings",
+			want: []manifest.JunctionKey{{Columns: []string{"author_id"}, References: []string{"id"}, Constraint: "posts_a"}},
+		},
+		{
+			name:     "manual belongs-to names its constraint",
+			dialects: allDialects,
+			ddl:      namedPosts,
+			cfg:      declared("posts", config.TableRelationship{Name: "Writer", Type: "o2o", Table: "users", FK: config.KeyColumns{"author_id"}}),
+			entity:   "Post", rel: "Writer",
+			want: []manifest.JunctionKey{{Columns: []string{"author_id"}, References: []string{"id"}, Constraint: "posts_author"}},
+		},
+		{
+			name:     "manual has-one names its constraint",
+			dialects: allDialects,
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE profiles (id bigint PRIMARY KEY, user_id bigint NOT NULL UNIQUE,
+	CONSTRAINT profiles_owner FOREIGN KEY (user_id) REFERENCES users(id));
+`,
+			cfg:    declared("users", config.TableRelationship{Name: "Bio", Type: "o2o", Table: "profiles", FK: config.KeyColumns{"user_id"}}),
+			entity: "User", rel: "Bio",
+			want: []manifest.JunctionKey{{Columns: []string{"user_id"}, References: []string{"id"}, Constraint: "profiles_owner"}},
+		},
+		{
+			name:     "manual m2m names both junction constraints",
+			dialects: allDialects,
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE tags (id bigint PRIMARY KEY);
+CREATE TABLE user_tags (user_id bigint NOT NULL, tag_id bigint NOT NULL, PRIMARY KEY (user_id, tag_id),
+	CONSTRAINT user_tags_user FOREIGN KEY (user_id) REFERENCES users(id),
+	CONSTRAINT user_tags_tag FOREIGN KEY (tag_id) REFERENCES tags(id));
+`,
+			cfg: declared("users", config.TableRelationship{
+				Name: "Labels", Type: "m2m", Table: "tags",
+				Junction: "user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"},
+			}),
+			entity: "User", rel: "Labels",
+			want: []manifest.JunctionKey{
+				{Columns: []string{"user_id"}, References: []string{"id"}, Constraint: "user_tags_user"},
+				{Columns: []string{"tag_id"}, References: []string{"id"}, Constraint: "user_tags_tag"},
+			},
+		},
+		{
+			// The foreign key lists its pairs in the other order; the manifest
+			// keeps the declared fk order.
+			name:     "manual composite key names its constraint",
+			dialects: allDialects,
+			ddl:      compositeTasks,
+			cfg:      declared("cycles", config.TableRelationship{Name: "Work", Type: "o2m", Table: "tasks", FK: config.KeyColumns{"workspace_id", "cycle_id"}}),
+			entity:   "Cycle", rel: "Work",
+			want: []manifest.JunctionKey{{Columns: []string{"workspace_id", "cycle_id"}, References: []string{"workspace_id", "id"}, Constraint: "tasks_cycle"}},
+		},
+		{
+			// The same two columns, paired cycle_id → workspace_id and
+			// workspace_id → id: another key than the foreign key's.
+			name:     "manual key pairing a foreign key differently names no constraint",
+			dialects: allDialects,
+			ddl:      compositeTasks,
+			cfg:      declared("tasks", config.TableRelationship{Name: "Cycle", Type: "o2o", Table: "cycles", FK: config.KeyColumns{"cycle_id", "workspace_id"}}),
+			entity:   "Task", rel: "Cycle",
+			want: []manifest.JunctionKey{{Columns: []string{"cycle_id", "workspace_id"}, References: []string{"workspace_id", "id"}}},
+		},
+		{
+			name:     "manual relationship over an unnamed sqlite key",
+			dialects: []config.Dialect{config.DialectSQLite},
+			ddl:      usersPosts,
+			cfg:      declared("users", config.TableRelationship{Name: "Writings", Type: "o2m", Table: "posts", FK: config.KeyColumns{"author_id"}}),
+			entity:   "User", rel: "Writings",
+			want: []manifest.JunctionKey{{Columns: []string{"author_id"}, References: []string{"id"}, Constraint: "posts(author_id) → users(id)"}},
+		},
+		{
+			name:     "discriminator edge names its constraint",
+			dialects: allDialects,
+			ddl:      namedPosts,
+			cfg: declared("users", config.TableRelationship{
+				Name: "Drafts", Type: "o2m", Table: "posts", FK: config.KeyColumns{"author_id"},
+				Discriminator: &config.RelationshipDiscriminator{Column: "kind", Value: "draft"},
+			}),
+			entity: "User", rel: "Drafts",
+			want: []manifest.JunctionKey{{Columns: []string{"author_id"}, References: []string{"id"}, Constraint: "posts_author"}},
+		},
+	}
+	for _, tt := range manual {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, dialect := range tt.dialects {
+				t.Run(string(dialect), func(t *testing.T) {
+					cfg := dialectConfig(dialect)
+					tt.cfg(cfg)
+					got := relationshipKeys(relationshipOf(t, dialect, tt.ddl, cfg, tt.entity, tt.rel, nil))
+					if diff := cmp.Diff(tt.want, got); diff != "" {
+						t.Errorf("keys mismatch (-want +got):\n%s", diff)
+					}
+				})
 			}
 		})
 	}

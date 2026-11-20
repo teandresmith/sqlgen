@@ -289,7 +289,7 @@ type Relationship struct {
 //
 // Columns and References are the key's pairs in the FK's declared order,
 // Columns[i] referencing References[i]. Constraint names the FOREIGN KEY the
-// edge was detected from, and is omitted for a manual relationship.
+// key is, and is omitted when none declares it.
 type FK struct {
 	Table      string   `json:"table"`
 	Schema     string   `json:"schema,omitempty"`
@@ -313,7 +313,7 @@ type Junction struct {
 
 // JunctionKey is one of a junction's two foreign keys, shaped like FK without
 // the table: the junction's columns, the columns they reference, and the
-// constraint, omitted for a manual relationship.
+// constraint, omitted when no FOREIGN KEY declares the key.
 type JunctionKey struct {
 	Columns    []string `json:"columns"`
 	References []string `json:"references"`

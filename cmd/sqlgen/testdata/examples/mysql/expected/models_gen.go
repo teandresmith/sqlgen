@@ -7210,9 +7210,9 @@ type AssetAttachmentsUpdateNested struct {
 }
 
 // AssetAttachmentsCreateInput is CreateDocumentInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 // The edge's discriminator column is removed for the same reason: the executor
 // sets it to the value the relationship declares.
 type AssetAttachmentsCreateInput struct {
@@ -7300,9 +7300,9 @@ type AssetInvoicesUpdateNested struct {
 }
 
 // AssetInvoicesCreateInput is CreateDocumentInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 // The edge's discriminator column is removed for the same reason: the executor
 // sets it to the value the relationship declares.
 type AssetInvoicesCreateInput struct {
@@ -7346,9 +7346,9 @@ type AssetPrimaryDocumentUpdateNested struct {
 }
 
 // AssetPrimaryDocumentCreateInput is CreateDocumentInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 // The edge's discriminator column is removed for the same reason: the executor
 // sets it to the value the relationship declares.
 type AssetPrimaryDocumentCreateInput struct {
@@ -14846,9 +14846,9 @@ type BoolKeyedBoolKeyedNotesUpdateNested struct {
 }
 
 // BoolKeyedBoolKeyedNotesCreateInput is CreateBoolKeyedNoteInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type BoolKeyedBoolKeyedNotesCreateInput struct {
 	Note string `json:"note"`
 }
@@ -20033,9 +20033,9 @@ type CategoryProductsUpdateNested struct {
 }
 
 // CategoryProductsCreateInput is CreateProductInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type CategoryProductsCreateInput struct {
 	// Title - Product display name
 	Title string `json:"title"`
@@ -32519,9 +32519,9 @@ type OrderOrderItemsUpdateNested struct {
 }
 
 // OrderOrderItemsCreateInput is CreateOrderItemInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type OrderOrderItemsCreateInput struct {
 	// ProductID - Purchased product reference
 	ProductID int64 `json:"product_id"`
@@ -37605,9 +37605,9 @@ type ProductOrderItemsUpdateNested struct {
 }
 
 // ProductOrderItemsCreateInput is CreateOrderItemInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type ProductOrderItemsCreateInput struct {
 	// OrderID - Parent order reference
 	OrderID int64 `json:"order_id"`
@@ -47991,9 +47991,9 @@ type TimeKeyedTimeKeyedNotesUpdateNested struct {
 }
 
 // TimeKeyedTimeKeyedNotesCreateInput is CreateTimeKeyedNoteInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type TimeKeyedTimeKeyedNotesCreateInput struct {
 	Note string `json:"note"`
 }
@@ -58316,9 +58316,9 @@ type UserOrdersUpdateNested struct {
 }
 
 // UserOrdersCreateInput is CreateOrderInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type UserOrdersCreateInput struct {
 	// Status - Current lifecycle state
 	Status omittable.Value[OrdersStatusEnum] `json:"status,omitzero"`
@@ -58364,9 +58364,9 @@ type UserProfileUpdateNested struct {
 }
 
 // UserProfileCreateInput is CreateProfileInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type UserProfileCreateInput struct {
 	// Website - Personal website URL
 	Website omittable.Value[*string] `json:"website,omitzero"`
@@ -58422,9 +58422,9 @@ type UserUserEventsUpdateNested struct {
 }
 
 // UserUserEventsCreateInput is CreateUserEventInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type UserUserEventsCreateInput struct {
 	// Action - What happened
 	Action string `json:"action"`

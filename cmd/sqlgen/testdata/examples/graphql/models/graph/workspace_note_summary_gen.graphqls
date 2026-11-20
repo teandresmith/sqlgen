@@ -38,6 +38,7 @@ type WorkspaceNoteSummaryListResult {
 }
 
 input WorkspaceNoteSummaryFilter {
+  id: IDComparator
   workspaceID: IDComparator
   kind: WorkspaceNoteKindEnumComparator
   labels: JSONBComparator

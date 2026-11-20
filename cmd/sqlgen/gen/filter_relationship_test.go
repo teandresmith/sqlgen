@@ -577,7 +577,9 @@ func TestRelationshipFilters_ColumnComparatorKeepsItsFieldName(t *testing.T) {
 	tables := relFilterTablesOn(t, config.DialectPostgres, func(cfg *config.RootConfig) {
 		cfg.Tables["users"] = config.TableConfig{
 			Relationships: []config.TableRelationship{
-				{Name: "Email", Type: "one_to_many", Table: "orders", FK: config.KeyColumns{"user_id"}},
+				// Over a key no foreign key declares, so the detected orders
+				// edge stays as the control below.
+				{Name: "Email", Type: "one_to_many", Table: "orders", FK: config.KeyColumns{"workspace_id"}},
 			},
 		}
 	})

@@ -28,6 +28,8 @@ type AssetDocumentLinkListResult {
 }
 
 input AssetDocumentLinkFilter {
+  assetID: NumericComparator
+  documentID: NumericComparator
   and: [AssetDocumentLinkFilter!]
   or:  [AssetDocumentLinkFilter!]
 }

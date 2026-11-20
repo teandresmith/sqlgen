@@ -37,6 +37,9 @@ func translateCategoryFilter(in *gqlmodel.CategoryFilter) *models.CategoryFilter
 	if in.Description != nil {
 		out.Description = translateNullableStringComparator(in.Description)
 	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
 	}
@@ -78,6 +81,9 @@ func translateProductFilter(in *gqlmodel.ProductFilter) *models.ProductFilter {
 	}
 	if in.CreatedAt != nil {
 		out.CreatedAt = translateTimeComparator(in.CreatedAt)
+	}
+	if in.ID != nil {
+		out.ID = translateIDComparator(in.ID)
 	}
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)

@@ -919,7 +919,8 @@
               ],
               "references": [
                 "id"
-              ]
+              ],
+              "constraint": "asset_document_links_asset_id_fkey"
             },
             "target_fk": {
               "columns": [
@@ -927,7 +928,8 @@
               ],
               "references": [
                 "id"
-              ]
+              ],
+              "constraint": "asset_document_links_document_id_fkey"
             }
           },
           "filter": "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
@@ -12527,7 +12529,8 @@
             ],
             "references": [
               "id"
-            ]
+            ],
+            "constraint": "profiles_user_id_fkey"
           }
         },
         {

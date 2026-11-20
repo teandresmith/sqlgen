@@ -34,6 +34,7 @@ type OrderItemListResult {
 }
 
 input OrderItemFilter {
+  id: NumericComparator
   orderID: NumericComparator
   productID: NumericComparator
   quantity: NumericComparator

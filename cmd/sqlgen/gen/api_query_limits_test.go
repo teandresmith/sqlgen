@@ -202,6 +202,54 @@ func TestGenerate_GraphQLQueryLimits(t *testing.T) {
 		}
 	})
 
+	t.Run("server_scaffold false writes no server.go", func(t *testing.T) {
+		root, schema := limProject(t)
+		res := limGenerate(t, schema, limLoad(t, limConfig(true, "    server_scaffold: false\n")))
+
+		if limReported(res, limServerRel) {
+			t.Errorf("Generate() files list %s with server_scaffold false", limServerRel)
+		}
+		if _, err := os.Stat(filepath.Join(root, limServerRel)); !os.IsNotExist(err) {
+			t.Errorf("%s exists with server_scaffold false (stat error = %v)", limServerRel, err)
+		}
+	})
+
+	t.Run("server_scaffold false still writes the limits file", func(t *testing.T) {
+		root, schema := limProject(t)
+		res := limGenerate(t, schema, limLoad(t, limConfig(true, "    server_scaffold: false\n    max_depth: 3\n    max_complexity: 77\n")))
+
+		if !limReported(res, limLimitsRel) {
+			t.Errorf("Generate() files do not list %s", limLimitsRel)
+		}
+		limits := limRead(t, root, limLimitsRel)
+		for _, want := range []string{"const MaxQueryDepth = 3", "const MaxQueryComplexity = 77", "func ApplyQueryLimits("} {
+			if !strings.Contains(limits, want) {
+				t.Errorf("limits_gen.go missing %q:\n%s", want, limits)
+			}
+		}
+	})
+
+	t.Run("server_scaffold false leaves an existing server.go untouched", func(t *testing.T) {
+		root, schema := limProject(t)
+		const own = "package graph\n\n// consumer-owned bootstrap\n"
+		path := filepath.Join(root, limServerRel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatalf("creating graph dir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(own), 0o600); err != nil {
+			t.Fatalf("writing server.go: %v", err)
+		}
+
+		res := limGenerate(t, schema, limLoad(t, limConfig(true, "    server_scaffold: false\n")))
+
+		if got := limRead(t, root, limServerRel); got != own {
+			t.Errorf("server.go = %q, want it left as %q", got, own)
+		}
+		if limReported(res, limServerRel) {
+			t.Errorf("Generate() files list %s, which it did not write", limServerRel)
+		}
+	})
+
 	t.Run("nothing is emitted when api.graphql.enabled is false", func(t *testing.T) {
 		root, schema := limProject(t)
 		res := limGenerate(t, schema, limLoad(t, limConfig(false, "    max_depth: 3\n")))

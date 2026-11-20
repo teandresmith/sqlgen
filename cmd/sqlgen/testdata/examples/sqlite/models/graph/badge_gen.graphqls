@@ -32,6 +32,7 @@ type BadgeListResult {
 }
 
 input BadgeFilter {
+  code: IDComparator
   label: StringComparator
   binaryKeys: BinaryKeyFilter
   owners: OwnerFilter

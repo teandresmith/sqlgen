@@ -86,6 +86,17 @@ input TimeRange {
   to:   Time!
 }
 
+input IDComparator {
+  eq:  ID
+  neq: ID
+  gt:  ID
+  gte: ID
+  lt:  ID
+  lte: ID
+  in:  [ID!]
+  nin: [ID!]
+}
+
 input DecimalComparator {
   eq:  Decimal
   neq: Decimal

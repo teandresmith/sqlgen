@@ -7,7 +7,7 @@
 The generated manifest (§30): configuration, the emitted artifacts, the JSON shape, versioning, extended schema metadata and the `manifest` subcommands. The runtime-embedded manifest (§30.6) is in `runtime/support.md`. The `manifest-artifacts` matrix has one row per §30.3 artifact, the GraphQL breadcrumb pair included; `emitted` is the artifact written when the manifest is enabled and its own gate is on, `gated` not written when that gate is off, `removed-when-disabled` gone after the next `generate` once `enabled` flips to false, `ownership` the overwrite and removal guard (the breadcrumb provenance marker, the manifest directory's anchors), and `deterministic` byte-identical across two runs with `--manifest-timestamp` pinned.
 
 ## §30 Manifest
-<!-- prd: 30 sha256: ca919ac4909ac61c -->
+<!-- prd: 30 sha256: 720f8434cd2f0330 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -250,7 +250,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.art.graph.pointer-doc-comments | The graph breadcrumb's third pointer is the doc comments on the generated resolver, walker and middleware Go files in that directory | `golden: graphql` | all |  |
 
 ## §30.4 JSON Schema
-<!-- prd: 30.4 sha256: 49e4d3f3f2e1a778 -->
+<!-- prd: 30.4 sha256: a6412ff92f105885 -->
 
 ### Single layout
 
@@ -373,7 +373,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.conv.omittable.json-behavior | `omittable.json_behavior` is the PRD's "Marshals to the wrapped value when set; omitted when unset (omitzero semantics on the wrapper, via IsZero)" | `unit: cmd/sqlgen/manifest: TestBuild_ConventionsMirrorRuntimeSurface` | all |  |
 
 ## §30.4.2 Entity shape
-<!-- prd: 30.4.2 sha256: 4e9080c9177c36e6 -->
+<!-- prd: 30.4.2 sha256: 6f1e3b8582458571 -->
 
 ### Entity fields
 
@@ -482,7 +482,8 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.rel.junction-target-fk | `junction.target_fk` is the junction's key into the target (`columns`, `references`, `constraint`) | `unit: cmd/sqlgen/manifest: TestBuild_M2MJunctionSchema` | all |  |
 | manifest.json.rel.constraint | `constraint` names the FOREIGN KEY constraint the edge was detected from | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected edge names its constraint` | all |  |
 | manifest.json.rel.constraint-sqlite-unnamed | An unnamed SQLite foreign key is named `table(columns) → target(columns)` | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/unnamed sqlite key`; `golden: sqlite` | sqlite |  |
-| manifest.json.rel.constraint-manual-omitted | A manual relationship omits `constraint` | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship` | all |  |
+| rename.constraint.unnamed-sqlite | A manual relationship over an unnamed SQLite foreign key is named `table(columns) → target(columns)`, as a detected edge is | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship over an unnamed sqlite key`; `golden: sqlite` | sqlite |  |
+| manifest.json.rel.constraint-manual-omitted | A manual relationship with no FOREIGN KEY behind it omits `constraint` | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship` | all |  |
 | manifest.json.rel.columns-references-required | `columns` and `references` are always present, and `schema/v1.json` requires them on every `fk` and junction key | `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/fk without columns`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/fk without references`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/0.1.0 fk column`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/junction local_fk without columns`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/junction target_fk without references` | all |  |
 
 ### `methods[]`

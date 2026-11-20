@@ -36,6 +36,7 @@ type EntryListResult {
 }
 
 input EntryFilter {
+  id: NumericComparator
   accountID: NumericComparator
   memo: NullableStringComparator
   amount: DecimalComparator

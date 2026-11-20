@@ -1169,17 +1169,22 @@ type APIConfig struct {
 }
 
 // GraphQLAPIConfig configures GraphQL schema and resolver generation.
+//
+// ServerScaffold is a pointer so an unset value can be told from an explicit
+// false; applyAPIDefaults resolves it to true. False stops sqlgen writing the
+// one-time server.go (PRD §26.5.6).
 type GraphQLAPIConfig struct {
-	Enabled       bool                     `yaml:"enabled"`
-	SchemaDir     string                   `yaml:"schema_dir"`
-	ResolverDir   string                   `yaml:"resolver_dir"`
-	Package       string                   `yaml:"package"`
-	MaxDepth      int                      `yaml:"max_depth"`
-	MaxComplexity int                      `yaml:"max_complexity"`
-	FieldCasing   string                   `yaml:"field_casing"`
-	GqlgenConfig  string                   `yaml:"gqlgen_config"`
-	GqlgenBin     string                   `yaml:"gqlgen_bin"`
-	Scalars       map[string]ScalarBinding `yaml:"scalars"`
+	Enabled        bool                     `yaml:"enabled"`
+	SchemaDir      string                   `yaml:"schema_dir"`
+	ResolverDir    string                   `yaml:"resolver_dir"`
+	Package        string                   `yaml:"package"`
+	MaxDepth       int                      `yaml:"max_depth"`
+	MaxComplexity  int                      `yaml:"max_complexity"`
+	ServerScaffold *bool                    `yaml:"server_scaffold"`
+	FieldCasing    string                   `yaml:"field_casing"`
+	GqlgenConfig   string                   `yaml:"gqlgen_config"`
+	GqlgenBin      string                   `yaml:"gqlgen_bin"`
+	Scalars        map[string]ScalarBinding `yaml:"scalars"`
 }
 
 // ScalarBinding declares a custom GraphQL scalar's Go type and marshaling
@@ -1916,6 +1921,9 @@ func applyAPIDefaults(cfg *RootConfig) {
 	}
 	if g.MaxComplexity == 0 {
 		g.MaxComplexity = 1000
+	}
+	if g.ServerScaffold == nil {
+		g.ServerScaffold = new(true)
 	}
 	if g.FieldCasing == "" {
 		g.FieldCasing = FieldCasingCamel

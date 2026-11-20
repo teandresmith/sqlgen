@@ -56,6 +56,7 @@ type UserListResult {
 }
 
 input UserFilter {
+  id: NumericComparator
   name: StringComparator
   email: StringComparator
   role: StringComparator

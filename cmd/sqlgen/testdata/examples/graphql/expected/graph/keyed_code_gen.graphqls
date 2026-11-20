@@ -32,6 +32,7 @@ type KeyedCodeListResult {
 }
 
 input KeyedCodeFilter {
+  id: IDComparator
   code: StringComparator
   name: StringComparator
   entries: KeyedCodeEntryFilter

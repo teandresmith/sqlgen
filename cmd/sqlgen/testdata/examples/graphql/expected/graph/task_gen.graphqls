@@ -34,6 +34,7 @@ type TaskListResult {
 }
 
 input TaskFilter {
+  id: IDComparator
   workspaceID: IDComparator
   cycleID: NullableIDComparator
   title: StringComparator

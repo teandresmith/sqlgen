@@ -552,12 +552,14 @@ func TestComparatorFamilies_emittedOnlyWhenReferenced(t *testing.T) {
 	out := renderAPISharedSchema(t, apiCtx)
 
 	mustContain(t, out, "input StringComparator {")
+	// The uuid PK references IDComparator; its nullable twin has no column.
+	mustContain(t, out, "input IDComparator {")
 	for _, absent := range []string{
 		"input NullableStringComparator {",
+		"input NullableIDComparator {",
 		"input TimeComparator {",
 		"input NumericComparator {",
 		"input BooleanComparator {",
-		"input IDComparator {",
 		"input DecimalComparator {",
 	} {
 		if strings.Contains(out, absent) {
