@@ -3802,7 +3802,7 @@ Closure is `/close-phase 34`, with no sub-item of its own. It flips the design d
 
 ## Phase 35: Renaming a Detected Relationship
 
-> **Status: Planned.** Design doc `docs/design/DETECTED_EDGE_RENAME.md` (approved 2026-11-20; rulings Q1–Q4 settled 2026-11-20, §11). Prototype `.claude/prototypes/DETECTED_EDGE_RENAME.patch`. Source: `sqlgen-example` v0.1.2 findings, #5.
+> **Status: Complete (closed 2026-11-20).** Design doc `docs/design/DETECTED_EDGE_RENAME.md` (SYNCED 2026-11-20; rulings Q1–Q4 settled 2026-11-20, §11). Task file `docs/tracker/phase-35.md`. All 4 sub-items (35.0–35.3) landed. Full sweep clean under `-race` (check 223s / static-examples 20s / conformance 794s, 6292 pass / 80 untested of 6372 rows), no flakes. No FIX originated in the phase. Source: `sqlgen-example` v0.1.2 findings, #5.
 
 **Why.**
 - **Renaming a detected edge loses facts or duplicates fields.** Declaring the edge alone emits two fields over one foreign key. Excluding and declaring it drops the manifest `constraint` (design §1.1).

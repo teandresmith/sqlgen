@@ -1,6 +1,6 @@
 # Renaming a Detected Relationship
 
-> **Status:** approved (2026-11-20; drafted 2026-11-19). Verified against source at `82544e16`. Today you can rename an
+> **Status: SYNCED — superseded by PRD §4.8/§4.13/§13.4/§30.4.2 (2026-11-20, Phase 35 closed).** Previously: approved 2026-11-20, drafted 2026-11-19. Verified against source at `82544e16`. Today you can rename an
 > FK-detected relationship only by excluding it and declaring it again by hand. Forget the
 > exclusion and the table gets two fields over one foreign key. Remember it and the manifest loses
 > the edge's FOREIGN KEY `constraint`. This note proposes two rules:

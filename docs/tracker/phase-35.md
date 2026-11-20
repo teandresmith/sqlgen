@@ -1,6 +1,6 @@
 # Phase 35: Renaming a Detected Relationship
 
-Status: In Progress
+Status: Complete (closed 2026-11-20)
 PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 > **Design.** `docs/design/DETECTED_EDGE_RENAME.md`, approved 2026-11-20, is the source for every
