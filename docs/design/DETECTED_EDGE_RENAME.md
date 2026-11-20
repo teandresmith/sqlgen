@@ -493,7 +493,7 @@ switches to the exported label.
   - New rows from §6.1.
   - `manifest.json.rel.constraint-manual-omitted` narrows to "a manual relationship with no FOREIGN
     KEY behind it".
-- **Design notes.** `COMPOSITE_FK_RELATIONSHIPS.md` is SYNCED. Its §3 and §7.1 statements about
+- **Design notes.** `COMPOSITE_FK_RELATIONSHIPS.md` is SYNCED. Its §6.2 and §7.1 statements about
   manual replacement get a pointer to this note.
 
 ## 9. Plan

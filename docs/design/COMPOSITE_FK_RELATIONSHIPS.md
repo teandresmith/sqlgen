@@ -521,7 +521,8 @@ structs.
 - **Detection on schemas with composite FKs:** a junction's ends can move (§4.2 rule 4).
 - **Consumers:** a manual relationship that duplicates a detected one replaces it with a
   warning (PRD §13.4), so a consumer that applied the §1.4 workaround keeps working until it
-  removes it.
+  removes it. A manual relationship over exactly a detected edge's key takes its place with no
+  warning ([`DETECTED_EDGE_RENAME.md`](DETECTED_EDGE_RENAME.md)).
 
 ## 7. Rulings (settled 2026-10-20)
 
@@ -554,7 +555,7 @@ recommended option:
 | Manifest `junction` shape | **Nested, like `fk`:** `{table, schema, local_fk: {columns, references, constraint}, target_fk: {…}}` (PRD §30.4.2). |
 | Nested child input and the tenant column | **Every key member is elided, tenant column included**, and set from the parent; a tenancy-set value that disagrees is `ErrAlreadyRelated`. E1 therefore covers every member, the tenant column included, which supersedes R1's "every non-tenant member". Keeping the tenant column in the input would have added a field to a single-column tenant FK edge, an N = 1 change. |
 | PK-override target | **Rule 1 also accepts the declared PRIMARY KEY constraint.** With `primary_key.columns: [code]` on `cycles(id PK, code UNIQUE)`, `tasks.cycle_id → cycles(id)` keeps its edge and loads through `id`, as §4.9 expects. |
-| Residual name collision | **Checked after `exclude_relationships` and manual replacements** (resolution-level), so the remedy it names can clear it. Detection still renames; the error lives where exclusions are known. |
+| Residual name collision | **Checked after `exclude_relationships` and manual replacements** (resolution-level), so the remedy it names can clear it. Detection still renames; the error lives where exclusions are known. Declaring one edge over its key also clears it ([`DETECTED_EDGE_RENAME.md`](DETECTED_EDGE_RENAME.md)). |
 | `MATCH FULL` `connect` with a pinned member | **Generated only with `allow_reparent: true`.** Such a key never has an unparented row, so the default `connect` could only report a no-op or a conflict. Dropped silently, as a schema fact. |
 | `Filter.PKs` and tuple IN | **PRD §9.8.13 states the code:** OR-of-ANDs on every dialect. Routing it through `BuildCompositePKBatchCondition` is a backlog line, since it moves every composite-PK example's Go goldens. |
 

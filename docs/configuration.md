@@ -438,7 +438,6 @@ tables:
         table: tasks
         fk: [workspace_id, cycle_id]   # → cycles (workspace_id, id)
   tasks:
-    exclude_relationships: [task_assignees]
     relationships:
       - name: Assignees
         type: m2m
@@ -451,11 +450,13 @@ tables:
 The other fields are `side` (O2O: `parent` or `child`), `filter` or `discriminator` (polymorphic
 edges, mutually exclusive), `sort` (O2M and M2M), and `description`.
 
-**Renaming a detected edge** currently takes both keys: exclude the detected name, then declare the
-edge under the name you want, as `Assignees` does above. A declared relationship that resolves to the
-same Go field as a detected one replaces it, with a warning naming both. If you want both edges, give
-the declared one a different name. A declared edge has no FOREIGN KEY constraint behind it, so its
-manifest entry has no `constraint`.
+**Renaming a detected edge** takes a single declaration over the same key, as `Assignees` does
+above. A declared edge with no `filter` or `discriminator`, of the same kind and target and over the
+same key column pairs (for M2M, the same junction and both junction keys), takes the detected edge's
+place, with no warning and no `exclude_relationships` entry. Its manifest entry keeps the FOREIGN
+KEY's `constraint`. A declared edge over a different key that resolves to the same Go field as a
+detected one also replaces it, with a warning naming both. If you want both edges, give the declared
+one a different name, and a different key or a `filter`. A declared key no FOREIGN KEY declares has no `constraint`.
 
 ## `views`
 

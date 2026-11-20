@@ -1,6 +1,6 @@
 # Phase 35: Renaming a Detected Relationship
 
-Status: Not Started
+Status: In Progress
 PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 > **Design.** `docs/design/DETECTED_EDGE_RENAME.md`, approved 2026-11-20, is the source for every
@@ -30,20 +30,20 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 **PRD Reference:** Sections 4.8, 4.13, 5.3, 13.4, 30.4.2
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] §13.4, "A manual relationship joins the referenced table's primary key" paragraph: replace the "has no FOREIGN KEY constraint behind it" sentence with design §8's constraint-naming wording.
-- [ ] §13.4: add design §8's "A manual edge over a detected edge's key is that edge, renamed" paragraph after "Auto-detected relationships can be disabled…".
-- [ ] §13.4, "Detection can leave an edge to be declared": replace the collision recipe with design §8's wording.
-- [ ] §4.13, "Two detected relationships keep one name" row: add "(including one a declared edge takes over, [13.4])".
-- [ ] §30.4.2, the `constraint` and `columns` bullets: design §8's wording.
-- [ ] §4.8, the `relationships` row: add the takeover sentence.
-- [ ] `docs/configuration.md` → Relationships, "Renaming a detected edge": a single declaration over the same key renames the edge and keeps its `constraint`. Drop `exclude_relationships: [task_assignees]` from the example.
-- [ ] Registry: narrow `gen.manual.replaces-inferred` to edges whose key differs, and `manifest.json.rel.constraint-manual-omitted` to "a manual relationship with no FOREIGN KEY behind it". Add the design §6.1 rows, with status planned.
-- [ ] `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §3 and §7.1: add a pointer to this design where they describe manual replacement.
-- [ ] Run `make req-check`. Review and `make req-rehash SECTIONS=4.8,4.13,13.4,30.4.2`.
+- [x] §13.4, "A manual relationship joins the referenced table's primary key" paragraph: replace the "has no FOREIGN KEY constraint behind it" sentence with design §8's constraint-naming wording.
+- [x] §13.4: add design §8's "A manual edge over a detected edge's key is that edge, renamed" paragraph after "Auto-detected relationships can be disabled…".
+- [x] §13.4, "Detection can leave an edge to be declared": replace the collision recipe with design §8's wording.
+- [x] §4.13, "Two detected relationships keep one name" row: add "(including one a declared edge takes over, [13.4])".
+- [x] §30.4.2, the `constraint` and `columns` bullets: design §8's wording.
+- [x] §4.8, the `relationships` row: add the takeover sentence.
+- [x] `docs/configuration.md` → Relationships, "Renaming a detected edge": a single declaration over the same key renames the edge and keeps its `constraint`. Drop `exclude_relationships: [task_assignees]` from the example.
+- [x] Registry: narrow `gen.manual.replaces-inferred` to edges whose key differs, and `manifest.json.rel.constraint-manual-omitted` to "a manual relationship with no FOREIGN KEY behind it". Add the design §6.1 rows, with status planned.
+- [x] `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §6.2 and §7.1: add a pointer to this design where they describe manual replacement.
+- [x] Run `make req-check`. Review and `make req-rehash SECTIONS=4.8,4.13,13.4,30.4.2`.
 
 ### Acceptance Criteria
 
@@ -56,11 +56,23 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 ### Tests Required
 
-- [ ] `make req-check` clean, with every new row citing its planned test name.
+- [x] `make req-check` clean, with every new row planned (empty Tests cell; design §6.1 holds the planned test name).
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.** Docs only, no code.
+
+- **PRD:** §13.4 gains design §8's constraint-naming sentence, the "A manual edge over a detected edge's key is that edge, renamed" paragraph and the new collision recipe. §4.13's residual-collision row counts a taken-over edge as replaced. §30.4.2's `constraint` and `columns` bullets carry design §8's wording. §4.8's `relationships` row gains the takeover sentence.
+- **`docs/configuration.md`:** "Renaming a detected edge" now says a single declaration over the same key renames the edge and keeps its `constraint`. The `exclude_relationships: [task_assignees]` line is gone from the example.
+- **Registry:**
+  - `cli/gen.md` §13.4: `gen.manual.replaces-inferred` narrowed to a manual edge over a different key. It drops the two `DeclaredReplacesInferred` cases that 35.3 flips (`declared name collides with inferred edge`, `declared name distinct from inferred edge`); they move to `rename.takeover.no-warning` and `rename.takeover.distinct-name` in 35.3. Fifteen planned rows: `rename.constraint.{o2m,belongs-to,has-one,m2m,composite,pairs-not-set,filtered}` and `rename.takeover.{o2m,belongs-to,m2m,composite,self-m2m,no-warning,distinct-name,only-same-key}`, with design §6.3's matrix cells.
+  - `cli/manifest.md` §30.4.2: `manifest.json.rel.constraint-manual-omitted` narrowed to a manual relationship with no FOREIGN KEY behind it; planned row `rename.constraint.unnamed-sqlite` (sqlite).
+  - `cli/config.md` §4.13: planned row `rename.takeover.clears-collision` (`config-validation: relationship-name-duplicate × fires`).
+  - All seventeen have empty Tests cells, as 34.0's planned rows do: `reqcheck` resolves every cited test, so a name that doesn't exist yet can't be cited. Design §6.1 holds each row's planned test name.
+  - Reviewed the existing rows under §4, §4.8, §4.13, §13.4, §30, §30.4 and §30.4.2 against the new text; they still hold. Rehashed those seven anchors.
+- **Design:** `COMPOSITE_FK_RELATIONSHIPS.md` §6.2 (Consumers) and §7.1 point to `DETECTED_EDGE_RENAME.md`. The task and design §8 said §3, which has no manual-replacement statement; both are corrected.
+- **Review (sqlgen-reviewer):** PRD 5/5, no defects. Applied its inline fixes: §13.4's field-name paragraph is now the "otherwise" case, over another key; §4.8's row states the takeover first; `configuration.md` says keeping both edges also needs a different name; `…/exclude_relationships alongside the declaration` moved from `gen.manual.replaces-inferred` to `gen.manual.exclude-relationships`; the Tests Required wording; the design pointer above. Rehashed §4, §4.8 and §13.4 again.
+- **Checks:** `make req-check`, `make refs-check` and `make tracker-check` pass.
 
 ## 35.1 Regression guards — coexistence and a fixture move
 
