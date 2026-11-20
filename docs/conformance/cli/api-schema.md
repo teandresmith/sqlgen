@@ -5,7 +5,7 @@
 The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's GraphQL rows), emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. The `api-generation` matrix and its rows for these sections are in [`api.md`](api.md).
 
 ## §26 API Generation
-<!-- prd: 26 sha256: 3dbb80152d1d1942 -->
+<!-- prd: 26 sha256: f505d693958cc74e -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -25,7 +25,7 @@ The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's Gra
 | api.protocols.graphql-gqlgen-resolvers | With `api.graphql.enabled`, generation emits gqlgen resolver implementations (resolver helpers plus seed delegations gqlgen's resolvergen keeps) | `unit: cmd/sqlgen/gen: TestResolvers_QMShape_NoQueryResolverMethods`; `unit: cmd/sqlgen/gen: TestSeeds_DelegateToQM`; `golden: graphql` | all | |
 
 ## §26.3 Configuration
-<!-- prd: 26.3 sha256: 9033b3e82890e295 -->
+<!-- prd: 26.3 sha256: b7b427dbe003be2e -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -38,6 +38,8 @@ The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's Gra
 | api.config.package-derived | `api.graphql.package` defaults to a name derived from `resolver_dir` | `unit: cmd/sqlgen/config: TestAPIDefaults/package is derived from resolver_dir`; `unit: cmd/sqlgen/config: TestAPIDefaults/an explicit package is kept` | all | |
 | api.config.max-depth-default | `api.graphql.max_depth` defaults to `5` | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` | all | |
 | api.config.max-complexity-default | `api.graphql.max_complexity` defaults to `1000` | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` | all | |
+| api.config.server-scaffold-default | An unset `api.graphql.server_scaffold` behaves as `true` |  | all | |
+| api.config.server-scaffold-schema | The JSON Schema accepts `api.graphql.server_scaffold` as a boolean and rejects any other type |  | all | |
 | api.config.field-casing-default | `api.graphql.field_casing` defaults to `camel_case` | `unit: cmd/sqlgen/config: TestAPIDefaults/field casing defaults to camel_case` | all | |
 | api.config.field-casing-invalid | A `field_casing` other than `camel_case` / `snake_case` is a config error naming `field_casing` | `unit: cmd/sqlgen/gen: TestValidateAPIConfig_rejectsBadFieldCasing`; `unit: cmd/sqlgen/config: TestValidatePreParse_APIGraphQLDisabledIsInert/enabled rejects invalid field_casing`; `unit: cmd/sqlgen/config: TestSchemaV1_rejectsKnownMistakes/invalid graphql field casing` | all | |
 | api.config.gqlgen-config-default | `api.graphql.gqlgen_config` defaults to `./gqlgen.yml` | `unit: cmd/sqlgen/config: TestAPIDefaults/gqlgen_config defaults to ./gqlgen.yml` | all | |

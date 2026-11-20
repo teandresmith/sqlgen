@@ -1,7 +1,7 @@
 # Phase 34: GraphQL Server Scaffold Opt-Out
 
-Status: Not Started
-PRD Sections: 4 (API config table), 23 (`diff`), 26.5.6, 26.6
+Status: In Progress
+PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 > **Design.** `docs/design/SERVER_SCAFFOLD.md`, approved 2026-11-20, is the source for every
 > sub-item below. Its §9 lists sub-items N.0–N.3, which are 34.0–34.3 here. Its §6 behavior
@@ -18,19 +18,19 @@ PRD Sections: 4 (API config table), 23 (`diff`), 26.5.6, 26.6
 >   in the Completion Record.
 > - **Findings** go through `/fix` → Findings triage.
 
-## 34.0 PRD sync — `server_scaffold` in §4, §26.5.6 and §26.6
+## 34.0 PRD sync — `server_scaffold` in §26.3, §26.5.6 and §26.6
 
-**PRD Reference:** Sections 4 (API config table), 26.5.6, 26.6
+**PRD Reference:** Sections 26.3 (API config table), 26.5.6, 26.6
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add the `api.graphql.server_scaffold` row to the PRD API config table, after `api.graphql.max_complexity` (design §8 wording).
-- [ ] Replace the `graph/server.go` row of the §26.5.6 file table with design §8's wording.
-- [ ] Append design §8's `server_scaffold` sentence to the §26.6 protections bullet that names `limits_gen.go`.
-- [ ] Add the design §6.1 rows to `docs/conformance/cli/api.md` (the `server.go` / limits rows) and `docs/conformance/cli/config-fields.md` (the `config-fields` default / explicit / schema cells), with status planned.
-- [ ] Run `make req-check`. Review the registry rows for §4, §26.5.6 and §26.6, then `make req-rehash SECTIONS=…` for those sections.
+- [x] Add the `api.graphql.server_scaffold` row to the PRD API config table, after `api.graphql.max_complexity` (design §8 wording).
+- [x] Replace the `graph/server.go` row of the §26.5.6 file table with design §8's wording.
+- [x] Append design §8's `server_scaffold` sentence to the §26.6 protections bullet that names `limits_gen.go`.
+- [x] Add the design §6.1 rows to `docs/conformance/cli/api.md` (the `server.go` / limits rows) and `docs/conformance/cli/api-schema.md` §26.3 (the default and schema rows, beside the other `api.graphql` defaults), with empty Tests cells (planned).
+- [x] Run `make req-check`. Review the registry rows for §26.3, §26.5.6 and §26.6, then `make req-rehash SECTIONS=…` for those sections.
 
 ### Acceptance Criteria
 
@@ -40,11 +40,27 @@ PRD Sections: 4 (API config table), 23 (`diff`), 26.5.6, 26.6
 
 ### Tests Required
 
-- [ ] `make req-check` clean, with every new row citing its planned test name.
+- [x] `make req-check` clean. The new rows have empty Tests cells, since `req-check` rejects a citation of a test that doesn't exist yet; the planned test names are listed against each row's sub-item in this file.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.**
+
+- **PRD:** §26.3 API config table gains the `api.graphql.server_scaffold` row; the §26.5.6 file table's `graph/server.go` row and the §26.6 protections bullet carry design §8's wording.
+- **Registry:**
+  - `docs/conformance/cli/api.md`: four planned rows, `api.artifacts.server-go-scaffold-off`, `…-scaffold-off-kept`, `…-scaffold-off-diff` and `api.complexity.scaffold-off-limits-written`.
+  - `docs/conformance/cli/api-schema.md` §26.3: two planned rows, `api.config.server-scaffold-default` and `api.config.server-scaffold-schema`.
+  - All six have empty Tests cells.
+  - Rehashed §26, §26.3, §26.5, §26.5.6 and §26.6 after review. The existing rows still hold.
+- **Deviation:** the config rows went to `api-schema.md` §26.3 rather than `config-fields.md`, because the PRD's API config table is in §26.3 and its existing `api.graphql.*` default rows live there. Design §8 is corrected to match.
+- **Checks:** `make req-check`, `make refs-check` and `make tracker-check` pass. No code changed.
+- **Review (sqlgen-reviewer):** PRD 5/5, no defects. Applied its inline fixes:
+  - the §4 → §26.3 API-config-table references in this file, `STATUS.md`, `IMPLEMENTATION_ORDER.md` and design §2.1/§6.1/§8;
+  - this file's header status (In Progress);
+  - `api.artifacts.server-go` narrowed to an unset or `true` `server_scaffold`;
+  - a design §6.3 note on where the config rows landed;
+  - design §8's PRD line refs.
+- **Ruling (2026-11-20):** the `server_scaffold: false` guidance names both helpers. A hand-written server calls `ApplyQueryLimits` and wraps its handler in `sqlgenresolver.WithCallOptionsMiddleware` (§26.11 headers). Added to the §26.5.6 row and the §26.6 sentence, and to design §8.
 
 ## 34.1 Regression guard — `diff` and an existing `server.go`
 
@@ -71,7 +87,7 @@ _Filled in when complete: files changed, commit references, notes._
 
 ## 34.2 Config — the `server_scaffold` key, its default and its JSON Schema
 
-**PRD Reference:** Sections 4 (API config table), 4.14
+**PRD Reference:** Sections 26.3 (API config table), 4.14
 
 **Status:** Not Started
 
@@ -81,6 +97,7 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] Default an unset value to `true` in the `api.graphql` defaults block, next to `max_depth` / `max_complexity`.
 - [ ] Add `server_scaffold` to the `graphql` object in `cmd/sqlgen/config/schema/v1.json`: `{"type": "boolean", "default": true, "description": …}`.
 - [ ] Add a `fieldValueTypes` case for the key.
+- [ ] Fill the Tests cells of `api.config.server-scaffold-default` and `api.config.server-scaffold-schema` in `docs/conformance/cli/api-schema.md`.
 
 ### Acceptance Criteria
 
@@ -109,7 +126,7 @@ _Filled in when complete: files changed, commit references, notes._
 
 - [ ] Pass the resolved `server_scaffold` into `generateAPIServerFiles` / `generateAPIServerFile` (`cmd/sqlgen/gen/orchestrate.go`, `cmd/sqlgen/gen/api_limits.go`). When it's `false`, return `"", nil` before the `os.Stat` check.
 - [ ] Leave `generateAPILimitsFile` unchanged.
-- [ ] `docs/configuration.md` § `api.graphql`: add the `server_scaffold` row, and change the "deleting it doesn't stick" sentence to name the key.
+- [ ] `docs/configuration.md` § `api.graphql`: add the `server_scaffold` row, and change the "deleting it doesn't stick" sentence to name the key. Say that a hand-written server calls `ApplyQueryLimits` and wraps its handler in `WithCallOptionsMiddleware`.
 - [ ] Move each design §6.1 registry row from planned to its test.
 
 ### Acceptance Criteria

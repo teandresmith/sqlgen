@@ -37,7 +37,7 @@ runs `Generate` on a project with no `server.go` and finds one written.
 `<configured resolver_dir>/server.go` exists (`:87`). If it doesn't, the file is written. No
 config is read. `generateAPIServerFiles` (`cmd/sqlgen/gen/orchestrate.go:1197-1213`) calls it on
 every run in which the API is generated. PRD §26.5.6's file table
-(`docs/PRD.md:13396`, "`graph/server.go` | sqlgen (one-shot) | **Only if missing**") offers no
+(`docs/PRD.md:13397`, "`graph/server.go` | sqlgen (one-shot) | **Only if missing**") offers no
 opt-out.
 
 ## 2. Scope
@@ -46,7 +46,7 @@ opt-out.
 
 - A config key, `api.graphql.server_scaffold`, which turns off writing `server.go`.
 - Its JSON Schema entry, its default, and its documentation in `docs/configuration.md`.
-- PRD §4 (API config table), §26.5.6 and §26.6 wording.
+- PRD §26.3 (API config table), §26.5.6 and §26.6 wording.
 
 ### 2.2 Non-goals
 
@@ -149,9 +149,9 @@ deletes it (§2.2).
 | scaffold.off-not-written | With `api.graphql.server_scaffold: false`, `generate` writes no `server.go` and does not list it among the files it wrote | §26.5.6 (proposed in §8) | all | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false writes no server.go` | api-generation: `graph/server.go` × single PK | planned |
 | scaffold.off-limits-still-written | With `api.graphql.server_scaffold: false`, `sqlgenresolver/limits_gen.go` is still written with the configured `max_depth` and `max_complexity` | §26.6 (proposed in §8) | all | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false still writes the limits file` | api-generation: `sqlgenresolver/limits_gen.go` × single PK | planned |
 | scaffold.off-existing-kept | With `api.graphql.server_scaffold: false`, an existing `server.go` is left byte-for-byte unchanged | §26.5.6 (proposed in §8) | all | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/server_scaffold false leaves an existing server.go untouched` | api-generation: `graph/server.go` × single PK | planned |
-| scaffold.default-true | An unset `api.graphql.server_scaffold` behaves as `true` | §4 API config table (proposed in §8) | all | `unit: cmd/sqlgen/config: TestLoad_GraphQLServerScaffoldDefault` | config-fields: `api.graphql.server_scaffold` × default | planned |
+| scaffold.default-true | An unset `api.graphql.server_scaffold` behaves as `true` | §26.3 API config table (proposed in §8) | all | `unit: cmd/sqlgen/config: TestLoad_GraphQLServerScaffoldDefault` | config-fields: `api.graphql.server_scaffold` × default | planned |
 | scaffold.diff-not-proposed | With `api.graphql.server_scaffold: false` and no `server.go` on disk, `sqlgen diff` reports no `server.go` change | §23 `diff` coverage + §26.5.6 (proposed in §8) | all | `unit: cmd/sqlgen/cli: TestDiff_ServerScaffoldOffProposesNoServer` | commands: `diff` × success × output | planned |
-| scaffold.schema-accepts | The JSON Schema accepts `api.graphql.server_scaffold` as a boolean and rejects a non-boolean | §4 (proposed in §8) | all | `unit: cmd/sqlgen/config: TestSchemaV1_fieldValueTypes/api.graphql.server_scaffold` | config-fields: `api.graphql.server_scaffold` × schema | planned |
+| scaffold.schema-accepts | The JSON Schema accepts `api.graphql.server_scaffold` as a boolean and rejects a non-boolean | §26.3 (proposed in §8) | all | `unit: cmd/sqlgen/config: TestSchemaV1_fieldValueTypes/api.graphql.server_scaffold` | config-fields: `api.graphql.server_scaffold` × schema | planned |
 
 ### 6.2 Regression guards
 
@@ -194,6 +194,8 @@ loader, so the config-validation matrix gains no row.
 |---|---|---|
 | `diff` (`server_scaffold: false`, no `server.go`) | scaffold.diff-not-proposed | scaffold.diff-not-proposed |
 
+The config rows landed in `api-schema.md` §26.3, which declares no matrix, so they carry no matrix cell. The `server.go` rows in `api.md` leave the cell empty, as the existing `server.go` rows do.
+
 ### 6.4 Dialect differences
 
 None. The key touches only GraphQL file emission, which doesn't vary by dialect.
@@ -209,17 +211,18 @@ None. The key touches only GraphQL file emission, which doesn't vary by dialect.
 
 ## 8. PRD and doc impact
 
-**PRD §26.5.6, file table row** (`docs/PRD.md:13396`):
+**PRD §26.5.6, file table row** (`docs/PRD.md:13397`):
 
-> | `graph/server.go` | sqlgen (one-shot) | **Only if missing**, and only while `api.graphql.server_scaffold` is `true` (the default) | Yes — entry-point bootstrapping. With `server_scaffold: false` sqlgen never writes it and never touches one that exists; a hand-written server calls `sqlgenresolver.ApplyQueryLimits` itself ([§26.6](#266-query-complexity-limits)). |
+> | `graph/server.go` | sqlgen (one-shot) | **Only if missing**, and only while `api.graphql.server_scaffold` is `true` (the default) | Yes — entry-point bootstrapping. With `server_scaffold: false` sqlgen never writes it and never touches one that exists; a hand-written server calls `sqlgenresolver.ApplyQueryLimits` itself ([§26.6](#266-query-complexity-limits)) and wraps its handler in `sqlgenresolver.WithCallOptionsMiddleware` for the per-call headers ([§26.11](#2611-per-call-options-via-http-headers)). |
 
-**PRD §26.6, protections bullet** (`docs/PRD.md:13462`), append:
+**PRD §26.6, protections bullet** (`docs/PRD.md:13463`), append:
 
 > With `api.graphql.server_scaffold: false` no `server.go` is written, and `limits_gen.go` is
 > written all the same: a consumer that builds its own `handler.Server` applies the configured
-> limits by calling `sqlgenresolver.ApplyQueryLimits(srv)` on it.
+> limits by calling `sqlgenresolver.ApplyQueryLimits(srv)` on it, and wraps it in
+> `sqlgenresolver.WithCallOptionsMiddleware` as the scaffold does ([§26.11](#2611-per-call-options-via-http-headers)).
 
-**PRD API config table** (after `api.graphql.max_complexity`, `docs/PRD.md:12315`):
+**PRD §26.3 API config table** (after `api.graphql.max_complexity`, `docs/PRD.md:12315`):
 
 > | `api.graphql.server_scaffold` | `bool` | `true` | Write the one-time `server.go` into `resolver_dir` when it is missing ([§26.5.6](#2656-module-boundary--wrapper-subcommand)). Set `false` when the application builds its own `handler.Server`; `limits_gen.go` is still generated ([§26.6](#266-query-complexity-limits)). |
 
@@ -228,7 +231,7 @@ None. The key touches only GraphQL file emission, which doesn't vary by dialect.
 
 **`cmd/sqlgen/config/schema/v1.json`:** `"server_scaffold": {"type": "boolean", "default": true, "description": …}`.
 
-**Registry** (`docs/conformance/cli/api.md`, `config-fields.md`): the §6.1 rows move there in N.0.
+**Registry** (`docs/conformance/cli/api.md`, and `api-schema.md` §26.3 for the config rows beside the other `api.graphql` defaults): the §6.1 rows move there in N.0.
 
 ## 9. Plan
 

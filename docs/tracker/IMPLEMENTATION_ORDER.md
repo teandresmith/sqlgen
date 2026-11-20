@@ -3784,7 +3784,7 @@ Closure is `/close-phase 33`, with no sub-item of its own. It flips the design d
 **Why.**
 - **`server.go` can't be removed.** `generate` writes `<resolver_dir>/server.go` whenever it's missing (`cmd/sqlgen/gen/api_limits.go:79-113`), so an app that builds its own `handler.Server` keeps getting a file it never uses (design §1).
 
-**Normative spec:** design doc §5. 34.0 writes it into PRD §4 (API config table), §26.5.6 and §26.6, `docs/configuration.md` and `v1.json` (design §8).
+**Normative spec:** design doc §5. 34.0 writes it into PRD §26.3 (API config table), §26.5.6 and §26.6, `docs/configuration.md` and `v1.json` (design §8).
 
 **Depends on:** nothing open. Independent of Phase 35.
 

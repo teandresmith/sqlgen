@@ -12313,6 +12313,7 @@ api:
 | `api.graphql.package` | `string` | derived from `resolver_dir` | Explicit Go package name for generated resolver code. |
 | `api.graphql.max_depth` | `int` | `5` | Maximum allowed relationship nesting depth in queries. |
 | `api.graphql.max_complexity` | `int` | `1000` | gqlgen complexity gate (each relationship field adds to query complexity; queries exceeding the limit are rejected before execution). |
+| `api.graphql.server_scaffold` | `bool` | `true` | Write the one-time `server.go` into `resolver_dir` when it is missing ([§26.5.6](#2656-module-boundary--wrapper-subcommand)). Set `false` when the application builds its own `handler.Server`; `limits_gen.go` is still generated ([§26.6](#266-query-complexity-limits)). |
 | `api.graphql.field_casing` | `string` | `"camel_case"` | Casing convention for GraphQL field names — `camel_case` or `snake_case`. See "GraphQL Field Casing" below. |
 | `api.graphql.gqlgen_config` | `string` | `"./gqlgen.yml"` | Path to the consumer-owned `gqlgen.yml`. The wrapper subcommand merges sqlgen-owned entries into a temp config; the on-disk file is never modified. See §26.5.6. |
 | `api.graphql.gqlgen_bin` | `string` | `"go run github.com/99designs/gqlgen"` | Invocation form for the gqlgen binary. Default uses the consumer's own `go.mod` pin to select the gqlgen version. |
@@ -13393,7 +13394,7 @@ This binding is only sound because the runtime `Connection[T] / Edge[T] / Pagina
 | `graph/generated_gen.go` | gqlgen (via wrapper) | After each wrapper run | No (gqlgen-managed) |
 | `graph/model/models_gen.go` | gqlgen (via wrapper) | After each wrapper run | No (gqlgen-managed) — the input types gqlgen generates (`<T>Filter`, `Create<T>Input`, comparators) |
 | `gqlgen.yml` | consumer | No (one-shot scaffold via `sqlgen graphql init` if missing) | Yes — fully consumer-owned; the wrapper reads it on every run to merge sqlgen's entries into a temp config (step 2), and never writes the on-disk file outside the one-shot init |
-| `graph/server.go` | sqlgen (one-shot) | **Only if missing** | Yes — entry-point bootstrapping |
+| `graph/server.go` | sqlgen (one-shot) | **Only if missing**, and only while `api.graphql.server_scaffold` is `true` (the default) | Yes — entry-point bootstrapping. With `server_scaffold: false` sqlgen never writes it and never touches one that exists; a hand-written server calls `sqlgenresolver.ApplyQueryLimits` itself ([§26.6](#266-query-complexity-limits)) and wraps its handler in `sqlgenresolver.WithCallOptionsMiddleware` for the per-call headers ([§26.11](#2611-per-call-options-via-http-headers)). |
 
 #### 26.5.7 Why No Dataloader for Generated Code
 
@@ -13459,7 +13460,7 @@ GraphQL queries can be deeply nested, which could overload the database:
 **Protections:**
 - `api.graphql.max_depth` — rejects queries exceeding the configured nesting depth (default: 5)
 - `gqlgen` complexity calculation — each relationship field adds to query complexity; queries exceeding the limit are rejected before execution
-- These are generated as `gqlgen` server configuration, not custom middleware: the regenerated `graph/sqlgenresolver/limits_gen.go` carries the two configured values and `ApplyQueryLimits(*handler.Server)`, which installs gqlgen's `FixedComplexityLimit` and a depth extension. The one-shot `graph/server.go` ([§26.5.6](#2656-module-boundary--wrapper-subcommand)) calls it, so a later edit to either value reaches an existing server on the next run.
+- These are generated as `gqlgen` server configuration, not custom middleware: the regenerated `graph/sqlgenresolver/limits_gen.go` carries the two configured values and `ApplyQueryLimits(*handler.Server)`, which installs gqlgen's `FixedComplexityLimit` and a depth extension. The one-shot `graph/server.go` ([§26.5.6](#2656-module-boundary--wrapper-subcommand)) calls it, so a later edit to either value reaches an existing server on the next run. With `api.graphql.server_scaffold: false` no `server.go` is written, and `limits_gen.go` is written all the same: a consumer that builds its own `handler.Server` applies the configured limits by calling `sqlgenresolver.ApplyQueryLimits(srv)` on it, and wraps it in `sqlgenresolver.WithCallOptionsMiddleware` as the scaffold does ([§26.11](#2611-per-call-options-via-http-headers)).
 - **Depth** counts relationship fields only: the root field is depth 0 and each relationship field on the path adds one, while connection and list wrappers (`edges`, `node`, `pageInfo`, `items`) and scalar fields add nothing — the example above is depth 3. A query deeper than `max_depth` is rejected before execution.
 
 ### 26.7 GraphQL Authorization
