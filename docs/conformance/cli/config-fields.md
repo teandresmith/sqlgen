@@ -9,7 +9,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 §4.13 validation rules and the package's unclaimed tests stay in [`config.md`](config.md).
 
 ## §4 Configuration System
-<!-- prd: 4 sha256: 5c3b47c473faf7c7 -->
+<!-- prd: 4 sha256: cc44119a29397f51 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -324,7 +324,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config-resolution: overrides.use-pointers × view-inherits | §4.9: ViewConfig has no `overrides` block | |
 
 ## §4.8 TableConfig (per-table)
-<!-- prd: 4.8 sha256: a9d37787663f15c4 -->
+<!-- prd: 4.8 sha256: bd560e49ec9f73b3 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

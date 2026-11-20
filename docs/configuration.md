@@ -79,8 +79,8 @@ settings.
 - [Environment variables](#environment-variables) · [Minimal config](#minimal-config) · [Top level](#top-level)
 - [`input`](#input) · [`connection`](#connection) · [`introspect`](#introspect) · [`exclude_tables`](#exclude_tables)
 - [`output`](#output) · [`generation`](#generation) · [`overrides`](#overrides)
-- [`tables`](#tables-per-table) · [`views`](#views) · [`enums`](#enums) · [`extras`](#extras)
-- [Optional subsystems](#optional-subsystems) · [Worked examples](#worked-examples)
+- [`tables`](#tables-per-table) · [Relationships](#relationships) · [`views`](#views) · [`enums`](#enums) · [`extras`](#extras)
+- [Optional subsystems](#optional-subsystems) · [`api.graphql`](#apigraphql) · [Worked examples](#worked-examples)
 
 ## Minimal config
 
@@ -398,6 +398,65 @@ tables:
       - id
 ```
 
+### Relationships
+
+sqlgen detects relationships from FOREIGN KEY constraints. You configure them per table with two
+keys: `exclude_relationships` drops detected edges, and `relationships` declares edges that
+detection can't find or names differently. PRD §5.3 and §13.4 are the full rules.
+
+**How detected edges are named.** Each FOREIGN KEY gives at most one edge, joining every column
+pair the constraint lists, so a composite key gives one edge, not one per column. The name comes
+from a table:
+
+| Edge | Named after | Example (`tasks.cycle_id → cycles`) |
+|------|-------------|-------------------------------------|
+| O2M | The table holding the foreign key, pluralized | `cycles` gets `tasks` (`Cycle.Tasks`) |
+| O2O | The referenced table | `tasks` gets `cycle` (`Task.Cycle`) |
+| M2M | The table at the other end of the junction | `tasks` gets `labels` through `task_labels` |
+
+When two or more edges share a source and a target, each is renamed from its own key. `<stem>` is
+the key's naming member, a column such as `parent_task_id`, without its `_id` suffix. An O2M edge
+becomes `<stem>_<name>`, an O2O edge becomes `<stem>`, and an M2M edge takes its junction table's
+name. So a second foreign key between the same two tables renames the edges that were already
+there. Adding `tasks.parent_task_id → tasks` beside a `task_dependencies` junction turns
+`Task.Tasks` into `Task.ParentTaskTasks`.
+
+**`exclude_relationships`** lists the detected names to drop. It matches the snake_case detected
+name (`task_assignees`, `parent_task_tasks`), not the Go field name, and a renamed edge also matches
+the name it had before the rename.
+
+**`relationships`** declares an edge. `fk`, `junction_local_fk` and `junction_reference_fk` each take
+a column name or a list. A list maps by position onto the referenced table's primary key, in its
+`PRIMARY KEY (...)` order, and must have one entry per key column:
+
+```yaml
+tables:
+  cycles:
+    relationships:
+      - name: Tasks
+        type: o2m              # o2o | o2m | m2m
+        table: tasks
+        fk: [workspace_id, cycle_id]   # → cycles (workspace_id, id)
+  tasks:
+    exclude_relationships: [task_assignees]
+    relationships:
+      - name: Assignees
+        type: m2m
+        table: users
+        junction: task_assignees
+        junction_local_fk: task_id
+        junction_reference_fk: user_id
+```
+
+The other fields are `side` (O2O: `parent` or `child`), `filter` or `discriminator` (polymorphic
+edges, mutually exclusive), `sort` (O2M and M2M), and `description`.
+
+**Renaming a detected edge** currently takes both keys: exclude the detected name, then declare the
+edge under the name you want, as `Assignees` does above. A declared relationship that resolves to the
+same Go field as a detected one replaces it, with a warning naming both. If you want both edges, give
+the declared one a different name. A declared edge has no FOREIGN KEY constraint behind it, so its
+manifest entry has no `constraint`.
+
 ## `views`
 
 Per-view settings, keyed by view name. Most commonly `cursor_keys`, since a view often lacks the
@@ -430,6 +489,46 @@ Four blocks are disabled unless present. Each is opt-in and independent:
 | `cache` | Read-through caching with invalidation |
 | `events` | Mutation lifecycle events |
 | `tenancy` | Mandatory tenant scoping on every generated query |
+
+## `api.graphql`
+
+`api.graphql` generates a GraphQL schema, gqlgen resolvers and translators into the models package.
+Run `sqlgen graphql init` once to scaffold `gqlgen.yml`. After that, `sqlgen generate` runs the
+gqlgen step too, unless you pass `--no-graphql`. PRD §26 is the full specification.
+
+```yaml
+api:
+  enabled: true
+  graphql:
+    enabled: true
+    schema_dir: graph          # root-relative; default <output.dir>/graph
+    resolver_dir: graph        # root-relative; default <output.dir>/graph
+    max_depth: 5
+    max_complexity: 1000
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Generate the GraphQL surface. Also requires `api.enabled: true`. |
+| `schema_dir` | `<output.dir>/graph` | Directory for `*_gen.graphqls`, relative to the module root. |
+| `resolver_dir` | `<output.dir>/graph` | Directory for resolvers and helpers, relative to the module root. |
+| `package` | from `resolver_dir` | Go package name for the resolver code. |
+| `max_depth` | `5` | Maximum relationship nesting depth. Only relationship fields count toward it. |
+| `max_complexity` | `1000` | gqlgen complexity limit. Queries over it are rejected before execution. |
+| `field_casing` | `camel_case` | `camel_case` or `snake_case` for emitted field names. |
+| `gqlgen_config` | `./gqlgen.yml` | Your `gqlgen.yml`. sqlgen merges its entries into a temporary copy and never edits this file. |
+| `gqlgen_bin` | `go run github.com/99designs/gqlgen` | How to invoke gqlgen. The default uses your `go.mod` pin. |
+| `scalars` | empty | Custom scalar bindings (`go_type`, `marshaling`, `marshaler_package`) added to the built-in set. |
+
+Per table, `tables.<t>.api` sets `enabled` and `operations`.
+
+**The query limits and `server.go`.** `max_depth` and `max_complexity` are written to the regenerated
+`<resolver_dir>/sqlgenresolver/limits_gen.go`, whose `ApplyQueryLimits(*handler.Server)` installs
+them. sqlgen also writes `<resolver_dir>/server.go`, a starter `NewServer` that calls
+`ApplyQueryLimits`. It's yours to edit, and sqlgen never overwrites it. sqlgen does write it again
+whenever the file is missing, though, so deleting it doesn't stick. If you build your own
+`handler.Server`, call `sqlgenresolver.ApplyQueryLimits(srv)` on it so the limits in `sqlgen.yml` are
+the ones the server enforces.
 
 ## Worked examples
 
