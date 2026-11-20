@@ -3779,7 +3779,7 @@ Closure is `/close-phase 33`, with no sub-item of its own. It flips the design d
 
 ## Phase 34: GraphQL Server Scaffold Opt-Out
 
-> **Status: Planned.** Design doc `docs/design/SERVER_SCAFFOLD.md` (approved 2026-11-20; rulings Q1–Q2 settled 2026-11-20, §11). Source: `sqlgen-example` v0.1.2 findings, #4.
+> **Status: Complete (closed 2026-11-20).** Design doc `docs/design/SERVER_SCAFFOLD.md` (SYNCED 2026-11-20; rulings Q1–Q2 settled 2026-11-20, §11). Task file `docs/tracker/phase-34.md`. All 4 sub-items (34.0–34.3) landed. Full sweep clean under `-race` (check 220s / static-examples 19s / conformance 779s, 6272 pass / 80 untested of 6352 rows), no flakes. No FIX originated in the phase. Source: `sqlgen-example` v0.1.2 findings, #4.
 
 **Why.**
 - **`server.go` can't be removed.** `generate` writes `<resolver_dir>/server.go` whenever it's missing (`cmd/sqlgen/gen/api_limits.go:79-113`), so an app that builds its own `handler.Server` keeps getting a file it never uses (design §1).

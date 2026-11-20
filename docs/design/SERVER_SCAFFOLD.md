@@ -1,6 +1,6 @@
 # GraphQL Server Scaffold Opt-Out
 
-> **Status:** approved (2026-11-20; drafted 2026-11-19). Verified against source at `82544e16`. Every `sqlgen generate`
+> **Status: SYNCED — superseded by PRD §26.3/§26.5.6/§26.6 (2026-11-20, Phase 34 closed).** Previously: approved 2026-11-20, drafted 2026-11-19. Verified against source at `82544e16`. Every `sqlgen generate`
 > with `api.graphql.enabled: true` writes the one-time `<resolver_dir>/server.go` when it is
 > missing, so an app that builds its own `handler.Server` cannot get rid of the file: deleting it
 > only brings it back on the next run. This proposes a boolean `api.graphql.server_scaffold`

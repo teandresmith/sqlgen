@@ -1,6 +1,6 @@
 # Phase 34: GraphQL Server Scaffold Opt-Out
 
-Status: Complete (closure pending)
+Status: Complete (closed 2026-11-20)
 PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 > **Design.** `docs/design/SERVER_SCAFFOLD.md`, approved 2026-11-20, is the source for every
