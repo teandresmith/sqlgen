@@ -12449,9 +12449,9 @@ type CycleTasksUpdateNested struct {
 }
 
 // CycleTasksCreateInput is CreateTaskInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type CycleTasksCreateInput struct {
 	SprintID    omittable.Value[*int64]  `json:"sprint_id,omitzero"`
 	ProjectCode omittable.Value[*string] `json:"project_code,omitzero"`
@@ -23048,9 +23048,9 @@ type MilestoneCheckpointsUpdateNested struct {
 }
 
 // MilestoneCheckpointsCreateInput is CreateCheckpointInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type MilestoneCheckpointsCreateInput struct {
 	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
 	Title       string                     `json:"title"`
@@ -26074,9 +26074,9 @@ type MomentOwnerMomentsUpdateNested struct {
 }
 
 // MomentOwnerMomentsCreateInput is CreateMomentInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type MomentOwnerMomentsCreateInput struct {
 	At    time.Time `json:"at"`
 	Label string    `json:"label"`
@@ -46044,9 +46044,9 @@ type SharedGuardianSharedKidsUpdateNested struct {
 }
 
 // SharedGuardianSharedKidsCreateInput is CreateSharedKidInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type SharedGuardianSharedKidsCreateInput struct {
 	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
 	ParentID    omittable.Value[*int64]    `json:"parent_id,omitzero"`
@@ -52575,9 +52575,9 @@ type SharedParentSharedKidsUpdateNested struct {
 }
 
 // SharedParentSharedKidsCreateInput is CreateSharedKidInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type SharedParentSharedKidsCreateInput struct {
 	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
 	GuardianID  omittable.Value[*int64]    `json:"guardian_id,omitzero"`
@@ -59041,9 +59041,9 @@ type SprintTasksUpdateNested struct {
 }
 
 // SprintTasksCreateInput is CreateTaskInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type SprintTasksCreateInput struct {
 	CycleID     omittable.Value[*int64]  `json:"cycle_id,omitzero"`
 	ProjectCode omittable.Value[*string] `json:"project_code,omitzero"`
@@ -87756,9 +87756,9 @@ type TemplateTemplateNotesUpdateNested struct {
 }
 
 // TemplateTemplateNotesCreateInput is CreateTemplateNoteInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type TemplateTemplateNotesCreateInput struct {
 	Body string `json:"body"`
 }
@@ -87798,9 +87798,9 @@ type TemplateTemplateStepsUpdateNested struct {
 }
 
 // TemplateTemplateStepsCreateInput is CreateTemplateStepInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type TemplateTemplateStepsCreateInput struct {
 	Title string `json:"title"`
 }
@@ -94296,9 +94296,9 @@ type WorkspaceWorkspaceNotesUpdateNested struct {
 }
 
 // WorkspaceWorkspaceNotesCreateInput is CreateWorkspaceNoteInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type WorkspaceWorkspaceNotesCreateInput struct {
 	Body string `json:"body"`
 }
@@ -97778,9 +97778,9 @@ type ZonePlotsUpdateNested struct {
 }
 
 // ZonePlotsCreateInput is CreatePlotInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type ZonePlotsCreateInput struct {
 	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
 }
@@ -97830,9 +97830,9 @@ type ZoneSitesUpdateNested struct {
 }
 
 // ZoneSitesCreateInput is CreateSiteInput with the traversed
-// foreign key removed — that column is always set from the parent's primary key,
-// so leaving it would force the caller to supply a value that is then
-// overwritten.
+// foreign key removed — its columns are always set from the parent columns the
+// key references, so leaving them would force the caller to supply values that
+// are then overwritten.
 type ZoneSitesCreateInput struct {
 	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
 }
