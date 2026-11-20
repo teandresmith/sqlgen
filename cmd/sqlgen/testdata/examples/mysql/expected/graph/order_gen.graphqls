@@ -38,6 +38,7 @@ type OrderListResult {
 }
 
 input OrderFilter {
+  id: NumericComparator
   userID: NumericComparator
   status: OrdersStatusEnumComparator
   total: NumericComparator

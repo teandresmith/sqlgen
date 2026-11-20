@@ -5,7 +5,7 @@
 The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's GraphQL rows), emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. The `api-generation` matrix and its rows for these sections are in [`api.md`](api.md).
 
 ## §26 API Generation
-<!-- prd: 26 sha256: b1d71a18235487bb -->
+<!-- prd: 26 sha256: 3dbb80152d1d1942 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -74,7 +74,7 @@ The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's Gra
 | api.casing.walker-matches | The generated `fieldOptionsFromCollected` walkers match the configured casing | `unit: cmd/sqlgen/gen: TestGraphQLCasing_perElementConventions/camel_case/walker cases match the casing`; `unit: cmd/sqlgen/gen: TestGraphQLCasing_perElementConventions/snake_case/walker cases match the casing` | all | |
 
 ## §26.4 GraphQL Schema Generation
-<!-- prd: 26.4 sha256: b4434ea5c04a9a47 -->
+<!-- prd: 26.4 sha256: 4c5f7f1b6bed3962 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -85,6 +85,7 @@ The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's Gra
 | api.map.enum-values-screaming | A GraphQL enum's values are SCREAMING_SNAKE_CASE | `golden: graphql` | all | |
 | api.map.enum-array | A PostgreSQL enum array column (Go `<Enum>Slice`) is `[<Enum>!]!` | `golden: graphql` | postgres | |
 | api.map.mysql-set | A MySQL SET column (Go `<Table><Column>Set`) is `[<Table><Column>SetValue!]!`, a nullable SET dropping only the outer `!` | `unit: cmd/sqlgen/gen: TestScalarBinding_setColumnProjectsEnumList` | mysql | |
+| api.map.filter-pk-columns | Every primary-key column, including each member of a composite key, is a field of the GraphQL `<T>Filter` with its column's comparator, as on the Go `<T>Filter` | `unit: cmd/sqlgen/gen: TestFilterTranslator_TranslatesPKAndColumns`; `unit: cmd/sqlgen/gen: TestComparatorFamilies_emittedOnlyWhenReferenced`; `golden: graphql` | all | |
 | api.map.mysql-set-filter | A MySQL SET column filters through `StringComparator` | `unit: cmd/sqlgen/gen: TestEnumComparator_setColumnKeepsStringComparator` | mysql | |
 | api.map.domain-type | A column of a domain type takes its underlying scalar (`email_address` → `String`) | `unit: cmd/sqlgen/gen: TestGraphQLSchema_domainColumnTakesUnderlyingScalar` | postgres | |
 | api.map.to-one-nullable-whatever-fk | An O2O / M2O relationship field is a nullable `Type`, also over a NOT NULL FK | `unit: cmd/sqlgen/gen: TestMapRelationshipToGraphQL_NoGoTypeSniff/o2o nullable even when FK column is non-null`; `golden: graphql` | all | |
@@ -327,7 +328,7 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
-| gap.api.filter-omits-pk-columns | Every primary-key column (a single PK, every member of a composite PK, an FK that is a PK member) is left out of the GraphQL `<T>Filter`, and the composite `<T>Filter.PKs` is not projected, though the Go `<T>Filter` carries them; §26.4 says the input "mirrors the generated `XFilter` Go struct" | `unit: cmd/sqlgen/gen: TestFilterTranslator_SkipsPKAndUnsupportedComparators` | §26.4 | |
+| gap.api.filter-omits-composite-pks | The composite `<T>Filter.PKs` member is not projected into the GraphQL `<T>Filter`, though the Go `<T>Filter` carries it; §26.4 says the input "mirrors the generated `XFilter` Go struct". Each primary-key column is projected (api.map.filter-pk-columns) | `golden: tenancy` | §26.4 | |
 | gap.api.to-one-filter-no-member | A to-one (O2O) relationship contributes no member to `<T>Filter`; only list relationships do. §26.4's row says "Relationship (as a filter)" without the restriction | `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_MemberPerListRelationship` | §26.4 | |
 | gap.api.output-package-gqlmodel-alias | With GraphQL enabled, `output.package` equal to the sqlgen-controlled `gqlmodel` import alias is a config error | `unit: cmd/sqlgen/config: TestValidatePreParse_GqlgenAliasCollision/graphql enabled with colliding package`; `unit: cmd/sqlgen/config: TestValidatePreParse_GqlgenAliasCollision/graphql disabled — collision check skipped` | §26.3 | |
 | gap.api.disabled-graphql-skips-validation | With `api.enabled` or `api.graphql.enabled` false, `api.graphql.*` fields (field_casing, scalars) are not validated | `unit: cmd/sqlgen/config: TestValidatePreParse_APIGraphQLDisabledIsInert/disabled ignores invalid field_casing`; `unit: cmd/sqlgen/config: TestValidatePreParse_ScalarBindingDisabledIsInert` | §26.3 | |

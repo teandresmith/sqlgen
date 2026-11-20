@@ -49,6 +49,9 @@ func translateAccountFilter(in *gqlmodel.AccountFilter) *models.AccountFilter {
 	if in.Flag != nil {
 		out.Flag = translateNullableBooleanComparator(in.Flag)
 	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.MidCount != nil {
 		out.MidCount = translateNullableNumericComparatorInt32(in.MidCount)
 	}
@@ -117,6 +120,9 @@ func translateEntryFilter(in *gqlmodel.EntryFilter) *models.EntryFilter {
 	}
 	if in.CreatedAt != nil {
 		out.CreatedAt = translateTimeComparator(in.CreatedAt)
+	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
 	}
 	if in.Memo != nil {
 		out.Memo = translateNullableStringComparator(in.Memo)

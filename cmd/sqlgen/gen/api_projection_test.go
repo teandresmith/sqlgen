@@ -485,12 +485,10 @@ func TestFilterProjection_pairsSchemaAndTranslator(t *testing.T) {
 	}
 
 	// Reverse direction: no FilterFields entry may name a translator no
-	// non-PK column projected. PK columns are excluded from the filter
-	// input, so their projections are discarded — counting them here would
-	// let a stale entry that only a PK backs slip through.
+	// filterable column projected.
 	projected := make(map[string]bool, len(tbl.Fields))
 	for _, f := range tbl.Fields {
-		if f.PrimaryKey || !f.Filterable {
+		if !f.Filterable {
 			continue
 		}
 		if f.Filter.TranslatorFunc != "" {
@@ -597,15 +595,16 @@ func TestSortProjection_everySortFieldMatchesSchemaEnum(t *testing.T) {
 func TestSharedSchema_comparatorFamiliesAreUsageDerived(t *testing.T) {
 	apiCtx := projectionAPIContext(t, apiTestSchema())
 
-	// apiTestSchema has a text, a nullable text, an integer, a nullable
-	// jsonb, a numeric and a timestamp — but no boolean and no non-PK ID
-	// column. NullableJSONBComparator is the shipped table's last entry, so
+	// apiTestSchema has a uuid PK, a text, a nullable text, an integer, a
+	// nullable jsonb, a numeric and a timestamp — but no boolean and no
+	// nullable ID column. NullableJSONBComparator is the shipped table's last entry, so
 	// it also shows the family order is the table's and not the schema's.
 	want := []string{
 		"StringComparator",
 		"NullableStringComparator",
 		"NumericComparator",
 		"TimeComparator",
+		"IDComparator",
 		"NullableJSONBComparator",
 	}
 	got := make([]string, 0, len(apiCtx.ComparatorFamilies))

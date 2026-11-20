@@ -38,6 +38,7 @@ type ProfileListResult {
 }
 
 input ProfileFilter {
+  id: IDComparator
   userID: IDComparator
   bio: NullableStringComparator
   avatarURL: NullableStringComparator

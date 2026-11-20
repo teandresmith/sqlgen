@@ -30,6 +30,7 @@ type KeyClassParentListResult {
 }
 
 input KeyClassParentFilter {
+  id: NumericComparator
   keyClassChildren: KeyClassChildFilter
   keyClassRealChildren: KeyClassRealChildFilter
   and: [KeyClassParentFilter!]

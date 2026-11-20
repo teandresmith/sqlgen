@@ -58,6 +58,7 @@ type AccountListResult {
 }
 
 input AccountFilter {
+  id: NumericComparator
   name: StringComparator
   externalRef: NumericComparator
   nickname: NullableStringComparator

@@ -43,6 +43,9 @@ func translateArticleFilter(in *gqlmodel.ArticleFilter) *models.ArticleFilter {
 	if in.DeletedAt != nil {
 		out.DeletedAt = translateNullableTimeComparator(in.DeletedAt)
 	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.Title != nil {
 		out.Title = translateStringComparator(in.Title)
 	}
@@ -78,6 +81,9 @@ func translateAssetFilter(in *gqlmodel.AssetFilter) *models.AssetFilter {
 	out := &models.AssetFilter{}
 	if in.CreatedAt != nil {
 		out.CreatedAt = translateTimeComparator(in.CreatedAt)
+	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
 	}
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
@@ -127,6 +133,12 @@ func translateAssetDocumentLinkFilter(in *gqlmodel.AssetDocumentLinkFilter) *mod
 		return nil
 	}
 	out := &models.AssetDocumentLinkFilter{}
+	if in.AssetID != nil {
+		out.AssetID = translateNumericComparatorInt64(in.AssetID)
+	}
+	if in.DocumentID != nil {
+		out.DocumentID = translateNumericComparatorInt64(in.DocumentID)
+	}
 	if len(in.And) > 0 {
 		out.And = make([]*models.AssetDocumentLinkFilter, 0, len(in.And))
 		for _, sub := range in.And {
@@ -157,8 +169,14 @@ func translateBinFilter(in *gqlmodel.BinFilter) *models.BinFilter {
 		return nil
 	}
 	out := &models.BinFilter{}
+	if in.Aisle != nil {
+		out.Aisle = translateIDComparator(in.Aisle)
+	}
 	if in.Label != nil {
 		out.Label = translateStringComparator(in.Label)
+	}
+	if in.Slot != nil {
+		out.Slot = translateNumericComparatorInt32(in.Slot)
 	}
 	if in.BinItems != nil {
 		out.BinItems = translateBinItemFilter(in.BinItems)
@@ -196,6 +214,9 @@ func translateBinItemFilter(in *gqlmodel.BinItemFilter) *models.BinItemFilter {
 	if in.Aisle != nil {
 		out.Aisle = translateNullableStringComparator(in.Aisle)
 	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
 	}
@@ -232,6 +253,9 @@ func translateBoolKeyedFilter(in *gqlmodel.BoolKeyedFilter) *models.BoolKeyedFil
 		return nil
 	}
 	out := &models.BoolKeyedFilter{}
+	if in.K != nil {
+		out.K = translateBooleanComparator(in.K)
+	}
 	if in.Label != nil {
 		out.Label = translateStringComparator(in.Label)
 	}
@@ -268,6 +292,9 @@ func translateBoolKeyedNoteFilter(in *gqlmodel.BoolKeyedNoteFilter) *models.Bool
 		return nil
 	}
 	out := &models.BoolKeyedNoteFilter{}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.KeyedK != nil {
 		out.KeyedK = translateNullableBooleanComparator(in.KeyedK)
 	}
@@ -306,6 +333,9 @@ func translateCategoryFilter(in *gqlmodel.CategoryFilter) *models.CategoryFilter
 	out := &models.CategoryFilter{}
 	if in.Description != nil {
 		out.Description = translateNullableStringComparator(in.Description)
+	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt32(in.ID)
 	}
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
@@ -406,6 +436,9 @@ func translateDefaultOnlyRowFilter(in *gqlmodel.DefaultOnlyRowFilter) *models.De
 	if in.Hits != nil {
 		out.Hits = translateNumericComparatorInt32(in.Hits)
 	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.Label != nil {
 		out.Label = translateStringComparator(in.Label)
 	}
@@ -448,6 +481,9 @@ func translateDocumentFilter(in *gqlmodel.DocumentFilter) *models.DocumentFilter
 	if in.EntityType != nil {
 		out.EntityType = translateDocumentsEntityTypeEnumComparator(in.EntityType)
 	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
 	}
@@ -484,6 +520,9 @@ func translateKeyOnlyRowFilter(in *gqlmodel.KeyOnlyRowFilter) *models.KeyOnlyRow
 		return nil
 	}
 	out := &models.KeyOnlyRowFilter{}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if len(in.And) > 0 {
 		out.And = make([]*models.KeyOnlyRowFilter, 0, len(in.And))
 		for _, sub := range in.And {
@@ -514,6 +553,9 @@ func translateOrderFilter(in *gqlmodel.OrderFilter) *models.OrderFilter {
 		return nil
 	}
 	out := &models.OrderFilter{}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.Notes != nil {
 		out.Notes = translateNullableStringComparator(in.Notes)
 	}
@@ -562,6 +604,9 @@ func translateOrderItemFilter(in *gqlmodel.OrderItemFilter) *models.OrderItemFil
 		return nil
 	}
 	out := &models.OrderItemFilter{}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.OrderID != nil {
 		out.OrderID = translateNumericComparatorInt64(in.OrderID)
 	}
@@ -612,6 +657,9 @@ func translateProductFilter(in *gqlmodel.ProductFilter) *models.ProductFilter {
 	}
 	if in.CreatedAt != nil {
 		out.CreatedAt = translateTimeComparator(in.CreatedAt)
+	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
 	}
 	if in.InStock != nil {
 		out.InStock = translateBooleanComparator(in.InStock)
@@ -667,6 +715,9 @@ func translateProductSummaryFilter(in *gqlmodel.ProductSummaryFilter) *models.Pr
 	if in.CategoryName != nil {
 		out.CategoryName = translateStringComparator(in.CategoryName)
 	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.OrderCount != nil {
 		out.OrderCount = translateNumericComparatorInt32(in.OrderCount)
 	}
@@ -709,6 +760,15 @@ func translateProductTagLabelFilter(in *gqlmodel.ProductTagLabelFilter) *models.
 	if in.Description != nil {
 		out.Description = translateNullableStringComparator(in.Description)
 	}
+	if in.Label != nil {
+		out.Label = translateIDComparator(in.Label)
+	}
+	if in.ProductID != nil {
+		out.ProductID = translateNumericComparatorInt64(in.ProductID)
+	}
+	if in.TagName != nil {
+		out.TagName = translateIDComparator(in.TagName)
+	}
 	if len(in.And) > 0 {
 		out.And = make([]*models.ProductTagLabelFilter, 0, len(in.And))
 		for _, sub := range in.And {
@@ -741,6 +801,9 @@ func translateProfileFilter(in *gqlmodel.ProfileFilter) *models.ProfileFilter {
 	out := &models.ProfileFilter{}
 	if in.GithubHandle != nil {
 		out.GithubHandle = translateNullableStringComparator(in.GithubHandle)
+	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
 	}
 	if in.Preferences != nil {
 		out.Preferences = translateNullableJSONComparator(in.Preferences)
@@ -784,6 +847,9 @@ func translateSluggedRowFilter(in *gqlmodel.SluggedRowFilter) *models.SluggedRow
 		return nil
 	}
 	out := &models.SluggedRowFilter{}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.Name != nil {
 		out.Name = translateStringComparator(in.Name)
 	}
@@ -820,6 +886,9 @@ func translateTagFilter(in *gqlmodel.TagFilter) *models.TagFilter {
 		return nil
 	}
 	out := &models.TagFilter{}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt32(in.ID)
+	}
 	if in.IsDeleted != nil {
 		out.IsDeleted = translateBooleanComparator(in.IsDeleted)
 	}
@@ -856,6 +925,9 @@ func translateTimeKeyedFilter(in *gqlmodel.TimeKeyedFilter) *models.TimeKeyedFil
 		return nil
 	}
 	out := &models.TimeKeyedFilter{}
+	if in.At != nil {
+		out.At = translateTimeComparator(in.At)
+	}
 	if in.Label != nil {
 		out.Label = translateStringComparator(in.Label)
 	}
@@ -892,6 +964,9 @@ func translateTimeKeyedNoteFilter(in *gqlmodel.TimeKeyedNoteFilter) *models.Time
 		return nil
 	}
 	out := &models.TimeKeyedNoteFilter{}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
 	if in.KeyedAt != nil {
 		out.KeyedAt = translateNullableTimeComparator(in.KeyedAt)
 	}
@@ -951,6 +1026,9 @@ func translateUserFilter(in *gqlmodel.UserFilter) *models.UserFilter {
 	}
 	if in.Email != nil {
 		out.Email = translateStringComparator(in.Email)
+	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
 	}
 	if in.IsActive != nil {
 		out.IsActive = translateBooleanComparator(in.IsActive)
@@ -1027,8 +1105,14 @@ func translateUserCategoryFilter(in *gqlmodel.UserCategoryFilter) *models.UserCa
 		return nil
 	}
 	out := &models.UserCategoryFilter{}
+	if in.CategoryID != nil {
+		out.CategoryID = translateNumericComparatorInt32(in.CategoryID)
+	}
 	if in.Slot != nil {
 		out.Slot = translateNullableNumericComparatorInt32(in.Slot)
+	}
+	if in.UserID != nil {
+		out.UserID = translateNumericComparatorInt64(in.UserID)
 	}
 	if len(in.And) > 0 {
 		out.And = make([]*models.UserCategoryFilter, 0, len(in.And))
@@ -1062,6 +1146,9 @@ func translateUserEventFilter(in *gqlmodel.UserEventFilter) *models.UserEventFil
 	out := &models.UserEventFilter{}
 	if in.Action != nil {
 		out.Action = translateStringComparator(in.Action)
+	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
 	}
 	if in.UserID != nil {
 		out.UserID = translateNullableNumericComparatorInt64(in.UserID)
@@ -1101,6 +1188,9 @@ func translateWarehouseFilter(in *gqlmodel.WarehouseFilter) *models.WarehouseFil
 	}
 	if in.ExternalID != nil {
 		out.ExternalID = translateStringComparator(in.ExternalID)
+	}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
 	}
 	if in.InspectedAt != nil {
 		out.InspectedAt = translateNullableTimeComparator(in.InspectedAt)

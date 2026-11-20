@@ -40,6 +40,7 @@ type OrderListResult {
 }
 
 input OrderFilter {
+  id: IDComparator
   userID: IDComparator
   total: DecimalComparator
   notes: NullableStringComparator

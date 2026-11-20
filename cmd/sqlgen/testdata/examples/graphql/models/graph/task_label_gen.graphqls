@@ -30,6 +30,9 @@ type TaskLabelListResult {
 }
 
 input TaskLabelFilter {
+  workspaceID: IDComparator
+  taskID: IDComparator
+  labelID: IDComparator
   and: [TaskLabelFilter!]
   or:  [TaskLabelFilter!]
 }

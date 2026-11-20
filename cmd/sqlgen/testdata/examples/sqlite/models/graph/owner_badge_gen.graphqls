@@ -28,6 +28,8 @@ type OwnerBadgeListResult {
 }
 
 input OwnerBadgeFilter {
+  ownerID: NumericComparator
+  badgeCode: IDComparator
   and: [OwnerBadgeFilter!]
   or:  [OwnerBadgeFilter!]
 }

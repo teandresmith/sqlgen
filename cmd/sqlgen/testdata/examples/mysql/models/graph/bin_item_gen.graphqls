@@ -32,6 +32,7 @@ type BinItemListResult {
 }
 
 input BinItemFilter {
+  id: NumericComparator
   aisle: NullableStringComparator
   slot: NullableNumericComparator
   name: StringComparator

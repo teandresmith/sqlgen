@@ -30,6 +30,7 @@ type BinaryKeyEventListResult {
 }
 
 input BinaryKeyEventFilter {
+  id: NumericComparator
   binaryKeyID: BytesComparator
   label: StringComparator
   and: [BinaryKeyEventFilter!]

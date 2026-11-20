@@ -599,6 +599,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputCreateCategoryInput,
 		ec.unmarshalInputCreateProductInput,
 		ec.unmarshalInputDecimalComparator,
+		ec.unmarshalInputIDComparator,
 		ec.unmarshalInputNullableStringComparator,
 		ec.unmarshalInputNumericComparator,
 		ec.unmarshalInputNumericRange,
@@ -4214,13 +4215,20 @@ func (ec *executionContext) unmarshalInputCategoryFilter(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "description", "createdAt", "products", "and", "or"}
+	fieldsInOrder := [...]string{"id", "name", "description", "createdAt", "products", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_top_levelᚋgraphᚋmodelᚐNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_top_levelᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -4470,6 +4478,85 @@ func (ec *executionContext) unmarshalInputDecimalComparator(ctx context.Context,
 		case "nin":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nin"))
 			data, err := ec.unmarshalODecimal2ᚕᚖgithubᚗcomᚋshopspringᚋdecimalᚐDecimalᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Nin = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputIDComparator(ctx context.Context, obj any) (model.IDComparator, error) {
+	var it model.IDComparator
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"eq", "neq", "gt", "gte", "lt", "lte", "in", "nin"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "eq":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("eq"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Eq = data
+		case "neq":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("neq"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Neq = data
+		case "gt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("gt"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Gt = data
+		case "gte":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("gte"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Gte = data
+		case "lt":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("lt"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Lt = data
+		case "lte":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("lte"))
+			data, err := ec.unmarshalOID2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Lte = data
+		case "in":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("in"))
+			data, err := ec.unmarshalOID2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.In = data
+		case "nin":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("nin"))
+			data, err := ec.unmarshalOID2ᚕstringᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -4741,13 +4828,20 @@ func (ec *executionContext) unmarshalInputProductFilter(ctx context.Context, obj
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "price", "categoryID", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"id", "name", "price", "categoryID", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_top_levelᚋgraphᚋmodelᚐIDComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_top_levelᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -6573,6 +6667,22 @@ func (ec *executionContext) marshalNFloat2float64(ctx context.Context, sel ast.S
 	return graphql.WrapContextMarshaler(ctx, res)
 }
 
+func (ec *executionContext) unmarshalNID2string(ctx context.Context, v any) (string, error) {
+	res, err := graphql.UnmarshalID(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNID2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalID(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
 func (ec *executionContext) unmarshalNInt2int(ctx context.Context, v any) (int, error) {
 	res, err := graphql.UnmarshalInt(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -7120,6 +7230,67 @@ func (ec *executionContext) marshalOFloat2ᚖfloat64(ctx context.Context, sel as
 	_ = sel
 	res := graphql.MarshalFloatContext(*v)
 	return graphql.WrapContextMarshaler(ctx, res)
+}
+
+func (ec *executionContext) unmarshalOID2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNID2string(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOID2ᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNID2string(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalOID2ᚖstring(ctx context.Context, v any) (*string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalID(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOID2ᚖstring(ctx context.Context, sel ast.SelectionSet, v *string) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalID(*v)
+	return res
+}
+
+func (ec *executionContext) unmarshalOIDComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_top_levelᚋgraphᚋmodelᚐIDComparator(ctx context.Context, v any) (*model.IDComparator, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputIDComparator(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalOInt2ᚖint(ctx context.Context, v any) (*int, error) {

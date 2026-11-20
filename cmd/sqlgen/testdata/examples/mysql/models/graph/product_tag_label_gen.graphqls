@@ -32,6 +32,9 @@ type ProductTagLabelListResult {
 }
 
 input ProductTagLabelFilter {
+  productID: NumericComparator
+  tagName: IDComparator
+  label: IDComparator
   description: NullableStringComparator
   and: [ProductTagLabelFilter!]
   or:  [ProductTagLabelFilter!]

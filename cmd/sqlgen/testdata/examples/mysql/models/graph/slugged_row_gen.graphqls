@@ -30,6 +30,7 @@ type SluggedRowListResult {
 }
 
 input SluggedRowFilter {
+  id: NumericComparator
   name: StringComparator
   slug: StringComparator
   and: [SluggedRowFilter!]

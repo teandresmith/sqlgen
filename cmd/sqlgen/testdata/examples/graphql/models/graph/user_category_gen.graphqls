@@ -28,6 +28,8 @@ type UserCategoryListResult {
 }
 
 input UserCategoryFilter {
+  userID: IDComparator
+  categoryID: NumericComparator
   and: [UserCategoryFilter!]
   or:  [UserCategoryFilter!]
 }

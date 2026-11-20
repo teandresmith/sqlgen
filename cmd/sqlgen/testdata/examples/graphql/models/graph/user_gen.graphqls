@@ -52,6 +52,7 @@ type UserListResult {
 }
 
 input UserFilter {
+  id: IDComparator
   email: StringComparator
   name: StringComparator
   metadata: NullableJSONBComparator

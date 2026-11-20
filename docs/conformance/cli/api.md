@@ -6,7 +6,7 @@
 API generation (§26) is emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. Its rows claim `gen`, `cli`, golden and example tests. It holds the `api-generation` matrix and §26.5–§26.12; the schema sections (§26–§26.4.1 and §16.4's GraphQL rows) are in [`api-schema.md`](api-schema.md).
 
 ## §26.4 GraphQL Schema Generation
-<!-- prd: 26.4 sha256: b4434ea5c04a9a47 -->
+<!-- prd: 26.4 sha256: 4c5f7f1b6bed3962 -->
 
 The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.md`](api-schema.md).
 
@@ -338,7 +338,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 |---|---|---|---|---|
 | api.filter.per-table-translator | A `translate<T>Filter` function is generated per exposed table, converting the GraphQL filter input into `*<pkg>.<T>Filter` | `unit: cmd/sqlgen/gen: TestFilterTranslator_AndOrNotNesting`; `golden: graphql` | all | |
 | api.filter.nil-in-nil-out | `translate<T>Filter(nil)` returns nil | `unit: cmd/sqlgen/gen: TestFilterTranslator_AndOrNotNesting` | all | |
-| api.filter.field-dispatch | Each non-nil column field is translated through its comparator translator into the same-named model filter field | `unit: cmd/sqlgen/gen: TestFilterTranslator_SkipsPKAndUnsupportedComparators`; `unit: cmd/sqlgen/gen: TestFilterProjection_pairsSchemaAndTranslator` | all | |
+| api.filter.field-dispatch | Each non-nil column field is translated through its comparator translator into the same-named model filter field | `unit: cmd/sqlgen/gen: TestFilterTranslator_TranslatesPKAndColumns`; `unit: cmd/sqlgen/gen: TestFilterProjection_pairsSchemaAndTranslator` | all | |
 | api.filter.and-recursion | Each non-nil `and` sub-filter is translated by recursing into the same translator and appended to `out.And` | `unit: cmd/sqlgen/gen: TestFilterTranslator_AndOrNotNesting` | all | |
 | api.filter.or-recursion | Each non-nil `or` sub-filter is translated by recursing into the same translator and appended to `out.Or` | `unit: cmd/sqlgen/gen: TestFilterTranslator_AndOrNotNesting` | all | |
 | api.filter-translator.single-pk | A single-PK table without soft delete or tenancy gets a filter translator | `unit: cmd/sqlgen/gen: TestFilterTranslator_NoSoftDeleteWorksUnchanged`; `example: graphql: TestCuratedSurface_Category/UpdateMany`; `golden: graphql` | all | api-generation: filter-translator × single-pk |

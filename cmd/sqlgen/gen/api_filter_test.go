@@ -85,16 +85,14 @@ func TestFilterTranslator_DeletedAtIsRegularFilterField(t *testing.T) {
 	}
 }
 
-func TestFilterTranslator_SkipsPKAndUnsupportedComparators(t *testing.T) {
-	// PRD §26.5.3 — PK columns excluded from the GraphQL filter input
-	// (per the schema template) so the translator must skip them. The
-	// schema's `id` column is the PK; no `out.ID = ...` should appear.
+func TestFilterTranslator_TranslatesPKAndColumns(t *testing.T) {
+	// PRD §26.4 — the GraphQL filter input mirrors the model `<T>Filter`
+	// struct, so the PK column is translated like any other column.
 	apiCtx := translatorAPIContext(t, config.DialectPostgres)
 	out := renderFilterTranslate(t, apiCtx)
 
-	if strings.Contains(out, "out.ID = translate") {
-		t.Errorf("PK column ID must not appear in filter translator body\n%s", out)
-	}
+	mustContain(t, out, "if in.ID != nil {")
+	mustContain(t, out, "out.ID = translateIDComparator(in.ID)")
 
 	// Per-column field-level translation — non-PK columns dispatch through
 	// the appropriate per-family translator.

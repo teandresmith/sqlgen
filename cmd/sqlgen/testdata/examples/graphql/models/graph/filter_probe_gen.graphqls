@@ -38,6 +38,7 @@ type FilterProbeListResult {
 }
 
 input FilterProbeFilter {
+  id: IDComparator
   doc: JSONBComparator
   tags: StringSliceComparator
   tagsN: NullableStringSliceComparator

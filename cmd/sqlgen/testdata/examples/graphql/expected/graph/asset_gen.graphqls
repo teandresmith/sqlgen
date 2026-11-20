@@ -48,6 +48,7 @@ type AssetListResult {
 }
 
 input AssetFilter {
+  id: IDComparator
   name: StringComparator
   declaredCategories: DocumentEntityTypeEnumSliceComparator
   primaryCategory: NullableDocumentEntityTypeEnumComparator

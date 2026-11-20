@@ -30,6 +30,7 @@ type TimeKeyedNoteListResult {
 }
 
 input TimeKeyedNoteFilter {
+  id: NumericComparator
   keyedAt: NullableTimeComparator
   note: StringComparator
   and: [TimeKeyedNoteFilter!]

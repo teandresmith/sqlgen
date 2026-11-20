@@ -28,6 +28,7 @@ type KeyClassChildListResult {
 }
 
 input KeyClassChildFilter {
+  id: NumericComparator
   parentID: NullableIDComparator
   and: [KeyClassChildFilter!]
   or:  [KeyClassChildFilter!]

@@ -34,6 +34,7 @@ type DigitLeadingColumnListResult {
 }
 
 input DigitLeadingColumnFilter {
+  id: NumericComparator
   col2010Revenue: NumericComparator
   col2024Quota: NumericComparator
   col1stPlace: StringComparator

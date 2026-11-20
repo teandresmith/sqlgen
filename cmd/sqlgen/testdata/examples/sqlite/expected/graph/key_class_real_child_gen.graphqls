@@ -28,6 +28,7 @@ type KeyClassRealChildListResult {
 }
 
 input KeyClassRealChildFilter {
+  id: NumericComparator
   parentID: NullableNumericComparator
   and: [KeyClassRealChildFilter!]
   or:  [KeyClassRealChildFilter!]

@@ -30,6 +30,7 @@ type UserEventListResult {
 }
 
 input UserEventFilter {
+  id: NumericComparator
   userID: NullableNumericComparator
   action: StringComparator
   and: [UserEventFilter!]

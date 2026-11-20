@@ -4786,13 +4786,20 @@ func (ec *executionContext) unmarshalInputAccountFilter(ctx context.Context, obj
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"name", "externalRef", "nickname", "flag", "smallCount", "midCount", "bigCount", "ratio", "observedAt", "balance", "tenantRef", "parentID", "createdAt", "deletedAt", "accounts", "entries", "and", "or"}
+	fieldsInOrder := [...]string{"id", "name", "externalRef", "nickname", "flag", "smallCount", "midCount", "bigCount", "ratio", "observedAt", "balance", "tenantRef", "parentID", "createdAt", "deletedAt", "accounts", "entries", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_null_wrappersᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "name":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
 			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_null_wrappersᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
@@ -5230,13 +5237,20 @@ func (ec *executionContext) unmarshalInputEntryFilter(ctx context.Context, obj a
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"accountID", "memo", "amount", "upstreamRef", "createdAt", "and", "or"}
+	fieldsInOrder := [...]string{"id", "accountID", "memo", "amount", "upstreamRef", "createdAt", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
 			continue
 		}
 		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_null_wrappersᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
 		case "accountID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("accountID"))
 			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_null_wrappersᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)

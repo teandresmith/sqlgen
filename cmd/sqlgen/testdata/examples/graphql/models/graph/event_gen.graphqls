@@ -66,6 +66,7 @@ type EventListResult {
 }
 
 input EventFilter {
+  id: IDComparator
   userID: NullableIDComparator
   action: StringComparator
   occurredAt: TimeComparator

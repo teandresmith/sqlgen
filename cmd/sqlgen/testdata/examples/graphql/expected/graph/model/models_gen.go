@@ -33,8 +33,10 @@ type AssetAttachmentsUpdateNested struct {
 }
 
 type AssetDocumentLinkFilter struct {
-	And []*AssetDocumentLinkFilter `json:"and,omitempty"`
-	Or  []*AssetDocumentLinkFilter `json:"or,omitempty"`
+	AssetID    *IDComparator              `json:"assetID,omitempty"`
+	DocumentID *IDComparator              `json:"documentID,omitempty"`
+	And        []*AssetDocumentLinkFilter `json:"and,omitempty"`
+	Or         []*AssetDocumentLinkFilter `json:"or,omitempty"`
 }
 
 type AssetDocumentLinkSort struct {
@@ -55,6 +57,7 @@ type AssetDocumentsUpdateNested struct {
 }
 
 type AssetFilter struct {
+	ID                 *IDComparator                             `json:"id,omitempty"`
 	Name               *StringComparator                         `json:"name,omitempty"`
 	DeclaredCategories *DocumentEntityTypeEnumSliceComparator    `json:"declaredCategories,omitempty"`
 	PrimaryCategory    *NullableDocumentEntityTypeEnumComparator `json:"primaryCategory,omitempty"`
@@ -135,6 +138,7 @@ type CIDRComparator struct {
 }
 
 type CategoryFilter struct {
+	ID          *NumericComparator        `json:"id,omitempty"`
 	Name        *StringComparator         `json:"name,omitempty"`
 	Description *NullableStringComparator `json:"description,omitempty"`
 	CreatedAt   *TimeComparator           `json:"createdAt,omitempty"`
@@ -145,6 +149,7 @@ type CategoryFilter struct {
 }
 
 type CategoryPriceTotalFilter struct {
+	CategoryID   *NumericComparator          `json:"categoryID,omitempty"`
 	ProductCount *NumericComparator          `json:"productCount,omitempty"`
 	TotalPrice   *NullableDecimalComparator  `json:"totalPrice,omitempty"`
 	MaxPrice     *NullableDecimalComparator  `json:"maxPrice,omitempty"`
@@ -470,6 +475,7 @@ type CreateWorkspaceSettingInput struct {
 }
 
 type CycleFilter struct {
+	ID          *IDComparator     `json:"id,omitempty"`
 	WorkspaceID *IDComparator     `json:"workspaceID,omitempty"`
 	Name        *StringComparator `json:"name,omitempty"`
 	Tasks       *TaskFilter       `json:"tasks,omitempty"`
@@ -536,6 +542,7 @@ type DocumentEntityTypeEnumSliceComparator struct {
 }
 
 type DocumentFilter struct {
+	ID         *IDComparator                     `json:"id,omitempty"`
 	EntityID   *IDComparator                     `json:"entityID,omitempty"`
 	EntityType *DocumentEntityTypeEnumComparator `json:"entityType,omitempty"`
 	Name       *StringComparator                 `json:"name,omitempty"`
@@ -569,6 +576,7 @@ type DurationRange struct {
 }
 
 type EventFilter struct {
+	ID          *IDComparator              `json:"id,omitempty"`
 	UserID      *NullableIDComparator      `json:"userID,omitempty"`
 	Action      *StringComparator          `json:"action,omitempty"`
 	OccurredAt  *TimeComparator            `json:"occurredAt,omitempty"`
@@ -599,6 +607,7 @@ type EventSort struct {
 }
 
 type FilterProbeFilter struct {
+	ID        *IDComparator                  `json:"id,omitempty"`
 	Doc       *JSONBComparator               `json:"doc,omitempty"`
 	Tags      *StringSliceComparator         `json:"tags,omitempty"`
 	TagsN     *NullableStringSliceComparator `json:"tagsN,omitempty"`
@@ -668,6 +677,7 @@ type KeyedCodeEntriesUpdateNested struct {
 }
 
 type KeyedCodeEntryFilter struct {
+	ID          *IDComparator           `json:"id,omitempty"`
 	KeyedCodeID *IDComparator           `json:"keyedCodeID,omitempty"`
 	Note        *StringComparator       `json:"note,omitempty"`
 	And         []*KeyedCodeEntryFilter `json:"and,omitempty"`
@@ -680,6 +690,7 @@ type KeyedCodeEntrySort struct {
 }
 
 type KeyedCodeFilter struct {
+	ID      *IDComparator         `json:"id,omitempty"`
 	Code    *StringComparator     `json:"code,omitempty"`
 	Name    *StringComparator     `json:"name,omitempty"`
 	Entries *KeyedCodeEntryFilter `json:"entries,omitempty"`
@@ -693,6 +704,7 @@ type KeyedCodeSort struct {
 }
 
 type LabelFilter struct {
+	ID          *IDComparator     `json:"id,omitempty"`
 	WorkspaceID *IDComparator     `json:"workspaceID,omitempty"`
 	Name        *StringComparator `json:"name,omitempty"`
 	Tasks       *TaskFilter       `json:"tasks,omitempty"`
@@ -729,6 +741,7 @@ type MacAddrComparator struct {
 }
 
 type MaskedLabelFilter struct {
+	ID    *IDComparator        `json:"id,omitempty"`
 	Label *StringComparator    `json:"label,omitempty"`
 	And   []*MaskedLabelFilter `json:"and,omitempty"`
 	Or    []*MaskedLabelFilter `json:"or,omitempty"`
@@ -939,6 +952,7 @@ type NumericRange struct {
 }
 
 type NumericWidthFilter struct {
+	ID        *IDComparator               `json:"id,omitempty"`
 	Small     *NumericComparator          `json:"small,omitempty"`
 	SmallN    *NullableNumericComparator  `json:"smallN,omitempty"`
 	Ratio     *NumericComparator          `json:"ratio,omitempty"`
@@ -959,6 +973,7 @@ type NumericWidthSort struct {
 }
 
 type OrderFilter struct {
+	ID         *IDComparator             `json:"id,omitempty"`
 	UserID     *IDComparator             `json:"userID,omitempty"`
 	Total      *DecimalComparator        `json:"total,omitempty"`
 	Notes      *NullableStringComparator `json:"notes,omitempty"`
@@ -971,6 +986,7 @@ type OrderFilter struct {
 }
 
 type OrderItemFilter struct {
+	ID          *IDComparator             `json:"id,omitempty"`
 	OrderID     *IDComparator             `json:"orderID,omitempty"`
 	ProductID   *IDComparator             `json:"productID,omitempty"`
 	Quantity    *NumericComparator        `json:"quantity,omitempty"`
@@ -1010,6 +1026,7 @@ type OrderSort struct {
 }
 
 type ProductFilter struct {
+	ID          *IDComparator             `json:"id,omitempty"`
 	Name        *StringComparator         `json:"name,omitempty"`
 	Description *NullableStringComparator `json:"description,omitempty"`
 	Price       *DecimalComparator        `json:"price,omitempty"`
@@ -1046,6 +1063,7 @@ type ProductSort struct {
 }
 
 type ProfileFilter struct {
+	ID        *IDComparator             `json:"id,omitempty"`
 	UserID    *IDComparator             `json:"userID,omitempty"`
 	Bio       *NullableStringComparator `json:"bio,omitempty"`
 	AvatarURL *NullableStringComparator `json:"avatarURL,omitempty"`
@@ -1064,6 +1082,7 @@ type Query struct {
 }
 
 type ScalarProbeFilter struct {
+	ID         *IDComparator               `json:"id,omitempty"`
 	Label      *StringComparator           `json:"label,omitempty"`
 	Payload    *BytesComparator            `json:"payload,omitempty"`
 	Signature  *NullableBytesComparator    `json:"signature,omitempty"`
@@ -1116,6 +1135,7 @@ type StringSliceComparator struct {
 }
 
 type TaskFilter struct {
+	ID          *IDComparator         `json:"id,omitempty"`
 	WorkspaceID *IDComparator         `json:"workspaceID,omitempty"`
 	CycleID     *NullableIDComparator `json:"cycleID,omitempty"`
 	Title       *StringComparator     `json:"title,omitempty"`
@@ -1125,8 +1145,11 @@ type TaskFilter struct {
 }
 
 type TaskLabelFilter struct {
-	And []*TaskLabelFilter `json:"and,omitempty"`
-	Or  []*TaskLabelFilter `json:"or,omitempty"`
+	WorkspaceID *IDComparator      `json:"workspaceID,omitempty"`
+	TaskID      *IDComparator      `json:"taskID,omitempty"`
+	LabelID     *IDComparator      `json:"labelID,omitempty"`
+	And         []*TaskLabelFilter `json:"and,omitempty"`
+	Or          []*TaskLabelFilter `json:"or,omitempty"`
 }
 
 type TaskLabelSort struct {
@@ -1147,6 +1170,7 @@ type TaskLabelsUpdateNested struct {
 }
 
 type TaskReportFilter struct {
+	ID          *IDComparator       `json:"id,omitempty"`
 	WorkspaceID *IDComparator       `json:"workspaceID,omitempty"`
 	TaskID      *IDComparator       `json:"taskID,omitempty"`
 	Summary     *StringComparator   `json:"summary,omitempty"`
@@ -1539,6 +1563,7 @@ type UserBadgeCreateNested struct {
 }
 
 type UserBadgeFilter struct {
+	ID     *NumericComparator    `json:"id,omitempty"`
 	UserID *NullableIDComparator `json:"userID,omitempty"`
 	Label  *StringComparator     `json:"label,omitempty"`
 	And    []*UserBadgeFilter    `json:"and,omitempty"`
@@ -1570,8 +1595,10 @@ type UserCategoriesUpdateNested struct {
 }
 
 type UserCategoryFilter struct {
-	And []*UserCategoryFilter `json:"and,omitempty"`
-	Or  []*UserCategoryFilter `json:"or,omitempty"`
+	UserID     *IDComparator         `json:"userID,omitempty"`
+	CategoryID *NumericComparator    `json:"categoryID,omitempty"`
+	And        []*UserCategoryFilter `json:"and,omitempty"`
+	Or         []*UserCategoryFilter `json:"or,omitempty"`
 }
 
 type UserCategorySort struct {
@@ -1580,6 +1607,7 @@ type UserCategorySort struct {
 }
 
 type UserCredentialFilter struct {
+	UserID      *IDComparator           `json:"userID,omitempty"`
 	Provider    *StringComparator       `json:"provider,omitempty"`
 	ExternalID  *StringComparator       `json:"externalID,omitempty"`
 	LastLoginAt *NullableTimeComparator `json:"lastLoginAt,omitempty"`
@@ -1628,6 +1656,7 @@ type UserEventsUpdateNested struct {
 }
 
 type UserFilter struct {
+	ID          *IDComparator             `json:"id,omitempty"`
 	Email       *StringComparator         `json:"email,omitempty"`
 	Name        *StringComparator         `json:"name,omitempty"`
 	Metadata    *NullableJSONBComparator  `json:"metadata,omitempty"`
@@ -1707,6 +1736,7 @@ type WorkspaceNoteDraftChildrenUpdateNested struct {
 }
 
 type WorkspaceNoteFilter struct {
+	ID            *IDComparator                    `json:"id,omitempty"`
 	WorkspaceID   *IDComparator                    `json:"workspaceID,omitempty"`
 	ParentID      *NullableIDComparator            `json:"parentID,omitempty"`
 	Body          *StringComparator                `json:"body,omitempty"`
@@ -1733,6 +1763,7 @@ type WorkspaceNoteSort struct {
 }
 
 type WorkspaceNoteSummaryFilter struct {
+	ID            *IDComparator                    `json:"id,omitempty"`
 	WorkspaceID   *IDComparator                    `json:"workspaceID,omitempty"`
 	Kind          *WorkspaceNoteKindEnumComparator `json:"kind,omitempty"`
 	Labels        *JSONBComparator                 `json:"labels,omitempty"`
@@ -1749,10 +1780,12 @@ type WorkspaceNoteSummarySort struct {
 }
 
 type WorkspaceSettingFilter struct {
-	Value     *StringComparator         `json:"value,omitempty"`
-	CreatedAt *TimeComparator           `json:"createdAt,omitempty"`
-	And       []*WorkspaceSettingFilter `json:"and,omitempty"`
-	Or        []*WorkspaceSettingFilter `json:"or,omitempty"`
+	WorkspaceID *IDComparator             `json:"workspaceID,omitempty"`
+	Key         *IDComparator             `json:"key,omitempty"`
+	Value       *StringComparator         `json:"value,omitempty"`
+	CreatedAt   *TimeComparator           `json:"createdAt,omitempty"`
+	And         []*WorkspaceSettingFilter `json:"and,omitempty"`
+	Or          []*WorkspaceSettingFilter `json:"or,omitempty"`
 }
 
 type WorkspaceSettingSort struct {

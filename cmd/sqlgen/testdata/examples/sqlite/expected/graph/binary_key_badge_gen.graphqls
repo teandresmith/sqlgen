@@ -28,6 +28,8 @@ type BinaryKeyBadgeListResult {
 }
 
 input BinaryKeyBadgeFilter {
+  binaryKeyID: BytesComparator
+  badgeCode: IDComparator
   and: [BinaryKeyBadgeFilter!]
   or:  [BinaryKeyBadgeFilter!]
 }

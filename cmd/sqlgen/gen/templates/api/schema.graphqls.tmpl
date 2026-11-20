@@ -40,7 +40,7 @@ type {{ $t.StructName }}ListResult {
 
 input {{ $t.StructName }}Filter {
 {{- range $f := $t.Fields }}
-{{- if and (not $f.PrimaryKey) $f.Filterable }}
+{{- if $f.Filterable }}
   {{ $f.GraphQLName }}: {{ $f.Filter.InputTypeName }}
 {{- end }}
 {{- end }}

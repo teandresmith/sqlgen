@@ -36,6 +36,7 @@ type ArticleListResult {
 }
 
 input ArticleFilter {
+  id: NumericComparator
   title: StringComparator
   body: NullableStringComparator
   author: StringComparator

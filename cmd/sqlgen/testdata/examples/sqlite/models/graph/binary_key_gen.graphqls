@@ -36,6 +36,7 @@ type BinaryKeyListResult {
 }
 
 input BinaryKeyFilter {
+  id: BytesComparator
   name: StringComparator
   createdAt: TimeComparator
   badges: BadgeFilter

@@ -144,6 +144,40 @@ func translateDocumentsEntityTypeEnumComparator(in *gqlmodel.DocumentsEntityType
 	return out
 }
 
+// translateIDComparator translates a GraphQL IDComparator into a
+// *comparator.ID for the model layer's filter struct.
+func translateIDComparator(in *gqlmodel.IDComparator) *comparator.ID {
+	if in == nil {
+		return nil
+	}
+	out := &comparator.ID{}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if in.Gt != nil {
+		out.Gt = in.Gt
+	}
+	if in.Gte != nil {
+		out.Gte = in.Gte
+	}
+	if in.Lt != nil {
+		out.Lt = in.Lt
+	}
+	if in.Lte != nil {
+		out.Lte = in.Lte
+	}
+	if len(in.In) > 0 {
+		out.In = append([]string(nil), in.In...)
+	}
+	if len(in.Nin) > 0 {
+		out.Nin = append([]string(nil), in.Nin...)
+	}
+	return out
+}
+
 // translateJSONComparator translates a GraphQL JSONComparator into a
 // *comparator.JSON for the model layer's filter struct.
 //

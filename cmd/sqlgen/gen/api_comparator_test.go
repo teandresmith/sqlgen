@@ -173,15 +173,9 @@ func TestComparatorFamily_TimeAndBooleanAndUUID(t *testing.T) {
 				t.Errorf("nullable boolean translator emitted without a nullable bool column\n%s", out)
 			}
 
-			// IDComparator (PK is uuid → ID family; PKs are filterable through
-			// IDComparator → translateIDComparator emitted whenever any PK
-			// column would propagate. The fixture's PK is excluded from the
-			// per-table filter, so without a non-PK ID column the translator
-			// is omitted. This anchors the emit-only-when-needed behaviour
-			// — switching the schema to add a non-PK ID column would emit it.
-			if strings.Contains(out, "translateIDComparator") {
-				t.Errorf("IDComparator emitted without a non-PK ID column in the fixture\n%s", out)
-			}
+			// IDComparator: the uuid PK is in the per-table filter (PRD §26.4,
+			// the input mirrors the model filter), so its translator is emitted.
+			mustContain(t, out, "func translateIDComparator(in *IDComparator) *comparator.ID {")
 		})
 	}
 }

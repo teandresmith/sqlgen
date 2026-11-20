@@ -36,6 +36,7 @@ type ProfileListResult {
 }
 
 input ProfileFilter {
+  id: NumericComparator
   userID: NumericComparator
   website: NullableStringComparator
   githubHandle: NullableStringComparator
