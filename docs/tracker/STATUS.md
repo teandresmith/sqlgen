@@ -41,9 +41,11 @@
 | 32 | Composite Foreign-Key Relationships | 9 | 9 | Complete (closed 2026-11-17; design doc `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` SYNCED — superseded by PRD §4.6/§4.8/§4.13/§5.3/§8.2/§8.6/§9.9/§13.1/§13.4/§25.1/§29.10/§30/Appendix A; 10 FIXes originated in the phase and were resolved within it, none carried forward) |
 | 33 | Conformance Variant Suite and Core-Suite Ports | 9 | 9 | Complete (closed 2026-11-19; design doc `docs/design/CONFORMANCE_VARIANTS.md` Implemented 2026-11-19, no PRD change; no FIX originated in the phase, none carried forward) |
 | 34 | GraphQL Server Scaffold Opt-Out | 4 | 4 | Complete (closed 2026-11-20; design doc `docs/design/SERVER_SCAFFOLD.md` SYNCED — superseded by PRD §26.3/§26.5.6/§26.6; no FIX originated in the phase, none carried forward) |
-| 35 | Renaming a Detected Relationship | 4 | 1 | In Progress (broken down 2026-11-20; design doc `docs/design/DETECTED_EDGE_RENAME.md` approved 2026-11-20) |
+| 35 | Renaming a Detected Relationship | 4 | 2 | In Progress (broken down 2026-11-20; design doc `docs/design/DETECTED_EDGE_RENAME.md` approved 2026-11-20) |
 
 ## Current Focus
+
+**35.1 complete (2026-11-20):** regression guards. A declared `filter:` / `discriminator:` edge, and a declared has-one `o2o`, over a detected `o2m`'s key are each emitted beside it (`TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists`, `TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists`). The `ColumnComparatorKeepsItsFieldName` fixture moved its declared `Email` edge onto a key no FOREIGN KEY declares. All pass on current code. **Next:** `/implement 35.2`.
 
 **35.0 complete (2026-11-20):** PRD sync for detected-edge renaming. §13.4 says a manual edge names the FOREIGN KEY its key is (column pairs in any order), and that an unfiltered manual edge over exactly a detected edge's key takes its place with no exclusion and no warning. §4.8, §4.13 and §30.4.2 follow, and `docs/configuration.md` drops the `exclude_relationships` step from its rename recipe. Seventeen planned registry rows (`rename.constraint.*`, `rename.takeover.*`); `gen.manual.replaces-inferred` and `manifest.json.rel.constraint-manual-omitted` narrowed. Docs only. **Next:** `/implement 35.1`.
 

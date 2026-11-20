@@ -1111,6 +1111,76 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 	}
 }
 
+// A declared `filter:` or `discriminator:` edge over a detected foreign key is
+// a sub-category of it, so both are emitted (PRD §13.7.3).
+func TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists(t *testing.T) {
+	tests := []struct {
+		name string
+		rel  config.TableRelationship
+	}{
+		{
+			name: "filter",
+			rel:  config.TableRelationship{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'ledger'"},
+		},
+		{
+			name: "discriminator",
+			rel: config.TableRelationship{
+				Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"},
+				Discriminator: &config.RelationshipDiscriminator{Column: "kind", Value: "ledger"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := declaredEntriesSchema()
+			schema.Tables[1].Columns = append(schema.Tables[1].Columns, parser.Column{Name: "kind", Type: "text"})
+			in := testInput(schema)
+			detectRelationships(in.Schema)
+			in.Config.Tables["accounts"] = config.TableConfig{Relationships: []config.TableRelationship{tt.rel}}
+
+			rels, warnings := accountsRelationships(t, in)
+
+			gotFields := relationshipFieldNames(rels)
+			slices.Sort(gotFields)
+			if diff := cmp.Diff([]string{"Entries", "LedgerEntries"}, gotFields); diff != "" {
+				t.Errorf("relationship field names (-want +got):\n%s", diff)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("warnings = %v, want none", warnings)
+			}
+		})
+	}
+}
+
+// A declared edge of another kind over a detected edge's columns is another
+// edge: a has-one `o2o` beside the detected `o2m` (PRD §13.4).
+func TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists(t *testing.T) {
+	in := testInput(declaredEntriesSchema())
+	detectRelationships(in.Schema)
+	in.Config.Tables["accounts"] = config.TableConfig{Relationships: []config.TableRelationship{
+		{Name: "LatestEntry", Type: "one_to_one", Table: "entries", FK: config.KeyColumns{"account_id"}},
+	}}
+
+	rels, warnings := accountsRelationships(t, in)
+
+	type edge struct {
+		Field string
+		Type  parser.RelationshipType
+	}
+	got := make([]edge, 0, len(rels))
+	for _, r := range rels {
+		got = append(got, edge{r.FieldName, r.Type})
+	}
+	slices.SortFunc(got, func(a, b edge) int { return strings.Compare(a.Field, b.Field) })
+	want := []edge{{"Entries", parser.OneToMany}, {"LatestEntry", parser.OneToOne}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("relationships (-want +got):\n%s", diff)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none", warnings)
+	}
+}
+
 // A one-pair manual relationship over a composite foreign key replaces the
 // detected edge it duplicates, with the warning, so a config declaring the edge
 // by hand keeps generating what it declared (PRD §13.4).

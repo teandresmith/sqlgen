@@ -78,13 +78,13 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 **PRD Reference:** Sections 13.4, 13.7.3
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Write `TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists` (`cmd/sqlgen/gen`): a declared `filter:` edge and a declared `discriminator:` edge over a detected FOREIGN KEY are each emitted alongside the detected edge.
-- [ ] Write `TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists` (`cmd/sqlgen/gen`): a declared `o2o` over the same columns as a detected `o2m` is emitted alongside it.
-- [ ] Move the `TestRelationshipFilters_ColumnComparatorKeepsItsFieldName` fixture's declared `Email` edge onto a key no FOREIGN KEY declares, so the takeover in 35.3 doesn't remove its `Orders` control. The assertion is unchanged.
+- [x] Write `TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists` (`cmd/sqlgen/gen`): a declared `filter:` edge and a declared `discriminator:` edge over a detected FOREIGN KEY are each emitted alongside the detected edge.
+- [x] Write `TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists` (`cmd/sqlgen/gen`): a declared `o2o` over the same columns as a detected `o2m` is emitted alongside it.
+- [x] Move the `TestRelationshipFilters_ColumnComparatorKeepsItsFieldName` fixture's declared `Email` edge onto a key no FOREIGN KEY declares, so the takeover in 35.3 doesn't remove its `Orders` control. The assertion is unchanged.
 
 ### Acceptance Criteria
 
@@ -92,13 +92,22 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists`: passes on current code before any change.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists`: passes on current code before any change.
-- [ ] `unit: cmd/sqlgen/gen: TestRelationshipFilters_ColumnComparatorKeepsItsFieldName` passes with its moved fixture, on current code.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists`: passes on current code before any change.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists`: passes on current code before any change.
+- [x] `unit: cmd/sqlgen/gen: TestRelationshipFilters_ColumnComparatorKeepsItsFieldName` passes with its moved fixture, on current code.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.** Tests and registry only, no generator code.
+
+- **Tests (`cmd/sqlgen/gen`):**
+  - `context_table_test.go`: `TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists` (`filter`, `discriminator`) declares `LedgerEntries` over the detected `entries` key with a predicate. Both fields are emitted, with no warning. `TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists` declares a has-one `o2o` `LatestEntry` over the same columns as the detected `o2m`. Both are emitted, each keeping its kind, with no warning.
+  - `filter_relationship_test.go`: `TestRelationshipFilters_ColumnComparatorKeepsItsFieldName` declares `Email` over `orders.workspace_id`, which no foreign key declares, instead of `user_id`. The assertions are unchanged.
+- **Guard run (current code, before any Phase 35 code change):** all three pass (`go test ./gen/ -run '…Coexists|…ColumnComparatorKeepsItsFieldName' -v`).
+- **Probe:** with the moved edge renamed `WorkspaceOrders`, it gets a relationship filter member. So `Email`'s missing member is still the collision's doing, not a key that never gets one. Reverted.
+- **Registry (`cli/gen.md` §13.4):** two guard rows, `gen.manual.filtered-coexists-with-detected` and `gen.manual.other-kind-coexists-with-detected`. Design §6.2 marks both rows guarded.
+- **Checks:** `make check` and `make check-examples` pass. `make check-examples` ran because the diff touches `cmd/sqlgen/gen/**`.
+- **Review (sqlgen-reviewer):** PRD 3/3, no findings, no doc fixes. It checked fail-first against the prototype in a throwaway worktree. Disabling the filtered-edge early return fails `FilteredEdgeOverDetectedKeyCoexists`. Dropping the kind comparison fails `DeclaredOfAnotherKindCoexists`. Putting `Email` back on `user_id` fails `ColumnComparatorKeepsItsFieldName` on the `Orders` control, so the move is needed.
 
 ## 35.2 Gen — declared edges name their FOREIGN KEY constraint
 

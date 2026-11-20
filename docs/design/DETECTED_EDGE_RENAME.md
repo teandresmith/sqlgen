@@ -402,8 +402,8 @@ later can still rename it. Option C (§4.3) is the guard for that, and it stays 
 | Two detected edges still sharing a name is an error naming both constraints | §4.13, §5.3 rule 6 | `cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionIsAnError` | guarded |
 | Two declared edges resolving to one Go field is an error, now that both may carry constraints | §13.7.3 | `cmd/sqlgen/gen: TestValidateResolvedFieldNames_DuplicateRelationshipField` | guarded |
 | Discriminator sub-categorized edges stay distinct | §13.7.3 | `cmd/sqlgen/gen: TestDiscriminator_SubCategorizedEdgesStayDistinct` | guarded |
-| A declared `filter:` or `discriminator:` edge over a detected FOREIGN KEY coexists with the detected edge | §13.7.3 | `cmd/sqlgen/gen: TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists` | unguarded |
-| A declared edge of another kind over the same columns (o2o against a detected o2m) coexists | §13.4 | `cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists` | unguarded |
+| A declared `filter:` or `discriminator:` edge over a detected FOREIGN KEY coexists with the detected edge | §13.7.3 | `cmd/sqlgen/gen: TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists` | guarded |
+| A declared edge of another kind over the same columns (o2o against a detected o2m) coexists | §13.4 | `cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOfAnotherKindCoexists` | guarded |
 | A declared key keeps joining the referenced primary key, in `fk` order | §13.4 | `cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredKeyListMapsOntoPrimaryKey` | guarded |
 | A declared edge's pinned members and MATCH type are unchanged | §9.9.2 | `cmd/sqlgen/gen: TestNestedEligibility_PinnedAndFreeMembers` | guarded |
 
