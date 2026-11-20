@@ -456,7 +456,9 @@ same key column pairs (for M2M, the same junction and both junction keys), takes
 place, with no warning and no `exclude_relationships` entry. Its manifest entry keeps the FOREIGN
 KEY's `constraint`. A declared edge over a different key that resolves to the same Go field as a
 detected one also replaces it, with a warning naming both. If you want both edges, give the declared
-one a different name, and a different key or a `filter`. A declared key no FOREIGN KEY declares has no `constraint`.
+one a different name, and a different key or a `filter`. A rename onto another detected edge's field
+is an error: pick a name no other edge resolves to. A declared key no FOREIGN KEY declares has no
+`constraint`.
 
 ## `views`
 

@@ -208,12 +208,11 @@ type ComplexityRoot struct {
 	}
 
 	BinaryKey struct {
-		Badges          func(childComplexity int) int
-		BinaryKeyEvents func(childComplexity int) int
-		CreatedAt       func(childComplexity int) int
-		Events          func(childComplexity int) int
-		ID              func(childComplexity int) int
-		Name            func(childComplexity int) int
+		Badges    func(childComplexity int) int
+		CreatedAt func(childComplexity int) int
+		Events    func(childComplexity int) int
+		ID        func(childComplexity int) int
+		Name      func(childComplexity int) int
 	}
 
 	BinaryKeyBadge struct {
@@ -2224,12 +2223,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.BinaryKey.Badges(childComplexity), true
-	case "BinaryKey.binaryKeyEvents":
-		if e.ComplexityRoot.BinaryKey.BinaryKeyEvents == nil {
-			break
-		}
-
-		return e.ComplexityRoot.BinaryKey.BinaryKeyEvents(childComplexity), true
 	case "BinaryKey.createdAt":
 		if e.ComplexityRoot.BinaryKey.CreatedAt == nil {
 			break
@@ -8900,8 +8893,6 @@ func (ec *executionContext) childFields_BinaryKey(ctx context.Context, field gra
 		return ec.fieldContext_BinaryKey_events(ctx, field)
 	case "badges":
 		return ec.fieldContext_BinaryKey_badges(ctx, field)
-	case "binaryKeyEvents":
-		return ec.fieldContext_BinaryKey_binaryKeyEvents(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type BinaryKey", field.Name)
 }
@@ -19964,38 +19955,6 @@ func (ec *executionContext) fieldContext_BinaryKey_badges(_ context.Context, fie
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_Badge(ctx, field)
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _BinaryKey_binaryKeyEvents(ctx context.Context, field graphql.CollectedField, obj *models.BinaryKey) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return ec.fieldContext_BinaryKey_binaryKeyEvents(ctx, field)
-		},
-		func(ctx context.Context) (any, error) {
-			return obj.BinaryKeyEvents, nil
-		},
-		nil,
-		func(ctx context.Context, selections ast.SelectionSet, v []*models.BinaryKeyEvent) graphql.Marshaler {
-			return ec.marshalNBinaryKeyEvent2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKeyEventᚄ(ctx, selections, v)
-		},
-		true,
-		true,
-	)
-}
-func (ec *executionContext) fieldContext_BinaryKey_binaryKeyEvents(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "BinaryKey",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return ec.childFields_BinaryKeyEvent(ctx, field)
 		},
 	}
 	return fc, nil
@@ -46354,7 +46313,7 @@ func (ec *executionContext) unmarshalInputBinaryKeyFilter(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"id", "name", "createdAt", "badges", "binaryKeyEvents", "events", "and", "or"}
+	fieldsInOrder := [...]string{"id", "name", "createdAt", "badges", "events", "and", "or"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -46389,13 +46348,6 @@ func (ec *executionContext) unmarshalInputBinaryKeyFilter(ctx context.Context, o
 				return it, err
 			}
 			it.Badges = data
-		case "binaryKeyEvents":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("binaryKeyEvents"))
-			data, err := ec.unmarshalOBinaryKeyEventFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyEventFilter(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.BinaryKeyEvents = data
 		case "events":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("events"))
 			data, err := ec.unmarshalOBinaryKeyEventFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐBinaryKeyEventFilter(ctx, v)
@@ -54852,11 +54804,6 @@ func (ec *executionContext) _BinaryKey(ctx context.Context, sel ast.SelectionSet
 			}
 		case "badges":
 			out.Values[i] = ec._BinaryKey_badges(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
-		case "binaryKeyEvents":
-			out.Values[i] = ec._BinaryKey_binaryKeyEvents(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

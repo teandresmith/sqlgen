@@ -175,21 +175,21 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 **PRD Reference:** Sections 13.4, 5.3 rule 6, 4.13
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Add `sameKeyInferred` and call it from `mergeDeclaredRelationships` (`cmd/sqlgen/gen/context_table.go:1873-1956`) before the field-name rule. It finds an unreplaced detected edge that matches on all of these:
+- [x] Add `sameKeyInferred` and call it from `mergeDeclaredRelationships` (`cmd/sqlgen/gen/context_table.go:1873-1956`) before the field-name rule. It finds an unreplaced detected edge that matches on all of these:
   - the same `Type`, `TargetSchema` and `TargetTable`;
   - for O2O / O2M, the same `FKOnTarget` and an equal `Key` pair set;
   - for M2M, the same junction and equal `JunctionLocal` and `JunctionReference` pair sets.
 
   A `filter:` / `discriminator:` edge never matches.
-- [ ] On a match, mark the detected edge replaced, with no warning. Otherwise fall back to the field-name rule and its warning, as today.
-- [ ] Update the two `TestBuildRelationshipContexts_DeclaredReplacesInferred` cases whose expectations change (ruling Q1 and Q2).
-- [ ] Regenerate the goldens. Confirm the only Go change is `sqlite` losing `BinaryKeyEvents` (and its loader, filter member and nested surface).
-- [ ] Probe `sqlgen-example`: drop its three `exclude_relationships` entries and regenerate. Confirm the struct and GraphQL surface are unchanged, and that `Subtasks`, `Assignees` and `Watchers` keep `constraint` in the manifest (design §10 item 6).
-- [ ] Move each design §6.1 registry row from planned to its test.
+- [x] On a match, mark the detected edge replaced, with no warning. Otherwise fall back to the field-name rule and its warning, as today.
+- [x] Update the two `TestBuildRelationshipContexts_DeclaredReplacesInferred` cases whose expectations change (ruling Q1 and Q2).
+- [x] Regenerate the goldens. Confirm the only Go change is `sqlite` losing `BinaryKeyEvents` (and its loader, filter member and nested surface).
+- [x] Probe `sqlgen-example`: drop its three `exclude_relationships` entries and regenerate. Confirm the struct and GraphQL surface are unchanged, and that `Subtasks`, `Assignees` and `Watchers` keep `constraint` in the manifest (design §10 item 6).
+- [x] Move each design §6.1 registry row from planned to its test.
 
 ### Acceptance Criteria
 
@@ -201,23 +201,42 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/o2m`: fails before the change, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/belongs-to`: fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/m2m`: fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/composite o2m` (pairs in another order): fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/self-referential m2m direction`: fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/one of several edges into one target`: fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared name collides with inferred edge` (now no warning): fails before the expectation change, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared name distinct from inferred edge` (now one field) and `golden: sqlite`: fail before, pass after. All dialects.
-- [ ] `unit: cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionClearedByDeclaringOneEdge`: fails before, passes after. All dialects.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/exclude_relationships alongside the declaration` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverCompositeFK` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_ExcludeByBaseName` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestDiscriminator_SubCategorizedEdgesStayDistinct` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredKeyListMapsOntoPrimaryKey` still passes.
-- [ ] Guard: the 35.1 coexistence tests still pass.
-- [ ] Sweep: `make check` and `make check-examples` are green.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/o2m`: fails before the change, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/belongs-to`: fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/m2m`: fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/composite o2m` (pairs in another order): fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/self-referential m2m direction`: fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/one of several edges into one target`: fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared name collides with inferred edge` (now no warning): fails before the expectation change, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared name distinct from inferred edge` (now one field) and `golden: sqlite`: fail before, pass after. All dialects.
+- [x] `unit: cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionClearedByDeclaringOneEdge`: fails before, passes after. All dialects.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/exclude_relationships alongside the declaration` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverCompositeFK` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_ExcludeByBaseName` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestDiscriminator_SubCategorizedEdgesStayDistinct` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredKeyListMapsOntoPrimaryKey` still passes.
+- [x] Guard: the 35.1 coexistence tests still pass.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_TakeoverOntoAnotherDetectedFieldIsAnError` passes (backs `rename.takeover.onto-another-field`).
+- [x] Sweep: `make check` and `make check-examples` are green.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.**
+
+- **Code:**
+  - `cmd/sqlgen/gen/key_members.go`: `sameKeyInferred` finds the unreplaced detected edge a declared edge is: the same kind and target, the same `FKOnTarget` and key pair set, or for M2M the same junction and both key pair sets. A `filter:` / `discriminator:` edge never matches.
+  - `cmd/sqlgen/gen/context_table.go`: `replaceInferred` tries `sameKeyInferred` before the field-name rule and replaces with no warning on a match. It is split out of `mergeDeclaredRelationships`, which the takeover pushed past `cyclop`'s limit of 15. The `validateDuplicateRelationshipFields` doc now lists the one declared-vs-detected pair that can reach it (below).
+- **Tests:**
+  - `TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace` (`cmd/sqlgen/gen/context_table_test.go`): six cases, each parsed from DDL on all three dialects. The belongs-to case uses `profiles(user_id UNIQUE)`, since detection gives a belongs-to edge only over a unique key.
+  - `TestBuildRelationshipContexts_DeclaredReplacesInferred`: the two cases change as ruled (Q1, Q2), and the now-unused warning branch is gone. `TestBuildRelationshipContexts_DeclaredOverCompositeFK`, the one test left on the field-name warning, now checks that it names both sides, the field and the table.
+  - `TestGenerate_DetectedNameCollisionClearedByDeclaringOneEdge` (`cmd/sqlgen/cli/relationship_detection_test.go`): on each dialect, generate first fails with the collision, then passes with `Members` declared over `users.organization_id`.
+- **Fail-first (before the code change):** the six takeover cases fail on every dialect, each only by the detected edge still emitted (`+ "posts"`, `+ "followees"`, `+ "author_posts"`, …). `declared name collides with inferred edge` fails on the warning, `declared name distinct from inferred edge` on the extra `Entries`, and the CLI test on the collision error, on all three dialects.
+- **Guards (before and after):** `DeclaredReplacesInferred/exclude_relationships alongside the declaration`, `DeclaredOverCompositeFK`, `ExcludeByBaseName`, `TestDiscriminator_SubCategorizedEdgesStayDistinct`, `DeclaredKeyListMapsOntoPrimaryKey`, both 35.1 coexistence tests and `TestGenerate_DetectedNameCollisionIsAnError` pass.
+- **Probe:** a takeover can leave the declared edge on another detected edge's field: `EditorPosts` over `posts.author_id`, beside the detected `editor_posts`. It is the §13.7.3 duplicate-field error, not uncompilable output.
+- **Goldens:** `make update-golden` changed nothing. `make update-golden-e2e` changed `sqlite` only, as ruled: `BinaryKey` loses `BinaryKeyEvents`, with its loader, GraphQL field, filter translation, field options, limits and manifest edge; the rest is gofumpt realignment. `expected/` and `models/` match.
+- **`sqlgen-example` probe:** the example, generated with this build with and without its three `exclude_relationships` entries, is byte-identical but for the manifest `generated_at`. `Subtasks` keeps `tasks_parent_task_id_fkey`; `Assignees` and `Watchers` keep both junction constraints (design §10 item 6).
+- **Registry:** the ten `rename.takeover.*` rows (nine in `gen.md` §13.4, one in `config.md` §4.13) cite their tests, and design §6.1's eighteen rows are `passing`.
+- **Review (sqlgen-reviewer):** PRD 6/6, tests 9/9 plus 6/6 guards. It confirmed fail-first: with the `sameKeyInferred` call replaced by `-1`, all six takeover cases fail on every dialect. It also confirmed that declaration order doesn't matter. Applied: the `mergeDeclaredRelationships` doc now names the silent takeover, and design §6.1 drops its "(proposed)" and "(expectation changes)" notes. It raised one question: the PRD didn't name the takeover-onto-another-field case (see Probe).
+- **Ruling (user, 2026-11-20):** name it. PRD §13.4 now says it is the §13.7.3 duplicate-field error, `docs/configuration.md` says so too, and `TestBuildRelationshipContexts_TakeoverOntoAnotherDetectedFieldIsAnError` pins it on all three dialects. It is a guard and passes on the code as it stands. It backs registry row `rename.takeover.onto-another-field` and the matching design §6.1 row. §13.4 is rehashed.
+- **Checks:** `make check-examples` passes. `make check` passes after the `replaceInferred` extraction, with no suppression.
+- **Verify (2026-11-20):** PRD 7/7 and all 10 takeover rows pass. An independent reviewer confirmed the CLI test's fail-first (with `sameKeyInferred` disabled, all three dialects report the collision). It also confirmed that both remedies the new §13.4 sentence names clear the error. `make check` and `make check-examples` pass on the final tree. Doc fixes applied: the row counts above, the guard in Tests Required, a history note in design §6.1, and `COMPOSITE_FK_RELATIONSHIPS.md` §10.2 now cites `DeclaredOverCompositeFK` for the warning guard.

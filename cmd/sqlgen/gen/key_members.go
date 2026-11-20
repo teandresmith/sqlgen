@@ -234,6 +234,32 @@ func foreignKeyOver(holder *parser.Table, refSchema, refName string, key []parse
 	return parser.ForeignKeyName(holder, match)
 }
 
+// sameKeyInferred returns the index of the unreplaced detected edge a declared
+// edge is: the same kind and target over the same key pair set, and for M2M
+// the same junction and both keys. A `filter:` or `discriminator:` edge is a
+// sub-category of the detected edge, never the edge itself. -1 means none.
+func sameKeyInferred(decl RelationshipContext, inferred []RelationshipContext, replaced map[int]bool) int {
+	if decl.Filter != "" || decl.Discriminator != nil {
+		return -1
+	}
+	for i, inf := range inferred {
+		if replaced[i] || inf.Type != decl.Type || inf.TargetSchema != decl.TargetSchema || inf.TargetTable != decl.TargetTable {
+			continue
+		}
+		if decl.Type == parser.ManyToMany {
+			if inf.JunctionSchema == decl.JunctionSchema && inf.JunctionTable == decl.JunctionTable &&
+				samePairSet(inf.JunctionLocal, decl.JunctionLocal) && samePairSet(inf.JunctionReference, decl.JunctionReference) {
+				return i
+			}
+			continue
+		}
+		if inf.FKOnTarget == decl.FKOnTarget && samePairSet(inf.Key, decl.Key) {
+			return i
+		}
+	}
+	return -1
+}
+
 // samePairSet reports whether a and b hold the same column pairs, in any order.
 func samePairSet(a, b []parser.KeyPair) bool {
 	return len(a) > 0 && len(a) == len(b) && !slices.ContainsFunc(a, func(p parser.KeyPair) bool { return !slices.Contains(b, p) })

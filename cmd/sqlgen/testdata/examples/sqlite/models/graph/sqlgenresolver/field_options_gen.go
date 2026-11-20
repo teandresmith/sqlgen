@@ -395,10 +395,6 @@ func binaryKeyFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.Badges = &models.BadgeRelationshipOptions{
 				FieldOptions: badgeFieldOptionsFromCollected(opCtx, f.Sub),
 			}
-		case "binaryKeyEvents":
-			fo.BinaryKeyEvents = &models.BinaryKeyEventRelationshipOptions{
-				FieldOptions: binaryKeyEventFieldOptionsFromCollected(opCtx, f.Sub),
-			}
 		}
 	}
 	if !fo.HasSelectedColumns() {

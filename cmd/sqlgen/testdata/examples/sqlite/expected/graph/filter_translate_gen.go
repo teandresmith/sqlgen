@@ -310,9 +310,6 @@ func translateBinaryKeyFilter(in *gqlmodel.BinaryKeyFilter) *models.BinaryKeyFil
 	if in.Badges != nil {
 		out.Badges = translateBadgeFilter(in.Badges)
 	}
-	if in.BinaryKeyEvents != nil {
-		out.BinaryKeyEvents = translateBinaryKeyEventFilter(in.BinaryKeyEvents)
-	}
 	if in.Events != nil {
 		out.Events = translateBinaryKeyEventFilter(in.Events)
 	}

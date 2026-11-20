@@ -27,8 +27,6 @@ type BinaryKey struct {
 	Events []*BinaryKeyEvent `db:"-" json:"events"`
 	// Badges - many-to-many relationship with the badges table.
 	Badges []*Badge `db:"-" json:"badges"`
-	// BinaryKeyEvents - one-to-many relationship with the binary_key_events table.
-	BinaryKeyEvents []*BinaryKeyEvent `db:"-" json:"binary_key_events"`
 }
 
 // BinaryKeyClient provides type-safe operations for the binary_keys table.
@@ -118,24 +116,23 @@ type BinaryKeyClient interface {
 
 // binaryKeyClient implements the BinaryKeyClient interface.
 type binaryKeyClient struct {
-	querier                    database.Querier
-	dialect                    sql.Dialect
-	table                      sql.Table
-	batchSize                  int
-	queryLimit                 int
-	pageSize                   int
-	cursorKeys                 []string
-	strictUpdates              bool
-	mutationHooks              []hook.MutationHook
-	queryHooks                 []hook.QueryHook
-	panicHandler               hook.PanicHandler
-	callbackMode               database.CallbackMode
-	eventsDefaultSort          []sql.Sort
-	binaryKeyEventsDefaultSort []sql.Sort
-	badgesDefaultSort          []sql.Sort
-	badgeClient                *badgeClient
-	binaryKeyEventClient       *binaryKeyEventClient
-	binaryKeyBadgeClient       *binaryKeyBadgeClient
+	querier              database.Querier
+	dialect              sql.Dialect
+	table                sql.Table
+	batchSize            int
+	queryLimit           int
+	pageSize             int
+	cursorKeys           []string
+	strictUpdates        bool
+	mutationHooks        []hook.MutationHook
+	queryHooks           []hook.QueryHook
+	panicHandler         hook.PanicHandler
+	callbackMode         database.CallbackMode
+	eventsDefaultSort    []sql.Sort
+	badgesDefaultSort    []sql.Sort
+	badgeClient          *badgeClient
+	binaryKeyEventClient *binaryKeyEventClient
+	binaryKeyBadgeClient *binaryKeyBadgeClient
 }
 
 // newBinaryKeyClient creates a new binaryKeyClient.
@@ -383,9 +380,6 @@ func (fo *BinaryKeyFieldOptions) loadsRelationships() bool {
 	if fo.Events != nil {
 		return true
 	}
-	if fo.BinaryKeyEvents != nil {
-		return true
-	}
 	if fo.Badges != nil {
 		return true
 	}
@@ -491,89 +485,6 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				key := fmt.Sprint(binaryKeys[i].ID)
 				rs, ok := byFK[key]
 				binaryKeys[i].Events = rs
-				if ok {
-					matched[key] = struct{}{}
-				}
-			}
-			if len(matched) != len(byFK) {
-				return fmt.Errorf("load binary_key binary_key_events: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
-			}
-			return nil
-		})
-	}
-
-	if fo.BinaryKeyEvents != nil {
-		g.Go(func() error {
-			// Collect parent FK values
-			binaryKeyIDs := make([][]byte, len(binaryKeys))
-			for idx, b := range binaryKeys {
-				binaryKeyIDs[idx] = b.ID
-			}
-
-			sorts := fo.BinaryKeyEvents.Sorts
-			if len(sorts) == 0 {
-				sorts = c.binaryKeyEventsDefaultSort
-			}
-
-			// Load via related entity client, 16383 parent keys per
-			// statement: half the dialect's bind-parameter limit, leaving the rest
-			// for the relationship's filters. Each parent's children come from one
-			// statement, so the sorts order every parent's slice.
-			//
-			// Self-referential relationships share the parent's entity type, so
-			// the loaded children must use a name distinct from the parent slice
-			// (binaryKeys) to avoid shadowing it and mis-mapping the results
-			// onto the children instead of the parents.
-			var relatedBinaryKeyEvents []*BinaryKeyEvent
-			for start := 0; start < len(binaryKeyIDs); start += 16383 {
-				chunk := binaryKeyIDs[start:min(start+16383, len(binaryKeyIDs))]
-
-				// Build FK-based filter, merged with consumer filter
-				filter := &BinaryKeyEventFilter{
-					BinaryKeyID: &comparator.Opaque[[]byte]{In: chunk},
-				}
-				if fo.BinaryKeyEvents.Filter != nil {
-					filter.And = append(filter.And, fo.BinaryKeyEvents.Filter)
-				}
-
-				loaded, err := c.binaryKeyEventClient.GetMany(ctx, &GetBinaryKeyEventsInput{
-					Filter: filter,
-					Sorts:  sorts,
-					Limit:  new(0),
-					// The mapping below keys every child on its FK, so the fetch
-					// declares that column rather than mutating the caller's
-					// FieldOptions — a narrowed selection that omits it would
-					// otherwise map every child onto the zero value.
-					requiredColumns: []string{"binary_key_id"},
-				}, func(co *CallOptions[BinaryKeyEventFieldOptions]) {
-					co.FieldOptions = fo.BinaryKeyEvents.FieldOptions
-					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
-					co.SkipHooks = options.caller.skipHooks
-				})
-				if err != nil {
-					return fmt.Errorf("load binary_key binary_key_events: %w", err)
-				}
-				relatedBinaryKeyEvents = append(relatedBinaryKeyEvents, loaded...)
-			}
-
-			// Map results back to parent entities by FK. The FK column on the
-			// child table may be nullable and resolved to a Null-wrapper struct
-			// (e.g., uuid.NullUUID) — fkLoadGuard skips invalid rows and
-			// fkLoadKey unwraps the underlying scalar before stringifying.
-			byFK := make(map[string][]*BinaryKeyEvent)
-			for _, r := range relatedBinaryKeyEvents {
-				key := fmt.Sprint(r.BinaryKeyID)
-				byFK[key] = append(byFK[key], r)
-			}
-			// The fetch matched every child in the database, so a key no
-			// parent holds byte for byte is one the column's comparison calls
-			// equal: Go cannot apply that collation, and the child is not
-			// dropped silently.
-			matched := make(map[string]struct{}, len(byFK))
-			for i := range binaryKeys {
-				key := fmt.Sprint(binaryKeys[i].ID)
-				rs, ok := byFK[key]
-				binaryKeys[i].BinaryKeyEvents = rs
 				if ok {
 					matched[key] = struct{}{}
 				}
@@ -2209,14 +2120,13 @@ func (c *binaryKeyClient) Stream(ctx context.Context, input *StreamBinaryKeysInp
 
 // BinaryKeyFilter provides type-safe filtering for the binary_keys table.
 type BinaryKeyFilter struct {
-	CreatedAt       *comparator.Time           `json:"created_at"`
-	ID              *comparator.Opaque[[]byte] `json:"id"`
-	Name            *comparator.String         `json:"name"`
-	Badges          *BadgeFilter               `json:"badges"`
-	BinaryKeyEvents *BinaryKeyEventFilter      `json:"binary_key_events"`
-	Events          *BinaryKeyEventFilter      `json:"events"`
-	And             []*BinaryKeyFilter         `json:"and"`
-	Or              []*BinaryKeyFilter         `json:"or"`
+	CreatedAt *comparator.Time           `json:"created_at"`
+	ID        *comparator.Opaque[[]byte] `json:"id"`
+	Name      *comparator.String         `json:"name"`
+	Badges    *BadgeFilter               `json:"badges"`
+	Events    *BinaryKeyEventFilter      `json:"events"`
+	And       []*BinaryKeyFilter         `json:"and"`
+	Or        []*BinaryKeyFilter         `json:"or"`
 }
 
 // ToConditions converts the filter to a slice of SQL conditions.
@@ -2248,10 +2158,6 @@ func (f *BinaryKeyFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 	if f.Badges != nil {
 		conds = append(conds, binaryKeyBadgesFilterExists(f.Badges, dialect, opts))
-	}
-
-	if f.BinaryKeyEvents != nil {
-		conds = append(conds, binaryKeyBinaryKeyEventsFilterExists(f.BinaryKeyEvents, dialect, opts))
 	}
 
 	if f.Events != nil {
@@ -2328,42 +2234,6 @@ func binaryKeyBadgesFilterExists(f *BadgeFilter, dialect sql.Dialect, opts []Fil
 	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
-// binaryKeyBinaryKeyEventsFilterExists compiles a BinaryKeyEventFilter set on the
-// BinaryKeyEvents relationship into a correlated EXISTS over binary_key_events.
-//
-// The parent-side reference carries no qualifier: sql.CorrelationToken is
-// resolved by the builder against whichever FROM clause encloses the predicate,
-// so one emitted value is correct on both the plain read path and the aliased
-// O2O-join path.
-//
-// The subquery alias is keyed on nesting depth. A relationship filter nested
-// inside itself — legal for a self-referential relationship — would
-// otherwise reuse the alias and let the inner subquery shadow the reference its
-// own correlation resolves against.
-//
-// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
-// (error 1093). A relationship filter whose target is the mutated table is
-// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
-// SoftDeleteWhere / HardDeleteWhere / Increment.
-func binaryKeyBinaryKeyEventsFilterExists(f *BinaryKeyEventFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
-	scope := resolveFilterScope(opts)
-	tgt := filterSubqueryAlias("tgt", scope.depth)
-	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "binary_key_events"}) + " " + tgt +
-		" WHERE " + tgt + "." + dialect.QuoteIdentifier("binary_key_id") + " = " + sql.CorrelationToken
-	var subArgs []any
-
-	// The target's own ToConditions supplies the inner WHERE, so nesting and
-	// and/or compose recursively. Every reference is qualified with the target
-	// alias: unqualified names inside a correlated subquery bind to the
-	// enclosing statement whenever the target lacks the column.
-	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
-		subSQL += " AND " + where
-		subArgs = append(subArgs, whereArgs...)
-	}
-
-	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
-}
-
 // binaryKeyEventsFilterExists compiles a BinaryKeyEventFilter set on the
 // Events relationship into a correlated EXISTS over binary_key_events.
 //
@@ -2402,12 +2272,11 @@ func binaryKeyEventsFilterExists(f *BinaryKeyEventFilter, dialect sql.Dialect, o
 
 // BinaryKeyFieldOptions controls column selection and relationship loading for binary_keys queries.
 type BinaryKeyFieldOptions struct {
-	ID              bool                               `json:"id"`
-	Name            bool                               `json:"name"`
-	CreatedAt       bool                               `json:"created_at"`
-	Events          *BinaryKeyEventRelationshipOptions `json:"events"`
-	Badges          *BadgeRelationshipOptions          `json:"badges"`
-	BinaryKeyEvents *BinaryKeyEventRelationshipOptions `json:"binary_key_events"`
+	ID        bool                               `json:"id"`
+	Name      bool                               `json:"name"`
+	CreatedAt bool                               `json:"created_at"`
+	Events    *BinaryKeyEventRelationshipOptions `json:"events"`
+	Badges    *BadgeRelationshipOptions          `json:"badges"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -2451,9 +2320,6 @@ func (fo *BinaryKeyFieldOptions) HasSelectedColumns() bool {
 		return true
 	}
 	if fo.Badges != nil {
-		return true
-	}
-	if fo.BinaryKeyEvents != nil {
 		return true
 	}
 	return false

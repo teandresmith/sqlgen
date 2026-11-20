@@ -799,7 +799,7 @@ Each row is an existing behavior on a path 32.3–32.8 rewrites.
 | Every existing example's Go output is byte-identical (design §4.9) | §5.3, §13 | `golden: <every example>` (`TestE2EGoldenFiles`) | guarded |
 | Detection and output agree under `database` | §6 | `TestE2EDatabaseTwin` | guarded |
 | A string `fk` / `junction_local_fk` / `junction_reference_fk` means what it does today | §13.4 | `unit: cmd/sqlgen/config: TestLoadConfig_FullConfig`; `unit: cmd/sqlgen/config: TestSchemaV1_acceptsUnexercisedSurface`; `unit: cmd/sqlgen/gen: TestGenerate_RelationshipSideCaseInsensitive` | guarded |
-| A manual relationship replaces a detected one with a warning | §13.4 | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred` | guarded |
+| A manual relationship replaces a detected one with a warning | §13.4 | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverCompositeFK` | guarded |
 | A one-column O2M load uses `IN`, or one `= ANY($1)` statement on pgx | §13.2, §25.1 | `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading/pgx`, `/stdlib` | guarded |
 | A one-column M2M load scans typed keys and fetches targets by their own key | §13.2 | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading`; `TestGetTemplate_m2mJunctionScansTypedKeys`; `TestGetTemplate_m2mTargetFilterUsesTargetPKField` | guarded |
 | A one-pair O2O join, belongs-to and has-one | §13.2 | `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_chainedFKOnTarget`; `TestBuildO2OJoinDetails_fkOnTargetParentPKName`; `TestRelationshipsTemplate_resolveO2OJoins` | guarded |

@@ -130,14 +130,13 @@ type BinaryKeyEventSort struct {
 }
 
 type BinaryKeyFilter struct {
-	ID              *BytesComparator      `json:"id,omitempty"`
-	Name            *StringComparator     `json:"name,omitempty"`
-	CreatedAt       *TimeComparator       `json:"createdAt,omitempty"`
-	Badges          *BadgeFilter          `json:"badges,omitempty"`
-	BinaryKeyEvents *BinaryKeyEventFilter `json:"binaryKeyEvents,omitempty"`
-	Events          *BinaryKeyEventFilter `json:"events,omitempty"`
-	And             []*BinaryKeyFilter    `json:"and,omitempty"`
-	Or              []*BinaryKeyFilter    `json:"or,omitempty"`
+	ID        *BytesComparator      `json:"id,omitempty"`
+	Name      *StringComparator     `json:"name,omitempty"`
+	CreatedAt *TimeComparator       `json:"createdAt,omitempty"`
+	Badges    *BadgeFilter          `json:"badges,omitempty"`
+	Events    *BinaryKeyEventFilter `json:"events,omitempty"`
+	And       []*BinaryKeyFilter    `json:"and,omitempty"`
+	Or        []*BinaryKeyFilter    `json:"or,omitempty"`
 }
 
 type BinaryKeySort struct {

@@ -32,7 +32,6 @@
 | --- | --- | --- | --- | --- |
 | Events | o2m | BinaryKeyEvent | binary_key_events.binary_key_id |  |
 | badges | m2m | Badge | binary_key_badges (binary_key_id → badge_code) |  |
-| binary_key_events | o2m | BinaryKeyEvent | binary_key_events.binary_key_id |  |
 
 ## Query methods
 

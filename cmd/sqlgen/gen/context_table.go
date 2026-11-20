@@ -969,17 +969,16 @@ func validateResolvedFieldNames(
 // generated code, where validate and generate both report success and the
 // build fails.
 //
-// A surviving pair is always same-provenance, so neither side is privileged
-// and the message names both symmetrically. A declared-vs-inferred collision
-// cannot reach here — buildRelationshipContexts resolves that one by
-// replacement (§13.4). What remains is two declared entries whose
-// names pascalize onto one field, which config.validateRelationships misses
-// because it compares `name:` byte-equal (`primary_document` and
-// `PrimaryDocument` are distinct names, one field), two inferred edges to
-// different targets whose names pluralize onto one, or two inferred edges
-// that disambiguation left one name (PRD §5.3 rule 6). The last is reported
-// with the foreign keys behind both edges, since its remedy is to exclude the
-// name and declare the edges by hand.
+// The message names both sides symmetrically. A pair here is two declared
+// entries whose names pascalize onto one field, which
+// config.validateRelationships misses because it compares `name:` byte-equal
+// (`primary_document` and `PrimaryDocument` are distinct names, one field); a
+// declared edge that took over one detected edge (§13.4) under another
+// detected edge's field; two inferred edges to different targets whose names
+// pluralize onto one; or two inferred edges that disambiguation left one name
+// (PRD §5.3 rule 6). The last is reported with the foreign keys behind both
+// edges, since its remedy is to exclude the name and declare the edges by
+// hand.
 //
 // rels is sorted by Name before this runs, so the reported pair is stable.
 func validateDuplicateRelationshipFields(qualifiedTable string, rels []RelationshipContext) error {
@@ -1866,10 +1865,10 @@ func buildRelationshipContexts(
 }
 
 // mergeDeclaredRelationships folds `tables.<t>.relationships` into the
-// FK-inferred set, applying the §4.8 / §13.4 replacement rule: a declared
-// entry that resolves to the same Go field as an inferred one supersedes it.
-// It returns the merged set in source order (caller sorts) plus one notice per
-// replacement.
+// FK-inferred set, applying the §13.4 replacement rules: a declared entry
+// over an inferred edge's key takes its place silently; otherwise one
+// resolving to the same Go field supersedes it with a notice. It returns the
+// merged set in source order (caller sorts) plus those notices.
 func mergeDeclaredRelationships(
 	schema *parser.Schema, inferred []RelationshipContext, tableCfg config.TableConfig,
 	excludeSet map[string]bool, targets *relationshipTargets, qualifiedName string,
@@ -1924,19 +1923,8 @@ func mergeDeclaredRelationships(
 			errs = append(errs, err)
 			continue
 		}
-		// The !replaced guard keeps a second declared entry resolving to the
-		// same field from re-reporting a replacement that already happened.
-		// It does not make that pair legal: config.validateRelationships
-		// compares `name:` byte-equal, so `primary_document` and
-		// `PrimaryDocument` are distinct names claiming one field and both
-		// pass it. validateDuplicateRelationshipFields rejects the merged
-		// set (§13.7.3 row 2).
-		if i, ok := inferredByField[rel.FieldName]; ok && !replaced[i] {
-			replaced[i] = true
-			warnings = append(warnings, fmt.Sprintf(
-				"tables.%s.relationships: %q replaces the foreign-key-inferred relationship %q — both resolve to the Go field %q (PRD §13.4). Rename the declared relationship to keep both edges.",
-				qualifiedName, rel.Name, inferred[i].Name, rel.FieldName,
-			))
+		if w := replaceInferred(rel, inferred, inferredByField, replaced, qualifiedName); w != "" {
+			warnings = append(warnings, w)
 		}
 		declared = append(declared, rel)
 	}
@@ -1952,6 +1940,37 @@ func mergeDeclaredRelationships(
 		return nil, nil, err
 	}
 	return append(rels, declared...), warnings, nil
+}
+
+// replaceInferred marks the inferred edge a declared edge replaces and
+// returns the notice the replacement reports, or "". A declared edge over a
+// detected edge's key is that edge renamed, so it takes its place with no
+// notice (PRD §13.4). Otherwise it replaces the inferred edge resolving to its
+// Go field, with a notice.
+//
+// The !replaced guard keeps a second declared entry resolving to the same
+// field from re-reporting a replacement that already happened. It does not
+// make that pair legal: config.validateRelationships compares `name:`
+// byte-equal, so `primary_document` and `PrimaryDocument` are distinct names
+// claiming one field and both pass it. validateDuplicateRelationshipFields
+// rejects the merged set (§13.7.3 row 2).
+func replaceInferred(
+	rel RelationshipContext, inferred []RelationshipContext, inferredByField map[string]int,
+	replaced map[int]bool, qualifiedName string,
+) string {
+	if i := sameKeyInferred(rel, inferred, replaced); i >= 0 {
+		replaced[i] = true
+		return ""
+	}
+	i, ok := inferredByField[rel.FieldName]
+	if !ok || replaced[i] {
+		return ""
+	}
+	replaced[i] = true
+	return fmt.Sprintf(
+		"tables.%s.relationships: %q replaces the foreign-key-inferred relationship %q — both resolve to the Go field %q (PRD §13.4). Rename the declared relationship to keep both edges.",
+		qualifiedName, rel.Name, inferred[i].Name, rel.FieldName,
+	)
 }
 
 // checkDeclaredLinkColumns rejects a declared relationship whose link

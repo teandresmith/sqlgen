@@ -3214,21 +3214,6 @@
               "constraint": "binary_key_badges(badge_code) → badges(code)"
             }
           }
-        },
-        {
-          "name": "binary_key_events",
-          "kind": "o2m",
-          "target_entity": "BinaryKeyEvent",
-          "fk": {
-            "table": "binary_key_events",
-            "columns": [
-              "binary_key_id"
-            ],
-            "references": [
-              "id"
-            ],
-            "constraint": "binary_key_events(binary_key_id) → binary_keys(id)"
-          }
         }
       ],
       "methods": {
