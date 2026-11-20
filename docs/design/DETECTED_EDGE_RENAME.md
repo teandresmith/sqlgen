@@ -503,7 +503,7 @@ switches to the exported label.
 |---|---|---|---|
 | N.0 | PRD sync (§8), `configuration.md`, registry rows | — | Blocks everything |
 | N.1 | Regression guards: the filtered-edge and other-kind coexistence tests, and moving the `ColumnComparatorKeepsItsFieldName` fixture to an undeclared key | the two unguarded §6.2 rows | Pass on today's code |
-| N.2 | Constraint naming: export `parser.ForeignKeyName`, add the `Declared` flag, switch the collision check to it, add `declaredKeyConstraints` | rename.constraint.* | Manifest goldens gain `constraint` in `graphql`, `mysql`, `postgres` |
+| N.2 | Constraint naming: export `parser.ForeignKeyName`, add the `Declared` flag, switch the collision check to it, add `declaredKeyConstraints` | rename.constraint.* | Manifest goldens gain `constraint` in `graphql`, `mysql`, `postgres`, and in `sqlite` through the unnamed-key label (P3 ran before the label) |
 | N.3 | Takeover: `sameKeyInferred` in `mergeDeclaredRelationships` | rename.takeover.* (including rename.takeover.only-same-key) | `sqlite` golden loses `BinaryKeyEvents`. The two `DeclaredReplacesInferred` cases flip |
 
 ## 10. Definition of done

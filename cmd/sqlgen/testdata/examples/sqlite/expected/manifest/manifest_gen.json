@@ -860,7 +860,8 @@
               ],
               "references": [
                 "id"
-              ]
+              ],
+              "constraint": "asset_document_links(asset_id) → assets(id)"
             },
             "target_fk": {
               "columns": [
@@ -868,7 +869,8 @@
               ],
               "references": [
                 "id"
-              ]
+              ],
+              "constraint": "asset_document_links(document_id) → documents(id)"
             }
           },
           "filter": "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
@@ -3183,7 +3185,8 @@
             ],
             "references": [
               "id"
-            ]
+            ],
+            "constraint": "binary_key_events(binary_key_id) → binary_keys(id)"
           }
         },
         {
@@ -9644,7 +9647,8 @@
             ],
             "references": [
               "owner_key"
-            ]
+            ],
+            "constraint": "owner_profiles(owner_id) → owners(owner_key)"
           }
         },
         {
@@ -15242,7 +15246,8 @@
             ],
             "references": [
               "id"
-            ]
+            ],
+            "constraint": "profiles(user_id) → users(id)"
           }
         },
         {

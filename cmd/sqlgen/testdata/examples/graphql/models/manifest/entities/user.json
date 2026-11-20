@@ -253,7 +253,8 @@
         ],
         "references": [
           "id"
-        ]
+        ],
+        "constraint": "user_badges_user_id_fkey"
       }
     },
     {

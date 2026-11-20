@@ -992,7 +992,7 @@ func validateDuplicateRelationshipFields(qualifiedTable string, rels []Relations
 			continue
 		}
 		prev := rels[j]
-		if prev.Name == rels[i].Name && len(prev.Constraints) > 0 && len(rels[i].Constraints) > 0 {
+		if prev.Name == rels[i].Name && !prev.Declared && !rels[i].Declared {
 			// rels are sorted by Name alone, so the pair is ordered here.
 			first, second := quotedConstraints(prev), quotedConstraints(rels[i])
 			if second < first {
@@ -2132,9 +2132,11 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 		GoType:              goType,
 		Description:         declaredRelationshipDescription(r, relType),
 		JSONTag:             toSnakeName(r.Name),
+		Declared:            true,
 	}
 	sSchema, sName := splitQualifiedName(source)
 	stampKeyConstraintFacts(schema, &rel, sSchema, sName)
+	rel.Constraints = declaredKeyConstraints(schema, rel, sSchema, sName)
 	return rel
 }
 

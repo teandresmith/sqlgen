@@ -180,3 +180,61 @@ func keyRewriteVerbs(members []keyMember, match parser.MatchType, allowReparent 
 	}
 	return keyRewrite{connect: true, unlink: true}
 }
+
+// declaredKeyConstraints names, for each key of a declared edge, the FOREIGN
+// KEY whose column pairs equal that key, in any order, and which references the
+// key's table: one name for O2O / O2M, the junction's two for M2M. Of
+// identical keys it names the one detection keeps, the first by name, then by
+// declaration. A key no FOREIGN KEY declares gets "" (PRD §13.4, §30.4.2).
+func declaredKeyConstraints(schema *parser.Schema, r RelationshipContext, sourceSchema, sourceName string) []string {
+	find := func(holderSchema, holderName, refSchema, refName string, key []parser.KeyPair) string {
+		return foreignKeyOver(findSchemaTable(schema, holderSchema, holderName), refSchema, refName, key)
+	}
+	switch r.Type {
+	case parser.ManyToMany:
+		return []string{
+			find(r.JunctionSchema, r.JunctionTable, sourceSchema, sourceName, r.JunctionLocal),
+			find(r.JunctionSchema, r.JunctionTable, r.TargetSchema, r.TargetTable, r.JunctionReference),
+		}
+	case parser.OneToMany, parser.OneToOne:
+		// An O2M key, and a has-one O2O key, is on the target and references
+		// this table; a belongs-to key references the target.
+		holderSchema, holderName, refSchema, refName := sourceSchema, sourceName, r.TargetSchema, r.TargetTable
+		if r.Type == parser.OneToMany || r.FKOnTarget {
+			holderSchema, holderName, refSchema, refName = r.TargetSchema, r.TargetTable, sourceSchema, sourceName
+		}
+		return []string{find(holderSchema, holderName, refSchema, refName, r.Key)}
+	}
+	return nil
+}
+
+// foreignKeyOver names holder's FOREIGN KEY into refName whose column pairs
+// equal key, or "" when it has none.
+func foreignKeyOver(holder *parser.Table, refSchema, refName string, key []parser.KeyPair) string {
+	if holder == nil || len(key) == 0 {
+		return ""
+	}
+	var match *parser.Constraint
+	for i := range holder.Constraints {
+		c := &holder.Constraints[i]
+		if c.Type != parser.ForeignKey || !referencesTable(*c, refSchema, refName) || len(c.Columns) != len(c.ReferenceColumns) {
+			continue
+		}
+		pairs := make([]parser.KeyPair, len(c.Columns))
+		for k := range c.Columns {
+			pairs[k] = parser.KeyPair{Local: c.Columns[k], Referenced: c.ReferenceColumns[k]}
+		}
+		if samePairSet(pairs, key) && (match == nil || c.Name < match.Name) {
+			match = c
+		}
+	}
+	if match == nil {
+		return ""
+	}
+	return parser.ForeignKeyName(holder, match)
+}
+
+// samePairSet reports whether a and b hold the same column pairs, in any order.
+func samePairSet(a, b []parser.KeyPair) bool {
+	return len(a) > 0 && len(a) == len(b) && !slices.ContainsFunc(a, func(p parser.KeyPair) bool { return !slices.Contains(b, p) })
+}

@@ -23,7 +23,7 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 > - **The declared context is used unchanged.** A takeover generates exactly what the
 >   exclude-and-declare recipe generates today, plus `constraint`. Go golden churn is limited to
 >   the `sqlite` `BinaryKeyEvents` removal (35.3). Manifest golden churn is limited to `constraint`
->   lines in `graphql`, `mysql` and `postgres` (35.2).
+>   lines in `graphql`, `mysql`, `postgres` and `sqlite` (35.2; `sqlite` gets the unnamed-key label).
 > - **Findings** go through `/fix` → Findings triage.
 
 ## 35.0 PRD sync — constraint naming and takeover in §4.8, §4.13, §13.4, §30.4.2
@@ -113,16 +113,16 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 **PRD Reference:** Sections 13.4, 30.4.2, 4.13
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Export `parser.ForeignKeyName(table *Table, c *Constraint) string` from `foreignKeyName` (`parser/relationship.go:148-155`), so a declared edge labels an unnamed SQLite key as detection does.
-- [ ] Add `Declared bool` to `RelationshipContext`, set by `configRelationshipToContext`.
-- [ ] Switch `validateDuplicateRelationshipFields` (`cmd/sqlgen/gen/context_table.go:995`) from `len(Constraints) > 0` to `!Declared` on both edges.
-- [ ] Add `declaredKeyConstraints`. For O2O / O2M (belongs-to and has-one), find the holder table's FOREIGN KEY into the referenced table whose column pairs equal the key's pairs as a set. For M2M, find the junction's FK for `JunctionLocal` and for `JunctionReference`. Return `""` where nothing matches.
-- [ ] Set `Constraints` from it in `configRelationshipToContext`, for every declared edge, `filter:` / `discriminator:` edges included.
-- [ ] Regenerate the goldens (`make update-golden`, `make update-golden-e2e`). Confirm the only changes are `constraint` lines in the `graphql`, `mysql` and `postgres` manifests.
+- [x] Export `parser.ForeignKeyName(table *Table, c *Constraint) string` from `foreignKeyName` (`parser/relationship.go:148-155`), so a declared edge labels an unnamed SQLite key as detection does.
+- [x] Add `Declared bool` to `RelationshipContext`, set by `configRelationshipToContext`.
+- [x] Switch `validateDuplicateRelationshipFields` (`cmd/sqlgen/gen/context_table.go:995`) from `len(Constraints) > 0` to `!Declared` on both edges.
+- [x] Add `declaredKeyConstraints`. For O2O / O2M (belongs-to and has-one), find the holder table's FOREIGN KEY into the referenced table whose column pairs equal the key's pairs as a set. For M2M, find the junction's FK for `JunctionLocal` and for `JunctionReference`. Return `""` where nothing matches.
+- [x] Set `Constraints` from it in `configRelationshipToContext`, for every declared edge, `filter:` / `discriminator:` edges included.
+- [x] Regenerate the goldens (`make update-golden`, `make update-golden-e2e`). Confirm the only changes are `constraint` lines in the `graphql`, `mysql`, `postgres` and `sqlite` manifests.
 
 ### Acceptance Criteria
 
@@ -133,23 +133,43 @@ PRD Sections: 4.8, 4.13, 5.3, 13.4, 30.4.2
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship over a foreign key names its constraint` (o2m): fails before the change, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual belongs-to names its constraint`: fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual has-one names its constraint`: fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual m2m names both junction constraints`: fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual composite key names its constraint` (pairs listed in another order): fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual key pairing a foreign key differently names no constraint`: passes before and after (it pins that set-of-columns is not enough). All dialects.
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship over an unnamed sqlite key`: fails before, passes after. SQLite.
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/discriminator edge names its constraint`: fails before, passes after. All dialects.
-- [ ] Guard: `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship` (no FOREIGN KEY, no `constraint`) still passes.
-- [ ] Guard: `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected edge names its constraint`, `…/key into a unique constraint` and `…/unnamed sqlite key` still pass.
-- [ ] Guard: `unit: cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionIsAnError` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestValidateResolvedFieldNames_DuplicateRelationshipField` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestNestedEligibility_PinnedAndFreeMembers` still passes.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship over a foreign key names its constraint` (o2m): fails before the change, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual belongs-to names its constraint`: fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual has-one names its constraint`: fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual m2m names both junction constraints`: fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual composite key names its constraint` (pairs listed in another order): fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual key pairing a foreign key differently names no constraint`: passes before and after (it pins that set-of-columns is not enough). All dialects.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship over an unnamed sqlite key`: fails before, passes after. SQLite.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/discriminator edge names its constraint`: fails before, passes after. All dialects.
+- [x] Guard: `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship` (no FOREIGN KEY, no `constraint`) still passes.
+- [x] Guard: `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected edge names its constraint`, `…/key into a unique constraint` and `…/unnamed sqlite key` still pass.
+- [x] Guard: `unit: cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionIsAnError` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestValidateResolvedFieldNames_DuplicateRelationshipField` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestNestedEligibility_PinnedAndFreeMembers` still passes.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.**
+
+- **Code:**
+  - `parser/relationship.go`: `foreignKeyName` is exported as `ForeignKeyName`.
+  - `cmd/sqlgen/gen/context.go`: `RelationshipContext.Declared`, and the `Constraints` doc.
+  - `cmd/sqlgen/gen/context_table.go`: `configRelationshipToContext` sets `Declared` and `Constraints`. `validateDuplicateRelationshipFields` pairs two edges only when neither is declared.
+  - `cmd/sqlgen/gen/key_members.go`: `declaredKeyConstraints`, `foreignKeyOver` and `samePairSet`. `samePairSet` is the pair-set match 35.3's `sameKeyInferred` reuses.
+- **Tests (`cmd/sqlgen/manifest/relationship_key_test.go`):** eight cases in `TestBuild_RelationshipKeyShape`, each run per dialect as a `<case>/<dialect>` subtest. The SQLite case runs on SQLite only, and the other seven on all three dialects. Each case compares every key's `columns`, `references` and `constraint` (`relationshipOf` and `relationshipKeys` are the new helpers). The fixtures name their constraints (`CONSTRAINT posts_author …`), so the expected name is the same on every dialect.
+- **Fail-first (before the code change):** seven cases fail, and every diff line is the missing `constraint` (`- Constraint: "posts_author"` / `+ Constraint: ""`). `manual key pairing a foreign key differently names no constraint` passes, as required.
+- **Guards (before and after):** `TestBuild_RelationshipKeyShape/{manual relationship, detected edge names its constraint, key into a unique constraint, unnamed sqlite key}`, `TestGenerate_DetectedNameCollisionIsAnError`, `TestValidateResolvedFieldNames_DuplicateRelationshipField` and `TestNestedEligibility_PinnedAndFreeMembers` pass.
+- **Goldens:** no Go golden moved, and `make update-golden` changed nothing. `make update-golden-e2e` added `constraint` lines to the manifests only:
+  - `graphql` (`asset`, `user`, `workspace_note`), `mysql` and `postgres`, as design P3 measured. The generated `models/manifest` copies in each example move with their `expected/` goldens;
+  - `sqlite`, five `table(columns) → target(columns)` labels on declared edges (`asset_document_links` ×2, `binary_key_events`, `owner_profiles`, `profiles`). P3 ran the prototype, which left an unnamed key `""`. Exporting the label (the first task) adds them, so the ground rule, this task and design §9 now list `sqlite`.
+- **Registry:** the eight `rename.constraint.*` rows cite their tests. `rename.constraint.filtered` also cites `TestBuildRelationshipContexts_FilteredEdgeOverDetectedKeyCoexists/discriminator` for "the detected edge is still emitted", and `rename.constraint.unnamed-sqlite` also cites `golden: sqlite`. Design §6.1's Status column moves in 35.3, with the takeover rows.
+- **Review (sqlgen-reviewer):** PRD 5/6, plus one partial. It confirmed fail-first: reverting to the prototype's `c.Name` fails only the unnamed-SQLite case. It also confirmed the `sqlite` churn attribution, and that every new manifest line sits on a declared edge whose key pairs match one FOREIGN KEY. Applied:
+  - **Identical keys:** `declaredKeyConstraints` took the first match in declaration order, while detection keeps the identical key whose name sorts first (`firstOfIdentical`). That left the label dependent on the source, since introspectors list constraints by name. It now picks the same key: first by name, then by declaration. New case `TestBuild_RelationshipKeyShape/manual relationship over identical foreign keys names the one detection keeps` failed first on all three dialects (`posts_b` for `posts_a`) and passes now. It is cited on `rename.constraint.o2m`.
+  - **Doc fixes:** `manifest/types.go`, the `FK` and `JunctionKey` docs say `Constraint` is omitted when no FOREIGN KEY declares the key.
+- **Checks:** `make check` passes. The tie-break first pushed `declaredKeyConstraints` past `cyclop`'s limit of 15, so the per-table lookup moved into `foreignKeyOver`, with no suppression. `make check-examples` passes, and `TestE2EGoldenFiles` without `-update` passes on the tie-break: no golden moved beyond the regenerated manifests.
+- **Verify (2026-11-20):** PRD 6/6, tests 13/13, and an independent reviewer confirmed the tie-break's fail-first (reverted, `posts_b` for `posts_a` on all three dialects). Applied:
+  - `manual key pairing a foreign key differently names no constraint` is now a composite belongs-to (`tasks.Cycle`), the `composite-belongs-to × struct-field` cell its row names; it was an o2m. With the foreign key's pairing it names `tasks_cycle`, so the case can fail.
+  - A stale test comment in the `composite key in declared order` case is shortened.
 
 ## 35.3 Gen — a declared edge over a detected key takes its place
 

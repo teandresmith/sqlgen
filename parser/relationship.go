@@ -89,7 +89,7 @@ func foreignKeys(schema *Schema, table *Table) ([]foreignKey, []string) {
 		if c.Type != ForeignKey {
 			continue
 		}
-		fk := foreignKey{constraint: c, name: foreignKeyName(table, c), declared: j}
+		fk := foreignKey{constraint: c, name: ForeignKeyName(table, c), declared: j}
 		for _, name := range c.Columns {
 			fk.positions = append(fk.positions, slices.IndexFunc(table.Columns, func(col Column) bool { return col.Name == name }))
 		}
@@ -145,9 +145,9 @@ func firstOfIdentical(a, b foreignKey) bool {
 	return cmp.Or(strings.Compare(a.constraint.Name, b.constraint.Name), cmp.Compare(a.declared, b.declared)) < 0
 }
 
-// foreignKeyName is the constraint's name, or "table(columns) →
+// ForeignKeyName is the constraint's name, or "table(columns) →
 // target(columns)" for an unnamed one, as SQLite's usually are.
-func foreignKeyName(table *Table, c *Constraint) string {
+func ForeignKeyName(table *Table, c *Constraint) string {
 	if c.Name != "" {
 		return c.Name
 	}
