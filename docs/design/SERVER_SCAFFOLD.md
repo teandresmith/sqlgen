@@ -164,7 +164,7 @@ deletes it (§2.2).
 | `max_depth` / `max_complexity` default to 5 / 1000 | §4, §26.6 | `unit: cmd/sqlgen/gen: TestGenerate_GraphQLQueryLimits/defaults are depth 5 and complexity 1000 when unset` | guarded |
 | The config structs and `v1.json` do not drift | §4.14 | `unit: cmd/sqlgen/config: TestSchemaV1_noDriftFromConfigStructs` | guarded |
 | Every example config still validates against the schema | §4.14 | `unit: cmd/sqlgen/config: TestSchemaV1_acceptsExampleConfigs` | guarded |
-| `sqlgen diff` does not propose a `server.go` the consumer already owns | §23, §26.5.6 | none found | unguarded |
+| `sqlgen diff` does not propose a `server.go` the consumer already owns | §23, §26.5.6 | `unit: cmd/sqlgen/cli: TestDiff_KeepsExistingServerGo` | guarded |
 | The GraphQL examples still start their server through the scaffolded `NewServer` | §26.5.6 | `example: graphql: TestQueryLimits`; `golden: graphql`; `golden: graphql_top_level` | guarded |
 
 ### 6.3 Module matrix cells

@@ -40,10 +40,12 @@
 | 31 | Introspection Examples — `source: database` and `both` End to End | 5 | 5 | Complete (closed 2026-10-12; design doc `docs/design/INTROSPECTION_EXAMPLES.md` SYNCED — superseded by PRD §8.1.7 and `guidelines/TESTING.md` §10) |
 | 32 | Composite Foreign-Key Relationships | 9 | 9 | Complete (closed 2026-11-17; design doc `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` SYNCED — superseded by PRD §4.6/§4.8/§4.13/§5.3/§8.2/§8.6/§9.9/§13.1/§13.4/§25.1/§29.10/§30/Appendix A; 10 FIXes originated in the phase and were resolved within it, none carried forward) |
 | 33 | Conformance Variant Suite and Core-Suite Ports | 9 | 9 | Complete (closed 2026-11-19; design doc `docs/design/CONFORMANCE_VARIANTS.md` Implemented 2026-11-19, no PRD change; no FIX originated in the phase, none carried forward) |
-| 34 | GraphQL Server Scaffold Opt-Out | 4 | 1 | In Progress (broken down 2026-11-20; design doc `docs/design/SERVER_SCAFFOLD.md` approved 2026-11-20) |
+| 34 | GraphQL Server Scaffold Opt-Out | 4 | 2 | In Progress (broken down 2026-11-20; design doc `docs/design/SERVER_SCAFFOLD.md` approved 2026-11-20) |
 | 35 | Renaming a Detected Relationship | 4 | 0 | Not Started (broken down 2026-11-20; design doc `docs/design/DETECTED_EDGE_RENAME.md` approved 2026-11-20) |
 
 ## Current Focus
+
+**34.1 complete (2026-11-20):** regression guard. `TestDiff_KeepsExistingServerGo` pins that `sqlgen diff` never proposes a change to a consumer-owned `server.go`. It passes on current code and fails when the existence check is disabled. Registered as `cmd.diff.existing-server-go-not-proposed`. **Next:** `/implement 34.2`.
 
 **34.0 complete (2026-11-20):** PRD sync. §26.3 gains the `api.graphql.server_scaffold` config row (`bool`, default `true`), and §26.5.6 and §26.6 state that `false` writes no `server.go` and touches no existing one, while `limits_gen.go` is still generated. Six planned registry rows (four in `api.md`, two in `api-schema.md` §26.3) have empty Tests cells until 34.2 and 34.3. **Next:** `/implement 34.1`.
 

@@ -193,3 +193,34 @@ func TestDiff_ManifestStageFailureOutsidePreview(t *testing.T) {
 		})
 	}
 }
+
+// TestDiff_KeepsExistingServerGo pins that a server.go the consumer owns is
+// never proposed: after the consumer rewrites the scaffold, diff on an
+// otherwise current tree reports no changes and leaves the file as it is.
+func TestDiff_KeepsExistingServerGo(t *testing.T) {
+	cfgPath := setupDiffProject(t, diffProjectOptions{})
+	generateForDiff(t, cfgPath)
+
+	server := filepath.Join("internal", "graph", "server.go")
+	if _, err := os.Stat(server); err != nil {
+		t.Fatalf("generate did not write %s: %v", server, err)
+	}
+	const own = "package graph\n\n// The application's own server.\n"
+	writeFileOrFail(t, server, own)
+
+	stdout, code := runDiff(t, cfgPath)
+
+	if code != ExitSuccess {
+		t.Errorf("diff exit code = %d, want 0; stdout:\n%s", code, stdout)
+	}
+	if strings.Contains(stdout, "server.go") {
+		t.Errorf("diff stdout names server.go:\n%s", stdout)
+	}
+	got, err := os.ReadFile(server) //nolint:gosec // test-local temp tree
+	if err != nil {
+		t.Fatalf("reading %s: %v", server, err)
+	}
+	if string(got) != own {
+		t.Errorf("server.go = %q, want it left as %q", got, own)
+	}
+}

@@ -66,12 +66,12 @@ PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 **PRD Reference:** Sections 23 (`diff` coverage), 26.5.6
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Write `unit: cmd/sqlgen/cli: TestDiff_KeepsExistingServerGo`: in a GraphQL project where `server.go` exists with the consumer's own content, `sqlgen diff` reports no change for it and exits 0 when the rest is current.
-- [ ] Register it in `docs/conformance/cli/commands.md` (or the row that already owns `diff` coverage).
+- [x] Write `unit: cmd/sqlgen/cli: TestDiff_KeepsExistingServerGo`: in a GraphQL project where `server.go` exists with the consumer's own content, `sqlgen diff` reports no change for it and exits 0 when the rest is current.
+- [x] Register it in `docs/conformance/cli/commands.md` as `cmd.diff.existing-server-go-not-proposed`.
 
 ### Acceptance Criteria
 
@@ -79,11 +79,26 @@ PRD Sections: 4.14, 23 (`diff`), 26.3 (API config table), 26.5.6, 26.6
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/cli: TestDiff_KeepsExistingServerGo`: passes on current code before any change.
+- [x] `unit: cmd/sqlgen/cli: TestDiff_KeepsExistingServerGo`: passes on current code before any change.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.**
+
+- **Test:** `TestDiff_KeepsExistingServerGo` in `cmd/sqlgen/cli/diff_promises_test.go`.
+  - It generates a GraphQL project with `setupDiffProject` and `generateForDiff`, then replaces the scaffolded `internal/graph/server.go` with the consumer's own content.
+  - It asserts that `diff` exits 0, doesn't name `server.go`, and leaves the file byte-for-byte unchanged.
+- **Run on current code:** PASS (`go test ./cli/ -run TestDiff_KeepsExistingServerGo`).
+- **Mutation check:** with `generateAPIServerFile`'s existence check disabled (the early return skipped and the error branch guarded by `err != nil`), the test FAILS: `diff` lists `modify  internal/graph/server.go` and exits 1, so both the exit-code assertion and the "names server.go" assertion fire. Reverted.
+  - My first mutation (`err == nil && false` alone) failed for an unrelated reason: it fell into the error branch with a nil error. The reviewer caught it, and I reran the check with the correct mutation.
+- **Registry:** new row `cmd.diff.existing-server-go-not-proposed` in `docs/conformance/cli/commands.md` under §23.6.
+- **Checks:** `make check` passes (tool pins match `.tool-versions`). `make check-examples` isn't triggered: only a `cmd/sqlgen/cli` test file changed. The security-review trigger doesn't apply, since no subcommand code changed.
+- **Review (sqlgen-reviewer):** PRD 3/3, no defects. Applied its inline fixes:
+  - the corrected mutation record above;
+  - design §6.2's `diff` row marked guarded;
+  - the registry row moved below the `coverage-graphql-*` group.
+  
+  The row derives from §23.6 plus §26.5.6 and cites §26.5.6 inline, as other rows cite cross-sections.
 
 ## 34.2 Config — the `server_scaffold` key, its default and its JSON Schema
 
