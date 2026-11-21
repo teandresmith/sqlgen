@@ -377,3 +377,72 @@ func TestGraphQLSchema_HiddenFKKeepsRelationship(t *testing.T) {
 		t.Errorf("walker has a case for the hidden FK column\n%s", walker)
 	}
 }
+
+// A declared belongs-to over an `internal` FK column hides the raw id from
+// `type User` and the walker while the relationship field stays (PRD §32.5).
+func TestAccess_HiddenForeignKeyKeepsItsRelationship(t *testing.T) {
+	const ddl = `
+CREATE TABLE companies (id bigint PRIMARY KEY, name text NOT NULL);
+CREATE TABLE users (
+	id bigint PRIMARY KEY,
+	email text NOT NULL,
+	company_id bigint NOT NULL REFERENCES companies (id)
+);`
+	build := func(t *testing.T, dialect config.Dialect, fkRole string) gen.APITableContext {
+		t.Helper()
+		in := apiTestInput(t, parseDDLForTest(t, dialect, ddl))
+		in.Config.Input.Dialect = dialect
+		in.Config.Tables["users"] = config.TableConfig{
+			ColumnMap: map[string]config.ColumnOverride{"company_id": {Access: fkRole}},
+			Relationships: []config.TableRelationship{
+				{Name: "Company", Type: "o2o", Table: "companies", FK: config.KeyColumns{"company_id"}},
+			},
+		}
+		tables, views, err := gen.BuildEntityContextsFromSchema(in.Schema, in.Config)
+		if err != nil {
+			t.Fatalf("BuildEntityContextsFromSchema: %v", err)
+		}
+		apiCtx, err := gen.BuildAPIContext(tables, views, nil, nil, in.Config)
+		if err != nil {
+			t.Fatalf("BuildAPIContext: %v", err)
+		}
+		return apiTableByName(t, apiCtx, "User")
+	}
+	walker := func(t *testing.T, at gen.APITableContext) string {
+		t.Helper()
+		var buf strings.Builder
+		ctx := struct {
+			ModelsPackage string
+			Tables        []gen.APITableContext
+		}{ModelsPackage: "models", Tables: []gen.APITableContext{at}}
+		if err := loadAPISchemaTemplate(t).ExecuteTemplate(&buf, "api/field-options", ctx); err != nil {
+			t.Fatalf("rendering api/field-options: %v", err)
+		}
+		return buf.String()
+	}
+
+	for _, dialect := range []config.Dialect{config.DialectPostgres, config.DialectMySQL, config.DialectSQLite} {
+		t.Run(string(dialect), func(t *testing.T) {
+			public := block(t, renderAPITableSchema(t, build(t, dialect, config.AccessPublic)), "type User")
+			if !strings.Contains(public, "companyID:") || !strings.Contains(public, "company: Company") {
+				t.Fatalf("control: public FK type User lacks companyID or company:\n%s", public)
+			}
+
+			at := build(t, dialect, config.AccessInternal)
+			user := block(t, renderAPITableSchema(t, at), "type User")
+			if strings.Contains(user, "companyID") {
+				t.Errorf("type User exposes the internal FK column:\n%s", user)
+			}
+			if !strings.Contains(user, "company: Company") {
+				t.Errorf("type User lost the relationship along with its internal FK:\n%s", user)
+			}
+			w := walker(t, at)
+			if !strings.Contains(w, `case "company":`) {
+				t.Errorf("walker lost the relationship case for company\n%s", w)
+			}
+			if strings.Contains(w, `case "companyID":`) {
+				t.Errorf("walker has a case for the internal FK column\n%s", w)
+			}
+		})
+	}
+}

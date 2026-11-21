@@ -286,7 +286,7 @@ The chain depth stays 6. P2 measured the size: no example grows by more than 5%.
 | The manifest splits `o2o` / `m2o` by `side` | §30.4.2 | `cmd/sqlgen/manifest: TestBuild_O2OSideDisambiguation` | guarded |
 | `sqlgen_find_referencing` dedups by full tuple | §31 | `cmd/sqlgen/mcp: TestDispatchFindReferencingDedupsByFullTuple` | guarded |
 | A GraphQL `Connection` read with a to-one selection loads it | §26, §13.2 | `examples/graphql: TestO2OJoin_GraphQLConnection` | guarded |
-| A classified (hidden) FK column hides the id while its relationship object stays exposable | §32 | none found | unguarded |
+| A classified (hidden) FK column hides the id while its relationship object stays exposable | §32 | `cmd/sqlgen/gen: TestGraphQLSchema_HiddenFKKeepsRelationship`; `cmd/sqlgen/gen: TestAccess_HiddenForeignKeyKeepsItsRelationship` | guarded |
 | Two declared edges on one field is an error | §13.7.3 | `cmd/sqlgen/gen: TestValidateResolvedFieldNames_DuplicateRelationshipField` | guarded |
 
 ### 6.3 Module matrix cells

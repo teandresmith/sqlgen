@@ -81,11 +81,11 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 **PRD Reference:** Section 32
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Write the §32 guard on a declared belongs-to whose FK column is classified `internal`: the GraphQL type omits the id, and the relationship field stays.
+- [x] Write the §32 guard on a declared belongs-to whose FK column is classified `internal`: the GraphQL type omits the id, and the relationship field stays.
 
 ### Acceptance Criteria
 
@@ -93,11 +93,14 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/gen: TestAccess_HiddenForeignKeyKeepsItsRelationship` (a classified FK column hides the id while its relationship object stays exposable, PRD §32): passes on current code before any change. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestAccess_HiddenForeignKeyKeepsItsRelationship` (a classified FK column hides the id while its relationship object stays exposable, PRD §32): passes on current code before any change. All dialects.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-11-20. `make check` and `make check-examples` green; `/verify 36.1` PRD 1/1, tests 1/1, reviewer agreement full, no FIX logged.
+- **Files:** `cmd/sqlgen/gen/api_access_test.go` (new guard); `docs/conformance/cli/access-control.md` (`gen.access.relationship-fk-hidden` row now cites the new guard alongside the existing one).
+- **Contract run (before any change):** `go test ./cmd/sqlgen/gen -run TestAccess_HiddenForeignKeyKeepsItsRelationship` passes on postgres, mysql and sqlite. The guard parses real DDL per dialect (`parseDDLForTest` runs no detection, so the only edge is the declared `Company` o2o), asserts a `public` control first (`companyID:` and `company: Company` present), then with `company_id` `internal` asserts `type User` and the walker drop `companyID` and keep `company`.
+- **Note:** design §6.2 listed this behavior as unguarded ("none found"); `TestGraphQLSchema_HiddenFKKeepsRelationship` already guarded it for a detected unique FK with role `hidden`. The new guard adds the declared belongs-to, the `internal` role and all three dialects. No production code changed.
 
 ## 36.2 Gen — FK side from the key's holder
 
