@@ -3825,7 +3825,7 @@ Closure is `/close-phase 35`, with no sub-item of its own. It flips the design d
 
 ## Phase 36: Belongs-To Detection
 
-> **Status: Planned.** Design doc `docs/design/BELONGS_TO_DETECTION.md` (approved 2026-11-20; rulings Q1–Q6 settled 2026-11-20, §11). Prototype `.claude/prototypes/BELONGS_TO_DETECTION.patch`. Source: research after the `sqlgen-example` v0.1.2 findings. The example app has 43 foreign keys and no to-one navigation.
+> **Status: Complete (closed 2026-11-21).** Design doc `docs/design/BELONGS_TO_DETECTION.md` (SYNCED 2026-11-21; approved 2026-11-20; rulings Q1–Q6 settled 2026-11-20, §11). Prototype `.claude/prototypes/BELONGS_TO_DETECTION.patch`. Source: research after the `sqlgen-example` v0.1.2 findings. The example app has 43 foreign keys and no to-one navigation.
 
 **Why.**
 - **A row can't reach its parent.** A non-unique foreign key gives only its list edge on the referenced table, so `Project.tasks` is generated and `Task.project` isn't (design §1.1).

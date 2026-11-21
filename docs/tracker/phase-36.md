@@ -1,6 +1,6 @@
 # Phase 36: Belongs-To Detection
 
-Status: In Progress
+Status: Complete (closed 2026-11-21)
 PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 > **Design.** `docs/design/BELONGS_TO_DETECTION.md`, approved 2026-11-20, is the source for every
