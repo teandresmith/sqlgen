@@ -145,12 +145,12 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 **PRD Reference:** Sections 13.2, 13.4
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `findO2ORelationships` builds the target's edges the way its own context does: exclusion by name or base name, the Phase 35 takeover (`sameKeyInferred`), and the omitted edges, so a chain never names a field the target struct lacks.
-- [ ] Prefer reusing the target's built relationship contexts over a second derivation.
+- [x] `findO2ORelationships` builds the target's edges the way its own context does: exclusion by name or base name, the Phase 35 takeover (`sameKeyInferred`), and the omitted edges, so a chain never names a field the target struct lacks.
+- [x] Prefer reusing the target's built relationship contexts over a second derivation.
 
 ### Acceptance Criteria
 
@@ -159,14 +159,21 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_ChainUsesTheTargetsEdges/takeover` (PRD §13.2, §13.4): fails before the change, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_ChainUsesTheTargetsEdges/excluded by base name` (PRD §13.2, §4.8): fails before, passes after. All dialects.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped` still passes.
-- [ ] Guard: `example: tenancy: TestO2OChain_SingleQueryForChainedLoad`, `TestO2OChain_TenantWHEREOnEveryAlias` and `TestO2OChain_CrossTenantRowsFilteredAtEveryChainLevel` still pass.
+- [x] `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_ChainUsesTheTargetsEdges/takeover` (PRD §13.2, §13.4): fails before the change, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_ChainUsesTheTargetsEdges/excluded by base name` (PRD §13.2, §4.8): fails before, passes after. All dialects.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped` still passes.
+- [x] Guard: `example: tenancy: TestO2OChain_SingleQueryForChainedLoad`, `TestO2OChain_TenantWHEREOnEveryAlias` and `TestO2OChain_CrossTenantRowsFilteredAtEveryChainLevel` still pass.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-11-20. Uncommitted at completion.
+- **Files:** `cmd/sqlgen/gen/context_table.go` (`findO2ORelationships` returns the O2O subset of `buildRelationshipContexts` for the target; `chainedRelInfo` removed); `cmd/sqlgen/gen/chain_target_edges_test.go` (new); `cmd/sqlgen/gen/context_test.go` (the `chainedFKOnTarget` comment no longer describes the old direct-constructor path); `docs/conformance/cli/gen.md` (`chain.matches-target` Tests cell).
+- **Reuse:** the chain calls the same `buildRelationshipContexts` the target's own context calls, so exclusion by name or base name, the takeover, and every omitted edge (including 36.4's, when it lands there) apply with no second derivation. The target's built context is not read directly: tables build in schema order, so a chain can reach a target not built yet. An error on the target yields no chain; the target's own build reports it.
+- **Contract run (before the change):** `TestBuildO2OJoinDetails_ChainUsesTheTargetsEdges/takeover` fails on all three dialects with the chain reading `fo.Posts.Users` beside `fo.Posts.Writer`; `…/excluded by base name` fails on all three with `fo.Posts.Author` and `fo.Posts.Editor` chained though `posts` excludes `users`. Guard `TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped` passes before and after.
+- **Golden churn:** none. `make update-golden-e2e` and `make update-golden` moved no file.
+- **Checks:** `make check` passes; `make check-examples` (triggered by `cmd/sqlgen/gen/**`) passes, including the tenancy `TestO2OChain_*` guards.
+- **Review (sqlgen-reviewer):** PRD 2/2, tests 4/4, fail-first confirmed independently, no high-confidence issue, no question. Noted that chained edges now come in the target's own `Name` order (schema order, declared last, before); no example has a chained target with two or more O2O edges, so no golden moved. Applied its doc fixes: `findO2ORelationships`' comment shortened; one blank line before 36.4; STATUS.md's 27.1 note on `findO2ORelationships` put in the past tense.
+- **Verify (2026-11-20):** PRD 3/3, tests 4/4, independent reviewer agreed and confirmed fail-first on its own. Added guard subtest `…/excluded by name` (passes before and after: the old code already excluded by `Name`) and cited it, `TestRelationshipTargets_ChainedO2OIntoExcludedTableDropped/fk column excluded` and `…/target excluded` in `chain.matches-target`, so each clause of the row has a test. No FIX logged.
 
 ## 36.4 Gen — detected-edge collisions with a column
 

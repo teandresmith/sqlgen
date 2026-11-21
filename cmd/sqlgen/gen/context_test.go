@@ -2450,12 +2450,9 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 	})
 }
 
-// Chained O2O joins are built from contexts that findO2ORelationships creates by
-// calling relationshipToContext / configRelationshipToContext *directly*, not
-// through buildRelationshipContexts. Deriving FKOnTarget anywhere but inside
-// those two constructors leaves a chained edge at the zero value, which silently
-// inverts its JOIN ON clause. Pin the ON clause of a chain whose second hop
-// holds its FK on the target.
+// A chained edge's FKOnTarget must survive the chain's own derivation of the
+// target's edges; at the zero value it silently inverts the JOIN ON clause.
+// Pin the ON clause of a chain whose second hop holds its FK on the target.
 func TestBuildO2OJoinDetails_chainedFKOnTarget(t *testing.T) {
 	schema := &parser.Schema{
 		Tables: []parser.Table{

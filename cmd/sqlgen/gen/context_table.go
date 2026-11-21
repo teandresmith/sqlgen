@@ -3272,7 +3272,7 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	// Discover chained O2O relationships on the target table
 	targetRels := findO2ORelationships(input.Schema, targetTable, targetCfg, input.relTargets)
 	for _, chainRel := range targetRels {
-		chained, err := buildSingleO2ODetail(input, chainRel.rel, alias, pkCol.Name, usedAliases, varName, foPath, depth+1)
+		chained, err := buildSingleO2ODetail(input, chainRel, alias, pkCol.Name, usedAliases, varName, foPath, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -3284,60 +3284,18 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	return &detail, nil
 }
 
-// chainedRelInfo wraps a relationship context for chain discovery.
-type chainedRelInfo struct {
-	rel RelationshipContext
-}
-
-// findO2ORelationships finds O2O relationships for a target table.
-func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg config.TableConfig, targets *relationshipTargets) []chainedRelInfo {
-	excludeSet := make(map[string]bool)
-	for _, name := range tableCfg.ExcludeRelationships {
-		excludeSet[name] = true
+// findO2ORelationships returns the O2O edges a chain walks from table, built
+// as table's own context builds them, so a chain never names a field the
+// target lacks (PRD §13.2, §13.4). The target may not be built yet, so they
+// are derived, not read. On error it returns nil; the target's own build
+// reports it.
+func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg config.TableConfig, targets *relationshipTargets) []RelationshipContext {
+	rels, _, err := buildRelationshipContexts(schema, table, tableCfg, targets)
+	if err != nil {
+		return nil
 	}
-
-	qualifiedName := table.Name
-	if table.Schema != "" {
-		qualifiedName = table.Schema + "." + table.Name
-	}
-
-	var results []chainedRelInfo
-	for _, r := range schema.Relationships {
-		if r.SourceTable != qualifiedName || r.Type != parser.OneToOne {
-			continue
-		}
-		if excludeSet[r.Name] {
-			continue
-		}
-		// Skipped rather than reported: buildRelationshipContexts reports it.
-		if !targets.generates(r.TargetTable) || targets.excludedKeyMember(schema, r) != "" {
-			continue
-		}
-		results = append(results, chainedRelInfo{
-			rel: relationshipToContext(schema, r, targets),
-		})
-	}
-
-	for _, r := range tableCfg.Relationships {
-		relType := parseRelationshipType(r.Type)
-		// A nameless entry is skipped as mergeDeclaredRelationships skips it:
-		// config validation reports the missing `name:` (PRD §4.8).
-		if relType != parser.OneToOne || r.Name == "" {
-			continue
-		}
-		if excludeSet[r.Name] {
-			continue
-		}
-		// Skipped rather than reported: this table's own build reports the
-		// same edge, since a chained target is itself a generated table.
-		if checkDeclaredTarget(r, targets, "") != nil {
-			continue
-		}
-		results = append(results, chainedRelInfo{
-			rel: configRelationshipToContext(schema, r, qualifiedName, targets),
-		})
-	}
-	return results
+	o2o, _, _ := classifyRelationships(rels)
+	return o2o
 }
 
 // o2oJoinPredicate returns the alias-qualified sub-categorization predicate an
