@@ -2352,7 +2352,7 @@ func (c *ownerClient) resolveO2OJoins(d sql.Dialect, fo *OwnerFieldOptions) []sq
 			// for it — an unselected PK reads as a LEFT JOIN miss.
 			Columns: unionColumns(fo.OwnerProfile.Columns(), "id"),
 		})
-		if fo.OwnerProfile.Owners != nil {
+		if fo.OwnerProfile.Owner != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "", Name: "owners"},
 				Alias: "o3",
@@ -2360,9 +2360,9 @@ func (c *ownerClient) resolveO2OJoins(d sql.Dialect, fo *OwnerFieldOptions) []sq
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.OwnerProfile.Owners.Columns(), "owner_key"),
+				Columns: unionColumns(fo.OwnerProfile.Owner.Columns(), "owner_key"),
 			})
-			if fo.OwnerProfile.Owners.OwnerProfile != nil {
+			if fo.OwnerProfile.Owner.OwnerProfile != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "", Name: "owner_profiles"},
 					Alias: "o4",
@@ -2370,9 +2370,9 @@ func (c *ownerClient) resolveO2OJoins(d sql.Dialect, fo *OwnerFieldOptions) []sq
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.OwnerProfile.Owners.OwnerProfile.Columns(), "id"),
+					Columns: unionColumns(fo.OwnerProfile.Owner.OwnerProfile.Columns(), "id"),
 				})
-				if fo.OwnerProfile.Owners.OwnerProfile.Owners != nil {
+				if fo.OwnerProfile.Owner.OwnerProfile.Owner != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "", Name: "owners"},
 						Alias: "o5",
@@ -2380,9 +2380,9 @@ func (c *ownerClient) resolveO2OJoins(d sql.Dialect, fo *OwnerFieldOptions) []sq
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.OwnerProfile.Owners.OwnerProfile.Owners.Columns(), "owner_key"),
+						Columns: unionColumns(fo.OwnerProfile.Owner.OwnerProfile.Owner.Columns(), "owner_key"),
 					})
-					if fo.OwnerProfile.Owners.OwnerProfile.Owners.OwnerProfile != nil {
+					if fo.OwnerProfile.Owner.OwnerProfile.Owner.OwnerProfile != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "", Name: "owner_profiles"},
 							Alias: "o6",
@@ -2390,9 +2390,9 @@ func (c *ownerClient) resolveO2OJoins(d sql.Dialect, fo *OwnerFieldOptions) []sq
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.OwnerProfile.Owners.OwnerProfile.Owners.OwnerProfile.Columns(), "id"),
+							Columns: unionColumns(fo.OwnerProfile.Owner.OwnerProfile.Owner.OwnerProfile.Columns(), "id"),
 						})
-						if fo.OwnerProfile.Owners.OwnerProfile.Owners.OwnerProfile.Owners != nil {
+						if fo.OwnerProfile.Owner.OwnerProfile.Owner.OwnerProfile.Owner != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "", Name: "owners"},
 								Alias: "o7",
@@ -2400,7 +2400,7 @@ func (c *ownerClient) resolveO2OJoins(d sql.Dialect, fo *OwnerFieldOptions) []sq
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.OwnerProfile.Owners.OwnerProfile.Owners.OwnerProfile.Owners.Columns(), "owner_key"),
+								Columns: unionColumns(fo.OwnerProfile.Owner.OwnerProfile.Owner.OwnerProfile.Owner.Columns(), "owner_key"),
 							})
 						}
 					}
@@ -2483,9 +2483,9 @@ func scanOwnersWithOneToOneJoins(rows database.Rows, columns []string) ([]*Owner
 
 		// NULL detection — assign deepest chain first, then parents
 		if o7HasData && o7.OwnerKey != 0 {
-			o6.Owners = o7
+			o6.Owner = o7
 		} else {
-			o6.Owners = nil
+			o6.Owner = nil
 		}
 		if o6HasData && o6.ID != 0 {
 			o5.OwnerProfile = o6
@@ -2493,9 +2493,9 @@ func scanOwnersWithOneToOneJoins(rows database.Rows, columns []string) ([]*Owner
 			o5.OwnerProfile = nil
 		}
 		if o5HasData && o5.OwnerKey != 0 {
-			o4.Owners = o5
+			o4.Owner = o5
 		} else {
-			o4.Owners = nil
+			o4.Owner = nil
 		}
 		if o4HasData && o4.ID != 0 {
 			o3.OwnerProfile = o4
@@ -2503,9 +2503,9 @@ func scanOwnersWithOneToOneJoins(rows database.Rows, columns []string) ([]*Owner
 			o3.OwnerProfile = nil
 		}
 		if o3HasData && o3.OwnerKey != 0 {
-			o2.Owners = o3
+			o2.Owner = o3
 		} else {
-			o2.Owners = nil
+			o2.Owner = nil
 		}
 		if o2HasData && o2.ID != 0 {
 			o.OwnerProfile = o2

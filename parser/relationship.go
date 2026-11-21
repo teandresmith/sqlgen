@@ -9,9 +9,10 @@ import (
 
 // DetectRelationships replaces schema.Relationships with the edges its
 // FOREIGN KEY constraints give (PRD §5.3), so running it twice changes
-// nothing. Each FOREIGN KEY gives at most one edge: an M2M edge when its table
-// is a junction, else an O2O edge when a key of its table lies within its
-// columns, else an O2M edge.
+// nothing. Each FOREIGN KEY gives at most one edge in each direction: M2M
+// edges when its table is a junction, else a belongs-to O2O edge on its table,
+// plus an O2M edge on the referenced table unless a key of its table lies
+// within its columns.
 //
 // Run it after ResolveReferenceNames and the primary-key overrides: it compares
 // referenced columns with the target's spelling and reads the resolved primary
@@ -41,7 +42,7 @@ func DetectRelationships(schema *Schema) []string {
 		}
 		for _, fk := range fks {
 			if !fk.noEdge {
-				edges = append(edges, keyEdge(table, fk, fks))
+				edges = append(edges, keyEdges(table, fk, fks)...)
 			}
 		}
 	}
@@ -55,8 +56,9 @@ func DetectRelationships(schema *Schema) []string {
 }
 
 // detectedEdge is a relationship with the member column its name is derived
-// from when it collides (PRD §5.3 rule 5): the naming member of an O2O / O2M
-// edge's key, or of an M2M edge's reference key. Empty when there is none.
+// from (PRD §5.3 rule 5): a to-one edge's always, a list edge's when it
+// collides. It is the naming member of an O2O / O2M edge's key, or of an M2M
+// edge's reference key, and empty when there is none.
 type detectedEdge struct {
 	Relationship
 	namingMember string
@@ -255,31 +257,47 @@ func junctionKeys(table *Table, fks []foreignKey) (foreignKey, foreignKey, bool)
 	return foreignKey{}, foreignKey{}, false
 }
 
-// keyEdge returns the O2O or O2M edge of a foreign key on a table that is not
-// a junction (PRD §5.3 rule 3). It is O2O when one of the table's keys lies
-// within the key's columns, which makes the whole key unique.
-func keyEdge(table *Table, fk foreignKey, fks []foreignKey) detectedEdge {
+// keyEdges returns the edges of a foreign key on a table that is not a
+// junction (PRD §5.3 rule 3): a belongs-to O2O edge on the table, and an O2M
+// edge on the referenced table unless one of the table's keys lies within the
+// key's columns, which makes the whole key unique. Both share the key and the
+// constraint.
+func keyEdges(table *Table, fk foreignKey, fks []foreignKey) []detectedEdge {
 	holder := qualifiedTableName(table.Schema, table.Name)
 	target := qualifiedTableName(fk.target.Schema, fk.target.Name)
-	e := detectedEdge{
+	member := namingMember(fk, fks, resolvedPK(table))
+	toOne := detectedEdge{
 		Relationship: Relationship{
-			Name:        table.Name,
-			BaseName:    table.Name,
-			Type:        OneToMany,
+			Name:        toOneName(table, member, fk.target.Name),
+			BaseName:    fk.target.Name,
+			Type:        OneToOne,
 			Side:        SideParent,
-			SourceTable: target,
-			TargetTable: holder,
+			SourceTable: holder,
+			TargetTable: target,
 			Constraint:  fk.name,
 			Key:         fk.key,
 		},
-		namingMember: namingMember(fk, fks, resolvedPK(table)),
+		namingMember: member,
 	}
 	cols := fk.localColumns()
 	if slices.ContainsFunc(tableKeys(table, true, false), func(k []string) bool { return within(k, cols) }) {
-		e.Name, e.BaseName, e.Type = fk.target.Name, fk.target.Name, OneToOne
-		e.SourceTable, e.TargetTable = holder, target
+		return []detectedEdge{toOne}
 	}
-	return e
+	list := toOne
+	list.Name, list.BaseName, list.Type = table.Name, table.Name, OneToMany
+	list.SourceTable, list.TargetTable = target, holder
+	return []detectedEdge{list, toOne}
+}
+
+// toOneName names a to-one edge after its naming member without `_id`, or
+// after the referenced table when there is no member or the stem names a
+// column of the holder, whose Go field it would take (PRD §5.3 rule 5).
+func toOneName(holder *Table, member, referenced string) string {
+	stem := strings.TrimSuffix(member, "_id")
+	if stem == "" || slices.ContainsFunc(holder.Columns, func(c Column) bool { return c.Name == stem }) {
+		return referenced
+	}
+	return stem
 }
 
 // m2mEdges returns both directions of the M2M edge through junction.
@@ -367,8 +385,10 @@ func qualifiedTableName(schema, name string) string {
 // every inverse-side relationship collapses to duplicate parent-struct
 // fields in generated code.
 //
-// Grouping key is (SourceTable, TargetTable) — kind-agnostic, so cross-kind
-// collisions like the M2M + O2M case above are detected. Each member of a
+// Grouping key is (SourceTable, TargetTable, to-one or list), so cross-kind
+// list collisions like the M2M + O2M case above are detected, while a
+// self-referential FK's list edge and its to-one edge, two fields of
+// different shape, are not a collision (PRD §5.3 rule 6). Each member of a
 // collision group has its Name rewritten to a unique edge-identifying form
 // derived from its own metadata; BaseName is preserved across the rewrite
 // so `exclude_relationships` entries written against the bare table name
@@ -395,10 +415,11 @@ func disambiguateRelationshipNames(edges []detectedEdge) {
 	type key struct {
 		source string
 		target string
+		toOne  bool
 	}
 	groups := make(map[key][]int)
 	for i, e := range edges {
-		k := key{source: e.SourceTable, target: e.TargetTable}
+		k := key{source: e.SourceTable, target: e.TargetTable, toOne: e.Type == OneToOne}
 		groups[k] = append(groups[k], i)
 	}
 	for _, idxs := range groups {

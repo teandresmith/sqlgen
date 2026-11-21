@@ -32,6 +32,12 @@ Product tag labels with 3-column composite primary key
 | --- | --- | --- | --- | --- |
 | `product_tag_labels_pkey` | product_id, tag_name, label | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| product | o2o | Product | public.product_tag_labels.product_id |  |
+
 ## Query methods
 
 ### Get

@@ -157,16 +157,16 @@ func getCompositeKey(t *testing.T, h *Harness) {
 		}
 
 		got, err := h.Client.ItemReceipts().Get(ctx, receipt.ID, func(o *models.CallOptions[models.ItemReceiptFieldOptions]) {
-			o.FieldOptions = &models.ItemReceiptFieldOptions{Code: true, OrderItems: &models.OrderItemFieldOptions{OrderID: true, ProductID: true, Quantity: true}}
+			o.FieldOptions = &models.ItemReceiptFieldOptions{Code: true, OrderItem: &models.OrderItemFieldOptions{OrderID: true, ProductID: true, Quantity: true}}
 		})
 		if err != nil {
 			t.Fatalf("Get(receipt) error = %v, want nil", err)
 		}
-		if got.OrderItems == nil {
-			t.Fatal("Get(receipt).OrderItems = nil, want the item the key names")
+		if got.OrderItem == nil {
+			t.Fatal("Get(receipt).OrderItem = nil, want the item the key names")
 		}
-		if got.OrderItems.Quantity != 20 || got.OrderItems.ProductID != b.ProductID {
-			t.Errorf("Get(receipt).OrderItems = %+v, want the item %+v with quantity 20", got.OrderItems, b)
+		if got.OrderItem.Quantity != 20 || got.OrderItem.ProductID != b.ProductID {
+			t.Errorf("Get(receipt).OrderItem = %+v, want the item %+v with quantity 20", got.OrderItem, b)
 		}
 	})
 }

@@ -174,6 +174,22 @@
         ],
         "constraint": "order_items_order_id_fkey"
       }
+    },
+    {
+      "name": "user",
+      "kind": "o2o",
+      "target_entity": "User",
+      "fk": {
+        "table": "orders",
+        "schema": "public",
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "orders_user_id_fkey"
+      }
     }
   ],
   "methods": {

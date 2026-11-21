@@ -56,9 +56,9 @@ CREATE TABLE @.profiles (id bigint PRIMARY KEY, user_id bigint UNIQUE REFERENCES
 			mysqlDDL: `CREATE TABLE @users (id bigint PRIMARY KEY);
 CREATE TABLE @profiles (id bigint PRIMARY KEY, user_id bigint UNIQUE, CONSTRAINT @profiles_user FOREIGN KEY (user_id) REFERENCES @users (id))`,
 			tables:    []string{"users", "profiles"},
-			wantPG:    []string{"O2O rdw_ou.profiles -> rdw_ou.users users [user_id→id] profiles_user_id_fkey"},
-			wantMySQL: []string{"O2O ou_profiles -> ou_users ou_users [user_id→id] ou_profiles_user"},
-			wantLite:  []string{"O2O profiles -> users users [user_id→id] profiles(user_id) → users(id)"},
+			wantPG:    []string{"O2O rdw_ou.profiles -> rdw_ou.users user (users) [user_id→id] profiles_user_id_fkey"},
+			wantMySQL: []string{"O2O ou_profiles -> ou_users user (ou_users) [user_id→id] ou_profiles_user"},
+			wantLite:  []string{"O2O profiles -> users user (users) [user_id→id] profiles(user_id) → users(id)"},
 		},
 		{
 			name:     "FK on the sole primary-key column is O2O",
@@ -69,9 +69,9 @@ CREATE TABLE @.user_credentials (user_id bigint PRIMARY KEY REFERENCES @.users (
 			mysqlDDL: `CREATE TABLE @users (id bigint PRIMARY KEY);
 CREATE TABLE @user_credentials (user_id bigint PRIMARY KEY, secret text, CONSTRAINT @credentials_user FOREIGN KEY (user_id) REFERENCES @users (id))`,
 			tables:    []string{"users", "user_credentials"},
-			wantPG:    []string{"O2O rdw_sp.user_credentials -> rdw_sp.users users [user_id→id] user_credentials_user_id_fkey"},
-			wantMySQL: []string{"O2O sp_user_credentials -> sp_users sp_users [user_id→id] sp_credentials_user"},
-			wantLite:  []string{"O2O user_credentials -> users users [user_id→id] user_credentials(user_id) → users(id)"},
+			wantPG:    []string{"O2O rdw_sp.user_credentials -> rdw_sp.users user (users) [user_id→id] user_credentials_user_id_fkey"},
+			wantMySQL: []string{"O2O sp_user_credentials -> sp_users user (sp_users) [user_id→id] sp_credentials_user"},
+			wantLite:  []string{"O2O user_credentials -> users user (users) [user_id→id] user_credentials(user_id) → users(id)"},
 		},
 		{
 			// MySQL needs an index whose leading columns are the referenced
@@ -86,10 +86,19 @@ CREATE TABLE @.tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle
 			mysqlDDL: `CREATE TABLE @cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (id, workspace_id), KEY (workspace_id, id));
 CREATE TABLE @tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint,
   CONSTRAINT @tasks_cycle FOREIGN KEY (workspace_id, cycle_id) REFERENCES @cycles (workspace_id, id))`,
-			tables:    []string{"cycles", "tasks"},
-			wantPG:    []string{"O2M rdw_rc.cycles -> rdw_rc.tasks tasks [cycle_id→id workspace_id→workspace_id] tasks_cycle_id_workspace_id_fkey"},
-			wantMySQL: []string{"O2M rc_cycles -> rc_tasks rc_tasks [workspace_id→workspace_id cycle_id→id] rc_tasks_cycle"},
-			wantLite:  []string{"O2M cycles -> tasks tasks [cycle_id→id workspace_id→workspace_id] tasks(cycle_id, workspace_id) → cycles(id, workspace_id)"},
+			tables: []string{"cycles", "tasks"},
+			wantPG: []string{
+				"O2M rdw_rc.cycles -> rdw_rc.tasks tasks [cycle_id→id workspace_id→workspace_id] tasks_cycle_id_workspace_id_fkey",
+				"O2O rdw_rc.tasks -> rdw_rc.cycles cycle (cycles) [cycle_id→id workspace_id→workspace_id] tasks_cycle_id_workspace_id_fkey",
+			},
+			wantMySQL: []string{
+				"O2M rc_cycles -> rc_tasks rc_tasks [workspace_id→workspace_id cycle_id→id] rc_tasks_cycle",
+				"O2O rc_tasks -> rc_cycles cycle (rc_cycles) [workspace_id→workspace_id cycle_id→id] rc_tasks_cycle",
+			},
+			wantLite: []string{
+				"O2M cycles -> tasks tasks [cycle_id→id workspace_id→workspace_id] tasks(cycle_id, workspace_id) → cycles(id, workspace_id)",
+				"O2O tasks -> cycles cycle (cycles) [cycle_id→id workspace_id→workspace_id] tasks(cycle_id, workspace_id) → cycles(id, workspace_id)",
+			},
 		},
 		{
 			name:     "FK into the declared primary key an override moves",
@@ -101,9 +110,18 @@ CREATE TABLE @.tasks (id bigint PRIMARY KEY, cycle_id bigint REFERENCES @.cycles
 CREATE TABLE @tasks (id bigint PRIMARY KEY, cycle_id bigint, CONSTRAINT @tasks_cycle FOREIGN KEY (cycle_id) REFERENCES @cycles (id))`,
 			tables:    []string{"cycles", "tasks"},
 			overrides: map[string][]string{"cycles": {"code"}},
-			wantPG:    []string{"O2M rdw_dpo.cycles -> rdw_dpo.tasks tasks [cycle_id→id] tasks_cycle_id_fkey"},
-			wantMySQL: []string{"O2M dpo_cycles -> dpo_tasks dpo_tasks [cycle_id→id] dpo_tasks_cycle"},
-			wantLite:  []string{"O2M cycles -> tasks tasks [cycle_id→id] tasks(cycle_id) → cycles(id)"},
+			wantPG: []string{
+				"O2M rdw_dpo.cycles -> rdw_dpo.tasks tasks [cycle_id→id] tasks_cycle_id_fkey",
+				"O2O rdw_dpo.tasks -> rdw_dpo.cycles cycle (cycles) [cycle_id→id] tasks_cycle_id_fkey",
+			},
+			wantMySQL: []string{
+				"O2M dpo_cycles -> dpo_tasks dpo_tasks [cycle_id→id] dpo_tasks_cycle",
+				"O2O dpo_tasks -> dpo_cycles cycle (dpo_cycles) [cycle_id→id] dpo_tasks_cycle",
+			},
+			wantLite: []string{
+				"O2M cycles -> tasks tasks [cycle_id→id] tasks(cycle_id) → cycles(id)",
+				"O2O tasks -> cycles cycle (cycles) [cycle_id→id] tasks(cycle_id) → cycles(id)",
+			},
 		},
 		{
 			// The override target holds no UNIQUE, so only the override makes
@@ -117,8 +135,14 @@ CREATE TABLE @.tasks (id bigint PRIMARY KEY, cycle_code text REFERENCES @.cycles
 CREATE TABLE @tasks (id bigint PRIMARY KEY, cycle_code varchar(20), CONSTRAINT @tasks_code FOREIGN KEY (cycle_code) REFERENCES @cycles (code))`,
 			tables:    []string{"cycles", "tasks"},
 			overrides: map[string][]string{"cycles": {"code"}},
-			wantMySQL: []string{"O2M rpo_cycles -> rpo_tasks rpo_tasks [cycle_code→code] rpo_tasks_code"},
-			wantLite:  []string{"O2M cycles -> tasks tasks [cycle_code→code] tasks(cycle_code) → cycles(code)"},
+			wantMySQL: []string{
+				"O2M rpo_cycles -> rpo_tasks rpo_tasks [cycle_code→code] rpo_tasks_code",
+				"O2O rpo_tasks -> rpo_cycles rpo_cycles [cycle_code→code] rpo_tasks_code",
+			},
+			wantLite: []string{
+				"O2M cycles -> tasks tasks [cycle_code→code] tasks(cycle_code) → cycles(code)",
+				"O2O tasks -> cycles cycles [cycle_code→code] tasks(cycle_code) → cycles(code)",
+			},
 		},
 		{
 			name:     "REFERENCES with no column list joins the primary key",
@@ -127,8 +151,14 @@ CREATE TABLE @tasks (id bigint PRIMARY KEY, cycle_code varchar(20), CONSTRAINT @
 CREATE TABLE @.posts (id bigint PRIMARY KEY, account_num bigint REFERENCES @.accounts)`,
 			mysqlSkip: "MySQL's REFERENCES requires a column list",
 			tables:    []string{"accounts", "posts"},
-			wantPG:    []string{"O2M rdw_ncl.accounts -> rdw_ncl.posts posts [account_num→num] posts_account_num_fkey"},
-			wantLite:  []string{"O2M accounts -> posts posts [account_num→num] posts(account_num) → accounts(num)"},
+			wantPG: []string{
+				"O2M rdw_ncl.accounts -> rdw_ncl.posts posts [account_num→num] posts_account_num_fkey",
+				"O2O rdw_ncl.posts -> rdw_ncl.accounts accounts [account_num→num] posts_account_num_fkey",
+			},
+			wantLite: []string{
+				"O2M accounts -> posts posts [account_num→num] posts(account_num) → accounts(num)",
+				"O2O posts -> accounts accounts [account_num→num] posts(account_num) → accounts(num)",
+			},
 		},
 		{
 			name:     "FK into a table outside the schema gives no edge",
@@ -144,13 +174,22 @@ CREATE TABLE @.posts (id bigint PRIMARY KEY, author_id bigint REFERENCES @.users
 CREATE TABLE @posts (id bigint PRIMARY KEY, author_id bigint, account_id bigint,
   CONSTRAINT @posts_author FOREIGN KEY (author_id) REFERENCES @users (id),
   CONSTRAINT @posts_account FOREIGN KEY (account_id) REFERENCES @accounts (id))`,
-			tables:    []string{"users", "posts"},
-			wantPG:    []string{"O2M rdw_tos.users -> rdw_tos.posts posts [author_id→id] posts_author_id_fkey"},
-			wantMySQL: []string{"O2M tos_users -> tos_posts tos_posts [author_id→id] tos_posts_author"},
-			wantLite:  []string{"O2M users -> posts posts [author_id→id] posts(author_id) → users(id)"},
+			tables: []string{"users", "posts"},
+			wantPG: []string{
+				"O2M rdw_tos.users -> rdw_tos.posts posts [author_id→id] posts_author_id_fkey",
+				"O2O rdw_tos.posts -> rdw_tos.users author (users) [author_id→id] posts_author_id_fkey",
+			},
+			wantMySQL: []string{
+				"O2M tos_users -> tos_posts tos_posts [author_id→id] tos_posts_author",
+				"O2O tos_posts -> tos_users author (tos_users) [author_id→id] tos_posts_author",
+			},
+			wantLite: []string{
+				"O2M users -> posts posts [author_id→id] posts(author_id) → users(id)",
+				"O2O posts -> users author (users) [author_id→id] posts(author_id) → users(id)",
+			},
 		},
 		{
-			name:     "three single-column FKs in the primary key give three O2M edges",
+			name:     "three single-column FKs in the primary key give three O2M and three belongs-to edges",
 			pgSchema: "rdw_tfj",
 			ddl: `CREATE TABLE @.workspaces (id bigint PRIMARY KEY);
 CREATE TABLE @.tasks (id bigint PRIMARY KEY);
@@ -169,18 +208,27 @@ CREATE TABLE @task_labels (workspace_id bigint NOT NULL, task_id bigint NOT NULL
 			tables: []string{"workspaces", "tasks", "labels", "task_labels"},
 			wantPG: []string{
 				"O2M rdw_tfj.workspaces -> rdw_tfj.task_labels task_labels [workspace_id→id] task_labels_workspace_id_fkey",
+				"O2O rdw_tfj.task_labels -> rdw_tfj.workspaces workspace (workspaces) [workspace_id→id] task_labels_workspace_id_fkey",
 				"O2M rdw_tfj.tasks -> rdw_tfj.task_labels task_labels [task_id→id] task_labels_task_id_fkey",
+				"O2O rdw_tfj.task_labels -> rdw_tfj.tasks task (tasks) [task_id→id] task_labels_task_id_fkey",
 				"O2M rdw_tfj.labels -> rdw_tfj.task_labels task_labels [label_id→id] task_labels_label_id_fkey",
+				"O2O rdw_tfj.task_labels -> rdw_tfj.labels label (labels) [label_id→id] task_labels_label_id_fkey",
 			},
 			wantMySQL: []string{
 				"O2M tfj_workspaces -> tfj_task_labels tfj_task_labels [workspace_id→id] tfj_tl_ws",
+				"O2O tfj_task_labels -> tfj_workspaces workspace (tfj_workspaces) [workspace_id→id] tfj_tl_ws",
 				"O2M tfj_tasks -> tfj_task_labels tfj_task_labels [task_id→id] tfj_tl_task",
+				"O2O tfj_task_labels -> tfj_tasks task (tfj_tasks) [task_id→id] tfj_tl_task",
 				"O2M tfj_labels -> tfj_task_labels tfj_task_labels [label_id→id] tfj_tl_label",
+				"O2O tfj_task_labels -> tfj_labels label (tfj_labels) [label_id→id] tfj_tl_label",
 			},
 			wantLite: []string{
 				"O2M workspaces -> task_labels task_labels [workspace_id→id] task_labels(workspace_id) → workspaces(id)",
+				"O2O task_labels -> workspaces workspace (workspaces) [workspace_id→id] task_labels(workspace_id) → workspaces(id)",
 				"O2M tasks -> task_labels task_labels [task_id→id] task_labels(task_id) → tasks(id)",
+				"O2O task_labels -> tasks task (tasks) [task_id→id] task_labels(task_id) → tasks(id)",
 				"O2M labels -> task_labels task_labels [label_id→id] task_labels(label_id) → labels(id)",
+				"O2O task_labels -> labels label (labels) [label_id→id] task_labels(label_id) → labels(id)",
 			},
 		},
 		{
@@ -215,15 +263,21 @@ CREATE TABLE @user_tags (user_id bigint NOT NULL, tag_id bigint NOT NULL,
 			overrides: map[string][]string{"user_tags": {"user_id", "tag_id"}},
 			wantPG: []string{
 				"O2M rdw_pkj.users -> rdw_pkj.user_tags user_tags [user_id→id] user_tags_user_id_fkey",
+				"O2O rdw_pkj.user_tags -> rdw_pkj.users user (users) [user_id→id] user_tags_user_id_fkey",
 				"O2M rdw_pkj.tags -> rdw_pkj.user_tags user_tags [tag_id→id] user_tags_tag_id_fkey",
+				"O2O rdw_pkj.user_tags -> rdw_pkj.tags tag (tags) [tag_id→id] user_tags_tag_id_fkey",
 			},
 			wantMySQL: []string{
 				"O2M pkj_users -> pkj_user_tags pkj_user_tags [user_id→id] pkj_ut_user",
+				"O2O pkj_user_tags -> pkj_users user (pkj_users) [user_id→id] pkj_ut_user",
 				"O2M pkj_tags -> pkj_user_tags pkj_user_tags [tag_id→id] pkj_ut_tag",
+				"O2O pkj_user_tags -> pkj_tags tag (pkj_tags) [tag_id→id] pkj_ut_tag",
 			},
 			wantLite: []string{
 				"O2M users -> user_tags user_tags [user_id→id] user_tags(user_id) → users(id)",
+				"O2O user_tags -> users user (users) [user_id→id] user_tags(user_id) → users(id)",
 				"O2M tags -> user_tags user_tags [tag_id→id] user_tags(tag_id) → tags(id)",
+				"O2O user_tags -> tags tag (tags) [tag_id→id] user_tags(tag_id) → tags(id)",
 			},
 		},
 		{
@@ -266,6 +320,27 @@ CREATE TABLE @order_items (order_id bigint NOT NULL, product_id bigint NOT NULL,
 				"M2M products -> warehouses warehouses via stock [product_id→id] [warehouse_id→id] stock(product_id) → products(id) / stock(warehouse_id) → warehouses(id)",
 				"M2M orders -> stock stock via order_items [order_id→id] [warehouse_id→warehouse_id product_id→product_id] order_items(order_id) → orders(id) / order_items(warehouse_id, product_id) → stock(warehouse_id, product_id)",
 				"M2M stock -> orders orders via order_items [warehouse_id→warehouse_id product_id→product_id] [order_id→id] order_items(warehouse_id, product_id) → stock(warehouse_id, product_id) / order_items(order_id) → orders(id)",
+			},
+		},
+		{
+			name:     "self-referential foreign key gives both edges",
+			pgSchema: "rdw_srf",
+			ddl:      `CREATE TABLE @.tasks (id bigint PRIMARY KEY, parent_task_id bigint REFERENCES @.tasks (id))`,
+			mysqlPfx: "srf_",
+			mysqlDDL: `CREATE TABLE @tasks (id bigint PRIMARY KEY, parent_task_id bigint,
+  CONSTRAINT @tasks_parent FOREIGN KEY (parent_task_id) REFERENCES @tasks (id))`,
+			tables: []string{"tasks"},
+			wantPG: []string{
+				"O2M rdw_srf.tasks -> rdw_srf.tasks tasks [parent_task_id→id] tasks_parent_task_id_fkey",
+				"O2O rdw_srf.tasks -> rdw_srf.tasks parent_task (tasks) [parent_task_id→id] tasks_parent_task_id_fkey",
+			},
+			wantMySQL: []string{
+				"O2M srf_tasks -> srf_tasks srf_tasks [parent_task_id→id] srf_tasks_parent",
+				"O2O srf_tasks -> srf_tasks parent_task (srf_tasks) [parent_task_id→id] srf_tasks_parent",
+			},
+			wantLite: []string{
+				"O2M tasks -> tasks tasks [parent_task_id→id] tasks(parent_task_id) → tasks(id)",
+				"O2O tasks -> tasks parent_task (tasks) [parent_task_id→id] tasks(parent_task_id) → tasks(id)",
 			},
 		},
 		{
@@ -436,8 +511,10 @@ CREATE UNIQUE INDEX labels_owner ON rdw_both.labels (owner_task_id)`,
 				"O2M rdw_both.workspaces -> rdw_both.labels labels [workspace_id→id] labels_workspace_id_fkey",
 				"O2O rdw_both.labels -> rdw_both.tasks owner_task (tasks) [owner_task_id→id] labels_owner_task_id_fkey",
 				"M2M rdw_both.tasks -> rdw_both.labels labels via rdw_both.task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id] task_labels_workspace_id_task_id_fkey / task_labels_workspace_id_label_id_fkey",
-				"M2M rdw_both.labels -> rdw_both.tasks task_labels (tasks) via rdw_both.task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] task_labels_workspace_id_label_id_fkey / task_labels_workspace_id_task_id_fkey",
+				"M2M rdw_both.labels -> rdw_both.tasks tasks via rdw_both.task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] task_labels_workspace_id_label_id_fkey / task_labels_workspace_id_task_id_fkey",
 				"O2M rdw_both.workspaces -> rdw_both.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O rdw_both.labels -> rdw_both.workspaces workspace (workspaces) [workspace_id→id] labels_workspace_id_fkey",
+				"O2O rdw_both.tasks -> rdw_both.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 			},
 		},
 		{
@@ -467,8 +544,10 @@ ALTER TABLE bo_labels ADD CONSTRAINT bo_labels_owner_task FOREIGN KEY (owner_tas
 				"O2M bo_workspaces -> bo_labels bo_labels [workspace_id→id] bo_labels_ws",
 				"O2O bo_labels -> bo_tasks owner_task (bo_tasks) [owner_task_id→id] bo_labels_owner_task",
 				"M2M bo_tasks -> bo_labels bo_labels via bo_task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id] bo_tl_task / bo_tl_label",
-				"M2M bo_labels -> bo_tasks bo_task_labels (bo_tasks) via bo_task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] bo_tl_label / bo_tl_task",
+				"M2M bo_labels -> bo_tasks bo_tasks via bo_task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] bo_tl_label / bo_tl_task",
 				"O2M bo_workspaces -> bo_tasks bo_tasks [workspace_id→id] bo_tasks_ws",
+				"O2O bo_labels -> bo_workspaces workspace (bo_workspaces) [workspace_id→id] bo_labels_ws",
+				"O2O bo_tasks -> bo_workspaces workspace (bo_workspaces) [workspace_id→id] bo_tasks_ws",
 			},
 		},
 		{
@@ -487,8 +566,10 @@ CREATE UNIQUE INDEX labels_owner ON labels (owner_task_id)`,
 				"O2M workspaces -> labels labels [workspace_id→id] labels(workspace_id) → workspaces(id)",
 				"O2O labels -> tasks owner_task (tasks) [owner_task_id→id] labels(owner_task_id) → tasks(id)",
 				"M2M tasks -> labels labels via task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id] task_labels(workspace_id, task_id) → tasks(workspace_id, id) / task_labels(workspace_id, label_id) → labels(workspace_id, id)",
-				"M2M labels -> tasks task_labels (tasks) via task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] task_labels(workspace_id, label_id) → labels(workspace_id, id) / task_labels(workspace_id, task_id) → tasks(workspace_id, id)",
+				"M2M labels -> tasks tasks via task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] task_labels(workspace_id, label_id) → labels(workspace_id, id) / task_labels(workspace_id, task_id) → tasks(workspace_id, id)",
 				"O2M workspaces -> tasks tasks [workspace_id→id] tasks(workspace_id) → workspaces(id)",
+				"O2O labels -> workspaces workspace (workspaces) [workspace_id→id] labels(workspace_id) → workspaces(id)",
+				"O2O tasks -> workspaces workspace (workspaces) [workspace_id→id] tasks(workspace_id) → workspaces(id)",
 			},
 		},
 	}

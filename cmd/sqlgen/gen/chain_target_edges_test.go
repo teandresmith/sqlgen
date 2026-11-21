@@ -34,7 +34,7 @@ CREATE TABLE post_details (post_id bigint PRIMARY KEY,
 			postsCfg: config.TableConfig{Relationships: []config.TableRelationship{
 				{Name: "Writer", Type: "o2o", Table: "users", FK: config.KeyColumns{"author_id"}},
 			}},
-			want: []string{"fo.Posts.Writer != nil"},
+			want: []string{"fo.Post.Writer != nil"},
 		},
 		{
 			name: "excluded by name",
@@ -47,7 +47,7 @@ CREATE TABLE post_details (post_id bigint PRIMARY KEY,
 	CONSTRAINT post_details_post FOREIGN KEY (post_id) REFERENCES posts (id));
 `,
 			postsCfg: config.TableConfig{ExcludeRelationships: []string{"author"}},
-			want:     []string{"fo.Posts.Editor != nil"},
+			want:     []string{"fo.Post.Editor != nil"},
 		},
 		{
 			name: "excluded by base name",
@@ -65,9 +65,9 @@ CREATE TABLE post_details (post_id bigint PRIMARY KEY,
 		{
 			name: "omitted on a column field",
 			ddl: `
-CREATE TABLE users (id bigint PRIMARY KEY);
-CREATE TABLE posts (id bigint PRIMARY KEY, users text, author_id bigint UNIQUE,
-	CONSTRAINT posts_author FOREIGN KEY (author_id) REFERENCES users (id));
+CREATE TABLE writers (id bigint PRIMARY KEY);
+CREATE TABLE posts (id bigint PRIMARY KEY, writer text, writer_id bigint UNIQUE,
+	CONSTRAINT posts_writer FOREIGN KEY (writer_id) REFERENCES writers (id));
 CREATE TABLE post_details (post_id bigint PRIMARY KEY,
 	CONSTRAINT post_details_post FOREIGN KEY (post_id) REFERENCES posts (id));
 `,
@@ -94,14 +94,14 @@ CREATE TABLE post_details (post_id bigint PRIMARY KEY,
 					own := []string{}
 					for _, r := range posts.Relationships {
 						if r.Type == parser.OneToOne {
-							own = append(own, "fo.Posts."+r.FieldName+" != nil")
+							own = append(own, "fo.Post."+r.FieldName+" != nil")
 						}
 					}
 					details, ok := tableContextByName(contexts, "post_details")
 					if !ok {
 						t.Fatal("no post_details context")
 					}
-					d := o2oJoin(t, details, "Posts")
+					d := o2oJoin(t, details, "Post")
 					got := []string{}
 					for _, c := range d.ChainedJoins {
 						got = append(got, c.FieldOptionsCheck)

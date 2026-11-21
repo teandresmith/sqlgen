@@ -23,8 +23,8 @@ type Profile struct {
 	GithubHandle *string `db:"github_handle" json:"github_handle"`
 	Verified     bool    `db:"verified" json:"verified"`
 
-	// Users - one-to-one relationship with the users table.
-	Users *User `db:"-" json:"users"`
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // ProfileClient provides type-safe operations for the profiles table.
@@ -2139,7 +2139,7 @@ type ProfileFieldOptions struct {
 	Website      bool              `json:"website"`
 	GithubHandle bool              `json:"github_handle"`
 	Verified     bool              `json:"verified"`
-	Users        *UserFieldOptions `json:"users"`
+	User         *UserFieldOptions `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -2193,7 +2193,7 @@ func (fo *ProfileFieldOptions) HasSelectedColumns() bool {
 	if fo.Verified {
 		return true
 	}
-	if fo.Users != nil {
+	if fo.User != nil {
 		return true
 	}
 	return false
@@ -2239,7 +2239,7 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 		return nil
 	}
 	var joins []sql.JoinClause
-	if fo.Users != nil {
+	if fo.User != nil {
 		joins = append(joins, sql.JoinClause{
 			Table: sql.Table{Schema: "", Name: "users"},
 			Alias: "u",
@@ -2247,9 +2247,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 			// The NULL-detection below reads the target's PK off the scanned
 			// row, so the join carries it even when FieldOptions did not ask
 			// for it — an unselected PK reads as a LEFT JOIN miss.
-			Columns: unionColumns(fo.Users.Columns(), "id"),
+			Columns: unionColumns(fo.User.Columns(), "id"),
 		})
-		if fo.Users.Profile != nil {
+		if fo.User.Profile != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "", Name: "profiles"},
 				Alias: "p2",
@@ -2257,9 +2257,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Users.Profile.Columns(), "id"),
+				Columns: unionColumns(fo.User.Profile.Columns(), "id"),
 			})
-			if fo.Users.Profile.Users != nil {
+			if fo.User.Profile.User != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "", Name: "users"},
 					Alias: "u2",
@@ -2267,9 +2267,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Users.Profile.Users.Columns(), "id"),
+					Columns: unionColumns(fo.User.Profile.User.Columns(), "id"),
 				})
-				if fo.Users.Profile.Users.Profile != nil {
+				if fo.User.Profile.User.Profile != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "", Name: "profiles"},
 						Alias: "p3",
@@ -2277,9 +2277,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Users.Profile.Users.Profile.Columns(), "id"),
+						Columns: unionColumns(fo.User.Profile.User.Profile.Columns(), "id"),
 					})
-					if fo.Users.Profile.Users.Profile.Users != nil {
+					if fo.User.Profile.User.Profile.User != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "", Name: "users"},
 							Alias: "u3",
@@ -2287,9 +2287,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Users.Profile.Users.Profile.Users.Columns(), "id"),
+							Columns: unionColumns(fo.User.Profile.User.Profile.User.Columns(), "id"),
 						})
-						if fo.Users.Profile.Users.Profile.Users.Profile != nil {
+						if fo.User.Profile.User.Profile.User.Profile != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "", Name: "profiles"},
 								Alias: "p4",
@@ -2297,7 +2297,7 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Users.Profile.Users.Profile.Users.Profile.Columns(), "id"),
+								Columns: unionColumns(fo.User.Profile.User.Profile.User.Profile.Columns(), "id"),
 							})
 						}
 					}
@@ -2464,19 +2464,19 @@ func scanProfilesWithOneToOneJoins(rows database.Rows, columns []string) ([]*Pro
 
 		// NULL detection — assign deepest chain first, then parents
 		if u3HasData && u3.ID != 0 {
-			p3.Users = u3
+			p3.User = u3
 		} else {
-			p3.Users = nil
+			p3.User = nil
 		}
 		if u2HasData && u2.ID != 0 {
-			p2.Users = u2
+			p2.User = u2
 		} else {
-			p2.Users = nil
+			p2.User = nil
 		}
 		if uHasData && u.ID != 0 {
-			p.Users = u
+			p.User = u
 		} else {
-			p.Users = nil
+			p.User = nil
 		}
 		if p4HasData && p4.ID != 0 {
 			u3.Profile = p4

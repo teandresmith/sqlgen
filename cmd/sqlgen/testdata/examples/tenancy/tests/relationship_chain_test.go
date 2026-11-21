@@ -16,7 +16,7 @@ package tests
 // example: the users ↔ user_profiles back-reference auto-detection produces
 // an O2O chain of arbitrary depth (alias order: u → p → us → pr → use → pro →
 // user).
-// Selecting `fo.Profile.Users.Profile` materialises three chained aliases
+// Selecting `fo.Profile.User.Profile` materialises three chained aliases
 // (p, us, pr) on top of the parent alias (u) — four tenant conditions in
 // WHERE, one per alias. The aliases alternate between two tables instead
 // of naming three distinct tables, but the §29.10 invariant under test
@@ -126,7 +126,7 @@ func countWorkspaceIDPredicates(sqlStr string) int {
 }
 
 // TestO2OChain_SingleQueryForChainedLoad is the no-N+1 contract. Loading a
-// User with Profile → Users → Profile selected must materialise as ONE SELECT
+// User with Profile → User → Profile selected must materialise as ONE SELECT
 // against `users` (the parent + LEFT JOIN chain) — no follow-up query per
 // level, since §13.2 flattens O2O chains into a single multi-JOIN statement.
 // (Collection relationships like Posts/Tags would spawn extra queries; those
@@ -152,7 +152,7 @@ func TestO2OChain_SingleQueryForChainedLoad(t *testing.T) {
 	// Fresh slate: count only the chained GetMany's queries, not setup.
 	cap.reset()
 
-	// Load via GetMany with depth-2 chain selection (Profile → Users → Profile).
+	// Load via GetMany with depth-2 chain selection (Profile → User → Profile).
 	// The userClient.resolveO2OJoins emits JOINs only for each chain level
 	// materialised here — 3 chained aliases (p, u2, p2) on top of parent u.
 	users, err := client.Users().GetMany(
@@ -162,7 +162,7 @@ func TestO2OChain_SingleQueryForChainedLoad(t *testing.T) {
 				ID: true, WorkspaceID: true, Email: true,
 				Profile: &models.UserProfileFieldOptions{
 					ID: true, UserID: true, WorkspaceID: true, Bio: true,
-					Users: &models.UserFieldOptions{
+					User: &models.UserFieldOptions{
 						ID: true, WorkspaceID: true, Email: true,
 						Profile: &models.UserProfileFieldOptions{
 							ID: true, UserID: true, WorkspaceID: true, Bio: true,
@@ -224,7 +224,7 @@ func TestO2OChain_TenantWHEREOnEveryAlias(t *testing.T) {
 				ID: true, WorkspaceID: true, Email: true,
 				Profile: &models.UserProfileFieldOptions{
 					ID: true, UserID: true, WorkspaceID: true, Bio: true,
-					Users: &models.UserFieldOptions{
+					User: &models.UserFieldOptions{
 						ID: true, WorkspaceID: true, Email: true,
 						Profile: &models.UserProfileFieldOptions{
 							ID: true, UserID: true, WorkspaceID: true, Bio: true,
@@ -296,7 +296,7 @@ func TestO2OChain_SkipTenancyDropsFilterOnEveryAlias(t *testing.T) {
 				ID: true, WorkspaceID: true, Email: true,
 				Profile: &models.UserProfileFieldOptions{
 					ID: true, UserID: true, WorkspaceID: true, Bio: true,
-					Users: &models.UserFieldOptions{
+					User: &models.UserFieldOptions{
 						ID: true, WorkspaceID: true, Email: true,
 						Profile: &models.UserProfileFieldOptions{
 							ID: true, UserID: true, WorkspaceID: true, Bio: true,
@@ -335,7 +335,7 @@ func TestO2OChain_SkipTenancyDropsFilterOnEveryAlias(t *testing.T) {
 // poison row at the deepest chain level and verifies it never materialises
 // through the chain load. Without the child-side tenant WHERE on the deep
 // alias (`p2.workspace_id = $`), tenant B's user_profile attached to A's
-// user ID would leak into A's loaded.Profile.Users.Profile.
+// user ID would leak into A's loaded.Profile.User.Profile.
 //
 // This is the behavioural mirror of the SQL-shape test above: the WHERE-count
 // proves the clause is emitted; this test proves it's effective.
@@ -383,7 +383,7 @@ func TestO2OChain_CrossTenantRowsFilteredAtEveryChainLevel(t *testing.T) {
 				ID: true, WorkspaceID: true, Email: true,
 				Profile: &models.UserProfileFieldOptions{
 					ID: true, UserID: true, WorkspaceID: true, Bio: true,
-					Users: &models.UserFieldOptions{
+					User: &models.UserFieldOptions{
 						ID: true, WorkspaceID: true, Email: true,
 						Profile: &models.UserProfileFieldOptions{
 							ID: true, UserID: true, WorkspaceID: true, Bio: true,
@@ -409,16 +409,16 @@ func TestO2OChain_CrossTenantRowsFilteredAtEveryChainLevel(t *testing.T) {
 	if u.Profile.WorkspaceID != tenantA {
 		t.Errorf("Profile.WorkspaceID = %v, want %v", u.Profile.WorkspaceID, tenantA)
 	}
-	if u.Profile.Users == nil {
-		t.Fatalf("Profile.Users = nil, want non-nil")
+	if u.Profile.User == nil {
+		t.Fatalf("Profile.User = nil, want non-nil")
 	}
-	if u.Profile.Users.WorkspaceID != tenantA {
-		t.Errorf("Profile.Users.WorkspaceID = %v, want %v", u.Profile.Users.WorkspaceID, tenantA)
+	if u.Profile.User.WorkspaceID != tenantA {
+		t.Errorf("Profile.User.WorkspaceID = %v, want %v", u.Profile.User.WorkspaceID, tenantA)
 	}
-	if u.Profile.Users.Profile == nil {
-		t.Fatalf("Profile.Users.Profile = nil, want non-nil")
+	if u.Profile.User.Profile == nil {
+		t.Fatalf("Profile.User.Profile = nil, want non-nil")
 	}
-	if u.Profile.Users.Profile.WorkspaceID != tenantA {
-		t.Errorf("Profile.Users.Profile.WorkspaceID = %v, want %v", u.Profile.Users.Profile.WorkspaceID, tenantA)
+	if u.Profile.User.Profile.WorkspaceID != tenantA {
+		t.Errorf("Profile.User.Profile.WorkspaceID = %v, want %v", u.Profile.User.Profile.WorkspaceID, tenantA)
 	}
 }

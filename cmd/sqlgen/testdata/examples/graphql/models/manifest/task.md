@@ -32,6 +32,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| cycle | o2o | Cycle | public.tasks.(workspace_id, cycle_id) |  |
 | labels | m2m | Label | public.task_labels ((workspace_id, task_id) → (workspace_id, label_id)) |  |
 
 ## Query methods

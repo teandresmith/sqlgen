@@ -10,6 +10,8 @@ type ProductTagLabel {
   label: ID!
   "Optional description"
   description: String
+  "one-to-one relationship with the products table."
+  product: Product
 }
 
 type ProductTagLabelConnection {

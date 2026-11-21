@@ -2739,6 +2739,8 @@ type Project struct {
 	Summary   string          `db:"summary" json:"summary"`
 	Tags      ProjectsTagsSet `db:"tags" json:"tags"`
 
+	// Account - one-to-one relationship with the accounts table.
+	Account *Account `db:"-" json:"account"`
 	// Tasks - one-to-many relationship with the tasks table.
 	Tasks []*Task `db:"-" json:"tasks"`
 }
@@ -2958,6 +2960,19 @@ func (c *projectClient) Get(ctx context.Context, id uint64, opts ...func(*CallOp
 				return nil, fmt.Errorf("get project: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get project: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get project: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableProjects, Schema: "",
@@ -3032,6 +3047,19 @@ func (c *projectClient) GetMany(ctx context.Context, input *GetProjectsInput, op
 				return nil, fmt.Errorf("get many projects: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many projects: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many projects: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableProjects, Schema: "",
@@ -3088,25 +3116,58 @@ func (c *projectClient) GetMany(ctx context.Context, input *GetProjectsInput, op
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var projects []*Project
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("p", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "p",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		projects, err = scanProjects(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			projects, err = scanProjectsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			projects, err = scanProjects(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -4523,6 +4584,19 @@ func (c *projectClient) Paginate(ctx context.Context, input PaginateInput[Projec
 				return nil, fmt.Errorf("paginate projects: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate projects: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate projects: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProjects, Schema: "",
@@ -4583,6 +4657,19 @@ func (c *projectClient) Connection(ctx context.Context, input ConnectionInput[Pr
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection projects: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection projects: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection projects: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -5086,6 +5173,7 @@ type ProjectFieldOptions struct {
 	Slug      bool                     `json:"slug"`
 	Summary   bool                     `json:"summary"`
 	Tags      bool                     `json:"tags"`
+	Account   *AccountFieldOptions     `json:"account"`
 	Tasks     *TaskRelationshipOptions `json:"tasks"`
 }
 
@@ -5147,6 +5235,9 @@ func (fo *ProjectFieldOptions) HasSelectedColumns() bool {
 	if fo.Tags {
 		return true
 	}
+	if fo.Account != nil {
+		return true
+	}
 	if fo.Tasks != nil {
 		return true
 	}
@@ -5188,10 +5279,96 @@ type GetProjectsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *projectClient) resolveO2OJoins(d sql.Dialect, fo *ProjectFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Account != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "accounts"},
+			Alias: "a",
+			On:    fmt.Sprintf("a.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("account_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Account.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanProjectsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Project entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanProjectsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Project, error) {
+	var result []*Project
+	for rows.Next() {
+		p := &Project{}
+		a := &Account{}
+		aHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "p.id":
+				targets[idx] = &p.ID
+			case "p.account_id":
+				targets[idx] = &p.AccountID
+			case "p.name":
+				targets[idx] = &p.Name
+			case "p.slug":
+				targets[idx] = &p.Slug
+			case "p.summary":
+				targets[idx] = &p.Summary
+			case "p.tags":
+				targets[idx] = &p.Tags
+			case "a.id":
+				targets[idx] = database.NullScan(&a.ID)
+				aHasData = true
+			case "a.email":
+				targets[idx] = database.NullScan(&a.Email)
+			case "a.display_name":
+				targets[idx] = database.NullScan(&a.DisplayName)
+			case "a.is_active":
+				targets[idx] = database.NullScan(&a.IsActive)
+			case "a.created_at":
+				targets[idx] = database.NullScan(&a.CreatedAt)
+			case "a.nickname":
+				targets[idx] = &a.Nickname
+			case "a.locale":
+				targets[idx] = database.NullScan(&a.Locale)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan project with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if aHasData && a.ID != 0 {
+			p.Account = a
+		} else {
+			p.Account = nil
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project rows: %w", err)
+	}
+	return result, nil
+}
+
 type TaskLabel struct {
 	ID     uint64 `db:"id" json:"id"`
 	TaskID uint64 `db:"task_id" json:"task_id"`
 	Label  string `db:"label" json:"label"`
+
+	// Task - one-to-one relationship with the tasks table.
+	Task *Task `db:"-" json:"task"`
 }
 
 // TaskLabelClient provides type-safe operations for the task_labels table.
@@ -5397,6 +5574,19 @@ func (c *taskLabelClient) Get(ctx context.Context, id uint64, opts ...func(*Call
 				return nil, fmt.Errorf("get task_label: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get task_label: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get task_label: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableTaskLabels, Schema: "",
@@ -5468,6 +5658,19 @@ func (c *taskLabelClient) GetMany(ctx context.Context, input *GetTaskLabelsInput
 				return nil, fmt.Errorf("get many task_labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many task_labels: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many task_labels: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableTaskLabels, Schema: "",
@@ -5520,25 +5723,58 @@ func (c *taskLabelClient) GetMany(ctx context.Context, input *GetTaskLabelsInput
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var taskLabels []*TaskLabel
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("t", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		taskLabels, err = scanTaskLabels(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			taskLabels, err = scanTaskLabelsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			taskLabels, err = scanTaskLabels(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return taskLabels, nil
@@ -6764,6 +7000,19 @@ func (c *taskLabelClient) Paginate(ctx context.Context, input PaginateInput[Task
 				return nil, fmt.Errorf("paginate task_labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate task_labels: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate task_labels: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTaskLabels, Schema: "",
@@ -6824,6 +7073,19 @@ func (c *taskLabelClient) Connection(ctx context.Context, input ConnectionInput[
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection task_labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection task_labels: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection task_labels: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -7232,9 +7494,10 @@ func (f *TaskLabelFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 // TaskLabelFieldOptions controls column selection and relationship loading for task_labels queries.
 type TaskLabelFieldOptions struct {
-	ID     bool `json:"id"`
-	TaskID bool `json:"task_id"`
-	Label  bool `json:"label"`
+	ID     bool              `json:"id"`
+	TaskID bool              `json:"task_id"`
+	Label  bool              `json:"label"`
+	Task   *TaskFieldOptions `json:"task"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -7274,6 +7537,9 @@ func (fo *TaskLabelFieldOptions) HasSelectedColumns() bool {
 	if fo.Label {
 		return true
 	}
+	if fo.Task != nil {
+		return true
+	}
 	return false
 }
 
@@ -7306,6 +7572,180 @@ type GetTaskLabelsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *taskLabelClient) resolveO2OJoins(d sql.Dialect, fo *TaskLabelFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Task != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "tasks"},
+			Alias: "t2",
+			On:    fmt.Sprintf("t2.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("task_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Task.Columns(), "id"),
+		})
+		if fo.Task.Assignee != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "accounts"},
+				Alias: "a",
+				On:    fmt.Sprintf("a.%s = t2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("assignee_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Task.Assignee.Columns(), "id"),
+			})
+		}
+		if fo.Task.Project != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "projects"},
+				Alias: "p",
+				On:    fmt.Sprintf("p.%s = t2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("project_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Task.Project.Columns(), "id"),
+			})
+			if fo.Task.Project.Account != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "", Name: "accounts"},
+					Alias: "a2",
+					On:    fmt.Sprintf("a2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("account_id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.Task.Project.Account.Columns(), "id"),
+				})
+			}
+		}
+	}
+	return joins
+}
+
+// scanTaskLabelsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// TaskLabel entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTaskLabelsWithOneToOneJoins(rows database.Rows, columns []string) ([]*TaskLabel, error) {
+	var result []*TaskLabel
+	for rows.Next() {
+		t := &TaskLabel{}
+		a := &Account{}
+		aHasData := false
+		a2 := &Account{}
+		a2HasData := false
+		p := &Project{}
+		pHasData := false
+		t2 := &Task{}
+		t2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.task_id":
+				targets[idx] = &t.TaskID
+			case "t.label":
+				targets[idx] = &t.Label
+			case "a.id":
+				targets[idx] = database.NullScan(&a.ID)
+				aHasData = true
+			case "a.email":
+				targets[idx] = database.NullScan(&a.Email)
+			case "a.display_name":
+				targets[idx] = database.NullScan(&a.DisplayName)
+			case "a.is_active":
+				targets[idx] = database.NullScan(&a.IsActive)
+			case "a.created_at":
+				targets[idx] = database.NullScan(&a.CreatedAt)
+			case "a.nickname":
+				targets[idx] = &a.Nickname
+			case "a.locale":
+				targets[idx] = database.NullScan(&a.Locale)
+			case "a2.id":
+				targets[idx] = database.NullScan(&a2.ID)
+				a2HasData = true
+			case "a2.email":
+				targets[idx] = database.NullScan(&a2.Email)
+			case "a2.display_name":
+				targets[idx] = database.NullScan(&a2.DisplayName)
+			case "a2.is_active":
+				targets[idx] = database.NullScan(&a2.IsActive)
+			case "a2.created_at":
+				targets[idx] = database.NullScan(&a2.CreatedAt)
+			case "a2.nickname":
+				targets[idx] = &a2.Nickname
+			case "a2.locale":
+				targets[idx] = database.NullScan(&a2.Locale)
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.account_id":
+				targets[idx] = database.NullScan(&p.AccountID)
+			case "p.name":
+				targets[idx] = database.NullScan(&p.Name)
+			case "p.slug":
+				targets[idx] = database.NullScan(&p.Slug)
+			case "p.summary":
+				targets[idx] = database.NullScan(&p.Summary)
+			case "p.tags":
+				targets[idx] = database.NullScan(&p.Tags)
+			case "t2.id":
+				targets[idx] = database.NullScan(&t2.ID)
+				t2HasData = true
+			case "t2.project_id":
+				targets[idx] = database.NullScan(&t2.ProjectID)
+			case "t2.assignee_id":
+				targets[idx] = &t2.AssigneeID
+			case "t2.title":
+				targets[idx] = database.NullScan(&t2.Title)
+			case "t2.estimate_minutes":
+				targets[idx] = database.NullScan(&t2.EstimateMinutes)
+			case "t2.estimate_seconds":
+				targets[idx] = &t2.EstimateSeconds
+			case "t2.priority":
+				targets[idx] = database.NullScan(&t2.Priority)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan task_label with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if t2HasData && t2.ID != 0 {
+			t.Task = t2
+		} else {
+			t.Task = nil
+		}
+		if pHasData && p.ID != 0 {
+			t2.Project = p
+		} else {
+			t2.Project = nil
+		}
+		if a2HasData && a2.ID != 0 {
+			p.Account = a2
+		} else {
+			p.Account = nil
+		}
+		if aHasData && a.ID != 0 {
+			t2.Assignee = a
+		} else {
+			t2.Assignee = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task_label rows: %w", err)
+	}
+	return result, nil
+}
+
 type Task struct {
 	ID              uint64            `db:"id" json:"id"`
 	ProjectID       uint64            `db:"project_id" json:"project_id"`
@@ -7315,6 +7755,10 @@ type Task struct {
 	EstimateSeconds *uint32           `db:"estimate_seconds" json:"estimate_seconds"`
 	Priority        TasksPriorityEnum `db:"priority" json:"priority"`
 
+	// Assignee - one-to-one relationship with the accounts table.
+	Assignee *Account `db:"-" json:"assignee"`
+	// Project - one-to-one relationship with the projects table.
+	Project *Project `db:"-" json:"project"`
 	// TaskLabels - one-to-many relationship with the task_labels table.
 	TaskLabels []*TaskLabel `db:"-" json:"task_labels"`
 }
@@ -7540,6 +7984,19 @@ func (c *taskClient) Get(ctx context.Context, id uint64, opts ...func(*CallOptio
 				return nil, fmt.Errorf("get task: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get task: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get task: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableTasks, Schema: "",
@@ -7614,6 +8071,19 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 				return nil, fmt.Errorf("get many tasks: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many tasks: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many tasks: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableTasks, Schema: "",
@@ -7670,25 +8140,58 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var tasks []*Task
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("t", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		tasks, err = scanTasks(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			tasks, err = scanTasksWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			tasks, err = scanTasks(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -9197,6 +9700,19 @@ func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilte
 				return nil, fmt.Errorf("paginate tasks: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate tasks: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate tasks: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTasks, Schema: "",
@@ -9257,6 +9773,19 @@ func (c *taskClient) Connection(ctx context.Context, input ConnectionInput[TaskF
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection tasks: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection tasks: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection tasks: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -9777,6 +10306,8 @@ type TaskFieldOptions struct {
 	EstimateMinutes bool                          `json:"estimate_minutes"`
 	EstimateSeconds bool                          `json:"estimate_seconds"`
 	Priority        bool                          `json:"priority"`
+	Assignee        *AccountFieldOptions          `json:"assignee"`
+	Project         *ProjectFieldOptions          `json:"project"`
 	TaskLabels      *TaskLabelRelationshipOptions `json:"task_labels"`
 }
 
@@ -9845,6 +10376,12 @@ func (fo *TaskFieldOptions) HasSelectedColumns() bool {
 	if fo.Priority {
 		return true
 	}
+	if fo.Assignee != nil {
+		return true
+	}
+	if fo.Project != nil {
+		return true
+	}
 	if fo.TaskLabels != nil {
 		return true
 	}
@@ -9891,4 +10428,153 @@ type GetTasksInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *taskClient) resolveO2OJoins(d sql.Dialect, fo *TaskFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Assignee != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "accounts"},
+			Alias: "a",
+			On:    fmt.Sprintf("a.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("assignee_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Assignee.Columns(), "id"),
+		})
+	}
+	if fo.Project != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "projects"},
+			Alias: "p",
+			On:    fmt.Sprintf("p.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("project_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Project.Columns(), "id"),
+		})
+		if fo.Project.Account != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "accounts"},
+				Alias: "a2",
+				On:    fmt.Sprintf("a2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("account_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Project.Account.Columns(), "id"),
+			})
+		}
+	}
+	return joins
+}
+
+// scanTasksWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Task entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTasksWithOneToOneJoins(rows database.Rows, columns []string) ([]*Task, error) {
+	var result []*Task
+	for rows.Next() {
+		t := &Task{}
+		a := &Account{}
+		aHasData := false
+		a2 := &Account{}
+		a2HasData := false
+		p := &Project{}
+		pHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.project_id":
+				targets[idx] = &t.ProjectID
+			case "t.assignee_id":
+				targets[idx] = &t.AssigneeID
+			case "t.title":
+				targets[idx] = &t.Title
+			case "t.estimate_minutes":
+				targets[idx] = &t.EstimateMinutes
+			case "t.estimate_seconds":
+				targets[idx] = &t.EstimateSeconds
+			case "t.priority":
+				targets[idx] = &t.Priority
+			case "a.id":
+				targets[idx] = database.NullScan(&a.ID)
+				aHasData = true
+			case "a.email":
+				targets[idx] = database.NullScan(&a.Email)
+			case "a.display_name":
+				targets[idx] = database.NullScan(&a.DisplayName)
+			case "a.is_active":
+				targets[idx] = database.NullScan(&a.IsActive)
+			case "a.created_at":
+				targets[idx] = database.NullScan(&a.CreatedAt)
+			case "a.nickname":
+				targets[idx] = &a.Nickname
+			case "a.locale":
+				targets[idx] = database.NullScan(&a.Locale)
+			case "a2.id":
+				targets[idx] = database.NullScan(&a2.ID)
+				a2HasData = true
+			case "a2.email":
+				targets[idx] = database.NullScan(&a2.Email)
+			case "a2.display_name":
+				targets[idx] = database.NullScan(&a2.DisplayName)
+			case "a2.is_active":
+				targets[idx] = database.NullScan(&a2.IsActive)
+			case "a2.created_at":
+				targets[idx] = database.NullScan(&a2.CreatedAt)
+			case "a2.nickname":
+				targets[idx] = &a2.Nickname
+			case "a2.locale":
+				targets[idx] = database.NullScan(&a2.Locale)
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.account_id":
+				targets[idx] = database.NullScan(&p.AccountID)
+			case "p.name":
+				targets[idx] = database.NullScan(&p.Name)
+			case "p.slug":
+				targets[idx] = database.NullScan(&p.Slug)
+			case "p.summary":
+				targets[idx] = database.NullScan(&p.Summary)
+			case "p.tags":
+				targets[idx] = database.NullScan(&p.Tags)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan task with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if pHasData && p.ID != 0 {
+			t.Project = p
+		} else {
+			t.Project = nil
+		}
+		if a2HasData && a2.ID != 0 {
+			p.Account = a2
+		} else {
+			p.Account = nil
+		}
+		if aHasData && a.ID != 0 {
+			t.Assignee = a
+		} else {
+			t.Assignee = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task rows: %w", err)
+	}
+	return result, nil
 }

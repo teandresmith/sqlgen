@@ -167,35 +167,38 @@ func TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused(t *testing.T) {
 			dialect: config.DialectSQLite,
 			ddl: `CREATE TABLE stamps (k DATETIME PRIMARY KEY);
 CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`,
-			want: `tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime), a time column next to a column of another storage class`,
+			// Without its belongs-to edge, which reports the pair first.
+			retype: map[string]config.TableConfig{"stamp_kids": {ExcludeRelationships: []string{"stamps"}}},
+			want:   `tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime), a time column next to a column of another storage class`,
 		},
 		{
 			name:    "text key, datetime fk",
 			dialect: config.DialectSQLite,
 			ddl: `CREATE TABLE stamps (k TEXT PRIMARY KEY);
 CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k DATETIME REFERENCES stamps (k));`,
-			want: `tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (datetime) with stamps.k (text), a time column next to a column of another storage class`,
+			retype: map[string]config.TableConfig{"stamp_kids": {ExcludeRelationships: []string{"stamps"}}},
+			want:   `tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (datetime) with stamps.k (text), a time column next to a column of another storage class`,
 		},
 		{
 			name:    "integer key, datetime fk",
 			dialect: config.DialectSQLite,
 			ddl: `CREATE TABLE users (id INTEGER PRIMARY KEY);
 CREATE TABLE profiles (id INTEGER PRIMARY KEY, user_at DATETIME REFERENCES users (id));`,
-			want: `"profiles" pairs profiles.user_at (datetime) with users.id (integer)`,
+			want: `tables.profiles.relationships: "user" pairs profiles.user_at (datetime) with users.id (integer)`,
 		},
 		{
 			name:    "composite member",
 			dialect: config.DialectSQLite,
 			ddl: `CREATE TABLE stamps (a INTEGER NOT NULL, k DATETIME NOT NULL, PRIMARY KEY (a, k));
 CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, a INTEGER, k TEXT, FOREIGN KEY (a, k) REFERENCES stamps (a, k));`,
-			want: `"stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime)`,
+			want: `"stamp" pairs stamp_kids.k (text) with stamps.k (datetime)`,
 		},
 		{
 			name:    "nullable unique key",
 			dialect: config.DialectSQLite,
 			ddl: `CREATE TABLE stamps (id INTEGER PRIMARY KEY, k DATETIME UNIQUE);
 CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`,
-			want: `"stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime)`,
+			want: `"stamp" pairs stamp_kids.k (text) with stamps.k (datetime)`,
 		},
 		{
 			name:    "m2m junction",

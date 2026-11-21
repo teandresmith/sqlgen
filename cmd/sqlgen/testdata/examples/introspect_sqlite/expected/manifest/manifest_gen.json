@@ -811,6 +811,21 @@
       ],
       "relationships": [
         {
+          "name": "account",
+          "kind": "o2o",
+          "target_entity": "Account",
+          "fk": {
+            "table": "projects",
+            "columns": [
+              "account_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "projects(account_id) → accounts(id)"
+          }
+        },
+        {
           "name": "accounts",
           "kind": "m2m",
           "target_entity": "Account",
@@ -1956,6 +1971,36 @@
       ],
       "relationships": [
         {
+          "name": "assignee",
+          "kind": "o2o",
+          "target_entity": "Account",
+          "fk": {
+            "table": "tasks",
+            "columns": [
+              "assignee_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks(assignee_id) → accounts(id)"
+          }
+        },
+        {
+          "name": "project",
+          "kind": "o2o",
+          "target_entity": "Project",
+          "fk": {
+            "table": "tasks",
+            "columns": [
+              "project_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks(project_id) → projects(id)"
+          }
+        },
+        {
           "name": "task_labels",
           "kind": "o2m",
           "target_entity": "TaskLabel",
@@ -2432,7 +2477,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "task",
+          "kind": "o2o",
+          "target_entity": "Task",
+          "fk": {
+            "table": "task_labels",
+            "columns": [
+              "task_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "task_labels(task_id) → tasks(id)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {

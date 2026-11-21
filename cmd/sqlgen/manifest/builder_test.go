@@ -486,7 +486,7 @@ func TestBuild_FKSchema(t *testing.T) {
 	want := map[string]*manifest.FK{
 		"Document.document_notes": {Table: "document_notes", Schema: "audit", Columns: []string{"document_id"}, References: []string{"id"}, Constraint: "document_notes(document_id) → documents(id)"},
 		"Product.document_notes":  {Table: "document_notes", Schema: "public", Columns: []string{"product_id"}, References: []string{"id"}, Constraint: "document_notes(product_id) → products(id)"},
-		"EventRef.events":         {Table: "event_refs", Schema: "public", Columns: []string{"event_id"}, References: []string{"id"}, Constraint: "event_refs(event_id) → events(id)"},
+		"EventRef.event":          {Table: "event_refs", Schema: "public", Columns: []string{"event_id"}, References: []string{"id"}, Constraint: "event_refs(event_id) → events(id)"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("FK edges mismatch (-want +got):\n%s", diff)

@@ -1180,6 +1180,9 @@ CREATE TABLE follows (follower_id bigint NOT NULL, followee_id bigint NOT NULL, 
 		table string
 		rel   config.TableRelationship
 		want  []string
+		// wantDetected, when set, is the table's edges with no declared
+		// one: the detected edge the declared one takes over is there.
+		wantDetected []string
 	}{
 		{
 			name:  "o2m",
@@ -1198,6 +1201,14 @@ CREATE TABLE profiles (id bigint PRIMARY KEY, user_id bigint NOT NULL UNIQUE,
 			table: "profiles",
 			rel:   config.TableRelationship{Name: "Owner", Type: "o2o", Table: "users", FK: config.KeyColumns{"user_id"}},
 			want:  []string{"Owner"},
+		},
+		{
+			name:         "detected belongs-to over a non-unique key",
+			ddl:          usersPosts,
+			table:        "posts",
+			rel:          config.TableRelationship{Name: "Writer", Type: "o2o", Table: "users", FK: config.KeyColumns{"author_id"}},
+			want:         []string{"Writer"},
+			wantDetected: []string{"author"},
 		},
 		{
 			name: "m2m",
@@ -1254,20 +1265,30 @@ CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint NOT NULL, editor_id 
 		t.Run(tt.name, func(t *testing.T) {
 			for _, dialect := range []config.Dialect{config.DialectPostgres, config.DialectMySQL, config.DialectSQLite} {
 				t.Run(string(dialect), func(t *testing.T) {
-					schema := parseDDLForTest(t, dialect, tt.ddl)
-					parser.DetectRelationships(schema)
-					in := testInput(schema)
-					in.Config.Input.Dialect = dialect
-					in.Config.Tables[tt.table] = config.TableConfig{Relationships: []config.TableRelationship{tt.rel}}
-					contexts, err := gen.BuildTableContexts(in, nil)
-					if err != nil {
-						t.Fatalf("BuildTableContexts() error: %v", err)
+					build := func(rels []config.TableRelationship) (*gen.GenerateInput, []string) {
+						t.Helper()
+						schema := parseDDLForTest(t, dialect, tt.ddl)
+						parser.DetectRelationships(schema)
+						in := testInput(schema)
+						in.Config.Input.Dialect = dialect
+						in.Config.Tables[tt.table] = config.TableConfig{Relationships: rels}
+						contexts, err := gen.BuildTableContexts(in, nil)
+						if err != nil {
+							t.Fatalf("BuildTableContexts() error: %v", err)
+						}
+						i := slices.IndexFunc(contexts, func(tc gen.TableContext) bool { return tc.TableName == tt.table })
+						if i < 0 {
+							t.Fatalf("no %s context", tt.table)
+						}
+						return in, relationshipNames(contexts[i].Relationships)
 					}
-					i := slices.IndexFunc(contexts, func(tc gen.TableContext) bool { return tc.TableName == tt.table })
-					if i < 0 {
-						t.Fatalf("no %s context", tt.table)
+					if tt.wantDetected != nil {
+						if _, got := build(nil); !slices.Equal(got, tt.wantDetected) {
+							t.Errorf("%s relationships with none declared = %q, want %q", tt.table, got, tt.wantDetected)
+						}
 					}
-					if diff := cmp.Diff(tt.want, relationshipNames(contexts[i].Relationships)); diff != "" {
+					in, got := build([]config.TableRelationship{tt.rel})
+					if diff := cmp.Diff(tt.want, got); diff != "" {
 						t.Errorf("%s relationships (-want +got):\n%s", tt.table, diff)
 					}
 					if len(in.Warnings) != 0 {

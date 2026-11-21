@@ -22,6 +22,11 @@ type OrderItem struct {
 	ProductID int64   `db:"product_id" json:"product_id"`
 	Quantity  int64   `db:"quantity" json:"quantity"`
 	UnitPrice float64 `db:"unit_price" json:"unit_price"`
+
+	// Order - one-to-one relationship with the orders table.
+	Order *Order `db:"-" json:"order"`
+	// Product - one-to-one relationship with the products table.
+	Product *Product `db:"-" json:"product"`
 }
 
 // OrderItemClient provides type-safe operations for the order_items table.
@@ -319,25 +324,58 @@ func (c *orderItemClient) GetMany(ctx context.Context, input *GetOrderItemsInput
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var orderItems []*OrderItem
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("o", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "o",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		orderItems, err = scanOrderItems(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			orderItems, err = scanOrderItemsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			orderItems, err = scanOrderItems(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return orderItems, nil
@@ -2089,11 +2127,13 @@ func (f *OrderItemFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 // OrderItemFieldOptions controls column selection and relationship loading for order_items queries.
 type OrderItemFieldOptions struct {
-	ID        bool `json:"id"`
-	OrderID   bool `json:"order_id"`
-	ProductID bool `json:"product_id"`
-	Quantity  bool `json:"quantity"`
-	UnitPrice bool `json:"unit_price"`
+	ID        bool                 `json:"id"`
+	OrderID   bool                 `json:"order_id"`
+	ProductID bool                 `json:"product_id"`
+	Quantity  bool                 `json:"quantity"`
+	UnitPrice bool                 `json:"unit_price"`
+	Order     *OrderFieldOptions   `json:"order"`
+	Product   *ProductFieldOptions `json:"product"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -2147,6 +2187,12 @@ func (fo *OrderItemFieldOptions) HasSelectedColumns() bool {
 	if fo.UnitPrice {
 		return true
 	}
+	if fo.Order != nil {
+		return true
+	}
+	if fo.Product != nil {
+		return true
+	}
 	return false
 }
 
@@ -2181,4 +2227,336 @@ type GetOrderItemsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *orderItemClient) resolveO2OJoins(d sql.Dialect, fo *OrderItemFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Order != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "orders"},
+			Alias: "o2",
+			On:    fmt.Sprintf("o2.%s = o.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("order_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Order.Columns(), "id"),
+		})
+		if fo.Order.User != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "users"},
+				Alias: "u",
+				On:    fmt.Sprintf("u.%s = o2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Order.User.Columns(), "id"),
+			})
+			if fo.Order.User.Profile != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "", Name: "profiles"},
+					Alias: "p",
+					On:    fmt.Sprintf("p.%s = u.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.Order.User.Profile.Columns(), "id"),
+				})
+				if fo.Order.User.Profile.User != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "", Name: "users"},
+						Alias: "u2",
+						On:    fmt.Sprintf("u2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.Order.User.Profile.User.Columns(), "id"),
+					})
+					if fo.Order.User.Profile.User.Profile != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "", Name: "profiles"},
+							Alias: "p2",
+							On:    fmt.Sprintf("p2.%s = u2.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.Order.User.Profile.User.Profile.Columns(), "id"),
+						})
+						if fo.Order.User.Profile.User.Profile.User != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "", Name: "users"},
+								Alias: "u3",
+								On:    fmt.Sprintf("u3.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.Order.User.Profile.User.Profile.User.Columns(), "id"),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	if fo.Product != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "products"},
+			Alias: "p3",
+			On:    fmt.Sprintf("p3.%s = o.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("product_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Product.Columns(), "id"),
+		})
+		if fo.Product.Category != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "categories"},
+				Alias: "c",
+				On:    fmt.Sprintf("c.%s = p3.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("category_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Product.Category.Columns(), "id"),
+			})
+		}
+	}
+	return joins
+}
+
+// scanOrderItemsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// OrderItem entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanOrderItemsWithOneToOneJoins(rows database.Rows, columns []string) ([]*OrderItem, error) {
+	var result []*OrderItem
+	for rows.Next() {
+		o := &OrderItem{}
+		c := &Category{}
+		cHasData := false
+		o2 := &Order{}
+		o2HasData := false
+		p := &Profile{}
+		pHasData := false
+		p2 := &Profile{}
+		p2HasData := false
+		p3 := &Product{}
+		p3HasData := false
+		u := &User{}
+		uHasData := false
+		u2 := &User{}
+		u2HasData := false
+		u3 := &User{}
+		u3HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "o.id":
+				targets[idx] = &o.ID
+			case "o.order_id":
+				targets[idx] = &o.OrderID
+			case "o.product_id":
+				targets[idx] = &o.ProductID
+			case "o.quantity":
+				targets[idx] = &o.Quantity
+			case "o.unit_price":
+				targets[idx] = &o.UnitPrice
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "c.description":
+				targets[idx] = &c.Description
+			case "o2.id":
+				targets[idx] = database.NullScan(&o2.ID)
+				o2HasData = true
+			case "o2.user_id":
+				targets[idx] = database.NullScan(&o2.UserID)
+			case "o2.status":
+				targets[idx] = database.NullScan(&o2.Status)
+			case "o2.total":
+				targets[idx] = database.NullScan(&o2.Total)
+			case "o2.notes":
+				targets[idx] = &o2.Notes
+			case "o2.ordered_at":
+				targets[idx] = database.NullScan(&o2.OrderedAt)
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.user_id":
+				targets[idx] = database.NullScan(&p.UserID)
+			case "p.website":
+				targets[idx] = &p.Website
+			case "p.github_handle":
+				targets[idx] = &p.GithubHandle
+			case "p.verified":
+				targets[idx] = database.NullScan(&p.Verified)
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.user_id":
+				targets[idx] = database.NullScan(&p2.UserID)
+			case "p2.website":
+				targets[idx] = &p2.Website
+			case "p2.github_handle":
+				targets[idx] = &p2.GithubHandle
+			case "p2.verified":
+				targets[idx] = database.NullScan(&p2.Verified)
+			case "p3.id":
+				targets[idx] = database.NullScan(&p3.ID)
+				p3HasData = true
+			case "p3.category_id":
+				targets[idx] = database.NullScan(&p3.CategoryID)
+			case "p3.title":
+				targets[idx] = database.NullScan(&p3.Title)
+			case "p3.price":
+				targets[idx] = database.NullScan(&p3.Price)
+			case "p3.weight_kg":
+				targets[idx] = &p3.WeightKg
+			case "p3.in_stock":
+				targets[idx] = database.NullScan(&p3.InStock)
+			case "p3.sku":
+				targets[idx] = database.NullScan(&p3.SKU)
+			case "p3.created_at":
+				targets[idx] = database.NullScan(&p3.CreatedAt)
+			case "u.id":
+				targets[idx] = database.NullScan(&u.ID)
+				uHasData = true
+			case "u.name":
+				targets[idx] = database.NullScan(&u.Name)
+			case "u.email":
+				targets[idx] = database.NullScan(&u.Email)
+			case "u.role":
+				targets[idx] = database.NullScan(&u.Role)
+			case "u.age":
+				targets[idx] = &u.Age
+			case "u.bio":
+				targets[idx] = &u.Bio
+			case "u.is_active":
+				targets[idx] = database.NullScan(&u.IsActive)
+			case "u.balance":
+				targets[idx] = database.NullScan(&u.Balance)
+			case "u.login_count":
+				targets[idx] = database.NullScan(&u.LoginCount)
+			case "u.avatar":
+				targets[idx] = &u.Avatar
+			case "u.score":
+				targets[idx] = &u.Score
+			case "u.created_at":
+				targets[idx] = database.NullScan(&u.CreatedAt)
+			case "u.updated_at":
+				targets[idx] = &u.UpdatedAt
+			case "u2.id":
+				targets[idx] = database.NullScan(&u2.ID)
+				u2HasData = true
+			case "u2.name":
+				targets[idx] = database.NullScan(&u2.Name)
+			case "u2.email":
+				targets[idx] = database.NullScan(&u2.Email)
+			case "u2.role":
+				targets[idx] = database.NullScan(&u2.Role)
+			case "u2.age":
+				targets[idx] = &u2.Age
+			case "u2.bio":
+				targets[idx] = &u2.Bio
+			case "u2.is_active":
+				targets[idx] = database.NullScan(&u2.IsActive)
+			case "u2.balance":
+				targets[idx] = database.NullScan(&u2.Balance)
+			case "u2.login_count":
+				targets[idx] = database.NullScan(&u2.LoginCount)
+			case "u2.avatar":
+				targets[idx] = &u2.Avatar
+			case "u2.score":
+				targets[idx] = &u2.Score
+			case "u2.created_at":
+				targets[idx] = database.NullScan(&u2.CreatedAt)
+			case "u2.updated_at":
+				targets[idx] = &u2.UpdatedAt
+			case "u3.id":
+				targets[idx] = database.NullScan(&u3.ID)
+				u3HasData = true
+			case "u3.name":
+				targets[idx] = database.NullScan(&u3.Name)
+			case "u3.email":
+				targets[idx] = database.NullScan(&u3.Email)
+			case "u3.role":
+				targets[idx] = database.NullScan(&u3.Role)
+			case "u3.age":
+				targets[idx] = &u3.Age
+			case "u3.bio":
+				targets[idx] = &u3.Bio
+			case "u3.is_active":
+				targets[idx] = database.NullScan(&u3.IsActive)
+			case "u3.balance":
+				targets[idx] = database.NullScan(&u3.Balance)
+			case "u3.login_count":
+				targets[idx] = database.NullScan(&u3.LoginCount)
+			case "u3.avatar":
+				targets[idx] = &u3.Avatar
+			case "u3.score":
+				targets[idx] = &u3.Score
+			case "u3.created_at":
+				targets[idx] = database.NullScan(&u3.CreatedAt)
+			case "u3.updated_at":
+				targets[idx] = &u3.UpdatedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan order_item with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if u3HasData && u3.ID != 0 {
+			p2.User = u3
+		} else {
+			p2.User = nil
+		}
+		if u2HasData && u2.ID != 0 {
+			p.User = u2
+		} else {
+			p.User = nil
+		}
+		if uHasData && u.ID != 0 {
+			o2.User = u
+		} else {
+			o2.User = nil
+		}
+		if p3HasData && p3.ID != 0 {
+			o.Product = p3
+		} else {
+			o.Product = nil
+		}
+		if p2HasData && p2.ID != 0 {
+			u2.Profile = p2
+		} else {
+			u2.Profile = nil
+		}
+		if pHasData && p.ID != 0 {
+			u.Profile = p
+		} else {
+			u.Profile = nil
+		}
+		if o2HasData && o2.ID != 0 {
+			o.Order = o2
+		} else {
+			o.Order = nil
+		}
+		if cHasData && c.ID != 0 {
+			p3.Category = c
+		} else {
+			p3.Category = nil
+		}
+
+		result = append(result, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate order_item rows: %w", err)
+	}
+	return result, nil
 }

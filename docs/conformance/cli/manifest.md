@@ -405,7 +405,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.entity.examples.write | `examples.write` holds a `Create` call and an `Update` call (when generated) | `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/User`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/OrderItem`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines` | all |  |
 | manifest.json.entity.examples.view | A view's `examples` carries `read` lines only | `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/ActiveUser`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines` | all |  |
 | manifest.json.entity.examples.real-surface | Example lines are built from the entity's generated methods, fields and types | `unit: cmd/sqlgen: TestManifestExampleLinesCompile`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleUUIDConstructor`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleIDFilterLiteral` | all |  |
-| manifest.belongs-to.detected | The manifest lists a detected belongs-to as `kind: "o2o"`, with `fk.table` the holding table and its `constraint` |  | all |  |
+| manifest.belongs-to.detected | The manifest lists a detected belongs-to as `kind: "o2o"`, with `fk.table` the holding table and its `constraint` | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected belongs-to names its constraint` | all |  |
 
 ### View entries
 

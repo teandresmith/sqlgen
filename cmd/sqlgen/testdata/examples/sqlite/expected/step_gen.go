@@ -21,8 +21,8 @@ type Step struct {
 	Name           string `db:"name" json:"name"`
 	PreviousStepID *int64 `db:"previous_step_id" json:"previous_step_id"`
 
-	// Steps - one-to-one relationship with the steps table.
-	Steps *Step `db:"-" json:"steps"`
+	// PreviousStep - one-to-one relationship with the steps table.
+	PreviousStep *Step `db:"-" json:"previous_step"`
 }
 
 // StepClient provides type-safe operations for the steps table.
@@ -2037,7 +2037,7 @@ type StepFieldOptions struct {
 	ID             bool              `json:"id"`
 	Name           bool              `json:"name"`
 	PreviousStepID bool              `json:"previous_step_id"`
-	Steps          *StepFieldOptions `json:"steps"`
+	PreviousStep   *StepFieldOptions `json:"previous_step"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -2077,7 +2077,7 @@ func (fo *StepFieldOptions) HasSelectedColumns() bool {
 	if fo.PreviousStepID {
 		return true
 	}
-	if fo.Steps != nil {
+	if fo.PreviousStep != nil {
 		return true
 	}
 	return false
@@ -2119,65 +2119,65 @@ func (c *stepClient) resolveO2OJoins(d sql.Dialect, fo *StepFieldOptions) []sql.
 		return nil
 	}
 	var joins []sql.JoinClause
-	if fo.Steps != nil {
+	if fo.PreviousStep != nil {
 		joins = append(joins, sql.JoinClause{
 			Table: sql.Table{Schema: "", Name: "steps"},
-			Alias: "s2",
-			On:    fmt.Sprintf("s2.%s = s.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
+			Alias: "p",
+			On:    fmt.Sprintf("p.%s = s.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
 			// The NULL-detection below reads the target's PK off the scanned
 			// row, so the join carries it even when FieldOptions did not ask
 			// for it — an unselected PK reads as a LEFT JOIN miss.
-			Columns: unionColumns(fo.Steps.Columns(), "id"),
+			Columns: unionColumns(fo.PreviousStep.Columns(), "id"),
 		})
-		if fo.Steps.Steps != nil {
+		if fo.PreviousStep.PreviousStep != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "", Name: "steps"},
-				Alias: "s3",
-				On:    fmt.Sprintf("s3.%s = s2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
+				Alias: "p2",
+				On:    fmt.Sprintf("p2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Steps.Steps.Columns(), "id"),
+				Columns: unionColumns(fo.PreviousStep.PreviousStep.Columns(), "id"),
 			})
-			if fo.Steps.Steps.Steps != nil {
+			if fo.PreviousStep.PreviousStep.PreviousStep != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "", Name: "steps"},
-					Alias: "s4",
-					On:    fmt.Sprintf("s4.%s = s3.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
+					Alias: "p3",
+					On:    fmt.Sprintf("p3.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Steps.Steps.Steps.Columns(), "id"),
+					Columns: unionColumns(fo.PreviousStep.PreviousStep.PreviousStep.Columns(), "id"),
 				})
-				if fo.Steps.Steps.Steps.Steps != nil {
+				if fo.PreviousStep.PreviousStep.PreviousStep.PreviousStep != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "", Name: "steps"},
-						Alias: "s5",
-						On:    fmt.Sprintf("s5.%s = s4.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
+						Alias: "p4",
+						On:    fmt.Sprintf("p4.%s = p3.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Steps.Steps.Steps.Steps.Columns(), "id"),
+						Columns: unionColumns(fo.PreviousStep.PreviousStep.PreviousStep.PreviousStep.Columns(), "id"),
 					})
-					if fo.Steps.Steps.Steps.Steps.Steps != nil {
+					if fo.PreviousStep.PreviousStep.PreviousStep.PreviousStep.PreviousStep != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "", Name: "steps"},
-							Alias: "s6",
-							On:    fmt.Sprintf("s6.%s = s5.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
+							Alias: "p5",
+							On:    fmt.Sprintf("p5.%s = p4.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Steps.Steps.Steps.Steps.Steps.Columns(), "id"),
+							Columns: unionColumns(fo.PreviousStep.PreviousStep.PreviousStep.PreviousStep.PreviousStep.Columns(), "id"),
 						})
-						if fo.Steps.Steps.Steps.Steps.Steps.Steps != nil {
+						if fo.PreviousStep.PreviousStep.PreviousStep.PreviousStep.PreviousStep.PreviousStep != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "", Name: "steps"},
-								Alias: "s7",
-								On:    fmt.Sprintf("s7.%s = s6.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
+								Alias: "p6",
+								On:    fmt.Sprintf("p6.%s = p5.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("previous_step_id")),
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Steps.Steps.Steps.Steps.Steps.Steps.Columns(), "id"),
+								Columns: unionColumns(fo.PreviousStep.PreviousStep.PreviousStep.PreviousStep.PreviousStep.PreviousStep.Columns(), "id"),
 							})
 						}
 					}
@@ -2195,18 +2195,18 @@ func scanStepsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Step, 
 	var result []*Step
 	for rows.Next() {
 		s := &Step{}
-		s2 := &Step{}
-		s2HasData := false
-		s3 := &Step{}
-		s3HasData := false
-		s4 := &Step{}
-		s4HasData := false
-		s5 := &Step{}
-		s5HasData := false
-		s6 := &Step{}
-		s6HasData := false
-		s7 := &Step{}
-		s7HasData := false
+		p := &Step{}
+		pHasData := false
+		p2 := &Step{}
+		p2HasData := false
+		p3 := &Step{}
+		p3HasData := false
+		p4 := &Step{}
+		p4HasData := false
+		p5 := &Step{}
+		p5HasData := false
+		p6 := &Step{}
+		p6HasData := false
 
 		targets := make([]any, len(columns))
 		for idx, col := range columns {
@@ -2217,48 +2217,48 @@ func scanStepsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Step, 
 				targets[idx] = &s.Name
 			case "s.previous_step_id":
 				targets[idx] = &s.PreviousStepID
-			case "s2.id":
-				targets[idx] = database.NullScan(&s2.ID)
-				s2HasData = true
-			case "s2.name":
-				targets[idx] = database.NullScan(&s2.Name)
-			case "s2.previous_step_id":
-				targets[idx] = &s2.PreviousStepID
-			case "s3.id":
-				targets[idx] = database.NullScan(&s3.ID)
-				s3HasData = true
-			case "s3.name":
-				targets[idx] = database.NullScan(&s3.Name)
-			case "s3.previous_step_id":
-				targets[idx] = &s3.PreviousStepID
-			case "s4.id":
-				targets[idx] = database.NullScan(&s4.ID)
-				s4HasData = true
-			case "s4.name":
-				targets[idx] = database.NullScan(&s4.Name)
-			case "s4.previous_step_id":
-				targets[idx] = &s4.PreviousStepID
-			case "s5.id":
-				targets[idx] = database.NullScan(&s5.ID)
-				s5HasData = true
-			case "s5.name":
-				targets[idx] = database.NullScan(&s5.Name)
-			case "s5.previous_step_id":
-				targets[idx] = &s5.PreviousStepID
-			case "s6.id":
-				targets[idx] = database.NullScan(&s6.ID)
-				s6HasData = true
-			case "s6.name":
-				targets[idx] = database.NullScan(&s6.Name)
-			case "s6.previous_step_id":
-				targets[idx] = &s6.PreviousStepID
-			case "s7.id":
-				targets[idx] = database.NullScan(&s7.ID)
-				s7HasData = true
-			case "s7.name":
-				targets[idx] = database.NullScan(&s7.Name)
-			case "s7.previous_step_id":
-				targets[idx] = &s7.PreviousStepID
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.name":
+				targets[idx] = database.NullScan(&p.Name)
+			case "p.previous_step_id":
+				targets[idx] = &p.PreviousStepID
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.name":
+				targets[idx] = database.NullScan(&p2.Name)
+			case "p2.previous_step_id":
+				targets[idx] = &p2.PreviousStepID
+			case "p3.id":
+				targets[idx] = database.NullScan(&p3.ID)
+				p3HasData = true
+			case "p3.name":
+				targets[idx] = database.NullScan(&p3.Name)
+			case "p3.previous_step_id":
+				targets[idx] = &p3.PreviousStepID
+			case "p4.id":
+				targets[idx] = database.NullScan(&p4.ID)
+				p4HasData = true
+			case "p4.name":
+				targets[idx] = database.NullScan(&p4.Name)
+			case "p4.previous_step_id":
+				targets[idx] = &p4.PreviousStepID
+			case "p5.id":
+				targets[idx] = database.NullScan(&p5.ID)
+				p5HasData = true
+			case "p5.name":
+				targets[idx] = database.NullScan(&p5.Name)
+			case "p5.previous_step_id":
+				targets[idx] = &p5.PreviousStepID
+			case "p6.id":
+				targets[idx] = database.NullScan(&p6.ID)
+				p6HasData = true
+			case "p6.name":
+				targets[idx] = database.NullScan(&p6.Name)
+			case "p6.previous_step_id":
+				targets[idx] = &p6.PreviousStepID
 			}
 		}
 
@@ -2267,35 +2267,35 @@ func scanStepsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Step, 
 		}
 
 		// NULL detection — assign deepest chain first, then parents
-		if s7HasData && s7.ID != 0 {
-			s6.Steps = s7
+		if p6HasData && p6.ID != 0 {
+			p5.PreviousStep = p6
 		} else {
-			s6.Steps = nil
+			p5.PreviousStep = nil
 		}
-		if s6HasData && s6.ID != 0 {
-			s5.Steps = s6
+		if p5HasData && p5.ID != 0 {
+			p4.PreviousStep = p5
 		} else {
-			s5.Steps = nil
+			p4.PreviousStep = nil
 		}
-		if s5HasData && s5.ID != 0 {
-			s4.Steps = s5
+		if p4HasData && p4.ID != 0 {
+			p3.PreviousStep = p4
 		} else {
-			s4.Steps = nil
+			p3.PreviousStep = nil
 		}
-		if s4HasData && s4.ID != 0 {
-			s3.Steps = s4
+		if p3HasData && p3.ID != 0 {
+			p2.PreviousStep = p3
 		} else {
-			s3.Steps = nil
+			p2.PreviousStep = nil
 		}
-		if s3HasData && s3.ID != 0 {
-			s2.Steps = s3
+		if p2HasData && p2.ID != 0 {
+			p.PreviousStep = p2
 		} else {
-			s2.Steps = nil
+			p.PreviousStep = nil
 		}
-		if s2HasData && s2.ID != 0 {
-			s.Steps = s2
+		if pHasData && p.ID != 0 {
+			s.PreviousStep = p
 		} else {
-			s.Steps = nil
+			s.PreviousStep = nil
 		}
 
 		result = append(result, s)

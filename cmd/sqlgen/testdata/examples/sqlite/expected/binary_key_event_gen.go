@@ -20,6 +20,9 @@ type BinaryKeyEvent struct {
 	ID          int64  `db:"id" json:"id"`
 	BinaryKeyID []byte `db:"binary_key_id" json:"binary_key_id"`
 	Label       string `db:"label" json:"label"`
+
+	// BinaryKey - one-to-one relationship with the binary_keys table.
+	BinaryKey *BinaryKey `db:"-" json:"binary_key"`
 }
 
 // BinaryKeyEventClient provides type-safe operations for the binary_key_events table.
@@ -309,25 +312,58 @@ func (c *binaryKeyEventClient) GetMany(ctx context.Context, input *GetBinaryKeyE
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var binaryKeyEvents []*BinaryKeyEvent
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("b", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "b",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		binaryKeyEvents, err = scanBinaryKeyEvents(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			binaryKeyEvents, err = scanBinaryKeyEventsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			binaryKeyEvents, err = scanBinaryKeyEvents(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return binaryKeyEvents, nil
@@ -1978,9 +2014,10 @@ func (f *BinaryKeyEventFilter) ToConditions(dialect sql.Dialect, opts ...FilterO
 
 // BinaryKeyEventFieldOptions controls column selection and relationship loading for binary_key_events queries.
 type BinaryKeyEventFieldOptions struct {
-	ID          bool `json:"id"`
-	BinaryKeyID bool `json:"binary_key_id"`
-	Label       bool `json:"label"`
+	ID          bool                   `json:"id"`
+	BinaryKeyID bool                   `json:"binary_key_id"`
+	Label       bool                   `json:"label"`
+	BinaryKey   *BinaryKeyFieldOptions `json:"binary_key"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -2020,6 +2057,9 @@ func (fo *BinaryKeyEventFieldOptions) HasSelectedColumns() bool {
 	if fo.Label {
 		return true
 	}
+	if fo.BinaryKey != nil {
+		return true
+	}
 	return false
 }
 
@@ -2050,4 +2090,73 @@ type GetBinaryKeyEventsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *binaryKeyEventClient) resolveO2OJoins(d sql.Dialect, fo *BinaryKeyEventFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.BinaryKey != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "binary_keys"},
+			Alias: "b2",
+			On:    fmt.Sprintf("b2.%s = b.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("binary_key_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.BinaryKey.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanBinaryKeyEventsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// BinaryKeyEvent entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanBinaryKeyEventsWithOneToOneJoins(rows database.Rows, columns []string) ([]*BinaryKeyEvent, error) {
+	var result []*BinaryKeyEvent
+	for rows.Next() {
+		b := &BinaryKeyEvent{}
+		b2 := &BinaryKey{}
+		b2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "b.id":
+				targets[idx] = &b.ID
+			case "b.binary_key_id":
+				targets[idx] = &b.BinaryKeyID
+			case "b.label":
+				targets[idx] = &b.Label
+			case "b2.id":
+				targets[idx] = database.NullScan(&b2.ID)
+				b2HasData = true
+			case "b2.name":
+				targets[idx] = database.NullScan(&b2.Name)
+			case "b2.created_at":
+				targets[idx] = database.NullScan(&b2.CreatedAt)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan binary_key_event with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if b2HasData && b2.ID != nil {
+			b.BinaryKey = b2
+		} else {
+			b.BinaryKey = nil
+		}
+
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate binary_key_event rows: %w", err)
+	}
+	return result, nil
 }

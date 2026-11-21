@@ -114,7 +114,9 @@ func isRelationshipField(typeName, field string) bool {
 	switch typeName + "." + field {
 	case
 		"Account.accounts",
-		"Account.entries":
+		"Account.entries",
+		"Account.parent",
+		"Entry.account":
 		return true
 	}
 	return false

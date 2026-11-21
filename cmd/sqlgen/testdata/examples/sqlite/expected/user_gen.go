@@ -3211,7 +3211,7 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 			// for it — an unselected PK reads as a LEFT JOIN miss.
 			Columns: unionColumns(fo.Profile.Columns(), "id"),
 		})
-		if fo.Profile.Users != nil {
+		if fo.Profile.User != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "", Name: "users"},
 				Alias: "u2",
@@ -3219,9 +3219,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Profile.Users.Columns(), "id"),
+				Columns: unionColumns(fo.Profile.User.Columns(), "id"),
 			})
-			if fo.Profile.Users.Profile != nil {
+			if fo.Profile.User.Profile != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "", Name: "profiles"},
 					Alias: "p2",
@@ -3229,9 +3229,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Profile.Users.Profile.Columns(), "id"),
+					Columns: unionColumns(fo.Profile.User.Profile.Columns(), "id"),
 				})
-				if fo.Profile.Users.Profile.Users != nil {
+				if fo.Profile.User.Profile.User != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "", Name: "users"},
 						Alias: "u3",
@@ -3239,9 +3239,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Profile.Users.Profile.Users.Columns(), "id"),
+						Columns: unionColumns(fo.Profile.User.Profile.User.Columns(), "id"),
 					})
-					if fo.Profile.Users.Profile.Users.Profile != nil {
+					if fo.Profile.User.Profile.User.Profile != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "", Name: "profiles"},
 							Alias: "p3",
@@ -3249,9 +3249,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Profile.Users.Profile.Users.Profile.Columns(), "id"),
+							Columns: unionColumns(fo.Profile.User.Profile.User.Profile.Columns(), "id"),
 						})
-						if fo.Profile.Users.Profile.Users.Profile.Users != nil {
+						if fo.Profile.User.Profile.User.Profile.User != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "", Name: "users"},
 								Alias: "u4",
@@ -3259,7 +3259,7 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Profile.Users.Profile.Users.Profile.Users.Columns(), "id"),
+								Columns: unionColumns(fo.Profile.User.Profile.User.Profile.User.Columns(), "id"),
 							})
 						}
 					}
@@ -3442,19 +3442,19 @@ func scanUsersWithOneToOneJoins(rows database.Rows, columns []string) ([]*User, 
 
 		// NULL detection — assign deepest chain first, then parents
 		if u4HasData && u4.ID != 0 {
-			p3.Users = u4
+			p3.User = u4
 		} else {
-			p3.Users = nil
+			p3.User = nil
 		}
 		if u3HasData && u3.ID != 0 {
-			p2.Users = u3
+			p2.User = u3
 		} else {
-			p2.Users = nil
+			p2.User = nil
 		}
 		if u2HasData && u2.ID != 0 {
-			p.Users = u2
+			p.User = u2
 		} else {
-			p.Users = nil
+			p.User = nil
 		}
 		if p3HasData && p3.ID != 0 {
 			u3.Profile = p3

@@ -124,7 +124,7 @@ func TestO2OJoin_SortedReads(t *testing.T) {
 
 // TestO2OJoin_ConnectionOnNonPKCursorKey pins a connection whose cursor key
 // is not `id`: user_credentials pages on its PK `user_id`, and the
-// Users.Badge chain joins user_badges, which has a `user_id` of its own.
+// User.Badge chain joins user_badges, which has a `user_id` of its own.
 func TestO2OJoin_ConnectionOnNonPKCursorKey(t *testing.T) {
 	truncateAll(t)
 	ctx := context.Background()
@@ -158,7 +158,7 @@ func TestO2OJoin_ConnectionOnNonPKCursorKey(t *testing.T) {
 		}, func(o *models.CallOptions[models.UserCredentialFieldOptions]) {
 			o.FieldOptions = &models.UserCredentialFieldOptions{
 				UserID: true,
-				Users: &models.UserFieldOptions{
+				User: &models.UserFieldOptions{
 					ID:    true,
 					Badge: &models.UserBadgeFieldOptions{ID: true, Label: true},
 				},
@@ -170,12 +170,12 @@ func TestO2OJoin_ConnectionOnNonPKCursorKey(t *testing.T) {
 		for _, e := range conn.Edges {
 			id := e.Node.UserID.String()
 			got = append(got, id)
-			if e.Node.Users == nil || e.Node.Users.Badge == nil {
-				t.Errorf("credential %s: Users.Badge not loaded", id)
+			if e.Node.User == nil || e.Node.User.Badge == nil {
+				t.Errorf("credential %s: User.Badge not loaded", id)
 				continue
 			}
-			if e.Node.Users.Badge.Label != labels[id] {
-				t.Errorf("credential %s: Users.Badge.Label = %q, want %q", id, e.Node.Users.Badge.Label, labels[id])
+			if e.Node.User.Badge.Label != labels[id] {
+				t.Errorf("credential %s: User.Badge.Label = %q, want %q", id, e.Node.User.Badge.Label, labels[id])
 			}
 		}
 		if !conn.PageInfo.HasNextPage {

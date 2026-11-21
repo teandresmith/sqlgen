@@ -32,7 +32,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
-| tasks | o2o | Task | public.task_reports.(workspace_id, task_id) |  |
+| task | o2o | Task | public.task_reports.(workspace_id, task_id) |  |
 
 ## Query methods
 

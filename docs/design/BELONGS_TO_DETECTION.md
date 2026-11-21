@@ -261,7 +261,7 @@ The chain depth stays 6. P2 measured the size: no example grows by more than 5%.
 | loader.belongs-to.detected | A detected belongs-to loads its parent through the parent query's LEFT JOIN when selected, on `Get`, `GetMany`, `Paginate` and `Connection` | §13.2 (existing, for declared edges) | all | `conformance: GetMany/a detected belongs-to loads the parent row in the same query` | relationships: belongs-to × loader | planned |
 | api.belongs-to.graphql | A detected belongs-to is a nullable `<camelName>: <Target>` field on the GraphQL type | §26.4 (existing) | all | `golden: graphql` | relationships: belongs-to × struct-field | planned |
 | manifest.belongs-to.detected | The manifest lists a detected belongs-to as `kind: "o2o"`, with `fk.table` the holder and its `constraint` | §30.4.2 (existing) | all | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected belongs-to names its constraint` | relationships: belongs-to × struct-field | planned |
-| takeover.belongs-to.detected | A declared belongs-to over a detected belongs-to's key takes its place (the postgres example's `audit.notes.Author` keeps its name) | §13.4 (existing) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/detected belongs-to over a non-unique key`; `golden: postgres` | relationships: belongs-to × struct-field | planned |
+| takeover.belongs-to.detected | A declared belongs-to over a detected belongs-to's key takes its place | §13.4 (existing) | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/detected belongs-to over a non-unique key`; `golden: postgres` | relationships: belongs-to × struct-field | planned |
 
 ### 6.2 Regression guards
 

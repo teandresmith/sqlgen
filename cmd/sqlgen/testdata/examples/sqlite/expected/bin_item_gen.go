@@ -21,6 +21,9 @@ type BinItem struct {
 	Aisle *string `db:"aisle" json:"aisle"`
 	Slot  *int64  `db:"slot" json:"slot"`
 	Name  string  `db:"name" json:"name"`
+
+	// Bin - one-to-one relationship with the bins table.
+	Bin *Bin `db:"-" json:"bin"`
 }
 
 // BinItemClient provides type-safe operations for the bin_items table.
@@ -312,25 +315,58 @@ func (c *binItemClient) GetMany(ctx context.Context, input *GetBinItemsInput, op
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var binItems []*BinItem
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("b", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "b",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		binItems, err = scanBinItems(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			binItems, err = scanBinItemsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			binItems, err = scanBinItems(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return binItems, nil
@@ -2046,10 +2082,11 @@ func (f *BinItemFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) 
 
 // BinItemFieldOptions controls column selection and relationship loading for bin_items queries.
 type BinItemFieldOptions struct {
-	ID    bool `json:"id"`
-	Aisle bool `json:"aisle"`
-	Slot  bool `json:"slot"`
-	Name  bool `json:"name"`
+	ID    bool             `json:"id"`
+	Aisle bool             `json:"aisle"`
+	Slot  bool             `json:"slot"`
+	Name  bool             `json:"name"`
+	Bin   *BinFieldOptions `json:"bin"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -2096,6 +2133,9 @@ func (fo *BinItemFieldOptions) HasSelectedColumns() bool {
 	if fo.Name {
 		return true
 	}
+	if fo.Bin != nil {
+		return true
+	}
 	return false
 }
 
@@ -2128,4 +2168,75 @@ type GetBinItemsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *binItemClient) resolveO2OJoins(d sql.Dialect, fo *BinItemFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Bin != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "bins"},
+			Alias: "b2",
+			On:    fmt.Sprintf("b2.%s = b.%s", d.QuoteIdentifier("aisle"), d.QuoteIdentifier("aisle")) + fmt.Sprintf(" AND b2.%s = b.%s", d.QuoteIdentifier("slot"), d.QuoteIdentifier("slot")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Bin.Columns(), "aisle"),
+		})
+	}
+	return joins
+}
+
+// scanBinItemsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// BinItem entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanBinItemsWithOneToOneJoins(rows database.Rows, columns []string) ([]*BinItem, error) {
+	var result []*BinItem
+	for rows.Next() {
+		b := &BinItem{}
+		b2 := &Bin{}
+		b2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "b.id":
+				targets[idx] = &b.ID
+			case "b.aisle":
+				targets[idx] = &b.Aisle
+			case "b.slot":
+				targets[idx] = &b.Slot
+			case "b.name":
+				targets[idx] = &b.Name
+			case "b2.aisle":
+				targets[idx] = database.NullScan(&b2.Aisle)
+				b2HasData = true
+			case "b2.slot":
+				targets[idx] = database.NullScan(&b2.Slot)
+			case "b2.label":
+				targets[idx] = database.NullScan(&b2.Label)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan bin_item with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if b2HasData && b2.Aisle != "" {
+			b.Bin = b2
+		} else {
+			b.Bin = nil
+		}
+
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bin_item rows: %w", err)
+	}
+	return result, nil
 }

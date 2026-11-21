@@ -6,6 +6,8 @@ type KeyClassChild {
   id: Int!
   "parent_id"
   parentID: String
+  "one-to-one relationship with the key_class_parents table."
+  parent: KeyClassParent
 }
 
 type KeyClassChildConnection {

@@ -26,6 +26,12 @@
 | --- | --- | --- | --- | --- |
 | `bool_keyed_notes_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| bool_keyed | o2o | BoolKeyed | bool_keyed_notes.keyed_k |  |
+
 ## Query methods
 
 ### Get

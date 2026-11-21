@@ -29,6 +29,12 @@ User activity events; the one nullable-FK child table in this schema
 | `PRIMARY` | id | yes | btree |  |
 | `user_id` | user_id |  | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| user | o2o | User | user_events.user_id |  |
+
 ## Query methods
 
 ### Get

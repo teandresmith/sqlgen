@@ -33,6 +33,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| account | o2o | Account | public.projects.account_id |  |
 | tasks | o2m | Task | public.tasks.project_id |  |
 
 ## Query methods

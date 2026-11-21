@@ -25,6 +25,12 @@
 | --- | --- | --- | --- | --- |
 | `key_class_real_children_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| parent | o2o | KeyClassParent | key_class_real_children.parent_id |  |
+
 ## Query methods
 
 ### Get

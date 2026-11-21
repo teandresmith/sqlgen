@@ -34,6 +34,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| account | o2o | Account | projects.account_id |  |
 | accounts | m2m | Account | project_members (project_id → account_id) |  |
 | tasks | o2m | Task | tasks.project_id |  |
 

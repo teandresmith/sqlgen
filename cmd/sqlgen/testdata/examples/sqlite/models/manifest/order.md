@@ -34,6 +34,7 @@
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
 | order_items | o2m | OrderItem | order_items.order_id |  |
+| user | o2o | User | orders.user_id |  |
 
 ## Query methods
 

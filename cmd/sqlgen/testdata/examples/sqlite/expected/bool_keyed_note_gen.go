@@ -20,6 +20,9 @@ type BoolKeyedNote struct {
 	ID     int64  `db:"id" json:"id"`
 	KeyedK *bool  `db:"keyed_k" json:"keyed_k"`
 	Note   string `db:"note" json:"note"`
+
+	// BoolKeyed - one-to-one relationship with the bool_keyed table.
+	BoolKeyed *BoolKeyed `db:"-" json:"bool_keyed"`
 }
 
 // BoolKeyedNoteClient provides type-safe operations for the bool_keyed_notes table.
@@ -309,25 +312,58 @@ func (c *boolKeyedNoteClient) GetMany(ctx context.Context, input *GetBoolKeyedNo
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var boolKeyedNotes []*BoolKeyedNote
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("b", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "b",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		boolKeyedNotes, err = scanBoolKeyedNotes(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			boolKeyedNotes, err = scanBoolKeyedNotesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			boolKeyedNotes, err = scanBoolKeyedNotes(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return boolKeyedNotes, nil
@@ -1996,9 +2032,10 @@ func (f *BoolKeyedNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOp
 
 // BoolKeyedNoteFieldOptions controls column selection and relationship loading for bool_keyed_notes queries.
 type BoolKeyedNoteFieldOptions struct {
-	ID     bool `json:"id"`
-	KeyedK bool `json:"keyed_k"`
-	Note   bool `json:"note"`
+	ID        bool                   `json:"id"`
+	KeyedK    bool                   `json:"keyed_k"`
+	Note      bool                   `json:"note"`
+	BoolKeyed *BoolKeyedFieldOptions `json:"bool_keyed"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -2038,6 +2075,9 @@ func (fo *BoolKeyedNoteFieldOptions) HasSelectedColumns() bool {
 	if fo.Note {
 		return true
 	}
+	if fo.BoolKeyed != nil {
+		return true
+	}
 	return false
 }
 
@@ -2068,4 +2108,71 @@ type GetBoolKeyedNotesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *boolKeyedNoteClient) resolveO2OJoins(d sql.Dialect, fo *BoolKeyedNoteFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.BoolKeyed != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "bool_keyed"},
+			Alias: "b2",
+			On:    fmt.Sprintf("b2.%s = b.%s", d.QuoteIdentifier("k"), d.QuoteIdentifier("keyed_k")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.BoolKeyed.Columns(), "k"),
+		})
+	}
+	return joins
+}
+
+// scanBoolKeyedNotesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// BoolKeyedNote entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanBoolKeyedNotesWithOneToOneJoins(rows database.Rows, columns []string) ([]*BoolKeyedNote, error) {
+	var result []*BoolKeyedNote
+	for rows.Next() {
+		b := &BoolKeyedNote{}
+		b2 := &BoolKeyed{}
+		b2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "b.id":
+				targets[idx] = &b.ID
+			case "b.keyed_k":
+				targets[idx] = &b.KeyedK
+			case "b.note":
+				targets[idx] = &b.Note
+			case "b2.k":
+				targets[idx] = database.NullScan(&b2.K)
+				b2HasData = true
+			case "b2.label":
+				targets[idx] = database.NullScan(&b2.Label)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan bool_keyed_note with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if b2HasData && b2.K != false {
+			b.BoolKeyed = b2
+		} else {
+			b.BoolKeyed = nil
+		}
+
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bool_keyed_note rows: %w", err)
+	}
+	return result, nil
 }

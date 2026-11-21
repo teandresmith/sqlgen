@@ -138,7 +138,7 @@
   ],
   "relationships": [
     {
-      "name": "users",
+      "name": "user",
       "kind": "o2o",
       "target_entity": "User",
       "fk": {

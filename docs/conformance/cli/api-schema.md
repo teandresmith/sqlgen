@@ -143,7 +143,7 @@ The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's Gra
 | api.example.no-include-deleted | No `<T>Filter` carries an `includeDeleted` flag; passing any soft-delete comparator includes deleted rows | `unit: cmd/sqlgen/gen: TestFilterTranslator_DeletedAtIsRegularFilterField` | all | |
 | api.example.ops-follow-client | Which queries and mutations a table gets is decided by the client methods the schema gives it, narrowed by `api.operations` | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_CannotExceedClient`; `unit: cmd/sqlgen/gen: TestAPIOperationsMask_PerTable` | all | |
 | api.map.mysql-set-retyped-scalar | A MySQL SET column that a per-column override retypes to Go `string` is a plain `String!` field, not the `[<Table><Column>SetValue!]!` list, and no SET value enum is declared for it | `unit: cmd/sqlgen/gen: TestScalarBinding_overriddenSetIsNotListShaped` | mysql |  |
-| api.belongs-to.graphql | A detected belongs-to on a non-unique key is a nullable `<camelName>: <Target>` field on the GraphQL type |  | all |  |
+| api.belongs-to.graphql | A detected belongs-to on a non-unique key is a nullable `<camelName>: <Target>` field on the GraphQL type | `golden: graphql` | all |  |
 
 ### PK columns in the create input
 

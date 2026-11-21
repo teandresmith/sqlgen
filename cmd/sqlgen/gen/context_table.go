@@ -2053,6 +2053,10 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 	name := r.Name
 	if r.Type == parser.OneToMany || r.Type == parser.ManyToMany {
 		name = toPlural(name)
+	} else {
+		// A to-one edge is spelled singular (PRD §5.3 rule 5), so one named
+		// after its referenced table reads `users` → `User *User`.
+		name = toSingular(name)
 	}
 	fieldName, goType := relationshipFieldAndType(name, r.Type, targetStruct)
 

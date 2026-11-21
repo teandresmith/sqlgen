@@ -85,13 +85,117 @@ const workspacesDDL = "CREATE TABLE workspaces (id bigint PRIMARY KEY);\n"
 
 func TestDetectRelationships(t *testing.T) {
 	tests := []struct {
-		name         string
-		dialect      string // default postgres
+		name    string
+		dialect string // default postgres
+		// allDialects runs the case on every dialect, each foreign key a named
+		// table constraint. "@." in want is the PostgreSQL schema prefix,
+		// dropped on MySQL and SQLite.
+		allDialects  bool
 		ddl          string
 		pkOverrides  map[string][]string
 		want         []string
 		wantWarnings []string
 	}{
+		// --- belongs-to edges and to-one naming ---
+		{
+			name:        "non-unique foreign key gives a list edge and a belongs-to edge",
+			allDialects: true,
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint,
+  CONSTRAINT posts_author FOREIGN KEY (author_id) REFERENCES users (id));`,
+			want: []string{
+				"O2M @.users -> @.posts posts [author_id→id] posts_author",
+				"O2O @.posts -> @.users author (users) [author_id→id] posts_author",
+			},
+		},
+		{
+			name:        "composite foreign key gives a belongs-to edge over every pair",
+			allDialects: true,
+			ddl: `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint,
+  CONSTRAINT tasks_cycle FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
+			want: []string{
+				"O2M @.cycles -> @.tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_cycle",
+				"O2O @.tasks -> @.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks_cycle",
+			},
+		},
+		{
+			name:        "self-referential foreign key gives both edges",
+			allDialects: true,
+			ddl: `
+CREATE TABLE tasks (id bigint PRIMARY KEY, parent_task_id bigint,
+  CONSTRAINT tasks_parent FOREIGN KEY (parent_task_id) REFERENCES tasks (id));`,
+			want: []string{
+				"O2M @.tasks -> @.tasks tasks [parent_task_id→id] tasks_parent",
+				"O2O @.tasks -> @.tasks parent_task (tasks) [parent_task_id→id] tasks_parent",
+			},
+		},
+		{
+			// Three foreign keys remain after rule 4's set-aside, so the table
+			// is not a junction.
+			name:        "three foreign keys on a non-junction give three belongs-to edges",
+			allDialects: true,
+			ddl: `
+CREATE TABLE workspaces (id bigint PRIMARY KEY);
+CREATE TABLE tasks (id bigint PRIMARY KEY);
+CREATE TABLE labels (id bigint PRIMARY KEY);
+CREATE TABLE task_labels (workspace_id bigint NOT NULL, task_id bigint NOT NULL, label_id bigint NOT NULL,
+  PRIMARY KEY (workspace_id, task_id, label_id),
+  CONSTRAINT task_labels_workspace FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
+  CONSTRAINT task_labels_task FOREIGN KEY (task_id) REFERENCES tasks (id),
+  CONSTRAINT task_labels_label FOREIGN KEY (label_id) REFERENCES labels (id));`,
+			want: []string{
+				"O2M @.workspaces -> @.task_labels task_labels [workspace_id→id] task_labels_workspace",
+				"O2O @.task_labels -> @.workspaces workspace (workspaces) [workspace_id→id] task_labels_workspace",
+				"O2M @.tasks -> @.task_labels task_labels [task_id→id] task_labels_task",
+				"O2O @.task_labels -> @.tasks task (tasks) [task_id→id] task_labels_task",
+				"O2M @.labels -> @.task_labels task_labels [label_id→id] task_labels_label",
+				"O2O @.task_labels -> @.labels label (labels) [label_id→id] task_labels_label",
+			},
+		},
+		{
+			// A unique key's edge is named the same way as a non-unique one's.
+			name:        "to-one edge named after its key column",
+			allDialects: true,
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE comments (id bigint PRIMARY KEY, writer_id bigint,
+  CONSTRAINT comments_writer FOREIGN KEY (writer_id) REFERENCES users (id));
+CREATE TABLE profiles (id bigint PRIMARY KEY, owner_id bigint UNIQUE,
+  CONSTRAINT profiles_owner FOREIGN KEY (owner_id) REFERENCES users (id));`,
+			want: []string{
+				"O2M @.users -> @.comments comments [writer_id→id] comments_writer",
+				"O2O @.comments -> @.users writer (users) [writer_id→id] comments_writer",
+				"O2O @.profiles -> @.users owner (users) [owner_id→id] profiles_owner",
+			},
+		},
+		{
+			name:        "to-one edge whose stem is a column takes the table name",
+			allDialects: true,
+			ddl: `
+CREATE TABLE codes (id bigint PRIMARY KEY);
+CREATE TABLE items (id bigint PRIMARY KEY, code text, code_id bigint,
+  CONSTRAINT items_code FOREIGN KEY (code_id) REFERENCES codes (id));`,
+			want: []string{
+				"O2M @.codes -> @.items items [code_id→id] items_code",
+				"O2O @.items -> @.codes codes [code_id→id] items_code",
+			},
+		},
+		{
+			// Rule 6 groups to-one and list edges apart, so the two edges
+			// between categories and itself are no collision.
+			name:        "self-referential list edge keeps its name beside its belongs-to edge",
+			allDialects: true,
+			ddl: `
+CREATE TABLE categories (id bigint PRIMARY KEY, parent_id bigint,
+  CONSTRAINT categories_parent FOREIGN KEY (parent_id) REFERENCES categories (id));`,
+			want: []string{
+				"O2M @.categories -> @.categories categories [parent_id→id] categories_parent",
+				"O2O @.categories -> @.categories parent (categories) [parent_id→id] categories_parent",
+			},
+		},
 		// --- the tenant pattern ---
 		{
 			name: "composite tenant FK is O2M",
@@ -101,8 +205,11 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENC
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.cycles -> public.tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
+				"O2O public.tasks -> public.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
 			},
 		},
 		{
@@ -112,8 +219,11 @@ CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFEREN
 CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENCES workspaces(id), cycle_id bigint REFERENCES cycles(id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.cycles -> public.tasks tasks [cycle_id→id] tasks_cycle_id_fkey",
+				"O2O public.tasks -> public.cycles cycle (cycles) [cycle_id→id] tasks_cycle_id_fkey",
 			},
 		},
 		{
@@ -124,8 +234,11 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENC
   FOREIGN KEY (cycle_id, workspace_id) REFERENCES cycles (id, workspace_id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.cycles -> public.tasks tasks [cycle_id→id workspace_id→workspace_id] tasks_cycle_id_workspace_id_fkey",
+				"O2O public.tasks -> public.cycles cycle (cycles) [cycle_id→id workspace_id→workspace_id] tasks_cycle_id_workspace_id_fkey",
 			},
 		},
 		{
@@ -136,8 +249,11 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENC
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.cycles -> public.tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
+				"O2O public.tasks -> public.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
 			},
 		},
 		{
@@ -151,10 +267,15 @@ CREATE TABLE tasks (workspace_id bigint NOT NULL REFERENCES workspaces(id), id b
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.projects projects [workspace_id→id] projects_workspace_id_fkey",
+				"O2O public.projects -> public.workspaces workspace (workspaces) [workspace_id→id] projects_workspace_id_fkey",
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.projects -> public.tasks tasks [workspace_id→workspace_id project_id→id] tasks_workspace_id_project_id_fkey",
+				"O2O public.tasks -> public.projects project (projects) [workspace_id→workspace_id project_id→id] tasks_workspace_id_project_id_fkey",
 				"O2M public.cycles -> public.tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
+				"O2O public.tasks -> public.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
 			},
 		},
 		// --- O2O by a unique subset ---
@@ -166,8 +287,10 @@ CREATE TABLE cycle_reports (id bigint PRIMARY KEY, workspace_id bigint NOT NULL 
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.cycle_reports cycle_reports [workspace_id→id] cycle_reports_workspace_id_fkey",
-				"O2O public.cycle_reports -> public.cycles cycles [workspace_id→workspace_id cycle_id→id] cycle_reports_workspace_id_cycle_id_fkey",
+				"O2O public.cycle_reports -> public.workspaces workspace (workspaces) [workspace_id→id] cycle_reports_workspace_id_fkey",
+				"O2O public.cycle_reports -> public.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] cycle_reports_workspace_id_cycle_id_fkey",
 			},
 		},
 		{
@@ -178,8 +301,10 @@ CREATE TABLE cycle_reports (id bigint PRIMARY KEY, workspace_id bigint NOT NULL 
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.cycle_reports cycle_reports [workspace_id→id] cycle_reports_workspace_id_fkey",
-				"O2O public.cycle_reports -> public.cycles cycles [workspace_id→workspace_id cycle_id→id] cycle_reports_workspace_id_cycle_id_fkey",
+				"O2O public.cycle_reports -> public.workspaces workspace (workspaces) [workspace_id→id] cycle_reports_workspace_id_fkey",
+				"O2O public.cycle_reports -> public.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] cycle_reports_workspace_id_cycle_id_fkey",
 			},
 		},
 		{
@@ -188,7 +313,7 @@ CREATE TABLE cycle_reports (id bigint PRIMARY KEY, workspace_id bigint NOT NULL 
 CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE profiles (id bigint PRIMARY KEY, user_id bigint UNIQUE REFERENCES users(id));`,
 			want: []string{
-				"O2O public.profiles -> public.users users [user_id→id] profiles_user_id_fkey",
+				"O2O public.profiles -> public.users user (users) [user_id→id] profiles_user_id_fkey",
 			},
 		},
 		{
@@ -197,7 +322,7 @@ CREATE TABLE profiles (id bigint PRIMARY KEY, user_id bigint UNIQUE REFERENCES u
 CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE user_credentials (user_id bigint PRIMARY KEY REFERENCES users(id), secret text);`,
 			want: []string{
-				"O2O public.user_credentials -> public.users users [user_id→id] user_credentials_user_id_fkey",
+				"O2O public.user_credentials -> public.users user (users) [user_id→id] user_credentials_user_id_fkey",
 			},
 		},
 		{
@@ -208,8 +333,10 @@ CREATE TABLE cycle_settings (workspace_id bigint NOT NULL REFERENCES workspaces(
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.cycle_settings cycle_settings [workspace_id→id] cycle_settings_workspace_id_fkey",
-				"O2O public.cycle_settings -> public.cycles cycles [workspace_id→workspace_id cycle_id→id] cycle_settings_workspace_id_cycle_id_fkey",
+				"O2O public.cycle_settings -> public.workspaces workspace (workspaces) [workspace_id→id] cycle_settings_workspace_id_fkey",
+				"O2O public.cycle_settings -> public.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] cycle_settings_workspace_id_cycle_id_fkey",
 			},
 		},
 		{
@@ -219,6 +346,7 @@ CREATE TABLE orders (id bigint PRIMARY KEY);
 CREATE TABLE order_lines (order_id bigint NOT NULL REFERENCES orders(id), line_no int NOT NULL, PRIMARY KEY (order_id, line_no));`,
 			want: []string{
 				"O2M public.orders -> public.order_lines order_lines [order_id→id] order_lines_order_id_fkey",
+				"O2O public.order_lines -> public.orders order (orders) [order_id→id] order_lines_order_id_fkey",
 			},
 		},
 		{
@@ -229,6 +357,7 @@ CREATE TABLE sessions (id bigint PRIMARY KEY, user_id bigint REFERENCES users(id
 CREATE UNIQUE INDEX one_active_session ON sessions (user_id) WHERE active;`,
 			want: []string{
 				"O2M public.users -> public.sessions sessions [user_id→id] sessions_user_id_fkey",
+				"O2O public.sessions -> public.users user (users) [user_id→id] sessions_user_id_fkey",
 			},
 		},
 		// --- target keys ---
@@ -239,6 +368,7 @@ CREATE TABLE users (id int PRIMARY KEY, email text NOT NULL UNIQUE);
 CREATE TABLE invites (id int PRIMARY KEY, email text REFERENCES users(email));`,
 			want: []string{
 				"O2M public.users -> public.invites invites [email→email] invites_email_fkey",
+				"O2O public.invites -> public.users users [email→email] invites_email_fkey",
 			},
 		},
 		{
@@ -250,7 +380,9 @@ CREATE INDEX cycles_label ON cycles (label);
 CREATE TABLE tasks (id int PRIMARY KEY, cycle_id int REFERENCES cycles(id), cycle_code text REFERENCES cycles(code));`,
 			want: []string{
 				"O2M public.cycles -> public.tasks cycle_tasks (tasks) [cycle_id→id] tasks_cycle_id_fkey",
+				"O2O public.tasks -> public.cycles cycle (cycles) [cycle_id→id] tasks_cycle_id_fkey",
 				"O2M public.cycles -> public.tasks cycle_code_tasks (tasks) [cycle_code→code] tasks_cycle_code_fkey",
+				"O2O public.tasks -> public.cycles cycle_code (cycles) [cycle_code→code] tasks_cycle_code_fkey",
 			},
 		},
 		{
@@ -260,7 +392,7 @@ CREATE TABLE tasks (id int PRIMARY KEY, cycle_id int REFERENCES cycles(id), cycl
 CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE user_settings (user_id bigint NOT NULL REFERENCES users(id), theme text);`,
 			want: []string{
-				"O2O public.user_settings -> public.users users [user_id→id] user_settings_user_id_fkey",
+				"O2O public.user_settings -> public.users user (users) [user_id→id] user_settings_user_id_fkey",
 			},
 		},
 		{
@@ -283,7 +415,9 @@ CREATE TABLE tasks (id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL REFERE
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M workspaces -> cycles cycles [workspace_id→id] cycles(workspace_id) → workspaces(id)",
+				"O2O cycles -> workspaces workspace (workspaces) [workspace_id→id] cycles(workspace_id) → workspaces(id)",
 				"O2M workspaces -> tasks tasks [workspace_id→id] tasks(workspace_id) → workspaces(id)",
+				"O2O tasks -> workspaces workspace (workspaces) [workspace_id→id] tasks(workspace_id) → workspaces(id)",
 			},
 			wantWarnings: []string{
 				"tables.tasks: foreign key tasks(workspace_id, cycle_id) → cycles(workspace_id, id) references columns that are neither the primary key nor a non-partial UNIQUE constraint of cycles, so it gives no relationship; declare one by hand if you need it (PRD §5.3, §13.4)",
@@ -316,6 +450,7 @@ CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint REFERENCES users(id), legacy_id bigint REFERENCES legacy.accounts(id));`,
 			want: []string{
 				"O2M public.users -> public.posts posts [author_id→id] posts_author_id_fkey",
+				"O2O public.posts -> public.users author (users) [author_id→id] posts_author_id_fkey",
 			},
 		},
 		// --- redundant FKs ---
@@ -327,8 +462,11 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENC
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.cycles -> public.tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
+				"O2O public.tasks -> public.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks_workspace_id_cycle_id_fkey",
 			},
 		},
 		// Of identical keys the one whose name sorts first gives the edge, as
@@ -342,6 +480,7 @@ CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint,
   CONSTRAINT posts_author_a FOREIGN KEY (author_id) REFERENCES users(id));`,
 			want: []string{
 				"O2M public.users -> public.posts posts [author_id→id] posts_author_a",
+				"O2O public.posts -> public.users author (users) [author_id→id] posts_author_a",
 			},
 		},
 		{
@@ -351,7 +490,7 @@ CREATE TABLE t (x int NOT NULL, y int NOT NULL, PRIMARY KEY (x, y));
 CREATE TABLE c (id int PRIMARY KEY, a int, b int,
   CONSTRAINT z_decl FOREIGN KEY (a, b) REFERENCES t (x, y),
   CONSTRAINT a_decl FOREIGN KEY (b, a) REFERENCES t (y, x));`,
-			want: []string{"O2M public.t -> public.c c [b→y a→x] a_decl"},
+			want: []string{"O2M public.t -> public.c c [b→y a→x] a_decl", "O2O public.c -> public.t t [b→y a→x] a_decl"},
 		},
 		{
 			name:    "identical unnamed SQLite FKs keep the first declared",
@@ -361,7 +500,7 @@ CREATE TABLE t (x INTEGER NOT NULL, y INTEGER NOT NULL, PRIMARY KEY (x, y));
 CREATE TABLE c (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER,
   FOREIGN KEY (b, a) REFERENCES t (y, x),
   FOREIGN KEY (a, b) REFERENCES t (x, y));`,
-			want: []string{"O2M t -> c c [b→y a→x] c(b, a) → t(y, x)"},
+			want: []string{"O2M t -> c c [b→y a→x] c(b, a) → t(y, x)", "O2O c -> t t [b→y a→x] c(b, a) → t(y, x)"},
 		},
 		{
 			name: "a duplicated FK keeps its naming member",
@@ -374,7 +513,9 @@ CREATE TABLE posts (id bigint PRIMARY KEY, author_email text, reviewer_email tex
   CONSTRAINT posts_reviewer_b FOREIGN KEY (reviewer_email) REFERENCES users (email));`,
 			want: []string{
 				"O2M public.users -> public.posts author_email_posts (posts) [author_email→email] posts_author_a",
+				"O2O public.posts -> public.users author_email (users) [author_email→email] posts_author_a",
 				"O2M public.users -> public.posts reviewer_email_posts (posts) [reviewer_email→email] posts_reviewer_a",
+				"O2O public.posts -> public.users reviewer_email (users) [reviewer_email→email] posts_reviewer_a",
 			},
 		},
 		{
@@ -385,7 +526,9 @@ CREATE TABLE employees (id bigint PRIMARY KEY);
 CREATE TABLE badges (id bigint PRIMARY KEY, holder_id bigint REFERENCES people(id) REFERENCES employees(id));`,
 			want: []string{
 				"O2M public.people -> public.badges badges [holder_id→id] badges_holder_id_fkey",
+				"O2O public.badges -> public.people holder (people) [holder_id→id] badges_holder_id_fkey",
 				"O2M public.employees -> public.badges badges [holder_id→id] badges_holder_id_fkey1",
+				"O2O public.badges -> public.employees holder (employees) [holder_id→id] badges_holder_id_fkey1",
 			},
 		},
 		// --- junctions ---
@@ -431,11 +574,13 @@ CREATE TABLE product_tags (id bigint PRIMARY KEY, product_id bigint REFERENCES p
 CREATE UNIQUE INDEX product_tags_active ON product_tags (product_id, tag_id) WHERE active;`,
 			want: []string{
 				"O2M public.products -> public.product_tags product_tags [product_id→id] product_tags_product_id_fkey",
+				"O2O public.product_tags -> public.products product (products) [product_id→id] product_tags_product_id_fkey",
 				"O2M public.tags -> public.product_tags product_tags [tag_id→id] product_tags_tag_id_fkey",
+				"O2O public.product_tags -> public.tags tag (tags) [tag_id→id] product_tags_tag_id_fkey",
 			},
 		},
 		{
-			name: "three single-column FKs in the key give three O2M edges",
+			name: "three single-column FKs in the key give three O2M and three belongs-to edges",
 			ddl: workspacesDDL + `
 CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENCES workspaces(id));
 CREATE TABLE labels (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENCES workspaces(id));
@@ -443,10 +588,15 @@ CREATE TABLE task_labels (workspace_id bigint NOT NULL REFERENCES workspaces(id)
   PRIMARY KEY (workspace_id, task_id, label_id));`,
 			want: []string{
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.workspaces -> public.labels labels [workspace_id→id] labels_workspace_id_fkey",
+				"O2O public.labels -> public.workspaces workspace (workspaces) [workspace_id→id] labels_workspace_id_fkey",
 				"O2M public.workspaces -> public.task_labels task_labels [workspace_id→id] task_labels_workspace_id_fkey",
+				"O2O public.task_labels -> public.workspaces workspace (workspaces) [workspace_id→id] task_labels_workspace_id_fkey",
 				"O2M public.tasks -> public.task_labels task_labels [task_id→id] task_labels_task_id_fkey",
+				"O2O public.task_labels -> public.tasks task (tasks) [task_id→id] task_labels_task_id_fkey",
 				"O2M public.labels -> public.task_labels task_labels [label_id→id] task_labels_label_id_fkey",
+				"O2O public.task_labels -> public.labels label (labels) [label_id→id] task_labels_label_id_fkey",
 			},
 		},
 		{
@@ -460,7 +610,9 @@ CREATE TABLE task_labels (workspace_id bigint NOT NULL REFERENCES workspaces(id)
   FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.workspaces -> public.labels labels [workspace_id→id] labels_workspace_id_fkey",
+				"O2O public.labels -> public.workspaces workspace (workspaces) [workspace_id→id] labels_workspace_id_fkey",
 				"M2M public.tasks -> public.labels labels via public.task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id] task_labels_workspace_id_task_id_fkey / task_labels_workspace_id_label_id_fkey",
 				"M2M public.labels -> public.tasks tasks via public.task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] task_labels_workspace_id_label_id_fkey / task_labels_workspace_id_task_id_fkey",
 			},
@@ -476,7 +628,9 @@ CREATE TABLE task_labels (workspace_id bigint NOT NULL, task_id bigint NOT NULL,
   FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.workspaces -> public.labels labels [workspace_id→id] labels_workspace_id_fkey",
+				"O2O public.labels -> public.workspaces workspace (workspaces) [workspace_id→id] labels_workspace_id_fkey",
 				"M2M public.tasks -> public.labels labels via public.task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id] task_labels_workspace_id_task_id_fkey / task_labels_workspace_id_label_id_fkey",
 				"M2M public.labels -> public.tasks tasks via public.task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] task_labels_workspace_id_label_id_fkey / task_labels_workspace_id_task_id_fkey",
 			},
@@ -492,10 +646,14 @@ CREATE TABLE assignments (id bigint PRIMARY KEY, workspace_id bigint NOT NULL RE
   FOREIGN KEY (workspace_id, member_id) REFERENCES members (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.workspaces -> public.members members [workspace_id→id] members_workspace_id_fkey",
+				"O2O public.members -> public.workspaces workspace (workspaces) [workspace_id→id] members_workspace_id_fkey",
 				"O2M public.workspaces -> public.assignments assignments [workspace_id→id] assignments_workspace_id_fkey",
-				"O2O public.assignments -> public.tasks tasks [workspace_id→workspace_id task_id→id] assignments_workspace_id_task_id_fkey",
+				"O2O public.assignments -> public.workspaces workspace (workspaces) [workspace_id→id] assignments_workspace_id_fkey",
+				"O2O public.assignments -> public.tasks task (tasks) [workspace_id→workspace_id task_id→id] assignments_workspace_id_task_id_fkey",
 				"O2M public.members -> public.assignments assignments [workspace_id→workspace_id member_id→id] assignments_workspace_id_member_id_fkey",
+				"O2O public.assignments -> public.members member (members) [workspace_id→workspace_id member_id→id] assignments_workspace_id_member_id_fkey",
 			},
 		},
 		{
@@ -509,7 +667,9 @@ CREATE TABLE time_entries (id bigint PRIMARY KEY, workspace_id bigint NOT NULL R
   FOREIGN KEY (workspace_id, member_id) REFERENCES members (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.workspaces -> public.members members [workspace_id→id] members_workspace_id_fkey",
+				"O2O public.members -> public.workspaces workspace (workspaces) [workspace_id→id] members_workspace_id_fkey",
 				"M2M public.tasks -> public.members members via public.time_entries [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id member_id→id] time_entries_workspace_id_task_id_fkey / time_entries_workspace_id_member_id_fkey",
 				"M2M public.members -> public.tasks tasks via public.time_entries [workspace_id→workspace_id member_id→id] [workspace_id→workspace_id task_id→id] time_entries_workspace_id_member_id_fkey / time_entries_workspace_id_task_id_fkey",
 			},
@@ -525,6 +685,7 @@ CREATE TABLE shipments (order_id bigint NOT NULL REFERENCES orders(id), line_no 
   FOREIGN KEY (order_id, line_no) REFERENCES order_lines (order_id, line_no));`,
 			want: []string{
 				"O2M public.orders -> public.order_lines order_lines [order_id→id] order_lines_order_id_fkey",
+				"O2O public.order_lines -> public.orders order (orders) [order_id→id] order_lines_order_id_fkey",
 				"M2M public.order_lines -> public.carriers carriers via public.shipments [order_id→order_id line_no→line_no] [carrier_id→id] shipments_order_id_line_no_fkey / shipments_carrier_id_fkey",
 				"M2M public.carriers -> public.order_lines order_lines via public.shipments [carrier_id→id] [order_id→order_id line_no→line_no] shipments_carrier_id_fkey / shipments_order_id_line_no_fkey",
 			},
@@ -572,7 +733,9 @@ CREATE TABLE tags (id bigint PRIMARY KEY);
 CREATE TABLE user_tags (user_id bigint REFERENCES users(id), tag_id bigint REFERENCES tags(id));`,
 			want: []string{
 				"O2M public.users -> public.user_tags user_tags [user_id→id] user_tags_user_id_fkey",
+				"O2O public.user_tags -> public.users user (users) [user_id→id] user_tags_user_id_fkey",
 				"O2M public.tags -> public.user_tags user_tags [tag_id→id] user_tags_tag_id_fkey",
+				"O2O public.user_tags -> public.tags tag (tags) [tag_id→id] user_tags_tag_id_fkey",
 			},
 		},
 		// --- naming and disambiguation ---
@@ -583,7 +746,9 @@ CREATE TABLE members (id bigint PRIMARY KEY);
 CREATE TABLE tasks (id bigint PRIMARY KEY, assignee_id bigint REFERENCES members(id), reviewer_id bigint REFERENCES members(id));`,
 			want: []string{
 				"O2M public.members -> public.tasks assignee_tasks (tasks) [assignee_id→id] tasks_assignee_id_fkey",
+				"O2O public.tasks -> public.members assignee (members) [assignee_id→id] tasks_assignee_id_fkey",
 				"O2M public.members -> public.tasks reviewer_tasks (tasks) [reviewer_id→id] tasks_reviewer_id_fkey",
+				"O2O public.tasks -> public.members reviewer (members) [reviewer_id→id] tasks_reviewer_id_fkey",
 			},
 		},
 		{
@@ -595,9 +760,13 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENC
   FOREIGN KEY (workspace_id, reviewer_id) REFERENCES members (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.members members [workspace_id→id] members_workspace_id_fkey",
+				"O2O public.members -> public.workspaces workspace (workspaces) [workspace_id→id] members_workspace_id_fkey",
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.members -> public.tasks assignee_tasks (tasks) [workspace_id→workspace_id assignee_id→id] tasks_workspace_id_assignee_id_fkey",
+				"O2O public.tasks -> public.members assignee (members) [workspace_id→workspace_id assignee_id→id] tasks_workspace_id_assignee_id_fkey",
 				"O2M public.members -> public.tasks reviewer_tasks (tasks) [workspace_id→workspace_id reviewer_id→id] tasks_workspace_id_reviewer_id_fkey",
+				"O2O public.tasks -> public.members reviewer (members) [workspace_id→workspace_id reviewer_id→id] tasks_workspace_id_reviewer_id_fkey",
 			},
 		},
 		{
@@ -616,6 +785,7 @@ CREATE TABLE users (id bigint PRIMARY KEY, primary_profile_id bigint UNIQUE REFE
 CREATE TABLE employees (id bigint PRIMARY KEY, manager_id bigint REFERENCES employees(id));`,
 			want: []string{
 				"O2M public.employees -> public.employees employees [manager_id→id] employees_manager_id_fkey",
+				"O2O public.employees -> public.employees manager (employees) [manager_id→id] employees_manager_id_fkey",
 			},
 		},
 		{
@@ -625,7 +795,9 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENC
   FOREIGN KEY (workspace_id, parent_task_id) REFERENCES tasks (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
+				"O2O public.tasks -> public.workspaces workspace (workspaces) [workspace_id→id] tasks_workspace_id_fkey",
 				"O2M public.tasks -> public.tasks tasks [workspace_id→workspace_id parent_task_id→id] tasks_workspace_id_parent_task_id_fkey",
+				"O2O public.tasks -> public.tasks parent_task (tasks) [workspace_id→workspace_id parent_task_id→id] tasks_workspace_id_parent_task_id_fkey",
 			},
 		},
 		{
@@ -648,6 +820,7 @@ CREATE TABLE cycle_notes (workspace_id bigint NOT NULL REFERENCES workspaces(id)
   FOREIGN KEY (workspace_id, prev_cycle_id) REFERENCES cycles (workspace_id, id));`,
 			want: []string{
 				"O2M public.workspaces -> public.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
+				"O2O public.cycles -> public.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
 				"M2M public.cycles -> public.cycles prev_cycle (cycles) via public.cycle_notes [workspace_id→workspace_id cycle_id→id] [workspace_id→workspace_id prev_cycle_id→id] cycle_notes_workspace_id_cycle_id_fkey / cycle_notes_workspace_id_prev_cycle_id_fkey",
 				"M2M public.cycles -> public.cycles cycle (cycles) via public.cycle_notes [workspace_id→workspace_id prev_cycle_id→id] [workspace_id→workspace_id cycle_id→id] cycle_notes_workspace_id_prev_cycle_id_fkey / cycle_notes_workspace_id_cycle_id_fkey",
 			},
@@ -661,9 +834,13 @@ CREATE TABLE audit (id bigint PRIMARY KEY, user_id bigint NOT NULL REFERENCES us
   FOREIGN KEY (user_id, n) REFERENCES accounts (user_id, n));`,
 			want: []string{
 				"O2M public.users -> public.accounts accounts [user_id→id] accounts_user_id_fkey",
+				"O2O public.accounts -> public.users user (users) [user_id→id] accounts_user_id_fkey",
 				"O2M public.users -> public.audit user_audit (audit) [user_id→id] audit_user_id_fkey",
+				"O2O public.audit -> public.users user (users) [user_id→id] audit_user_id_fkey",
 				"O2M public.accounts -> public.audit audit [user_id→user_id n→n] audit_user_id_n_fkey",
+				"O2O public.audit -> public.accounts accounts [user_id→user_id n→n] audit_user_id_n_fkey",
 				"O2M public.users -> public.audit approver_audit (audit) [approver_id→id] audit_approver_id_fkey",
+				"O2O public.audit -> public.users approver (users) [approver_id→id] audit_approver_id_fkey",
 			},
 		},
 		{
@@ -675,7 +852,9 @@ CREATE TABLE links (id int PRIMARY KEY, a int, b int,
   CONSTRAINT links_ba FOREIGN KEY (b, a) REFERENCES pairs (x, y));`,
 			want: []string{
 				"O2M public.pairs -> public.links links [a→x b→y] links_ab",
+				"O2O public.links -> public.pairs pairs [a→x b→y] links_ab",
 				"O2M public.pairs -> public.links links [b→x a→y] links_ba",
+				"O2O public.links -> public.pairs pairs [b→x a→y] links_ba",
 			},
 		},
 		{
@@ -700,6 +879,7 @@ CREATE TABLE users (id bigint PRIMARY KEY, workspace_id bigint REFERENCES organi
 CREATE TABLE organization_users (organization_id bigint REFERENCES organizations(id), user_id bigint REFERENCES users(id), PRIMARY KEY (organization_id, user_id));`,
 			want: []string{
 				"O2M public.organizations -> public.users workspace_users (users) [workspace_id→id] users_workspace_id_fkey",
+				"O2O public.users -> public.organizations workspace (organizations) [workspace_id→id] users_workspace_id_fkey",
 				"M2M public.organizations -> public.users organization_users (users) via public.organization_users [organization_id→id] [user_id→id] organization_users_organization_id_fkey / organization_users_user_id_fkey",
 				"M2M public.users -> public.organizations organizations via public.organization_users [user_id→id] [organization_id→id] organization_users_user_id_fkey / organization_users_organization_id_fkey",
 			},
@@ -712,7 +892,9 @@ CREATE TABLE b (id bigint PRIMARY KEY, a_id bigint REFERENCES a(id));
 ALTER TABLE a ADD FOREIGN KEY (b_id) REFERENCES b(id);`,
 			want: []string{
 				"O2M public.b -> public.a a [b_id→id] a_b_id_fkey",
+				"O2O public.a -> public.b b [b_id→id] a_b_id_fkey",
 				"O2M public.a -> public.b b [a_id→id] b_a_id_fkey",
+				"O2O public.b -> public.a a [a_id→id] b_a_id_fkey",
 			},
 		},
 		{
@@ -720,20 +902,38 @@ ALTER TABLE a ADD FOREIGN KEY (b_id) REFERENCES b(id);`,
 			ddl:  `CREATE TABLE users (id bigint PRIMARY KEY, email text UNIQUE);`,
 		},
 	}
+	check := func(t *testing.T, dialect, ddl string, pkOverrides map[string][]string, want, wantWarnings []string) {
+		t.Helper()
+		schema := parseDDL(t, dialect, ddl, pkOverrides)
+		warnings := parser.DetectRelationships(schema)
+		if diff := cmp.Diff(want, edgeStrings(schema.Relationships)); diff != "" {
+			t.Errorf("DetectRelationships() edges mismatch (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff(wantWarnings, warnings); diff != "" {
+			t.Errorf("DetectRelationships() warnings mismatch (-want +got):\n%s", diff)
+		}
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dialect := tt.dialect
-			if dialect == "" {
-				dialect = "postgres"
+			if !tt.allDialects {
+				dialect := tt.dialect
+				if dialect == "" {
+					dialect = "postgres"
+				}
+				check(t, dialect, tt.ddl, tt.pkOverrides, tt.want, tt.wantWarnings)
+				return
 			}
-			schema := parseDDL(t, dialect, tt.ddl, tt.pkOverrides)
-			warnings := parser.DetectRelationships(schema)
-			if diff := cmp.Diff(tt.want, edgeStrings(schema.Relationships)); diff != "" {
-				t.Errorf("DetectRelationships() edges mismatch (-want +got):\n%s", diff)
+			run := func(t *testing.T, dialect, prefix string) {
+				t.Helper()
+				want := make([]string, len(tt.want))
+				for i, w := range tt.want {
+					want[i] = strings.ReplaceAll(w, "@.", prefix)
+				}
+				check(t, dialect, tt.ddl, tt.pkOverrides, want, tt.wantWarnings)
 			}
-			if diff := cmp.Diff(tt.wantWarnings, warnings); diff != "" {
-				t.Errorf("DetectRelationships() warnings mismatch (-want +got):\n%s", diff)
-			}
+			t.Run("postgres", func(t *testing.T) { run(t, "postgres", "public.") })
+			t.Run("mysql", func(t *testing.T) { run(t, "mysql", "") })
+			t.Run("sqlite", func(t *testing.T) { run(t, "sqlite", "") })
 		})
 	}
 }

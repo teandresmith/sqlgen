@@ -8,6 +8,8 @@ type BoolKeyedNote {
   keyedK: Boolean
   "note"
   note: String!
+  "one-to-one relationship with the bool_keyed table."
+  boolKeyed: BoolKeyed
 }
 
 type BoolKeyedNoteConnection {

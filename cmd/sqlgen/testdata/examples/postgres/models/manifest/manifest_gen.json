@@ -3319,7 +3319,24 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "bool_keyed",
+          "kind": "o2o",
+          "target_entity": "BoolKeyed",
+          "fk": {
+            "table": "bool_keyed_notes",
+            "schema": "public",
+            "columns": [
+              "keyed_k"
+            ],
+            "references": [
+              "k"
+            ],
+            "constraint": "bool_keyed_notes_keyed_k_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -8818,6 +8835,22 @@
             ],
             "constraint": "order_items_order_id_fkey"
           }
+        },
+        {
+          "name": "user",
+          "kind": "o2o",
+          "target_entity": "PublicUser",
+          "fk": {
+            "table": "orders",
+            "schema": "public",
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "orders_user_id_fkey"
+          }
         }
       ],
       "methods": {
@@ -9356,7 +9389,40 @@
           "comment": "Row creation timestamp"
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "order",
+          "kind": "o2o",
+          "target_entity": "Order",
+          "fk": {
+            "table": "order_items",
+            "schema": "public",
+            "columns": [
+              "order_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items_order_id_fkey"
+          }
+        },
+        {
+          "name": "product",
+          "kind": "o2o",
+          "target_entity": "Product",
+          "fk": {
+            "table": "order_items",
+            "schema": "public",
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items_product_id_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -10150,6 +10216,22 @@
       ],
       "relationships": [
         {
+          "name": "category",
+          "kind": "o2o",
+          "target_entity": "Category",
+          "fk": {
+            "table": "products",
+            "schema": "public",
+            "columns": [
+              "category_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "products_category_id_fkey"
+          }
+        },
+        {
           "name": "order_items",
           "kind": "o2m",
           "target_entity": "OrderItem",
@@ -10942,7 +11024,24 @@
           "comment": "Optional description"
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "product",
+          "kind": "o2o",
+          "target_entity": "Product",
+          "fk": {
+            "table": "product_tag_labels",
+            "schema": "public",
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "product_tag_labels_product_id_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -11453,7 +11552,7 @@
       ],
       "relationships": [
         {
-          "name": "users",
+          "name": "user",
           "kind": "o2o",
           "target_entity": "PublicUser",
           "fk": {
@@ -15581,7 +15680,24 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "time_keyed",
+          "kind": "o2o",
+          "target_entity": "TimeKeyed",
+          "fk": {
+            "table": "time_keyed_notes",
+            "schema": "public",
+            "columns": [
+              "keyed_at"
+            ],
+            "references": [
+              "at"
+            ],
+            "constraint": "time_keyed_notes_keyed_at_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -16574,6 +16690,22 @@
         }
       ],
       "relationships": [
+        {
+          "name": "warehouse",
+          "kind": "o2o",
+          "target_entity": "Warehouse",
+          "fk": {
+            "table": "warehouses",
+            "schema": "public",
+            "columns": [
+              "nullable_ref"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "warehouses_nullable_ref_fkey"
+          }
+        },
         {
           "name": "warehouses",
           "kind": "o2m",
@@ -17988,7 +18120,24 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "big",
+          "kind": "o2o",
+          "target_entity": "WidthBig",
+          "fk": {
+            "table": "width_narrow_children",
+            "schema": "public",
+            "columns": [
+              "big_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "width_narrow_children_big_id_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -18432,7 +18581,26 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "small",
+          "kind": "o2o",
+          "target_entity": "WidthSmall",
+          "fk": {
+            "table": "width_scoped_children",
+            "schema": "public",
+            "columns": [
+              "scope",
+              "small_id"
+            ],
+            "references": [
+              "scope",
+              "id"
+            ],
+            "constraint": "width_scoped_children_scope_small_id_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -19395,7 +19563,24 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "small",
+          "kind": "o2o",
+          "target_entity": "WidthSmall",
+          "fk": {
+            "table": "width_wide_children",
+            "schema": "public",
+            "columns": [
+              "small_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "width_wide_children_small_id_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {

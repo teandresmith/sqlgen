@@ -27,6 +27,12 @@
 | --- | --- | --- | --- | --- |
 | `template_steps_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| template | o2o | Template | public.template_steps.(workspace_id, template_id) |  |
+
 ## Query methods
 
 ### Get

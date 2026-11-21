@@ -40,18 +40,18 @@ func TestRelationshipO2O_ChainAliasesAreNotKeywords(t *testing.T) {
 			ID: true,
 			Profile: &models.ProfileFieldOptions{
 				ID: true, UserID: true,
-				Users: &models.UserFieldOptions{
+				User: &models.UserFieldOptions{
 					ID: true,
 					Profile: &models.ProfileFieldOptions{
 						ID: true, UserID: true,
-						Users: &models.UserFieldOptions{ID: true},
+						User: &models.UserFieldOptions{ID: true},
 					},
 				},
 			},
 		}
 	})
 	if err != nil {
-		t.Fatalf("GetMany with Profile.Users.Profile.Users: %v", err)
+		t.Fatalf("GetMany with Profile.User.Profile.User: %v", err)
 	}
 	if len(users) != 1 {
 		t.Fatalf("GetMany returned %d users, want 1", len(users))
@@ -60,16 +60,16 @@ func TestRelationshipO2O_ChainAliasesAreNotKeywords(t *testing.T) {
 	if p1 == nil || p1.ID != profile.ID {
 		t.Fatalf("Profile = %+v, want profile %d", p1, profile.ID)
 	}
-	u1 := p1.Users
+	u1 := p1.User
 	if u1 == nil || u1.ID != user.ID {
-		t.Fatalf("Profile.Users = %+v, want user %d", u1, user.ID)
+		t.Fatalf("Profile.User = %+v, want user %d", u1, user.ID)
 	}
 	p2 := u1.Profile
 	if p2 == nil || p2.ID != profile.ID {
-		t.Fatalf("Profile.Users.Profile = %+v, want profile %d", p2, profile.ID)
+		t.Fatalf("Profile.User.Profile = %+v, want profile %d", p2, profile.ID)
 	}
-	if u2 := p2.Users; u2 == nil || u2.ID != user.ID {
-		t.Errorf("Profile.Users.Profile.Users = %+v, want user %d", u2, user.ID)
+	if u2 := p2.User; u2 == nil || u2.ID != user.ID {
+		t.Errorf("Profile.User.Profile.User = %+v, want user %d", u2, user.ID)
 	}
 }
 

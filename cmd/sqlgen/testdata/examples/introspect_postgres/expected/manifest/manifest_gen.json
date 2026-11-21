@@ -818,7 +818,24 @@
           "comment": "Subtotal plus tax"
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "account",
+          "kind": "o2o",
+          "target_entity": "Account",
+          "fk": {
+            "table": "invoices",
+            "schema": "billing",
+            "columns": [
+              "account_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "invoices_account_id_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -1307,6 +1324,22 @@
         }
       ],
       "relationships": [
+        {
+          "name": "account",
+          "kind": "o2o",
+          "target_entity": "Account",
+          "fk": {
+            "table": "projects",
+            "schema": "public",
+            "columns": [
+              "account_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "projects_account_id_fkey"
+          }
+        },
         {
           "name": "tasks",
           "kind": "o2m",
@@ -2153,6 +2186,38 @@
       ],
       "relationships": [
         {
+          "name": "assignee",
+          "kind": "o2o",
+          "target_entity": "Account",
+          "fk": {
+            "table": "tasks",
+            "schema": "public",
+            "columns": [
+              "assignee_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks_assignee_id_fkey"
+          }
+        },
+        {
+          "name": "project",
+          "kind": "o2o",
+          "target_entity": "Project",
+          "fk": {
+            "table": "tasks",
+            "schema": "public",
+            "columns": [
+              "project_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks_project_id_fkey"
+          }
+        },
+        {
           "name": "task_labels",
           "kind": "o2m",
           "target_entity": "TaskLabel",
@@ -2610,7 +2675,24 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "task",
+          "kind": "o2o",
+          "target_entity": "Task",
+          "fk": {
+            "table": "task_labels",
+            "schema": "public",
+            "columns": [
+              "task_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "task_labels_task_id_fkey"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {

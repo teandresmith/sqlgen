@@ -13,7 +13,7 @@ type Profile {
   "verified"
   verified: Boolean!
   "one-to-one relationship with the users table."
-  users: User
+  user: User
 }
 
 type ProfileConnection {

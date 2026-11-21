@@ -1757,7 +1757,9 @@ func hasAnyRelationshipBoolKeyedNote(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.BoolKeyed != nil {
+		return true
+	}
 	return false
 }
 
@@ -4575,6 +4577,9 @@ func hasAnyRelationshipOrder(fo any) bool {
 	if typed.OrderItems != nil {
 		return true
 	}
+	if typed.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -4831,7 +4836,12 @@ func hasAnyRelationshipOrderItem(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Order != nil {
+		return true
+	}
+	if typed.Product != nil {
+		return true
+	}
 	return false
 }
 
@@ -5086,6 +5096,9 @@ func hasAnyRelationshipProduct(fo any) bool {
 	typed, ok := fo.(*ProductFieldOptions)
 	if !ok || typed == nil {
 		return false
+	}
+	if typed.Category != nil {
+		return true
 	}
 	if typed.OrderItems != nil {
 		return true
@@ -5359,7 +5372,9 @@ func hasAnyRelationshipProductTagLabel(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Product != nil {
+		return true
+	}
 	return false
 }
 
@@ -5617,7 +5632,7 @@ func hasAnyRelationshipProfile(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	if typed.Users != nil {
+	if typed.User != nil {
 		return true
 	}
 	return false
@@ -7683,7 +7698,9 @@ func hasAnyRelationshipTimeKeyedNote(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.TimeKeyed != nil {
+		return true
+	}
 	return false
 }
 
@@ -8195,6 +8212,9 @@ func hasAnyRelationshipWarehouse(fo any) bool {
 	typed, ok := fo.(*WarehouseFieldOptions)
 	if !ok || typed == nil {
 		return false
+	}
+	if typed.Warehouse != nil {
+		return true
 	}
 	if typed.Warehouses != nil {
 		return true
@@ -8975,7 +8995,9 @@ func hasAnyRelationshipWidthNarrowChild(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Big != nil {
+		return true
+	}
 	return false
 }
 
@@ -9227,7 +9249,9 @@ func hasAnyRelationshipWidthScopedChild(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Small != nil {
+		return true
+	}
 	return false
 }
 
@@ -9740,7 +9764,9 @@ func hasAnyRelationshipWidthWideChild(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Small != nil {
+		return true
+	}
 	return false
 }
 

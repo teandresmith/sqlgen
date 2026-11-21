@@ -1599,7 +1599,9 @@ func hasAnyRelationshipEvent(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -3418,6 +3420,9 @@ func hasAnyRelationshipOrder(fo any) bool {
 	if typed.OrderItems != nil {
 		return true
 	}
+	if typed.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -3674,7 +3679,12 @@ func hasAnyRelationshipOrderItem(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Order != nil {
+		return true
+	}
+	if typed.Product != nil {
+		return true
+	}
 	return false
 }
 
@@ -3931,6 +3941,9 @@ func hasAnyRelationshipProduct(fo any) bool {
 	typed, ok := fo.(*ProductFieldOptions)
 	if !ok || typed == nil {
 		return false
+	}
+	if typed.Category != nil {
+		return true
 	}
 	if typed.OrderItems != nil {
 		return true
@@ -4193,7 +4206,7 @@ func hasAnyRelationshipProfile(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	if typed.Users != nil {
+	if typed.User != nil {
 		return true
 	}
 	return false
@@ -4722,6 +4735,9 @@ func hasAnyRelationshipTask(fo any) bool {
 	typed, ok := fo.(*TaskFieldOptions)
 	if !ok || typed == nil {
 		return false
+	}
+	if typed.Cycle != nil {
+		return true
 	}
 	if typed.Labels != nil {
 		return true
@@ -5267,7 +5283,7 @@ func hasAnyRelationshipTaskReport(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	if typed.Tasks != nil {
+	if typed.Task != nil {
 		return true
 	}
 	return false
@@ -5810,7 +5826,7 @@ func hasAnyRelationshipUserBadge(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	if typed.Users != nil {
+	if typed.User != nil {
 		return true
 	}
 	return false
@@ -6325,7 +6341,7 @@ func hasAnyRelationshipUserCredential(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	if typed.Users != nil {
+	if typed.User != nil {
 		return true
 	}
 	return false
@@ -6582,7 +6598,9 @@ func hasAnyRelationshipUserSession(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.User != nil {
+		return true
+	}
 	return false
 }
 

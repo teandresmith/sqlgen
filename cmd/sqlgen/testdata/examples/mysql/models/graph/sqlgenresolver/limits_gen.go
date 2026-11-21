@@ -121,19 +121,28 @@ func isRelationshipField(typeName, field string) bool {
 		"Asset.primaryActiveDocument",
 		"Asset.primaryDocument",
 		"Bin.binItems",
+		"BinItem.bin",
 		"BoolKeyed.boolKeyedNotes",
+		"BoolKeyedNote.boolKeyed",
 		"Category.products",
 		"Category.users",
 		"Document.assets",
 		"Order.orderItems",
+		"Order.user",
+		"OrderItem.order",
+		"OrderItem.product",
+		"Product.category",
 		"Product.orderItems",
 		"Product.productTagLabels",
-		"Profile.users",
+		"ProductTagLabel.product",
+		"Profile.user",
 		"TimeKeyed.timeKeyedNotes",
+		"TimeKeyedNote.timeKeyed",
 		"User.categories",
 		"User.orders",
 		"User.profile",
-		"User.userEvents":
+		"User.userEvents",
+		"UserEvent.user":
 		return true
 	}
 	return false

@@ -12,6 +12,8 @@ type Product {
   categoryID: Int!
   "created_at"
   createdAt: Time!
+  "one-to-one relationship with the categories table."
+  category: Category
 }
 
 type ProductConnection {

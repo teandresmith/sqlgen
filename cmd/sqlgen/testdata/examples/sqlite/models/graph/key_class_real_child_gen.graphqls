@@ -6,6 +6,8 @@ type KeyClassRealChild {
   id: Int!
   "parent_id"
   parentID: Float
+  "one-to-one relationship with the key_class_parents table."
+  parent: KeyClassParent
 }
 
 type KeyClassRealChildConnection {

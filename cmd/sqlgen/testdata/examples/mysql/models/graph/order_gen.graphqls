@@ -16,6 +16,8 @@ type Order {
   orderedAt: Time!
   "one-to-many relationship with the order_items table."
   orderItems: [OrderItem!]!
+  "one-to-one relationship with the users table."
+  user: User
 }
 
 type OrderConnection {

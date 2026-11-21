@@ -265,8 +265,8 @@ func TestApplyPrimaryKeyOverrides_CompositeIsNotAJunction(t *testing.T) {
 	applyPrimaryKeyOverrides(schema, cfg)
 	detectRelationships(schema)
 
-	if len(schema.Relationships) != 2 {
-		t.Fatalf("DetectRelationships() produced %d edges, want the two O2M edges into user_tags", len(schema.Relationships))
+	if len(schema.Relationships) != 4 {
+		t.Fatalf("DetectRelationships() produced %d edges, want the two O2M edges into user_tags and their two belongs-to edges", len(schema.Relationships))
 	}
 	for _, rel := range schema.Relationships {
 		if rel.Type == parser.ManyToMany {
@@ -349,8 +349,8 @@ tables:
 
 	// Resolve-before-detect: O2O puts the parent pointer on the FK-holding
 	// child. O2M would instead hang a []*UserSetting off User.
-	if !strings.Contains(got, "Users *User") {
-		t.Errorf("generated models lack the O2O field `Users *User` on UserSetting — " +
+	if !strings.Contains(got, "User *User") {
+		t.Errorf("generated models lack the O2O field `User *User` on UserSetting — " +
 			"applyPrimaryKeyOverrides must run before parser.DetectRelationships")
 	}
 	if strings.Contains(got, "UserSettings []*UserSetting") {

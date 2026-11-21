@@ -162,13 +162,15 @@ func TestDetectRelationships_SourceParity(t *testing.T) {
 		defer assertSchemaParity(t, "postgres", parsed, introspected)
 		assertDetectionParity(t, "postgres", parsed, introspected, []string{
 			"O2M pgi_rel.workspaces -> pgi_rel.cycles cycles [workspace_id→id] cycles_workspace_id_fkey",
-			"O2O pgi_rel.cycle_settings -> pgi_rel.cycles cycles [workspace_id→workspace_id cycle_id→id] cycle_settings_workspace_id_cycle_id_fkey",
+			"O2O pgi_rel.cycles -> pgi_rel.workspaces workspace (workspaces) [workspace_id→id] cycles_workspace_id_fkey",
+			"O2O pgi_rel.cycle_settings -> pgi_rel.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] cycle_settings_workspace_id_cycle_id_fkey",
 			"O2M pgi_rel.workspaces -> pgi_rel.labels labels [workspace_id→id] labels_workspace_id_fkey",
 			"O2M pgi_rel.settings -> pgi_rel.setting_refs setting_refs [workspace_id→workspace_id setting_key→key] setting_refs_workspace_id_setting_key_fkey",
 			"M2M pgi_rel.tasks -> pgi_rel.labels labels via pgi_rel.task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id]",
 			"M2M pgi_rel.labels -> pgi_rel.tasks tasks via pgi_rel.task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id]",
 			"O2M pgi_rel.workspaces -> pgi_rel.tasks tasks [workspace_id→id] tasks_workspace_id_fkey",
 			"O2M pgi_rel.cycles -> pgi_rel.tasks cycle_tasks (tasks) [workspace_id→workspace_id cycle_id→id] tasks_a_cycle",
+			"O2O pgi_rel.tasks -> pgi_rel.cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks_a_cycle",
 			"O2M pgi_rel.cycles -> pgi_rel.tasks cycle_code_tasks (tasks) [cycle_code→code] tasks_cycle_code_fkey",
 		}, nil)
 	})
@@ -183,9 +185,11 @@ func TestDetectRelationships_SourceParity(t *testing.T) {
 		assertConstraintParity(t, parsed, introspected, tables...)
 		assertMatch(t, introspected, "r_tasks", "r_tasks_z_cycle", parser.MatchSimple)
 		assertDetectionParity(t, "mysql", parsed, introspected, []string{
-			"O2O r_cycle_settings -> r_cycles r_cycles [workspace_id→workspace_id cycle_id→id] r_cycle_settings_cycle",
+			"O2O r_cycles -> r_workspaces workspace (r_workspaces) [workspace_id→id] r_cycles_ws",
+			"O2O r_cycle_settings -> r_cycles cycle (r_cycles) [workspace_id→workspace_id cycle_id→id] r_cycle_settings_cycle",
 			"M2M r_tasks -> r_labels r_labels via r_task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id]",
 			"O2M r_cycles -> r_tasks cycle_r_tasks (r_tasks) [workspace_id→workspace_id cycle_id→id] r_tasks_a_cycle",
+			"O2O r_tasks -> r_cycles cycle (r_cycles) [workspace_id→workspace_id cycle_id→id] r_tasks_a_cycle",
 			"O2M r_cycles -> r_tasks cycle_code_r_tasks (r_tasks) [cycle_code→code] r_tasks_code",
 			"O2M r_settings -> r_setting_refs r_setting_refs [workspace_id→workspace_id setting_key→key] r_setting_refs_setting",
 		}, []string{
@@ -200,9 +204,11 @@ func TestDetectRelationships_SourceParity(t *testing.T) {
 		assertConstraintParity(t, parsed, introspected, tableNames(parsed)...)
 		assertMatch(t, introspected, "tasks", "", parser.MatchSimple)
 		assertDetectionParity(t, "sqlite", parsed, introspected, []string{
-			"O2O cycle_settings -> cycles cycles [workspace_id→workspace_id cycle_id→id] cycle_settings(workspace_id, cycle_id) → cycles(workspace_id, id)",
+			"O2O cycles -> workspaces workspace (workspaces) [workspace_id→id] cycles(workspace_id) → workspaces(id)",
+			"O2O cycle_settings -> cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] cycle_settings(workspace_id, cycle_id) → cycles(workspace_id, id)",
 			"M2M tasks -> labels labels via task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id]",
 			"O2M cycles -> tasks cycle_tasks (tasks) [workspace_id→workspace_id cycle_id→id] tasks(workspace_id, cycle_id) → cycles(workspace_id, id)",
+			"O2O tasks -> cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks(workspace_id, cycle_id) → cycles(workspace_id, id)",
 			"O2M cycles -> tasks cycle_code_tasks (tasks) [cycle_code→code] tasks(cycle_code) → cycles(code)",
 			"O2M settings -> setting_refs setting_refs [workspace_id→workspace_id setting_key→key] setting_refs(workspace_id, setting_key) → settings(workspace_id, key)",
 		}, []string{

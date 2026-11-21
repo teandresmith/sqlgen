@@ -1115,7 +1115,9 @@ func hasAnyRelationshipCard(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Board != nil {
+		return true
+	}
 	return false
 }
 
@@ -2969,7 +2971,9 @@ func hasAnyRelationshipTemplateNote(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Template != nil {
+		return true
+	}
 	return false
 }
 

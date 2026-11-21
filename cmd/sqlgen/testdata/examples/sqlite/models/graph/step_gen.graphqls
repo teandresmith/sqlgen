@@ -9,7 +9,7 @@ type Step {
   "previous_step_id"
   previousStepID: Int
   "one-to-one relationship with the steps table."
-  steps: Step
+  previousStep: Step
 }
 
 type StepConnection {

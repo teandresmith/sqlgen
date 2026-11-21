@@ -28,6 +28,13 @@
 | --- | --- | --- | --- | --- |
 | `shared_kids_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| guardian | o2o | SharedGuardian | public.shared_kids.(org, guardian_id) |  |
+| parent | o2o | SharedParent | public.shared_kids.(org, parent_id) |  |
+
 ## Query methods
 
 ### Get

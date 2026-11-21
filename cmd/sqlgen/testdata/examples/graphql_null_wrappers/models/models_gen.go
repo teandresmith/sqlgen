@@ -43,6 +43,8 @@ type Account struct {
 	Accounts []*Account `db:"-" json:"accounts"`
 	// Entries - one-to-many relationship with the entries table.
 	Entries []*Entry `db:"-" json:"entries"`
+	// Parent - one-to-one relationship with the accounts table.
+	Parent *Account `db:"-" json:"parent"`
 }
 
 // AccountClient provides type-safe operations for the accounts table.
@@ -424,25 +426,58 @@ func (c *accountClient) GetMany(ctx context.Context, input *GetAccountsInput, op
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var accounts []*Account
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("a", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "a",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		accounts, err = scanAccounts(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			accounts, err = scanAccountsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			accounts, err = scanAccounts(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -3637,6 +3672,7 @@ type AccountFieldOptions struct {
 	DeletedAt   bool                        `json:"deleted_at"`
 	Accounts    *AccountRelationshipOptions `json:"accounts"`
 	Entries     *EntryRelationshipOptions   `json:"entries"`
+	Parent      *AccountFieldOptions        `json:"parent"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -3766,6 +3802,9 @@ func (fo *AccountFieldOptions) HasSelectedColumns() bool {
 	if fo.Entries != nil {
 		return true
 	}
+	if fo.Parent != nil {
+		return true
+	}
 	return false
 }
 
@@ -3836,6 +3875,392 @@ type GetAccountsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *accountClient) resolveO2OJoins(d sql.Dialect, fo *AccountFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Parent != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "accounts"},
+			Alias: "p",
+			On:    fmt.Sprintf("p.%s = a.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Parent.Columns(), "id"),
+			SoftDelete: &sql.SoftDeleteOptions{
+				Column: "deleted_at",
+				Type:   sql.SoftDeleteTimestamp,
+			},
+		})
+		if fo.Parent.Parent != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "public", Name: "accounts"},
+				Alias: "p2",
+				On:    fmt.Sprintf("p2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Parent.Parent.Columns(), "id"),
+				SoftDelete: &sql.SoftDeleteOptions{
+					Column: "deleted_at",
+					Type:   sql.SoftDeleteTimestamp,
+				},
+			})
+			if fo.Parent.Parent.Parent != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "public", Name: "accounts"},
+					Alias: "p3",
+					On:    fmt.Sprintf("p3.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.Parent.Parent.Parent.Columns(), "id"),
+					SoftDelete: &sql.SoftDeleteOptions{
+						Column: "deleted_at",
+						Type:   sql.SoftDeleteTimestamp,
+					},
+				})
+				if fo.Parent.Parent.Parent.Parent != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "public", Name: "accounts"},
+						Alias: "p4",
+						On:    fmt.Sprintf("p4.%s = p3.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.Parent.Parent.Parent.Parent.Columns(), "id"),
+						SoftDelete: &sql.SoftDeleteOptions{
+							Column: "deleted_at",
+							Type:   sql.SoftDeleteTimestamp,
+						},
+					})
+					if fo.Parent.Parent.Parent.Parent.Parent != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "public", Name: "accounts"},
+							Alias: "p5",
+							On:    fmt.Sprintf("p5.%s = p4.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.Parent.Parent.Parent.Parent.Parent.Columns(), "id"),
+							SoftDelete: &sql.SoftDeleteOptions{
+								Column: "deleted_at",
+								Type:   sql.SoftDeleteTimestamp,
+							},
+						})
+						if fo.Parent.Parent.Parent.Parent.Parent.Parent != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "public", Name: "accounts"},
+								Alias: "p6",
+								On:    fmt.Sprintf("p6.%s = p5.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.Parent.Parent.Parent.Parent.Parent.Parent.Columns(), "id"),
+								SoftDelete: &sql.SoftDeleteOptions{
+									Column: "deleted_at",
+									Type:   sql.SoftDeleteTimestamp,
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	return joins
+}
+
+// scanAccountsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Account entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanAccountsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Account, error) {
+	var result []*Account
+	for rows.Next() {
+		a := &Account{}
+		p := &Account{}
+		pHasData := false
+		p2 := &Account{}
+		p2HasData := false
+		p3 := &Account{}
+		p3HasData := false
+		p4 := &Account{}
+		p4HasData := false
+		p5 := &Account{}
+		p5HasData := false
+		p6 := &Account{}
+		p6HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "a.id":
+				targets[idx] = &a.ID
+			case "a.name":
+				targets[idx] = &a.Name
+			case "a.external_ref":
+				targets[idx] = &a.ExternalRef
+			case "a.nickname":
+				targets[idx] = &a.Nickname
+			case "a.flag":
+				targets[idx] = &a.Flag
+			case "a.small_count":
+				targets[idx] = &a.SmallCount
+			case "a.mid_count":
+				targets[idx] = &a.MidCount
+			case "a.big_count":
+				targets[idx] = &a.BigCount
+			case "a.ratio":
+				targets[idx] = &a.Ratio
+			case "a.observed_at":
+				targets[idx] = &a.ObservedAt
+			case "a.balance":
+				targets[idx] = &a.Balance
+			case "a.tenant_ref":
+				targets[idx] = &a.TenantRef
+			case "a.parent_id":
+				targets[idx] = &a.ParentID
+			case "a.created_at":
+				targets[idx] = &a.CreatedAt
+			case "a.deleted_at":
+				targets[idx] = &a.DeletedAt
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.name":
+				targets[idx] = database.NullScan(&p.Name)
+			case "p.external_ref":
+				targets[idx] = database.NullScan(&p.ExternalRef)
+			case "p.nickname":
+				targets[idx] = &p.Nickname
+			case "p.flag":
+				targets[idx] = &p.Flag
+			case "p.small_count":
+				targets[idx] = &p.SmallCount
+			case "p.mid_count":
+				targets[idx] = &p.MidCount
+			case "p.big_count":
+				targets[idx] = &p.BigCount
+			case "p.ratio":
+				targets[idx] = &p.Ratio
+			case "p.observed_at":
+				targets[idx] = &p.ObservedAt
+			case "p.balance":
+				targets[idx] = &p.Balance
+			case "p.tenant_ref":
+				targets[idx] = &p.TenantRef
+			case "p.parent_id":
+				targets[idx] = &p.ParentID
+			case "p.created_at":
+				targets[idx] = database.NullScan(&p.CreatedAt)
+			case "p.deleted_at":
+				targets[idx] = &p.DeletedAt
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.name":
+				targets[idx] = database.NullScan(&p2.Name)
+			case "p2.external_ref":
+				targets[idx] = database.NullScan(&p2.ExternalRef)
+			case "p2.nickname":
+				targets[idx] = &p2.Nickname
+			case "p2.flag":
+				targets[idx] = &p2.Flag
+			case "p2.small_count":
+				targets[idx] = &p2.SmallCount
+			case "p2.mid_count":
+				targets[idx] = &p2.MidCount
+			case "p2.big_count":
+				targets[idx] = &p2.BigCount
+			case "p2.ratio":
+				targets[idx] = &p2.Ratio
+			case "p2.observed_at":
+				targets[idx] = &p2.ObservedAt
+			case "p2.balance":
+				targets[idx] = &p2.Balance
+			case "p2.tenant_ref":
+				targets[idx] = &p2.TenantRef
+			case "p2.parent_id":
+				targets[idx] = &p2.ParentID
+			case "p2.created_at":
+				targets[idx] = database.NullScan(&p2.CreatedAt)
+			case "p2.deleted_at":
+				targets[idx] = &p2.DeletedAt
+			case "p3.id":
+				targets[idx] = database.NullScan(&p3.ID)
+				p3HasData = true
+			case "p3.name":
+				targets[idx] = database.NullScan(&p3.Name)
+			case "p3.external_ref":
+				targets[idx] = database.NullScan(&p3.ExternalRef)
+			case "p3.nickname":
+				targets[idx] = &p3.Nickname
+			case "p3.flag":
+				targets[idx] = &p3.Flag
+			case "p3.small_count":
+				targets[idx] = &p3.SmallCount
+			case "p3.mid_count":
+				targets[idx] = &p3.MidCount
+			case "p3.big_count":
+				targets[idx] = &p3.BigCount
+			case "p3.ratio":
+				targets[idx] = &p3.Ratio
+			case "p3.observed_at":
+				targets[idx] = &p3.ObservedAt
+			case "p3.balance":
+				targets[idx] = &p3.Balance
+			case "p3.tenant_ref":
+				targets[idx] = &p3.TenantRef
+			case "p3.parent_id":
+				targets[idx] = &p3.ParentID
+			case "p3.created_at":
+				targets[idx] = database.NullScan(&p3.CreatedAt)
+			case "p3.deleted_at":
+				targets[idx] = &p3.DeletedAt
+			case "p4.id":
+				targets[idx] = database.NullScan(&p4.ID)
+				p4HasData = true
+			case "p4.name":
+				targets[idx] = database.NullScan(&p4.Name)
+			case "p4.external_ref":
+				targets[idx] = database.NullScan(&p4.ExternalRef)
+			case "p4.nickname":
+				targets[idx] = &p4.Nickname
+			case "p4.flag":
+				targets[idx] = &p4.Flag
+			case "p4.small_count":
+				targets[idx] = &p4.SmallCount
+			case "p4.mid_count":
+				targets[idx] = &p4.MidCount
+			case "p4.big_count":
+				targets[idx] = &p4.BigCount
+			case "p4.ratio":
+				targets[idx] = &p4.Ratio
+			case "p4.observed_at":
+				targets[idx] = &p4.ObservedAt
+			case "p4.balance":
+				targets[idx] = &p4.Balance
+			case "p4.tenant_ref":
+				targets[idx] = &p4.TenantRef
+			case "p4.parent_id":
+				targets[idx] = &p4.ParentID
+			case "p4.created_at":
+				targets[idx] = database.NullScan(&p4.CreatedAt)
+			case "p4.deleted_at":
+				targets[idx] = &p4.DeletedAt
+			case "p5.id":
+				targets[idx] = database.NullScan(&p5.ID)
+				p5HasData = true
+			case "p5.name":
+				targets[idx] = database.NullScan(&p5.Name)
+			case "p5.external_ref":
+				targets[idx] = database.NullScan(&p5.ExternalRef)
+			case "p5.nickname":
+				targets[idx] = &p5.Nickname
+			case "p5.flag":
+				targets[idx] = &p5.Flag
+			case "p5.small_count":
+				targets[idx] = &p5.SmallCount
+			case "p5.mid_count":
+				targets[idx] = &p5.MidCount
+			case "p5.big_count":
+				targets[idx] = &p5.BigCount
+			case "p5.ratio":
+				targets[idx] = &p5.Ratio
+			case "p5.observed_at":
+				targets[idx] = &p5.ObservedAt
+			case "p5.balance":
+				targets[idx] = &p5.Balance
+			case "p5.tenant_ref":
+				targets[idx] = &p5.TenantRef
+			case "p5.parent_id":
+				targets[idx] = &p5.ParentID
+			case "p5.created_at":
+				targets[idx] = database.NullScan(&p5.CreatedAt)
+			case "p5.deleted_at":
+				targets[idx] = &p5.DeletedAt
+			case "p6.id":
+				targets[idx] = database.NullScan(&p6.ID)
+				p6HasData = true
+			case "p6.name":
+				targets[idx] = database.NullScan(&p6.Name)
+			case "p6.external_ref":
+				targets[idx] = database.NullScan(&p6.ExternalRef)
+			case "p6.nickname":
+				targets[idx] = &p6.Nickname
+			case "p6.flag":
+				targets[idx] = &p6.Flag
+			case "p6.small_count":
+				targets[idx] = &p6.SmallCount
+			case "p6.mid_count":
+				targets[idx] = &p6.MidCount
+			case "p6.big_count":
+				targets[idx] = &p6.BigCount
+			case "p6.ratio":
+				targets[idx] = &p6.Ratio
+			case "p6.observed_at":
+				targets[idx] = &p6.ObservedAt
+			case "p6.balance":
+				targets[idx] = &p6.Balance
+			case "p6.tenant_ref":
+				targets[idx] = &p6.TenantRef
+			case "p6.parent_id":
+				targets[idx] = &p6.ParentID
+			case "p6.created_at":
+				targets[idx] = database.NullScan(&p6.CreatedAt)
+			case "p6.deleted_at":
+				targets[idx] = &p6.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan account with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if p6HasData && p6.ID != 0 {
+			p5.Parent = p6
+		} else {
+			p5.Parent = nil
+		}
+		if p5HasData && p5.ID != 0 {
+			p4.Parent = p5
+		} else {
+			p4.Parent = nil
+		}
+		if p4HasData && p4.ID != 0 {
+			p3.Parent = p4
+		} else {
+			p3.Parent = nil
+		}
+		if p3HasData && p3.ID != 0 {
+			p2.Parent = p3
+		} else {
+			p2.Parent = nil
+		}
+		if p2HasData && p2.ID != 0 {
+			p.Parent = p2
+		} else {
+			p.Parent = nil
+		}
+		if pHasData && p.ID != 0 {
+			a.Parent = p
+		} else {
+			a.Parent = nil
+		}
+
+		result = append(result, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate account rows: %w", err)
+	}
+	return result, nil
+}
+
 type Entry struct {
 	ID        int64             `db:"id" json:"id"`
 	AccountID int64             `db:"account_id" json:"account_id"`
@@ -3844,6 +4269,9 @@ type Entry struct {
 	// UpstreamRef - Identifier of this entry in the upstream ledger
 	UpstreamRef *uuid.UUID `db:"upstream_ref" json:"upstream_ref"`
 	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
+
+	// Account - one-to-one relationship with the accounts table.
+	Account *Account `db:"-" json:"account"`
 }
 
 // EntryClient provides type-safe operations for the entries table.
@@ -4149,25 +4577,58 @@ func (c *entryClient) GetMany(ctx context.Context, input *GetEntriesInput, opts 
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var entries []*Entry
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("e", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "e",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		entries, err = scanEntries(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			entries, err = scanEntriesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			entries, err = scanEntries(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return entries, nil
@@ -6045,12 +6506,13 @@ func (f *EntryFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 
 // EntryFieldOptions controls column selection and relationship loading for entries queries.
 type EntryFieldOptions struct {
-	ID          bool `json:"id"`
-	AccountID   bool `json:"account_id"`
-	Memo        bool `json:"memo"`
-	Amount      bool `json:"amount"`
-	UpstreamRef bool `json:"upstream_ref"`
-	CreatedAt   bool `json:"created_at"`
+	ID          bool                 `json:"id"`
+	AccountID   bool                 `json:"account_id"`
+	Memo        bool                 `json:"memo"`
+	Amount      bool                 `json:"amount"`
+	UpstreamRef bool                 `json:"upstream_ref"`
+	CreatedAt   bool                 `json:"created_at"`
+	Account     *AccountFieldOptions `json:"account"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -6111,6 +6573,9 @@ func (fo *EntryFieldOptions) HasSelectedColumns() bool {
 	if fo.CreatedAt {
 		return true
 	}
+	if fo.Account != nil {
+		return true
+	}
 	return false
 }
 
@@ -6149,4 +6614,372 @@ type GetEntriesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *entryClient) resolveO2OJoins(d sql.Dialect, fo *EntryFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Account != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "accounts"},
+			Alias: "a",
+			On:    fmt.Sprintf("a.%s = e.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("account_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Account.Columns(), "id"),
+			SoftDelete: &sql.SoftDeleteOptions{
+				Column: "deleted_at",
+				Type:   sql.SoftDeleteTimestamp,
+			},
+		})
+		if fo.Account.Parent != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "public", Name: "accounts"},
+				Alias: "p",
+				On:    fmt.Sprintf("p.%s = a.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Account.Parent.Columns(), "id"),
+				SoftDelete: &sql.SoftDeleteOptions{
+					Column: "deleted_at",
+					Type:   sql.SoftDeleteTimestamp,
+				},
+			})
+			if fo.Account.Parent.Parent != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "public", Name: "accounts"},
+					Alias: "p2",
+					On:    fmt.Sprintf("p2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.Account.Parent.Parent.Columns(), "id"),
+					SoftDelete: &sql.SoftDeleteOptions{
+						Column: "deleted_at",
+						Type:   sql.SoftDeleteTimestamp,
+					},
+				})
+				if fo.Account.Parent.Parent.Parent != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "public", Name: "accounts"},
+						Alias: "p3",
+						On:    fmt.Sprintf("p3.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.Account.Parent.Parent.Parent.Columns(), "id"),
+						SoftDelete: &sql.SoftDeleteOptions{
+							Column: "deleted_at",
+							Type:   sql.SoftDeleteTimestamp,
+						},
+					})
+					if fo.Account.Parent.Parent.Parent.Parent != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "public", Name: "accounts"},
+							Alias: "p4",
+							On:    fmt.Sprintf("p4.%s = p3.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.Account.Parent.Parent.Parent.Parent.Columns(), "id"),
+							SoftDelete: &sql.SoftDeleteOptions{
+								Column: "deleted_at",
+								Type:   sql.SoftDeleteTimestamp,
+							},
+						})
+						if fo.Account.Parent.Parent.Parent.Parent.Parent != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "public", Name: "accounts"},
+								Alias: "p5",
+								On:    fmt.Sprintf("p5.%s = p4.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.Account.Parent.Parent.Parent.Parent.Parent.Columns(), "id"),
+								SoftDelete: &sql.SoftDeleteOptions{
+									Column: "deleted_at",
+									Type:   sql.SoftDeleteTimestamp,
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	return joins
+}
+
+// scanEntriesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Entry entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanEntriesWithOneToOneJoins(rows database.Rows, columns []string) ([]*Entry, error) {
+	var result []*Entry
+	for rows.Next() {
+		e := &Entry{}
+		a := &Account{}
+		aHasData := false
+		p := &Account{}
+		pHasData := false
+		p2 := &Account{}
+		p2HasData := false
+		p3 := &Account{}
+		p3HasData := false
+		p4 := &Account{}
+		p4HasData := false
+		p5 := &Account{}
+		p5HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "e.id":
+				targets[idx] = &e.ID
+			case "e.account_id":
+				targets[idx] = &e.AccountID
+			case "e.memo":
+				targets[idx] = &e.Memo
+			case "e.amount":
+				targets[idx] = &e.Amount
+			case "e.upstream_ref":
+				targets[idx] = &e.UpstreamRef
+			case "e.created_at":
+				targets[idx] = &e.CreatedAt
+			case "a.id":
+				targets[idx] = database.NullScan(&a.ID)
+				aHasData = true
+			case "a.name":
+				targets[idx] = database.NullScan(&a.Name)
+			case "a.external_ref":
+				targets[idx] = database.NullScan(&a.ExternalRef)
+			case "a.nickname":
+				targets[idx] = &a.Nickname
+			case "a.flag":
+				targets[idx] = &a.Flag
+			case "a.small_count":
+				targets[idx] = &a.SmallCount
+			case "a.mid_count":
+				targets[idx] = &a.MidCount
+			case "a.big_count":
+				targets[idx] = &a.BigCount
+			case "a.ratio":
+				targets[idx] = &a.Ratio
+			case "a.observed_at":
+				targets[idx] = &a.ObservedAt
+			case "a.balance":
+				targets[idx] = &a.Balance
+			case "a.tenant_ref":
+				targets[idx] = &a.TenantRef
+			case "a.parent_id":
+				targets[idx] = &a.ParentID
+			case "a.created_at":
+				targets[idx] = database.NullScan(&a.CreatedAt)
+			case "a.deleted_at":
+				targets[idx] = &a.DeletedAt
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.name":
+				targets[idx] = database.NullScan(&p.Name)
+			case "p.external_ref":
+				targets[idx] = database.NullScan(&p.ExternalRef)
+			case "p.nickname":
+				targets[idx] = &p.Nickname
+			case "p.flag":
+				targets[idx] = &p.Flag
+			case "p.small_count":
+				targets[idx] = &p.SmallCount
+			case "p.mid_count":
+				targets[idx] = &p.MidCount
+			case "p.big_count":
+				targets[idx] = &p.BigCount
+			case "p.ratio":
+				targets[idx] = &p.Ratio
+			case "p.observed_at":
+				targets[idx] = &p.ObservedAt
+			case "p.balance":
+				targets[idx] = &p.Balance
+			case "p.tenant_ref":
+				targets[idx] = &p.TenantRef
+			case "p.parent_id":
+				targets[idx] = &p.ParentID
+			case "p.created_at":
+				targets[idx] = database.NullScan(&p.CreatedAt)
+			case "p.deleted_at":
+				targets[idx] = &p.DeletedAt
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.name":
+				targets[idx] = database.NullScan(&p2.Name)
+			case "p2.external_ref":
+				targets[idx] = database.NullScan(&p2.ExternalRef)
+			case "p2.nickname":
+				targets[idx] = &p2.Nickname
+			case "p2.flag":
+				targets[idx] = &p2.Flag
+			case "p2.small_count":
+				targets[idx] = &p2.SmallCount
+			case "p2.mid_count":
+				targets[idx] = &p2.MidCount
+			case "p2.big_count":
+				targets[idx] = &p2.BigCount
+			case "p2.ratio":
+				targets[idx] = &p2.Ratio
+			case "p2.observed_at":
+				targets[idx] = &p2.ObservedAt
+			case "p2.balance":
+				targets[idx] = &p2.Balance
+			case "p2.tenant_ref":
+				targets[idx] = &p2.TenantRef
+			case "p2.parent_id":
+				targets[idx] = &p2.ParentID
+			case "p2.created_at":
+				targets[idx] = database.NullScan(&p2.CreatedAt)
+			case "p2.deleted_at":
+				targets[idx] = &p2.DeletedAt
+			case "p3.id":
+				targets[idx] = database.NullScan(&p3.ID)
+				p3HasData = true
+			case "p3.name":
+				targets[idx] = database.NullScan(&p3.Name)
+			case "p3.external_ref":
+				targets[idx] = database.NullScan(&p3.ExternalRef)
+			case "p3.nickname":
+				targets[idx] = &p3.Nickname
+			case "p3.flag":
+				targets[idx] = &p3.Flag
+			case "p3.small_count":
+				targets[idx] = &p3.SmallCount
+			case "p3.mid_count":
+				targets[idx] = &p3.MidCount
+			case "p3.big_count":
+				targets[idx] = &p3.BigCount
+			case "p3.ratio":
+				targets[idx] = &p3.Ratio
+			case "p3.observed_at":
+				targets[idx] = &p3.ObservedAt
+			case "p3.balance":
+				targets[idx] = &p3.Balance
+			case "p3.tenant_ref":
+				targets[idx] = &p3.TenantRef
+			case "p3.parent_id":
+				targets[idx] = &p3.ParentID
+			case "p3.created_at":
+				targets[idx] = database.NullScan(&p3.CreatedAt)
+			case "p3.deleted_at":
+				targets[idx] = &p3.DeletedAt
+			case "p4.id":
+				targets[idx] = database.NullScan(&p4.ID)
+				p4HasData = true
+			case "p4.name":
+				targets[idx] = database.NullScan(&p4.Name)
+			case "p4.external_ref":
+				targets[idx] = database.NullScan(&p4.ExternalRef)
+			case "p4.nickname":
+				targets[idx] = &p4.Nickname
+			case "p4.flag":
+				targets[idx] = &p4.Flag
+			case "p4.small_count":
+				targets[idx] = &p4.SmallCount
+			case "p4.mid_count":
+				targets[idx] = &p4.MidCount
+			case "p4.big_count":
+				targets[idx] = &p4.BigCount
+			case "p4.ratio":
+				targets[idx] = &p4.Ratio
+			case "p4.observed_at":
+				targets[idx] = &p4.ObservedAt
+			case "p4.balance":
+				targets[idx] = &p4.Balance
+			case "p4.tenant_ref":
+				targets[idx] = &p4.TenantRef
+			case "p4.parent_id":
+				targets[idx] = &p4.ParentID
+			case "p4.created_at":
+				targets[idx] = database.NullScan(&p4.CreatedAt)
+			case "p4.deleted_at":
+				targets[idx] = &p4.DeletedAt
+			case "p5.id":
+				targets[idx] = database.NullScan(&p5.ID)
+				p5HasData = true
+			case "p5.name":
+				targets[idx] = database.NullScan(&p5.Name)
+			case "p5.external_ref":
+				targets[idx] = database.NullScan(&p5.ExternalRef)
+			case "p5.nickname":
+				targets[idx] = &p5.Nickname
+			case "p5.flag":
+				targets[idx] = &p5.Flag
+			case "p5.small_count":
+				targets[idx] = &p5.SmallCount
+			case "p5.mid_count":
+				targets[idx] = &p5.MidCount
+			case "p5.big_count":
+				targets[idx] = &p5.BigCount
+			case "p5.ratio":
+				targets[idx] = &p5.Ratio
+			case "p5.observed_at":
+				targets[idx] = &p5.ObservedAt
+			case "p5.balance":
+				targets[idx] = &p5.Balance
+			case "p5.tenant_ref":
+				targets[idx] = &p5.TenantRef
+			case "p5.parent_id":
+				targets[idx] = &p5.ParentID
+			case "p5.created_at":
+				targets[idx] = database.NullScan(&p5.CreatedAt)
+			case "p5.deleted_at":
+				targets[idx] = &p5.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan entry with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if p5HasData && p5.ID != 0 {
+			p4.Parent = p5
+		} else {
+			p4.Parent = nil
+		}
+		if p4HasData && p4.ID != 0 {
+			p3.Parent = p4
+		} else {
+			p3.Parent = nil
+		}
+		if p3HasData && p3.ID != 0 {
+			p2.Parent = p3
+		} else {
+			p2.Parent = nil
+		}
+		if p2HasData && p2.ID != 0 {
+			p.Parent = p2
+		} else {
+			p.Parent = nil
+		}
+		if pHasData && p.ID != 0 {
+			a.Parent = p
+		} else {
+			a.Parent = nil
+		}
+		if aHasData && a.ID != 0 {
+			e.Account = a
+		} else {
+			e.Account = nil
+		}
+
+		result = append(result, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate entry rows: %w", err)
+	}
+	return result, nil
 }

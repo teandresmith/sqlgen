@@ -35,7 +35,7 @@ func TestBelongsTo_SelfReferentialLoadsTheParent(t *testing.T) {
 		got, err := client.Steps().Get(ctx, id, func(o *models.CallOptions[models.StepFieldOptions]) {
 			o.FieldOptions = &models.StepFieldOptions{
 				ID: true, Name: true, PreviousStepID: true,
-				Steps: &models.StepFieldOptions{ID: true, Name: true},
+				PreviousStep: &models.StepFieldOptions{ID: true, Name: true},
 			}
 		})
 		if err != nil {
@@ -44,10 +44,10 @@ func TestBelongsTo_SelfReferentialLoadsTheParent(t *testing.T) {
 		return got
 	}
 
-	if got := get(second.ID).Steps; got == nil || got.ID != first.ID {
+	if got := get(second.ID).PreviousStep; got == nil || got.ID != first.ID {
 		t.Errorf("second step's previous step = %+v, want step %d (%q)", got, first.ID, "first")
 	}
-	if got := get(first.ID).Steps; got != nil {
+	if got := get(first.ID).PreviousStep; got != nil {
 		t.Errorf("first step's previous step = %+v, want none", got)
 	}
 }

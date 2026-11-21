@@ -109,7 +109,7 @@ type cycleSnap struct {
 type reportSnap struct {
 	ID      string    `json:"id"`
 	Summary string    `json:"summary"`
-	Task    *taskSnap `json:"tasks"`
+	Task    *taskSnap `json:"task"`
 }
 
 func sortCycles(cycles []cycleSnap) []cycleSnap {
@@ -187,7 +187,7 @@ func goReports(t *testing.T, tenant uuid.UUID) []reportSnap {
 	t.Helper()
 	client, ctx := compositeTenantClient(tenant)
 	rows, err := client.TaskReports().GetMany(ctx, &models.GetTaskReportsInput{}, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
-		o.FieldOptions = &models.TaskReportFieldOptions{ID: true, Summary: true, Tasks: &models.TaskFieldOptions{ID: true, Title: true}}
+		o.FieldOptions = &models.TaskReportFieldOptions{ID: true, Summary: true, Task: &models.TaskFieldOptions{ID: true, Title: true}}
 	})
 	if err != nil {
 		t.Fatalf("Go client TaskReports().GetMany: %v", err)
@@ -195,8 +195,8 @@ func goReports(t *testing.T, tenant uuid.UUID) []reportSnap {
 	out := make([]reportSnap, 0, len(rows))
 	for _, r := range rows {
 		snap := reportSnap{ID: r.ID.String(), Summary: r.Summary}
-		if r.Tasks != nil {
-			snap.Task = &taskSnap{ID: r.Tasks.ID.String(), Title: r.Tasks.Title}
+		if r.Task != nil {
+			snap.Task = &taskSnap{ID: r.Task.ID.String(), Title: r.Task.Title}
 		}
 		out = append(out, snap)
 	}
@@ -254,7 +254,7 @@ func TestCompositeTenantFK_GraphQLMatchesGoClient(t *testing.T) {
 	})
 
 	t.Run("o2o", func(t *testing.T) {
-		got := gqlReports(t, url, fixedTenantA, `id summary tasks { id title }`)
+		got := gqlReports(t, url, fixedTenantA, `id summary task { id title }`)
 		if diff := gocmp.Diff(wantReports(a), got); diff != "" {
 			t.Errorf("GraphQL task reports as tenant A (-want +got):\n%s", diff)
 		}
@@ -294,7 +294,7 @@ func TestCompositeTenantFK_EdgeLoadsWithoutSelectedKeys(t *testing.T) {
 			want[i].ID = ""
 			want[i].Task.ID = ""
 		}
-		got := gqlReports(t, url, fixedTenantA, `summary tasks { title }`)
+		got := gqlReports(t, url, fixedTenantA, `summary task { title }`)
 		if diff := gocmp.Diff(want, got); diff != "" {
 			t.Errorf("task reports selected without keys (-want +got):\n%s", diff)
 		}

@@ -8,6 +8,8 @@ type TimeKeyedNote {
   keyedAt: Time
   "note"
   note: String!
+  "one-to-one relationship with the time_keyed table."
+  timeKeyed: TimeKeyed
 }
 
 type TimeKeyedNoteConnection {

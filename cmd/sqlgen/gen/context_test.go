@@ -2404,7 +2404,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 		{
 			name:   "auto-detected O2O holds the FK on the source",
 			table:  "profiles",
-			field:  "Users",
+			field:  "User",
 			want:   false,
 			reason: "profiles.user_id is on the source table, not on users",
 		},
@@ -2442,7 +2442,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 	// The two O2O edges disagree on FKOnTarget while agreeing on Side, which is
 	// the whole reason Side cannot stand in for it (PRD §13.1).
 	t.Run("both O2O edges declare the same Side", func(t *testing.T) {
-		for _, c := range []struct{ table, field string }{{"profiles", "Users"}, {"assets", "PrimaryDocument"}} {
+		for _, c := range []struct{ table, field string }{{"profiles", "User"}, {"assets", "PrimaryDocument"}} {
 			if got := rel(t, c.table, c.field).Side; got != parser.SideParent {
 				t.Errorf("%s.%s Side = %v, want SideParent", c.table, c.field, got)
 			}

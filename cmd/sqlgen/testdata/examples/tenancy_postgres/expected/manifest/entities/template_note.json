@@ -108,7 +108,26 @@
       "comment": ""
     }
   ],
-  "relationships": [],
+  "relationships": [
+    {
+      "name": "template",
+      "kind": "o2o",
+      "target_entity": "Template",
+      "fk": {
+        "table": "template_notes",
+        "schema": "public",
+        "columns": [
+          "workspace_id",
+          "template_id"
+        ],
+        "references": [
+          "owner_workspace",
+          "id"
+        ],
+        "constraint": "template_notes_workspace_id_template_id_fkey"
+      }
+    }
+  ],
   "methods": {
     "query": [
       {

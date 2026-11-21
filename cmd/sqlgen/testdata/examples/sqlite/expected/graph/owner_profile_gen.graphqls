@@ -9,7 +9,7 @@ type OwnerProfile {
   "bio"
   bio: String
   "one-to-one relationship with the owners table."
-  owners: Owner
+  owner: Owner
 }
 
 type OwnerProfileConnection {

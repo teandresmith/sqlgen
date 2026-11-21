@@ -147,6 +147,7 @@ type ComplexityRoot struct {
 
 	BinItem struct {
 		Aisle func(childComplexity int) int
+		Bin   func(childComplexity int) int
 		ID    func(childComplexity int) int
 		Name  func(childComplexity int) int
 		Slot  func(childComplexity int) int
@@ -205,9 +206,10 @@ type ComplexityRoot struct {
 	}
 
 	BoolKeyedNote struct {
-		ID     func(childComplexity int) int
-		KeyedK func(childComplexity int) int
-		Note   func(childComplexity int) int
+		BoolKeyed func(childComplexity int) int
+		ID        func(childComplexity int) int
+		KeyedK    func(childComplexity int) int
+		Note      func(childComplexity int) int
 	}
 
 	BoolKeyedNoteConnection struct {
@@ -538,6 +540,7 @@ type ComplexityRoot struct {
 		OrderedAt  func(childComplexity int) int
 		Status     func(childComplexity int) int
 		Total      func(childComplexity int) int
+		User       func(childComplexity int) int
 		UserID     func(childComplexity int) int
 	}
 
@@ -554,7 +557,9 @@ type ComplexityRoot struct {
 
 	OrderItem struct {
 		ID        func(childComplexity int) int
+		Order     func(childComplexity int) int
 		OrderID   func(childComplexity int) int
+		Product   func(childComplexity int) int
 		ProductID func(childComplexity int) int
 		Quantity  func(childComplexity int) int
 		UnitPrice func(childComplexity int) int
@@ -596,6 +601,7 @@ type ComplexityRoot struct {
 
 	Product struct {
 		Attributes       func(childComplexity int) int
+		Category         func(childComplexity int) int
 		CategoryID       func(childComplexity int) int
 		CreatedAt        func(childComplexity int) int
 		ID               func(childComplexity int) int
@@ -657,6 +663,7 @@ type ComplexityRoot struct {
 	ProductTagLabel struct {
 		Description func(childComplexity int) int
 		Label       func(childComplexity int) int
+		Product     func(childComplexity int) int
 		ProductID   func(childComplexity int) int
 		TagName     func(childComplexity int) int
 	}
@@ -684,8 +691,8 @@ type ComplexityRoot struct {
 		GithubHandle func(childComplexity int) int
 		ID           func(childComplexity int) int
 		Preferences  func(childComplexity int) int
+		User         func(childComplexity int) int
 		UserID       func(childComplexity int) int
-		Users        func(childComplexity int) int
 		Verified     func(childComplexity int) int
 		Website      func(childComplexity int) int
 	}
@@ -864,9 +871,10 @@ type ComplexityRoot struct {
 	}
 
 	TimeKeyedNote struct {
-		ID      func(childComplexity int) int
-		KeyedAt func(childComplexity int) int
-		Note    func(childComplexity int) int
+		ID        func(childComplexity int) int
+		KeyedAt   func(childComplexity int) int
+		Note      func(childComplexity int) int
+		TimeKeyed func(childComplexity int) int
 	}
 
 	TimeKeyedNoteConnection struct {
@@ -955,6 +963,7 @@ type ComplexityRoot struct {
 	UserEvent struct {
 		Action func(childComplexity int) int
 		ID     func(childComplexity int) int
+		User   func(childComplexity int) int
 		UserID func(childComplexity int) int
 	}
 
@@ -1646,6 +1655,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.BinItem.Aisle(childComplexity), true
+	case "BinItem.bin":
+		if e.ComplexityRoot.BinItem.Bin == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItem.Bin(childComplexity), true
 	case "BinItem.id":
 		if e.ComplexityRoot.BinItem.ID == nil {
 			break
@@ -1841,6 +1856,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.BoolKeyedListResult.TotalCount(childComplexity), true
 
+	case "BoolKeyedNote.boolKeyed":
+		if e.ComplexityRoot.BoolKeyedNote.BoolKeyed == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNote.BoolKeyed(childComplexity), true
 	case "BoolKeyedNote.id":
 		if e.ComplexityRoot.BoolKeyedNote.ID == nil {
 			break
@@ -4239,6 +4260,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Order.Total(childComplexity), true
+	case "Order.user":
+		if e.ComplexityRoot.Order.User == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Order.User(childComplexity), true
 	case "Order.userID":
 		if e.ComplexityRoot.Order.UserID == nil {
 			break
@@ -4284,12 +4311,24 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.OrderItem.ID(childComplexity), true
+	case "OrderItem.order":
+		if e.ComplexityRoot.OrderItem.Order == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OrderItem.Order(childComplexity), true
 	case "OrderItem.orderID":
 		if e.ComplexityRoot.OrderItem.OrderID == nil {
 			break
 		}
 
 		return e.ComplexityRoot.OrderItem.OrderID(childComplexity), true
+	case "OrderItem.product":
+		if e.ComplexityRoot.OrderItem.Product == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OrderItem.Product(childComplexity), true
 	case "OrderItem.productID":
 		if e.ComplexityRoot.OrderItem.ProductID == nil {
 			break
@@ -4434,6 +4473,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Product.Attributes(childComplexity), true
+	case "Product.category":
+		if e.ComplexityRoot.Product.Category == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Product.Category(childComplexity), true
 	case "Product.categoryID":
 		if e.ComplexityRoot.Product.CategoryID == nil {
 			break
@@ -4664,6 +4709,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.ProductTagLabel.Label(childComplexity), true
+	case "ProductTagLabel.product":
+		if e.ComplexityRoot.ProductTagLabel.Product == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductTagLabel.Product(childComplexity), true
 	case "ProductTagLabel.productID":
 		if e.ComplexityRoot.ProductTagLabel.ProductID == nil {
 			break
@@ -4758,18 +4809,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Profile.Preferences(childComplexity), true
+	case "Profile.user":
+		if e.ComplexityRoot.Profile.User == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Profile.User(childComplexity), true
 	case "Profile.userID":
 		if e.ComplexityRoot.Profile.UserID == nil {
 			break
 		}
 
 		return e.ComplexityRoot.Profile.UserID(childComplexity), true
-	case "Profile.users":
-		if e.ComplexityRoot.Profile.Users == nil {
-			break
-		}
-
-		return e.ComplexityRoot.Profile.Users(childComplexity), true
 	case "Profile.verified":
 		if e.ComplexityRoot.Profile.Verified == nil {
 			break
@@ -5948,6 +5999,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.TimeKeyedNote.Note(childComplexity), true
+	case "TimeKeyedNote.timeKeyed":
+		if e.ComplexityRoot.TimeKeyedNote.TimeKeyed == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TimeKeyedNote.TimeKeyed(childComplexity), true
 
 	case "TimeKeyedNoteConnection.edges":
 		if e.ComplexityRoot.TimeKeyedNoteConnection.Edges == nil {
@@ -6289,6 +6346,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.UserEvent.ID(childComplexity), true
+	case "UserEvent.user":
+		if e.ComplexityRoot.UserEvent.User == nil {
+			break
+		}
+
+		return e.ComplexityRoot.UserEvent.User(childComplexity), true
 	case "UserEvent.userID":
 		if e.ComplexityRoot.UserEvent.UserID == nil {
 			break
@@ -7015,6 +7078,8 @@ func (ec *executionContext) childFields_BinItem(ctx context.Context, field graph
 		return ec.fieldContext_BinItem_slot(ctx, field)
 	case "name":
 		return ec.fieldContext_BinItem_name(ctx, field)
+	case "bin":
+		return ec.fieldContext_BinItem_bin(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type BinItem", field.Name)
 }
@@ -7131,6 +7196,8 @@ func (ec *executionContext) childFields_BoolKeyedNote(ctx context.Context, field
 		return ec.fieldContext_BoolKeyedNote_keyedK(ctx, field)
 	case "note":
 		return ec.fieldContext_BoolKeyedNote_note(ctx, field)
+	case "boolKeyed":
+		return ec.fieldContext_BoolKeyedNote_boolKeyed(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedNote", field.Name)
 }
@@ -7445,6 +7512,8 @@ func (ec *executionContext) childFields_Order(ctx context.Context, field graphql
 		return ec.fieldContext_Order_orderedAt(ctx, field)
 	case "orderItems":
 		return ec.fieldContext_Order_orderItems(ctx, field)
+	case "user":
+		return ec.fieldContext_Order_user(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Order", field.Name)
 }
@@ -7483,6 +7552,10 @@ func (ec *executionContext) childFields_OrderItem(ctx context.Context, field gra
 		return ec.fieldContext_OrderItem_quantity(ctx, field)
 	case "unitPrice":
 		return ec.fieldContext_OrderItem_unitPrice(ctx, field)
+	case "order":
+		return ec.fieldContext_OrderItem_order(ctx, field)
+	case "product":
+		return ec.fieldContext_OrderItem_product(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type OrderItem", field.Name)
 }
@@ -7575,6 +7648,8 @@ func (ec *executionContext) childFields_Product(ctx context.Context, field graph
 		return ec.fieldContext_Product_attributes(ctx, field)
 	case "createdAt":
 		return ec.fieldContext_Product_createdAt(ctx, field)
+	case "category":
+		return ec.fieldContext_Product_category(ctx, field)
 	case "orderItems":
 		return ec.fieldContext_Product_orderItems(ctx, field)
 	case "productTagLabels":
@@ -7685,6 +7760,8 @@ func (ec *executionContext) childFields_ProductTagLabel(ctx context.Context, fie
 		return ec.fieldContext_ProductTagLabel_label(ctx, field)
 	case "description":
 		return ec.fieldContext_ProductTagLabel_description(ctx, field)
+	case "product":
+		return ec.fieldContext_ProductTagLabel_product(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type ProductTagLabel", field.Name)
 }
@@ -7741,8 +7818,8 @@ func (ec *executionContext) childFields_Profile(ctx context.Context, field graph
 		return ec.fieldContext_Profile_verified(ctx, field)
 	case "preferences":
 		return ec.fieldContext_Profile_preferences(ctx, field)
-	case "users":
-		return ec.fieldContext_Profile_users(ctx, field)
+	case "user":
+		return ec.fieldContext_Profile_user(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Profile", field.Name)
 }
@@ -7943,6 +8020,8 @@ func (ec *executionContext) childFields_TimeKeyedNote(ctx context.Context, field
 		return ec.fieldContext_TimeKeyedNote_keyedAt(ctx, field)
 	case "note":
 		return ec.fieldContext_TimeKeyedNote_note(ctx, field)
+	case "timeKeyed":
+		return ec.fieldContext_TimeKeyedNote_timeKeyed(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type TimeKeyedNote", field.Name)
 }
@@ -8121,6 +8200,8 @@ func (ec *executionContext) childFields_UserEvent(ctx context.Context, field gra
 		return ec.fieldContext_UserEvent_userID(ctx, field)
 	case "action":
 		return ec.fieldContext_UserEvent_action(ctx, field)
+	case "user":
+		return ec.fieldContext_UserEvent_user(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type UserEvent", field.Name)
 }
@@ -15427,6 +15508,38 @@ func (ec *executionContext) fieldContext_BinItem_name(_ context.Context, field g
 	return graphql.NewScalarFieldContext("BinItem", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _BinItem_bin(ctx context.Context, field graphql.CollectedField, obj *models.BinItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItem_bin(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Bin, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+			return ec.marshalOBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_BinItem_bin(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinItem",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _BinItemConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinItem]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -16228,6 +16341,38 @@ func (ec *executionContext) _BoolKeyedNote_note(ctx context.Context, field graph
 }
 func (ec *executionContext) fieldContext_BoolKeyedNote_note(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("BoolKeyedNote", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNote_boolKeyed(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyedNote) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNote_boolKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BoolKeyed, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalOBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNote_boolKeyed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedNote",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _BoolKeyedNoteConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BoolKeyedNote]) (ret graphql.Marshaler) {
@@ -25835,6 +25980,38 @@ func (ec *executionContext) fieldContext_Order_orderItems(_ context.Context, fie
 	return fc, nil
 }
 
+func (ec *executionContext) _Order_user(ctx context.Context, field graphql.CollectedField, obj *models.Order) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Order_user(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.User, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.User) graphql.Marshaler {
+			return ec.marshalOUser2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐUser(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Order_user(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Order",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_User(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _OrderConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Order]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -26090,6 +26267,70 @@ func (ec *executionContext) _OrderItem_unitPrice(ctx context.Context, field grap
 }
 func (ec *executionContext) fieldContext_OrderItem_unitPrice(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("OrderItem", field, false, false, errors.New("field of type Float does not have child fields"))
+}
+
+func (ec *executionContext) _OrderItem_order(ctx context.Context, field graphql.CollectedField, obj *models.OrderItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OrderItem_order(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Order, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Order) graphql.Marshaler {
+			return ec.marshalOOrder2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐOrder(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_OrderItem_order(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OrderItem",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Order(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OrderItem_product(ctx context.Context, field graphql.CollectedField, obj *models.OrderItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OrderItem_product(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Product, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Product) graphql.Marshaler {
+			return ec.marshalOProduct2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐProduct(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_OrderItem_product(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OrderItem",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Product(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _OrderItemConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.OrderItem]) (ret graphql.Marshaler) {
@@ -26779,6 +27020,38 @@ func (ec *executionContext) _Product_createdAt(ctx context.Context, field graphq
 }
 func (ec *executionContext) fieldContext_Product_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Product", field, false, false, errors.New("field of type Time does not have child fields"))
+}
+
+func (ec *executionContext) _Product_category(ctx context.Context, field graphql.CollectedField, obj *models.Product) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Product_category(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Category, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Category) graphql.Marshaler {
+			return ec.marshalOCategory2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐCategory(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Product_category(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Product",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Category(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _Product_orderItems(ctx context.Context, field graphql.CollectedField, obj *models.Product) (ret graphql.Marshaler) {
@@ -27584,6 +27857,38 @@ func (ec *executionContext) fieldContext_ProductTagLabel_description(_ context.C
 	return graphql.NewScalarFieldContext("ProductTagLabel", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _ProductTagLabel_product(ctx context.Context, field graphql.CollectedField, obj *models.ProductTagLabel) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductTagLabel_product(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Product, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Product) graphql.Marshaler {
+			return ec.marshalOProduct2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐProduct(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_ProductTagLabel_product(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ProductTagLabel",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Product(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ProductTagLabelConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.ProductTagLabel]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -27988,16 +28293,16 @@ func (ec *executionContext) fieldContext_Profile_preferences(_ context.Context, 
 	return graphql.NewScalarFieldContext("Profile", field, false, false, errors.New("field of type JSON does not have child fields"))
 }
 
-func (ec *executionContext) _Profile_users(ctx context.Context, field graphql.CollectedField, obj *models.Profile) (ret graphql.Marshaler) {
+func (ec *executionContext) _Profile_user(ctx context.Context, field graphql.CollectedField, obj *models.Profile) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
 		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return ec.fieldContext_Profile_users(ctx, field)
+			return ec.fieldContext_Profile_user(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			return obj.Users, nil
+			return obj.User, nil
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *models.User) graphql.Marshaler {
@@ -28007,7 +28312,7 @@ func (ec *executionContext) _Profile_users(ctx context.Context, field graphql.Co
 		false,
 	)
 }
-func (ec *executionContext) fieldContext_Profile_users(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Profile_user(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Profile",
 		Field:      field,
@@ -32789,6 +33094,38 @@ func (ec *executionContext) fieldContext_TimeKeyedNote_note(_ context.Context, f
 	return graphql.NewScalarFieldContext("TimeKeyedNote", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _TimeKeyedNote_timeKeyed(ctx context.Context, field graphql.CollectedField, obj *models.TimeKeyedNote) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TimeKeyedNote_timeKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TimeKeyed, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.TimeKeyed) graphql.Marshaler {
+			return ec.marshalOTimeKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐTimeKeyed(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_TimeKeyedNote_timeKeyed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TimeKeyedNote",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_TimeKeyed(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _TimeKeyedNoteConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.TimeKeyedNote]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -34210,6 +34547,38 @@ func (ec *executionContext) _UserEvent_action(ctx context.Context, field graphql
 }
 func (ec *executionContext) fieldContext_UserEvent_action(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("UserEvent", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _UserEvent_user(ctx context.Context, field graphql.CollectedField, obj *models.UserEvent) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_UserEvent_user(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.User, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.User) graphql.Marshaler {
+			return ec.marshalOUser2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐUser(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_UserEvent_user(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UserEvent",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_User(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _UserEventConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.UserEvent]) (ret graphql.Marshaler) {
@@ -46033,6 +46402,11 @@ func (ec *executionContext) _BinItem(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "bin":
+			out.Values[i] = ec._BinItem_bin(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -46483,6 +46857,11 @@ func (ec *executionContext) _BoolKeyedNote(ctx context.Context, sel ast.Selectio
 		case "note":
 			out.Values[i] = ec._BoolKeyedNote_note(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "boolKeyed":
+			out.Values[i] = ec._BoolKeyedNote_boolKeyed(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:
@@ -48928,6 +49307,11 @@ func (ec *executionContext) _Order(ctx context.Context, sel ast.SelectionSet, ob
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "user":
+			out.Values[i] = ec._Order_user(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -49075,6 +49459,16 @@ func (ec *executionContext) _OrderItem(ctx context.Context, sel ast.SelectionSet
 		case "unitPrice":
 			out.Values[i] = ec._OrderItem_unitPrice(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "order":
+			out.Values[i] = ec._OrderItem_order(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "product":
+			out.Values[i] = ec._OrderItem_product(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:
@@ -49413,6 +49807,11 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 		case "createdAt":
 			out.Values[i] = ec._Product_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "category":
+			out.Values[i] = ec._Product_category(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		case "orderItems":
@@ -49834,6 +50233,11 @@ func (ec *executionContext) _ProductTagLabel(ctx context.Context, sel ast.Select
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
+		case "product":
+			out.Values[i] = ec._ProductTagLabel_product(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -50046,8 +50450,8 @@ func (ec *executionContext) _Profile(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
-		case "users":
-			out.Values[i] = ec._Profile_users(ctx, field, obj)
+		case "user":
+			out.Values[i] = ec._Profile_user(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
@@ -52566,6 +52970,11 @@ func (ec *executionContext) _TimeKeyedNote(ctx context.Context, sel ast.Selectio
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "timeKeyed":
+			out.Values[i] = ec._TimeKeyedNote_timeKeyed(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -53207,6 +53616,11 @@ func (ec *executionContext) _UserEvent(ctx context.Context, sel ast.SelectionSet
 		case "action":
 			out.Values[i] = ec._UserEvent_action(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "user":
+			out.Values[i] = ec._UserEvent_user(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:

@@ -28,6 +28,12 @@
 | --- | --- | --- | --- | --- |
 | `checkpoints_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| milestone | o2o | Milestone | public.checkpoints.(milestone_code, milestone_id) |  |
+
 ## Query methods
 
 ### Get

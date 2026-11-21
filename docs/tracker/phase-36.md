@@ -217,17 +217,17 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 **PRD Reference:** Sections 5.3, 13.1, 13.4
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `parser/relationship.go`: `keyEdge` becomes `keyEdges`. A foreign key that gives an O2M edge also gives a belongs-to O2O edge on the holder, with the same `Key` and `Constraint`. A unique key and a junction are unchanged.
-- [ ] `toOneName`: the naming member without `_id`, else the referenced table when the stem is empty or names a holder column. Apply it to every detected to-one edge. `BaseName` stays the referenced table.
-- [ ] `disambiguateRelationshipNames`: group by `(SourceTable, TargetTable, to-one | list)`.
-- [ ] `relationshipToContext`: singularize a to-one name.
-- [ ] Regenerate the goldens (`make update-golden`, `make update-golden-e2e`). Check that every change is a new to-one edge, a singular rename of an old to-one field, or a takeover keeping a declared name.
-- [ ] Rename the example tests that read the old plural to-one fields (graphql, mysql, postgres and tenancy examples; design §7 P2).
-- [ ] Registry: update the citations the rename makes stale — `parser.rel.single-o2o-unique.{mysql,sqlite}` (`TestDetectRelationships_Dialects/…: single-column UNIQUE FK is O2O named after the referenced table`) and `parser.rel.three-fk-junction.source-parity` (`ShapeSourceParity/three single-column FKs…`) — when their subtests are renamed.
+- [x] `parser/relationship.go`: `keyEdge` becomes `keyEdges`. A foreign key that gives an O2M edge also gives a belongs-to O2O edge on the holder, with the same `Key` and `Constraint`. A unique key and a junction are unchanged.
+- [x] `toOneName`: the naming member without `_id`, else the referenced table when the stem is empty or names a holder column. Apply it to every detected to-one edge. `BaseName` stays the referenced table.
+- [x] `disambiguateRelationshipNames`: group by `(SourceTable, TargetTable, to-one | list)`.
+- [x] `relationshipToContext`: singularize a to-one name.
+- [x] Regenerate the goldens (`make update-golden`, `make update-golden-e2e`). Check that every change is a new to-one edge, a singular rename of an old to-one field, or a takeover keeping a declared name.
+- [x] Rename the example tests that read the old plural to-one fields (graphql, mysql, sqlite and tenancy examples; design §7 P2).
+- [x] Registry: update the citations the rename makes stale — `parser.rel.single-o2o-unique.{mysql,sqlite}` (`TestDetectRelationships_Dialects/…: single-column UNIQUE FK is O2O named after the referenced table`) and `parser.rel.three-fk-junction.source-parity` (`ShapeSourceParity/three single-column FKs…`) — when their subtests are renamed.
 
 ### Acceptance Criteria
 
@@ -239,30 +239,39 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 ### Tests Required
 
-- [ ] `unit: parser: TestDetectRelationships/non-unique foreign key gives a list edge and a belongs-to edge` (PRD §5.3): fails before the change, passes after. All dialects. Also `integration: parser/introspect: TestDetectRelationships_SourceParity`.
-- [ ] `unit: parser: TestDetectRelationships/composite foreign key gives a belongs-to edge over every pair` (PRD §5.3): fails before, passes after. All dialects.
-- [ ] `unit: parser: TestDetectRelationships/self-referential foreign key gives both edges` (PRD §5.3): fails before, passes after. All dialects.
-- [ ] `unit: parser: TestDetectRelationships/three foreign keys on a non-junction give three belongs-to edges` (PRD §5.3): fails before, passes after. All dialects.
-- [ ] `unit: parser: TestDetectRelationships/to-one edge named after its key column` (PRD §5.3 rule 5): fails before, passes after. All dialects.
-- [ ] `unit: parser: TestDetectRelationships/to-one edge whose stem is a column takes the table name` (PRD §5.3 rule 5): fails before, passes after. All dialects.
-- [ ] `unit: parser: TestDetectRelationships/self-referential list edge keeps its name beside its belongs-to edge` (PRD §5.3 rule 6): fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DetectedToOneFieldIsSingular` (PRD §5.3 rule 5, §8.5): fails before, passes after. All dialects.
-- [ ] `conformance: GetMany/a detected belongs-to loads the parent row in the same query` (PRD §13.2): fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected belongs-to names its constraint` (PRD §30.4.2): fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/detected belongs-to over a non-unique key` (PRD §13.4): fails before, passes after. All dialects. Plus `golden: postgres`.
-- [ ] `golden: graphql`: a detected belongs-to is a nullable `<camelName>: <Target>` field (PRD §26.4).
-- [ ] `integration: parser/introspect: TestDetectRelationships_ShapeSourceParity/self-referential foreign key gives both edges` (PRD §5.3): files and database give identical edges for a self-referential non-unique FK; add the shape to the parity schema. Fails before, passes after. All dialects. Claims `detect.belongs-to.self.source-parity`.
-- [ ] Guard: `unit: parser: TestDetectRelationships` (non-self-referential O2M names, unique FKs, junctions), `parser/introspect: TestDetectRelationships_SourceParity` and `parser: TestDetectRelationships_BothSourceParity` still pass.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_ExcludeByBaseName`, `…_DeclaredOverDetectedKeyTakesItsPlace` and `…_DeclaredOverCompositeFK` still pass.
-- [ ] Guard: `unit: cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionIsAnError` still passes.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestRelationshipFilters_ListRelationshipsOnly` and `TestNestedEligibility_ListedShapeFailureIsReported/belongs-to edge` still pass.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestRelationshipsTemplate_softDeleteOnRelated`, `example: sqlite: TestO2OJoinMiss_ReadsAsNil` and `example: graphql: TestO2OJoin_GraphQLConnection` still pass.
-- [ ] Guard: `unit: cmd/sqlgen/manifest: TestBuild_O2OSideDisambiguation` and `unit: cmd/sqlgen/mcp: TestDispatchFindReferencingDedupsByFullTuple` still pass.
-- [ ] Sweep: `make check` and `make check-examples` are green.
+- [x] `unit: parser: TestDetectRelationships/non-unique foreign key gives a list edge and a belongs-to edge` (PRD §5.3): fails before the change, passes after. All dialects. Also `integration: parser/introspect: TestDetectRelationships_SourceParity`.
+- [x] `unit: parser: TestDetectRelationships/composite foreign key gives a belongs-to edge over every pair` (PRD §5.3): fails before, passes after. All dialects.
+- [x] `unit: parser: TestDetectRelationships/self-referential foreign key gives both edges` (PRD §5.3): fails before, passes after. All dialects.
+- [x] `unit: parser: TestDetectRelationships/three foreign keys on a non-junction give three belongs-to edges` (PRD §5.3): fails before, passes after. All dialects.
+- [x] `unit: parser: TestDetectRelationships/to-one edge named after its key column` (PRD §5.3 rule 5): fails before, passes after. All dialects.
+- [x] `unit: parser: TestDetectRelationships/to-one edge whose stem is a column takes the table name` (PRD §5.3 rule 5): fails before, passes after. All dialects.
+- [x] `unit: parser: TestDetectRelationships/self-referential list edge keeps its name beside its belongs-to edge` (PRD §5.3 rule 6): fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DetectedToOneFieldIsSingular` (PRD §5.3 rule 5, §8.5): fails before, passes after. All dialects.
+- [x] `conformance: GetMany/a detected belongs-to loads the parent row in the same query` (PRD §13.2): fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected belongs-to names its constraint` (PRD §30.4.2): fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/detected belongs-to over a non-unique key` (PRD §13.4): fails before, passes after. All dialects. Plus `golden: postgres` (vacuous: `audit.notes.Author` has no FOREIGN KEY under it; see the Completion Record).
+- [x] `golden: graphql`: a detected belongs-to is a nullable `<camelName>: <Target>` field (PRD §26.4).
+- [x] `integration: parser/introspect: TestDetectRelationships_ShapeSourceParity/self-referential foreign key gives both edges` (PRD §5.3): files and database give identical edges for a self-referential non-unique FK; add the shape to the parity schema. Fails before, passes after. All dialects. Claims `detect.belongs-to.self.source-parity`.
+- [x] Guard: `unit: parser: TestDetectRelationships` (non-self-referential O2M names, unique FKs, junctions), `parser/introspect: TestDetectRelationships_SourceParity` and `parser: TestDetectRelationships_BothSourceParity` still pass.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_ExcludeByBaseName`, `…_DeclaredOverDetectedKeyTakesItsPlace` and `…_DeclaredOverCompositeFK` still pass.
+- [x] Guard: `unit: cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionIsAnError` still passes.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestRelationshipFilters_ListRelationshipsOnly` and `TestNestedEligibility_ListedShapeFailureIsReported/belongs-to edge` still pass.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestRelationshipsTemplate_softDeleteOnRelated`, `example: sqlite: TestO2OJoinMiss_ReadsAsNil` and `example: graphql: TestO2OJoin_GraphQLConnection` still pass.
+- [x] Guard: `unit: cmd/sqlgen/manifest: TestBuild_O2OSideDisambiguation` and `unit: cmd/sqlgen/mcp: TestDispatchFindReferencingDedupsByFullTuple` still pass.
+- [x] Sweep: `make check` and `make check-examples` are green.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed 2026-11-20.** Uncommitted at completion. `make check` and `make check-examples` green after the verify doc fixes; no FIX logged.
+- **Files:** `parser/relationship.go` (`keyEdges` gives the belongs-to beside the O2M edge; `toOneName`; rule 6 groups by `(source, target, to-one | list)`); `cmd/sqlgen/gen/context_table.go` (`relationshipToContext` singularizes a to-one name). Tests: `parser/relationship_test.go` (seven new all-dialect cases, belongs-to edges added to the existing wants), `parser/relationship_dialects_test.go`, `parser/introspect/relationship_{parity,shapes_parity}_test.go` (new self-referential shape), `cmd/sqlgen/gen/to_one_naming_test.go` (new), `cmd/sqlgen/gen/context_table_test.go` (takeover subtest with a no-declaration control), `cmd/sqlgen/manifest/relationship_key_test.go`, `cmd/sqlgen/gen/api_access_test.go` (detected variant of the §32 guard), conformance `suite/get.go`; to-one renames in `cmd/sqlgen/{gen,cli,manifest}` tests and in the graphql, mysql, sqlite, tenancy example tests and conformance `suite/composite_key.go`. Registry: Tests cells for every planned 36.5 row (`parser/schema.md`, `cli/gen.md`, `cli/api-schema.md`, `cli/manifest.md`); stale citations renamed (`…single-column UNIQUE FK is O2O alone`, `…three O2M and three belongs-to edges`); `naming.reserved-field-{columns,hasselectedcolumns}.field.relationship` cite the declared case. Goldens: every example's `expected/` and `models/`, every conformance `models/`.
+- **Contract run (before the change):** every new parser case fails on all three dialects with the belongs-to edge missing (and the unique `profiles_owner` edge named `users`, not `owner`); with `keyEdges` applied but rule 6 still kind-agnostic, `…self-referential list edge keeps its name…` fails with the list edge renamed `parent_categories`, the predicted reason. `ShapeSourceParity/self-referential foreign key gives both edges` fails on all three dialects for the missing O2O. With the parser and gen changes stashed: `TestBuildRelationshipContexts_DetectedToOneFieldIsSingular` (`users`/`Users`, or no edge), `…_DeclaredOverDetectedKeyTakesItsPlace/detected belongs-to over a non-unique key` (control: no detected edge on posts) and `TestBuild_RelationshipKeyShape/detected belongs-to names its constraint` (no relationship `author`) fail; the conformance subtest cannot compile at HEAD (`Post` has no `Author`). Guards (`TestDetectRelationships` existing cases, `SourceParity`, `BothSourceParity`, `ExcludeByBaseName`, `DeclaredOverDetectedKeyTakesItsPlace`, `DeclaredOverCompositeFK`, `TestGenerate_DetectedNameCollisionIsAnError`, `RelationshipFilters_ListRelationshipsOnly`, `NestedEligibility_…/belongs-to edge`, `softDeleteOnRelated`, `O2OSideDisambiguation`, `DispatchFindReferencingDedupsByFullTuple`, the sqlite/graphql example guards) pass after; the parser guards' wants gain only belongs-to edges and singular to-one renames (diffed case by case).
+- **Golden churn:** checked mechanically (relationship struct fields, GraphQL fields, manifest names): every change is a new `*Target` to-one field, a singular rename of an old to-one field (`Users`→`User`, `Tasks`→`Task`, `Owners`→`Owner`, sqlite `Steps`→`PreviousStep`, stem-named), and its join, field-options, walker and manifest consequences. No list edge moved in any example. postgres `audit.notes.Author` keeps its name: it is declared over a column with no FOREIGN KEY, so no detected edge lies under it, and the takeover is pinned by the unit subtest alone. New fallback-named edges: postgres `Warehouse.Warehouse` (stem `nullable_ref` names its column), conformance `ItemReceipt.OrderItem` (no naming member). postgres_stdlib now also warns that `tasks`' belongs-to `cycle` is omitted with its `exclude_columns`-removed key, as its list edge already was.
+- **Consequence of rule 6 by cardinality (PRD §5.3):** a list edge that shared a group only with a to-one edge is no longer renamed: `BothSourceParity`'s M2M `labels → tasks` is `tasks` again, not `task_labels` (it shared the pair with the unique `owner_task` O2O). No example has the shape.
+- **Fixture adjustments:** the to-one name is singular, so a detected to-one can no longer derive `Columns` / `HasSelectedColumns`; those two reserved-name matrix cases now declare the edge. The time-key refusal tests exclude the belongs-to (`exclude_relationships: [stamps]`) where they pin the list edge's message, and a new case pins the belongs-to's; `chain …/omitted on a column field` uses a fallback name (`writers` → `Writer` beside a `writer` column), since a stem no longer collides.
+- **36.1 reviewer carry-forward:** `TestAccess_HiddenForeignKeyKeepsItsRelationship` gains `/detected` subtests (a detected non-unique FK whose column is `internal` keeps `company: Company`), passing.
+- **Checks:** `make check` and `make check-examples` green; `parser/introspect` integration tests green.
+- **Review (sqlgen-reviewer):** PRD 6/6, tests 19/19, fail-first confirmed independently (dropping the belongs-to from `keyEdges` fails the non-unique case on every dialect), no high-confidence issue, no doc correction. Its questions: (2) rule 6 renaming a fallback-named to-one edge onto a column, which is then omitted with the warning, is 36.0 ruling 3, unchanged. (1) Two to-one edges from one column into two tables sharing a stem stay the PRD §5.3 rule 6 generation error, and (3) `exclude_relationships` does not match a to-one edge's singular generated name, as rule 6 lists only the name, the pre-rename name and the referenced table: both auto-accepted as is (`/fix` auto-accept rule: gates green, no golden churn against the alternative, no public surface, follows the PRD). The error's "after disambiguation" wording, the exclude asymmetry and the `loader.belongs-to.detected` coverage (GetMany only) are backlog lines.
+- **Verify (2026-11-20):** PRD 5/5, tests 20/20, the independent reviewer agreed and confirmed fail-first on its own (dropping the `toSingular` branch fails `…DetectedToOneFieldIsSingular` on every dialect). No FIX logged. It refuted the postgres-golden evidence for the takeover: `audit.notes` has no FOREIGN KEY, so `Author` holds vacuously and only the unit subtest pins the takeover. Applied its doc fixes: `golden: postgres` dropped from `takeover.belongs-to.detected` and the design §6.1 row; this record's golden-churn line; the rename task names sqlite, not postgres; `naming.to-one.fallback.postgres` also cites the no-naming-member case; the `relationshipToContext` and `to_one_naming_test.go` comments; PRD §4.8's `exclude_relationships` row no longer calls the rule-5 name table-derived (rehashed §4 and §4.8, rows reviewed, they hold). Q1–Q3 confirmed as recorded above; on Q3 the reviewer notes that the list path matches the plural generated name for the reason the to-one path does not, which stays the backlog line.
 
 ## 36.6 Probe — `sqlgen-example`
 

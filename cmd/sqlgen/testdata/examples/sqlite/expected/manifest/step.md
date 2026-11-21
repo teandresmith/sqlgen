@@ -31,7 +31,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
-| steps | o2o | Step | steps.previous_step_id |  |
+| previous_step | o2o | Step | steps.previous_step_id |  |
 
 ## Query methods
 

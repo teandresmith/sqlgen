@@ -9032,6 +9032,9 @@ type BinItem struct {
 	Aisle *string `db:"aisle" json:"aisle"`
 	Slot  *int32  `db:"slot" json:"slot"`
 	Name  string  `db:"name" json:"name"`
+
+	// Bin - one-to-one relationship with the bins table.
+	Bin *Bin `db:"-" json:"bin"`
 }
 
 // BinItemClient provides type-safe operations for the bin_items table.
@@ -9239,6 +9242,19 @@ func (c *binItemClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 				return nil, fmt.Errorf("get bin_item: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get bin_item: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get bin_item: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableBinItems, Schema: "",
@@ -9310,6 +9326,19 @@ func (c *binItemClient) GetMany(ctx context.Context, input *GetBinItemsInput, op
 				return nil, fmt.Errorf("get many bin_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many bin_items: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many bin_items: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableBinItems, Schema: "",
@@ -9362,25 +9391,58 @@ func (c *binItemClient) GetMany(ctx context.Context, input *GetBinItemsInput, op
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var binItems []*BinItem
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("b", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "b",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		binItems, err = scanBinItems(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			binItems, err = scanBinItemsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			binItems, err = scanBinItems(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return binItems, nil
@@ -10655,6 +10717,19 @@ func (c *binItemClient) Paginate(ctx context.Context, input PaginateInput[BinIte
 				return nil, fmt.Errorf("paginate bin_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate bin_items: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate bin_items: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableBinItems, Schema: "",
@@ -10715,6 +10790,19 @@ func (c *binItemClient) Connection(ctx context.Context, input ConnectionInput[Bi
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection bin_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection bin_items: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection bin_items: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -11139,10 +11227,11 @@ func (f *BinItemFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) 
 
 // BinItemFieldOptions controls column selection and relationship loading for bin_items queries.
 type BinItemFieldOptions struct {
-	ID    bool `json:"id"`
-	Aisle bool `json:"aisle"`
-	Slot  bool `json:"slot"`
-	Name  bool `json:"name"`
+	ID    bool             `json:"id"`
+	Aisle bool             `json:"aisle"`
+	Slot  bool             `json:"slot"`
+	Name  bool             `json:"name"`
+	Bin   *BinFieldOptions `json:"bin"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -11189,6 +11278,9 @@ func (fo *BinItemFieldOptions) HasSelectedColumns() bool {
 	if fo.Name {
 		return true
 	}
+	if fo.Bin != nil {
+		return true
+	}
 	return false
 }
 
@@ -11221,6 +11313,77 @@ type GetBinItemsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *binItemClient) resolveO2OJoins(d sql.Dialect, fo *BinItemFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Bin != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "bins"},
+			Alias: "b2",
+			On:    fmt.Sprintf("b2.%s = b.%s", d.QuoteIdentifier("aisle"), d.QuoteIdentifier("aisle")) + fmt.Sprintf(" AND b2.%s = b.%s", d.QuoteIdentifier("slot"), d.QuoteIdentifier("slot")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Bin.Columns(), "aisle"),
+		})
+	}
+	return joins
+}
+
+// scanBinItemsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// BinItem entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanBinItemsWithOneToOneJoins(rows database.Rows, columns []string) ([]*BinItem, error) {
+	var result []*BinItem
+	for rows.Next() {
+		b := &BinItem{}
+		b2 := &Bin{}
+		b2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "b.id":
+				targets[idx] = &b.ID
+			case "b.aisle":
+				targets[idx] = &b.Aisle
+			case "b.slot":
+				targets[idx] = &b.Slot
+			case "b.name":
+				targets[idx] = &b.Name
+			case "b2.aisle":
+				targets[idx] = database.NullScan(&b2.Aisle)
+				b2HasData = true
+			case "b2.slot":
+				targets[idx] = database.NullScan(&b2.Slot)
+			case "b2.label":
+				targets[idx] = database.NullScan(&b2.Label)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan bin_item with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if b2HasData && b2.Aisle != "" {
+			b.Bin = b2
+		} else {
+			b.Bin = nil
+		}
+
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bin_item rows: %w", err)
+	}
+	return result, nil
 }
 
 // BinPK - composite primary key for the bins table.
@@ -15991,6 +16154,9 @@ type BoolKeyedNote struct {
 	ID     int64  `db:"id" json:"id"`
 	KeyedK *bool  `db:"keyed_k" json:"keyed_k"`
 	Note   string `db:"note" json:"note"`
+
+	// BoolKeyed - one-to-one relationship with the bool_keyed table.
+	BoolKeyed *BoolKeyed `db:"-" json:"bool_keyed"`
 }
 
 // BoolKeyedNoteClient provides type-safe operations for the bool_keyed_notes table.
@@ -16196,6 +16362,19 @@ func (c *boolKeyedNoteClient) Get(ctx context.Context, id int64, opts ...func(*C
 				return nil, fmt.Errorf("get bool_keyed_note: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get bool_keyed_note: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get bool_keyed_note: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableBoolKeyedNotes, Schema: "",
@@ -16267,6 +16446,19 @@ func (c *boolKeyedNoteClient) GetMany(ctx context.Context, input *GetBoolKeyedNo
 				return nil, fmt.Errorf("get many bool_keyed_notes: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many bool_keyed_notes: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many bool_keyed_notes: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableBoolKeyedNotes, Schema: "",
@@ -16319,25 +16511,58 @@ func (c *boolKeyedNoteClient) GetMany(ctx context.Context, input *GetBoolKeyedNo
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var boolKeyedNotes []*BoolKeyedNote
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("b", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "b",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		boolKeyedNotes, err = scanBoolKeyedNotes(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			boolKeyedNotes, err = scanBoolKeyedNotesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			boolKeyedNotes, err = scanBoolKeyedNotes(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return boolKeyedNotes, nil
@@ -17581,6 +17806,19 @@ func (c *boolKeyedNoteClient) Paginate(ctx context.Context, input PaginateInput[
 				return nil, fmt.Errorf("paginate bool_keyed_notes: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate bool_keyed_notes: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate bool_keyed_notes: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableBoolKeyedNotes, Schema: "",
@@ -17641,6 +17879,19 @@ func (c *boolKeyedNoteClient) Connection(ctx context.Context, input ConnectionIn
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection bool_keyed_notes: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection bool_keyed_notes: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection bool_keyed_notes: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -18049,9 +18300,10 @@ func (f *BoolKeyedNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOp
 
 // BoolKeyedNoteFieldOptions controls column selection and relationship loading for bool_keyed_notes queries.
 type BoolKeyedNoteFieldOptions struct {
-	ID     bool `json:"id"`
-	KeyedK bool `json:"keyed_k"`
-	Note   bool `json:"note"`
+	ID        bool                   `json:"id"`
+	KeyedK    bool                   `json:"keyed_k"`
+	Note      bool                   `json:"note"`
+	BoolKeyed *BoolKeyedFieldOptions `json:"bool_keyed"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -18091,6 +18343,9 @@ func (fo *BoolKeyedNoteFieldOptions) HasSelectedColumns() bool {
 	if fo.Note {
 		return true
 	}
+	if fo.BoolKeyed != nil {
+		return true
+	}
 	return false
 }
 
@@ -18121,6 +18376,73 @@ type GetBoolKeyedNotesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *boolKeyedNoteClient) resolveO2OJoins(d sql.Dialect, fo *BoolKeyedNoteFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.BoolKeyed != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "bool_keyed"},
+			Alias: "b2",
+			On:    fmt.Sprintf("b2.%s = b.%s", d.QuoteIdentifier("k"), d.QuoteIdentifier("keyed_k")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.BoolKeyed.Columns(), "k"),
+		})
+	}
+	return joins
+}
+
+// scanBoolKeyedNotesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// BoolKeyedNote entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanBoolKeyedNotesWithOneToOneJoins(rows database.Rows, columns []string) ([]*BoolKeyedNote, error) {
+	var result []*BoolKeyedNote
+	for rows.Next() {
+		b := &BoolKeyedNote{}
+		b2 := &BoolKeyed{}
+		b2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "b.id":
+				targets[idx] = &b.ID
+			case "b.keyed_k":
+				targets[idx] = &b.KeyedK
+			case "b.note":
+				targets[idx] = &b.Note
+			case "b2.k":
+				targets[idx] = database.NullScan(&b2.K)
+				b2HasData = true
+			case "b2.label":
+				targets[idx] = database.NullScan(&b2.Label)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan bool_keyed_note with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if b2HasData && b2.K != false {
+			b.BoolKeyed = b2
+		} else {
+			b.BoolKeyed = nil
+		}
+
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bool_keyed_note rows: %w", err)
+	}
+	return result, nil
 }
 
 // Category - Product classification categories
@@ -28423,6 +28745,11 @@ type OrderItem struct {
 	Quantity int32 `db:"quantity" json:"quantity"`
 	// UnitPrice - Price per unit at time of purchase
 	UnitPrice float64 `db:"unit_price" json:"unit_price"`
+
+	// Order - one-to-one relationship with the orders table.
+	Order *Order `db:"-" json:"order"`
+	// Product - one-to-one relationship with the products table.
+	Product *Product `db:"-" json:"product"`
 }
 
 // OrderItemClient provides type-safe operations for the order_items table.
@@ -28636,6 +28963,19 @@ func (c *orderItemClient) Get(ctx context.Context, id int64, opts ...func(*CallO
 				return nil, fmt.Errorf("get order_item: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get order_item: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get order_item: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableOrderItems, Schema: "",
@@ -28707,6 +29047,19 @@ func (c *orderItemClient) GetMany(ctx context.Context, input *GetOrderItemsInput
 				return nil, fmt.Errorf("get many order_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many order_items: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many order_items: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableOrderItems, Schema: "",
@@ -28759,25 +29112,58 @@ func (c *orderItemClient) GetMany(ctx context.Context, input *GetOrderItemsInput
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var orderItems []*OrderItem
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("o", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "o",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		orderItems, err = scanOrderItems(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			orderItems, err = scanOrderItemsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			orderItems, err = scanOrderItems(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return orderItems, nil
@@ -30086,6 +30472,19 @@ func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[Orde
 				return nil, fmt.Errorf("paginate order_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate order_items: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate order_items: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOrderItems, Schema: "",
@@ -30146,6 +30545,19 @@ func (c *orderItemClient) Connection(ctx context.Context, input ConnectionInput[
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection order_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection order_items: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection order_items: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -30586,11 +30998,13 @@ func (f *OrderItemFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 // OrderItemFieldOptions controls column selection and relationship loading for order_items queries.
 type OrderItemFieldOptions struct {
-	ID        bool `json:"id"`
-	OrderID   bool `json:"order_id"`
-	ProductID bool `json:"product_id"`
-	Quantity  bool `json:"quantity"`
-	UnitPrice bool `json:"unit_price"`
+	ID        bool                 `json:"id"`
+	OrderID   bool                 `json:"order_id"`
+	ProductID bool                 `json:"product_id"`
+	Quantity  bool                 `json:"quantity"`
+	UnitPrice bool                 `json:"unit_price"`
+	Order     *OrderFieldOptions   `json:"order"`
+	Product   *ProductFieldOptions `json:"product"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -30644,6 +31058,12 @@ func (fo *OrderItemFieldOptions) HasSelectedColumns() bool {
 	if fo.UnitPrice {
 		return true
 	}
+	if fo.Order != nil {
+		return true
+	}
+	if fo.Product != nil {
+		return true
+	}
 	return false
 }
 
@@ -30688,6 +31108,392 @@ type GetOrderItemsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *orderItemClient) resolveO2OJoins(d sql.Dialect, fo *OrderItemFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Order != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "orders"},
+			Alias: "o2",
+			On:    fmt.Sprintf("o2.%s = o.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("order_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Order.Columns(), "id"),
+		})
+		if fo.Order.User != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "users"},
+				Alias: "u",
+				On:    fmt.Sprintf("u.%s = o2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Order.User.Columns(), "id"),
+			})
+			if fo.Order.User.Profile != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "", Name: "profiles"},
+					Alias: "p",
+					On:    fmt.Sprintf("p.%s = u.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.Order.User.Profile.Columns(), "id"),
+				})
+				if fo.Order.User.Profile.User != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "", Name: "users"},
+						Alias: "u2",
+						On:    fmt.Sprintf("u2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.Order.User.Profile.User.Columns(), "id"),
+					})
+					if fo.Order.User.Profile.User.Profile != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "", Name: "profiles"},
+							Alias: "p2",
+							On:    fmt.Sprintf("p2.%s = u2.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.Order.User.Profile.User.Profile.Columns(), "id"),
+						})
+						if fo.Order.User.Profile.User.Profile.User != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "", Name: "users"},
+								Alias: "u3",
+								On:    fmt.Sprintf("u3.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.Order.User.Profile.User.Profile.User.Columns(), "id"),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	if fo.Product != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "products"},
+			Alias: "p3",
+			On:    fmt.Sprintf("p3.%s = o.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("product_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Product.Columns(), "id"),
+		})
+		if fo.Product.Category != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "categories"},
+				Alias: "c",
+				On:    fmt.Sprintf("c.%s = p3.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("category_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Product.Category.Columns(), "id"),
+			})
+		}
+	}
+	return joins
+}
+
+// scanOrderItemsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// OrderItem entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanOrderItemsWithOneToOneJoins(rows database.Rows, columns []string) ([]*OrderItem, error) {
+	var result []*OrderItem
+	for rows.Next() {
+		o := &OrderItem{}
+		c := &Category{}
+		cHasData := false
+		o2 := &Order{}
+		o2HasData := false
+		p := &Profile{}
+		pHasData := false
+		p2 := &Profile{}
+		p2HasData := false
+		p3 := &Product{}
+		p3HasData := false
+		u := &User{}
+		uHasData := false
+		u2 := &User{}
+		u2HasData := false
+		u3 := &User{}
+		u3HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "o.id":
+				targets[idx] = &o.ID
+			case "o.order_id":
+				targets[idx] = &o.OrderID
+			case "o.product_id":
+				targets[idx] = &o.ProductID
+			case "o.quantity":
+				targets[idx] = &o.Quantity
+			case "o.unit_price":
+				targets[idx] = &o.UnitPrice
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "c.description":
+				targets[idx] = &c.Description
+			case "o2.id":
+				targets[idx] = database.NullScan(&o2.ID)
+				o2HasData = true
+			case "o2.user_id":
+				targets[idx] = database.NullScan(&o2.UserID)
+			case "o2.status":
+				targets[idx] = database.NullScan(&o2.Status)
+			case "o2.total":
+				targets[idx] = database.NullScan(&o2.Total)
+			case "o2.notes":
+				targets[idx] = &o2.Notes
+			case "o2.ordered_at":
+				targets[idx] = database.NullScan(&o2.OrderedAt)
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.user_id":
+				targets[idx] = database.NullScan(&p.UserID)
+			case "p.website":
+				targets[idx] = &p.Website
+			case "p.github_handle":
+				targets[idx] = &p.GithubHandle
+			case "p.verified":
+				targets[idx] = database.NullScan(&p.Verified)
+			case "p.preferences":
+				targets[idx] = &p.Preferences
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.user_id":
+				targets[idx] = database.NullScan(&p2.UserID)
+			case "p2.website":
+				targets[idx] = &p2.Website
+			case "p2.github_handle":
+				targets[idx] = &p2.GithubHandle
+			case "p2.verified":
+				targets[idx] = database.NullScan(&p2.Verified)
+			case "p2.preferences":
+				targets[idx] = &p2.Preferences
+			case "p3.id":
+				targets[idx] = database.NullScan(&p3.ID)
+				p3HasData = true
+			case "p3.category_id":
+				targets[idx] = database.NullScan(&p3.CategoryID)
+			case "p3.title":
+				targets[idx] = database.NullScan(&p3.Title)
+			case "p3.price":
+				targets[idx] = database.NullScan(&p3.Price)
+			case "p3.weight_kg":
+				targets[idx] = &p3.WeightKg
+			case "p3.in_stock":
+				targets[idx] = database.NullScan(&p3.InStock)
+			case "p3.sku":
+				targets[idx] = database.NullScan(&p3.SKU)
+			case "p3.attributes":
+				targets[idx] = database.NullScan(&p3.Attributes)
+			case "p3.created_at":
+				targets[idx] = database.NullScan(&p3.CreatedAt)
+			case "u.id":
+				targets[idx] = database.NullScan(&u.ID)
+				uHasData = true
+			case "u.name":
+				targets[idx] = database.NullScan(&u.Name)
+			case "u.email":
+				targets[idx] = database.NullScan(&u.Email)
+			case "u.role":
+				targets[idx] = database.NullScan(&u.Role)
+			case "u.permissions":
+				targets[idx] = database.NullScan(&u.Permissions)
+			case "u.age":
+				targets[idx] = &u.Age
+			case "u.bio":
+				targets[idx] = &u.Bio
+			case "u.is_active":
+				targets[idx] = database.NullScan(&u.IsActive)
+			case "u.balance":
+				targets[idx] = database.NullScan(&u.Balance)
+			case "u.login_count":
+				targets[idx] = database.NullScan(&u.LoginCount)
+			case "u.avatar":
+				targets[idx] = &u.Avatar
+			case "u.metadata":
+				targets[idx] = &u.Metadata
+			case "u.rating":
+				targets[idx] = &u.Rating
+			case "u.score":
+				targets[idx] = &u.Score
+			case "u.tiny_flag":
+				targets[idx] = &u.TinyFlag
+			case "u.medium_val":
+				targets[idx] = &u.MediumVal
+			case "u.big_unsigned":
+				targets[idx] = &u.BigUnsigned
+			case "u.birth_date":
+				targets[idx] = &u.BirthDate
+			case "u.last_login":
+				targets[idx] = &u.LastLogin
+			case "u.created_at":
+				targets[idx] = database.NullScan(&u.CreatedAt)
+			case "u.updated_at":
+				targets[idx] = database.NullScan(&u.UpdatedAt)
+			case "u2.id":
+				targets[idx] = database.NullScan(&u2.ID)
+				u2HasData = true
+			case "u2.name":
+				targets[idx] = database.NullScan(&u2.Name)
+			case "u2.email":
+				targets[idx] = database.NullScan(&u2.Email)
+			case "u2.role":
+				targets[idx] = database.NullScan(&u2.Role)
+			case "u2.permissions":
+				targets[idx] = database.NullScan(&u2.Permissions)
+			case "u2.age":
+				targets[idx] = &u2.Age
+			case "u2.bio":
+				targets[idx] = &u2.Bio
+			case "u2.is_active":
+				targets[idx] = database.NullScan(&u2.IsActive)
+			case "u2.balance":
+				targets[idx] = database.NullScan(&u2.Balance)
+			case "u2.login_count":
+				targets[idx] = database.NullScan(&u2.LoginCount)
+			case "u2.avatar":
+				targets[idx] = &u2.Avatar
+			case "u2.metadata":
+				targets[idx] = &u2.Metadata
+			case "u2.rating":
+				targets[idx] = &u2.Rating
+			case "u2.score":
+				targets[idx] = &u2.Score
+			case "u2.tiny_flag":
+				targets[idx] = &u2.TinyFlag
+			case "u2.medium_val":
+				targets[idx] = &u2.MediumVal
+			case "u2.big_unsigned":
+				targets[idx] = &u2.BigUnsigned
+			case "u2.birth_date":
+				targets[idx] = &u2.BirthDate
+			case "u2.last_login":
+				targets[idx] = &u2.LastLogin
+			case "u2.created_at":
+				targets[idx] = database.NullScan(&u2.CreatedAt)
+			case "u2.updated_at":
+				targets[idx] = database.NullScan(&u2.UpdatedAt)
+			case "u3.id":
+				targets[idx] = database.NullScan(&u3.ID)
+				u3HasData = true
+			case "u3.name":
+				targets[idx] = database.NullScan(&u3.Name)
+			case "u3.email":
+				targets[idx] = database.NullScan(&u3.Email)
+			case "u3.role":
+				targets[idx] = database.NullScan(&u3.Role)
+			case "u3.permissions":
+				targets[idx] = database.NullScan(&u3.Permissions)
+			case "u3.age":
+				targets[idx] = &u3.Age
+			case "u3.bio":
+				targets[idx] = &u3.Bio
+			case "u3.is_active":
+				targets[idx] = database.NullScan(&u3.IsActive)
+			case "u3.balance":
+				targets[idx] = database.NullScan(&u3.Balance)
+			case "u3.login_count":
+				targets[idx] = database.NullScan(&u3.LoginCount)
+			case "u3.avatar":
+				targets[idx] = &u3.Avatar
+			case "u3.metadata":
+				targets[idx] = &u3.Metadata
+			case "u3.rating":
+				targets[idx] = &u3.Rating
+			case "u3.score":
+				targets[idx] = &u3.Score
+			case "u3.tiny_flag":
+				targets[idx] = &u3.TinyFlag
+			case "u3.medium_val":
+				targets[idx] = &u3.MediumVal
+			case "u3.big_unsigned":
+				targets[idx] = &u3.BigUnsigned
+			case "u3.birth_date":
+				targets[idx] = &u3.BirthDate
+			case "u3.last_login":
+				targets[idx] = &u3.LastLogin
+			case "u3.created_at":
+				targets[idx] = database.NullScan(&u3.CreatedAt)
+			case "u3.updated_at":
+				targets[idx] = database.NullScan(&u3.UpdatedAt)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan order_item with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if u3HasData && u3.ID != 0 {
+			p2.User = u3
+		} else {
+			p2.User = nil
+		}
+		if u2HasData && u2.ID != 0 {
+			p.User = u2
+		} else {
+			p.User = nil
+		}
+		if uHasData && u.ID != 0 {
+			o2.User = u
+		} else {
+			o2.User = nil
+		}
+		if p3HasData && p3.ID != 0 {
+			o.Product = p3
+		} else {
+			o.Product = nil
+		}
+		if p2HasData && p2.ID != 0 {
+			u2.Profile = p2
+		} else {
+			u2.Profile = nil
+		}
+		if pHasData && p.ID != 0 {
+			u.Profile = p
+		} else {
+			u.Profile = nil
+		}
+		if o2HasData && o2.ID != 0 {
+			o.Order = o2
+		} else {
+			o.Order = nil
+		}
+		if cHasData && c.ID != 0 {
+			p3.Category = c
+		} else {
+			p3.Category = nil
+		}
+
+		result = append(result, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate order_item rows: %w", err)
+	}
+	return result, nil
+}
+
 // Order - Customer purchase orders
 type Order struct {
 	// ID - Unique identifier
@@ -30705,6 +31511,8 @@ type Order struct {
 
 	// OrderItems - one-to-many relationship with the order_items table.
 	OrderItems []*OrderItem `db:"-" json:"order_items"`
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // OrderClient provides type-safe operations for the orders table.
@@ -30941,6 +31749,19 @@ func (c *orderClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 				return nil, fmt.Errorf("get order: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get order: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get order: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableOrders, Schema: "",
@@ -31015,6 +31836,19 @@ func (c *orderClient) GetMany(ctx context.Context, input *GetOrdersInput, opts .
 				return nil, fmt.Errorf("get many orders: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many orders: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many orders: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableOrders, Schema: "",
@@ -31071,25 +31905,58 @@ func (c *orderClient) GetMany(ctx context.Context, input *GetOrdersInput, opts .
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var orders []*Order
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("o", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "o",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		orders, err = scanOrders(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			orders, err = scanOrdersWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			orders, err = scanOrders(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -32557,6 +33424,7 @@ func orderNestedParentFieldOptions(fo *OrderFieldOptions) *OrderFieldOptions {
 	}
 	scalars := *fo
 	scalars.OrderItems = nil
+	scalars.User = nil
 	scalars.ID = true
 	return &scalars
 }
@@ -32569,7 +33437,7 @@ func orderNestedSelectsRelationship(fo *OrderFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.OrderItems != nil
+	return fo.OrderItems != nil || fo.User != nil
 }
 
 // CreateWithRelated creates a order together with rows on its nested
@@ -32953,6 +33821,19 @@ func (c *orderClient) Paginate(ctx context.Context, input PaginateInput[OrderFil
 				return nil, fmt.Errorf("paginate orders: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate orders: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate orders: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOrders, Schema: "",
@@ -33013,6 +33894,19 @@ func (c *orderClient) Connection(ctx context.Context, input ConnectionInput[Orde
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection orders: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection orders: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection orders: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -33517,6 +34411,7 @@ type OrderFieldOptions struct {
 	Notes      bool                          `json:"notes"`
 	OrderedAt  bool                          `json:"ordered_at"`
 	OrderItems *OrderItemRelationshipOptions `json:"order_items"`
+	User       *UserFieldOptions             `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -33580,6 +34475,9 @@ func (fo *OrderFieldOptions) HasSelectedColumns() bool {
 	if fo.OrderItems != nil {
 		return true
 	}
+	if fo.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -33635,6 +34533,332 @@ type GetOrdersInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *orderClient) resolveO2OJoins(d sql.Dialect, fo *OrderFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.User != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "users"},
+			Alias: "u",
+			On:    fmt.Sprintf("u.%s = o.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.User.Columns(), "id"),
+		})
+		if fo.User.Profile != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "profiles"},
+				Alias: "p",
+				On:    fmt.Sprintf("p.%s = u.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.User.Profile.Columns(), "id"),
+			})
+			if fo.User.Profile.User != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "", Name: "users"},
+					Alias: "u2",
+					On:    fmt.Sprintf("u2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.User.Profile.User.Columns(), "id"),
+				})
+				if fo.User.Profile.User.Profile != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "", Name: "profiles"},
+						Alias: "p2",
+						On:    fmt.Sprintf("p2.%s = u2.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.User.Profile.User.Profile.Columns(), "id"),
+					})
+					if fo.User.Profile.User.Profile.User != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "", Name: "users"},
+							Alias: "u3",
+							On:    fmt.Sprintf("u3.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.User.Profile.User.Profile.User.Columns(), "id"),
+						})
+						if fo.User.Profile.User.Profile.User.Profile != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "", Name: "profiles"},
+								Alias: "p3",
+								On:    fmt.Sprintf("p3.%s = u3.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.User.Profile.User.Profile.User.Profile.Columns(), "id"),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	return joins
+}
+
+// scanOrdersWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Order entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanOrdersWithOneToOneJoins(rows database.Rows, columns []string) ([]*Order, error) {
+	var result []*Order
+	for rows.Next() {
+		o := &Order{}
+		p := &Profile{}
+		pHasData := false
+		p2 := &Profile{}
+		p2HasData := false
+		p3 := &Profile{}
+		p3HasData := false
+		u := &User{}
+		uHasData := false
+		u2 := &User{}
+		u2HasData := false
+		u3 := &User{}
+		u3HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "o.id":
+				targets[idx] = &o.ID
+			case "o.user_id":
+				targets[idx] = &o.UserID
+			case "o.status":
+				targets[idx] = &o.Status
+			case "o.total":
+				targets[idx] = &o.Total
+			case "o.notes":
+				targets[idx] = &o.Notes
+			case "o.ordered_at":
+				targets[idx] = &o.OrderedAt
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.user_id":
+				targets[idx] = database.NullScan(&p.UserID)
+			case "p.website":
+				targets[idx] = &p.Website
+			case "p.github_handle":
+				targets[idx] = &p.GithubHandle
+			case "p.verified":
+				targets[idx] = database.NullScan(&p.Verified)
+			case "p.preferences":
+				targets[idx] = &p.Preferences
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.user_id":
+				targets[idx] = database.NullScan(&p2.UserID)
+			case "p2.website":
+				targets[idx] = &p2.Website
+			case "p2.github_handle":
+				targets[idx] = &p2.GithubHandle
+			case "p2.verified":
+				targets[idx] = database.NullScan(&p2.Verified)
+			case "p2.preferences":
+				targets[idx] = &p2.Preferences
+			case "p3.id":
+				targets[idx] = database.NullScan(&p3.ID)
+				p3HasData = true
+			case "p3.user_id":
+				targets[idx] = database.NullScan(&p3.UserID)
+			case "p3.website":
+				targets[idx] = &p3.Website
+			case "p3.github_handle":
+				targets[idx] = &p3.GithubHandle
+			case "p3.verified":
+				targets[idx] = database.NullScan(&p3.Verified)
+			case "p3.preferences":
+				targets[idx] = &p3.Preferences
+			case "u.id":
+				targets[idx] = database.NullScan(&u.ID)
+				uHasData = true
+			case "u.name":
+				targets[idx] = database.NullScan(&u.Name)
+			case "u.email":
+				targets[idx] = database.NullScan(&u.Email)
+			case "u.role":
+				targets[idx] = database.NullScan(&u.Role)
+			case "u.permissions":
+				targets[idx] = database.NullScan(&u.Permissions)
+			case "u.age":
+				targets[idx] = &u.Age
+			case "u.bio":
+				targets[idx] = &u.Bio
+			case "u.is_active":
+				targets[idx] = database.NullScan(&u.IsActive)
+			case "u.balance":
+				targets[idx] = database.NullScan(&u.Balance)
+			case "u.login_count":
+				targets[idx] = database.NullScan(&u.LoginCount)
+			case "u.avatar":
+				targets[idx] = &u.Avatar
+			case "u.metadata":
+				targets[idx] = &u.Metadata
+			case "u.rating":
+				targets[idx] = &u.Rating
+			case "u.score":
+				targets[idx] = &u.Score
+			case "u.tiny_flag":
+				targets[idx] = &u.TinyFlag
+			case "u.medium_val":
+				targets[idx] = &u.MediumVal
+			case "u.big_unsigned":
+				targets[idx] = &u.BigUnsigned
+			case "u.birth_date":
+				targets[idx] = &u.BirthDate
+			case "u.last_login":
+				targets[idx] = &u.LastLogin
+			case "u.created_at":
+				targets[idx] = database.NullScan(&u.CreatedAt)
+			case "u.updated_at":
+				targets[idx] = database.NullScan(&u.UpdatedAt)
+			case "u2.id":
+				targets[idx] = database.NullScan(&u2.ID)
+				u2HasData = true
+			case "u2.name":
+				targets[idx] = database.NullScan(&u2.Name)
+			case "u2.email":
+				targets[idx] = database.NullScan(&u2.Email)
+			case "u2.role":
+				targets[idx] = database.NullScan(&u2.Role)
+			case "u2.permissions":
+				targets[idx] = database.NullScan(&u2.Permissions)
+			case "u2.age":
+				targets[idx] = &u2.Age
+			case "u2.bio":
+				targets[idx] = &u2.Bio
+			case "u2.is_active":
+				targets[idx] = database.NullScan(&u2.IsActive)
+			case "u2.balance":
+				targets[idx] = database.NullScan(&u2.Balance)
+			case "u2.login_count":
+				targets[idx] = database.NullScan(&u2.LoginCount)
+			case "u2.avatar":
+				targets[idx] = &u2.Avatar
+			case "u2.metadata":
+				targets[idx] = &u2.Metadata
+			case "u2.rating":
+				targets[idx] = &u2.Rating
+			case "u2.score":
+				targets[idx] = &u2.Score
+			case "u2.tiny_flag":
+				targets[idx] = &u2.TinyFlag
+			case "u2.medium_val":
+				targets[idx] = &u2.MediumVal
+			case "u2.big_unsigned":
+				targets[idx] = &u2.BigUnsigned
+			case "u2.birth_date":
+				targets[idx] = &u2.BirthDate
+			case "u2.last_login":
+				targets[idx] = &u2.LastLogin
+			case "u2.created_at":
+				targets[idx] = database.NullScan(&u2.CreatedAt)
+			case "u2.updated_at":
+				targets[idx] = database.NullScan(&u2.UpdatedAt)
+			case "u3.id":
+				targets[idx] = database.NullScan(&u3.ID)
+				u3HasData = true
+			case "u3.name":
+				targets[idx] = database.NullScan(&u3.Name)
+			case "u3.email":
+				targets[idx] = database.NullScan(&u3.Email)
+			case "u3.role":
+				targets[idx] = database.NullScan(&u3.Role)
+			case "u3.permissions":
+				targets[idx] = database.NullScan(&u3.Permissions)
+			case "u3.age":
+				targets[idx] = &u3.Age
+			case "u3.bio":
+				targets[idx] = &u3.Bio
+			case "u3.is_active":
+				targets[idx] = database.NullScan(&u3.IsActive)
+			case "u3.balance":
+				targets[idx] = database.NullScan(&u3.Balance)
+			case "u3.login_count":
+				targets[idx] = database.NullScan(&u3.LoginCount)
+			case "u3.avatar":
+				targets[idx] = &u3.Avatar
+			case "u3.metadata":
+				targets[idx] = &u3.Metadata
+			case "u3.rating":
+				targets[idx] = &u3.Rating
+			case "u3.score":
+				targets[idx] = &u3.Score
+			case "u3.tiny_flag":
+				targets[idx] = &u3.TinyFlag
+			case "u3.medium_val":
+				targets[idx] = &u3.MediumVal
+			case "u3.big_unsigned":
+				targets[idx] = &u3.BigUnsigned
+			case "u3.birth_date":
+				targets[idx] = &u3.BirthDate
+			case "u3.last_login":
+				targets[idx] = &u3.LastLogin
+			case "u3.created_at":
+				targets[idx] = database.NullScan(&u3.CreatedAt)
+			case "u3.updated_at":
+				targets[idx] = database.NullScan(&u3.UpdatedAt)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan order with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if u3HasData && u3.ID != 0 {
+			p2.User = u3
+		} else {
+			p2.User = nil
+		}
+		if u2HasData && u2.ID != 0 {
+			p.User = u2
+		} else {
+			p.User = nil
+		}
+		if uHasData && u.ID != 0 {
+			o.User = u
+		} else {
+			o.User = nil
+		}
+		if p3HasData && p3.ID != 0 {
+			u3.Profile = p3
+		} else {
+			u3.Profile = nil
+		}
+		if p2HasData && p2.ID != 0 {
+			u2.Profile = p2
+		} else {
+			u2.Profile = nil
+		}
+		if pHasData && p.ID != 0 {
+			u.Profile = p
+		} else {
+			u.Profile = nil
+		}
+
+		result = append(result, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate order rows: %w", err)
+	}
+	return result, nil
+}
+
 // ProductTagLabelPK - composite primary key for the product_tag_labels table.
 type ProductTagLabelPK struct {
 	// ProductID - Product reference
@@ -33655,6 +34879,9 @@ type ProductTagLabel struct {
 	Label string `db:"label" json:"label"`
 	// Description - Optional description
 	Description *string `db:"description" json:"description"`
+
+	// Product - one-to-one relationship with the products table.
+	Product *Product `db:"-" json:"product"`
 }
 
 // ProductTagLabelClient provides type-safe operations for the product_tag_labels table.
@@ -33862,6 +35089,19 @@ func (c *productTagLabelClient) Get(ctx context.Context, pk ProductTagLabelPK, o
 				return nil, fmt.Errorf("get product_tag_label: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get product_tag_label: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get product_tag_label: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableProductTagLabels, Schema: "",
@@ -33935,6 +35175,19 @@ func (c *productTagLabelClient) GetMany(ctx context.Context, input *GetProductTa
 				return nil, fmt.Errorf("get many product_tag_labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many product_tag_labels: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many product_tag_labels: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableProductTagLabels, Schema: "",
@@ -33987,25 +35240,58 @@ func (c *productTagLabelClient) GetMany(ctx context.Context, input *GetProductTa
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var productTagLabels []*ProductTagLabel
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("p", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "p",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		productTagLabels, err = scanProductTagLabels(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			productTagLabels, err = scanProductTagLabelsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			productTagLabels, err = scanProductTagLabels(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return productTagLabels, nil
@@ -35050,6 +36336,19 @@ func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInpu
 				return nil, fmt.Errorf("paginate product_tag_labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate product_tag_labels: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate product_tag_labels: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProductTagLabels, Schema: "",
@@ -35110,6 +36409,19 @@ func (c *productTagLabelClient) Connection(ctx context.Context, input Connection
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection product_tag_labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection product_tag_labels: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection product_tag_labels: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -35553,10 +36865,11 @@ func (f *ProductTagLabelFilter) ToConditions(dialect sql.Dialect, opts ...Filter
 
 // ProductTagLabelFieldOptions controls column selection and relationship loading for product_tag_labels queries.
 type ProductTagLabelFieldOptions struct {
-	ProductID   bool `json:"product_id"`
-	TagName     bool `json:"tag_name"`
-	Label       bool `json:"label"`
-	Description bool `json:"description"`
+	ProductID   bool                 `json:"product_id"`
+	TagName     bool                 `json:"tag_name"`
+	Label       bool                 `json:"label"`
+	Description bool                 `json:"description"`
+	Product     *ProductFieldOptions `json:"product"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -35603,6 +36916,9 @@ func (fo *ProductTagLabelFieldOptions) HasSelectedColumns() bool {
 	if fo.Description {
 		return true
 	}
+	if fo.Product != nil {
+		return true
+	}
 	return false
 }
 
@@ -35641,6 +36957,114 @@ type GetProductTagLabelsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *productTagLabelClient) resolveO2OJoins(d sql.Dialect, fo *ProductTagLabelFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Product != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "products"},
+			Alias: "p2",
+			On:    fmt.Sprintf("p2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("product_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Product.Columns(), "id"),
+		})
+		if fo.Product.Category != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "categories"},
+				Alias: "c",
+				On:    fmt.Sprintf("c.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("category_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Product.Category.Columns(), "id"),
+			})
+		}
+	}
+	return joins
+}
+
+// scanProductTagLabelsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// ProductTagLabel entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanProductTagLabelsWithOneToOneJoins(rows database.Rows, columns []string) ([]*ProductTagLabel, error) {
+	var result []*ProductTagLabel
+	for rows.Next() {
+		p := &ProductTagLabel{}
+		c := &Category{}
+		cHasData := false
+		p2 := &Product{}
+		p2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "p.product_id":
+				targets[idx] = &p.ProductID
+			case "p.tag_name":
+				targets[idx] = &p.TagName
+			case "p.label":
+				targets[idx] = &p.Label
+			case "p.description":
+				targets[idx] = &p.Description
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "c.description":
+				targets[idx] = &c.Description
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.category_id":
+				targets[idx] = database.NullScan(&p2.CategoryID)
+			case "p2.title":
+				targets[idx] = database.NullScan(&p2.Title)
+			case "p2.price":
+				targets[idx] = database.NullScan(&p2.Price)
+			case "p2.weight_kg":
+				targets[idx] = &p2.WeightKg
+			case "p2.in_stock":
+				targets[idx] = database.NullScan(&p2.InStock)
+			case "p2.sku":
+				targets[idx] = database.NullScan(&p2.SKU)
+			case "p2.attributes":
+				targets[idx] = database.NullScan(&p2.Attributes)
+			case "p2.created_at":
+				targets[idx] = database.NullScan(&p2.CreatedAt)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan product_tag_label with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if p2HasData && p2.ID != 0 {
+			p.Product = p2
+		} else {
+			p.Product = nil
+		}
+		if cHasData && c.ID != 0 {
+			p2.Category = c
+		} else {
+			p2.Category = nil
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate product_tag_label rows: %w", err)
+	}
+	return result, nil
+}
+
 // Product - Catalog of products available for sale
 type Product struct {
 	// ID - Unique identifier
@@ -35662,6 +37086,8 @@ type Product struct {
 	// CreatedAt - Row creation timestamp
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 
+	// Category - one-to-one relationship with the categories table.
+	Category *Category `db:"-" json:"category"`
 	// OrderItems - one-to-many relationship with the order_items table.
 	OrderItems []*OrderItem `db:"-" json:"order_items"`
 	// ProductTagLabels - one-to-many relationship with the product_tag_labels table.
@@ -35914,6 +37340,19 @@ func (c *productClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 				return nil, fmt.Errorf("get product: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get product: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get product: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableProducts, Schema: "",
@@ -35988,6 +37427,19 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 				return nil, fmt.Errorf("get many products: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many products: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many products: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableProducts, Schema: "",
@@ -36044,25 +37496,58 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var products []*Product
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("p", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "p",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		products, err = scanProducts(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			products, err = scanProductsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			products, err = scanProducts(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -37642,6 +39127,7 @@ func productNestedParentFieldOptions(fo *ProductFieldOptions) *ProductFieldOptio
 		return nil
 	}
 	scalars := *fo
+	scalars.Category = nil
 	scalars.OrderItems = nil
 	scalars.ProductTagLabels = nil
 	scalars.ID = true
@@ -37656,7 +39142,7 @@ func productNestedSelectsRelationship(fo *ProductFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.OrderItems != nil || fo.ProductTagLabels != nil
+	return fo.Category != nil || fo.OrderItems != nil || fo.ProductTagLabels != nil
 }
 
 // CreateWithRelated creates a product together with rows on its nested
@@ -38035,6 +39521,19 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 				return nil, fmt.Errorf("paginate products: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate products: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate products: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProducts, Schema: "",
@@ -38095,6 +39594,19 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection products: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection products: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection products: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -38690,6 +40202,7 @@ type ProductFieldOptions struct {
 	SKU              bool                                `json:"sku"`
 	Attributes       bool                                `json:"attributes"`
 	CreatedAt        bool                                `json:"created_at"`
+	Category         *CategoryFieldOptions               `json:"category"`
 	OrderItems       *OrderItemRelationshipOptions       `json:"order_items"`
 	ProductTagLabels *ProductTagLabelRelationshipOptions `json:"product_tag_labels"`
 }
@@ -38773,6 +40286,9 @@ func (fo *ProductFieldOptions) HasSelectedColumns() bool {
 	if fo.CreatedAt {
 		return true
 	}
+	if fo.Category != nil {
+		return true
+	}
 	if fo.OrderItems != nil {
 		return true
 	}
@@ -38846,6 +40362,87 @@ type GetProductsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *productClient) resolveO2OJoins(d sql.Dialect, fo *ProductFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Category != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "categories"},
+			Alias: "c",
+			On:    fmt.Sprintf("c.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("category_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Category.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanProductsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Product entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanProductsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Product, error) {
+	var result []*Product
+	for rows.Next() {
+		p := &Product{}
+		c := &Category{}
+		cHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "p.id":
+				targets[idx] = &p.ID
+			case "p.category_id":
+				targets[idx] = &p.CategoryID
+			case "p.title":
+				targets[idx] = &p.Title
+			case "p.price":
+				targets[idx] = &p.Price
+			case "p.weight_kg":
+				targets[idx] = &p.WeightKg
+			case "p.in_stock":
+				targets[idx] = &p.InStock
+			case "p.sku":
+				targets[idx] = &p.SKU
+			case "p.attributes":
+				targets[idx] = &p.Attributes
+			case "p.created_at":
+				targets[idx] = &p.CreatedAt
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "c.description":
+				targets[idx] = &c.Description
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan product with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if cHasData && c.ID != 0 {
+			p.Category = c
+		} else {
+			p.Category = nil
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate product rows: %w", err)
+	}
+	return result, nil
+}
+
 // Profile - Extended user profile information
 type Profile struct {
 	// ID - Unique identifier
@@ -38861,8 +40458,8 @@ type Profile struct {
 	// Preferences - User preference settings
 	Preferences types.JSON `db:"preferences" json:"preferences"`
 
-	// Users - one-to-one relationship with the users table.
-	Users *User `db:"-" json:"users"`
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // ProfileClient provides type-safe operations for the profiles table.
@@ -41161,7 +42758,7 @@ type ProfileFieldOptions struct {
 	GithubHandle bool              `json:"github_handle"`
 	Verified     bool              `json:"verified"`
 	Preferences  bool              `json:"preferences"`
-	Users        *UserFieldOptions `json:"users"`
+	User         *UserFieldOptions `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -41222,7 +42819,7 @@ func (fo *ProfileFieldOptions) HasSelectedColumns() bool {
 	if fo.Preferences {
 		return true
 	}
-	if fo.Users != nil {
+	if fo.User != nil {
 		return true
 	}
 	return false
@@ -41280,7 +42877,7 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 		return nil
 	}
 	var joins []sql.JoinClause
-	if fo.Users != nil {
+	if fo.User != nil {
 		joins = append(joins, sql.JoinClause{
 			Table: sql.Table{Schema: "", Name: "users"},
 			Alias: "u",
@@ -41288,9 +42885,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 			// The NULL-detection below reads the target's PK off the scanned
 			// row, so the join carries it even when FieldOptions did not ask
 			// for it — an unselected PK reads as a LEFT JOIN miss.
-			Columns: unionColumns(fo.Users.Columns(), "id"),
+			Columns: unionColumns(fo.User.Columns(), "id"),
 		})
-		if fo.Users.Profile != nil {
+		if fo.User.Profile != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "", Name: "profiles"},
 				Alias: "p2",
@@ -41298,9 +42895,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Users.Profile.Columns(), "id"),
+				Columns: unionColumns(fo.User.Profile.Columns(), "id"),
 			})
-			if fo.Users.Profile.Users != nil {
+			if fo.User.Profile.User != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "", Name: "users"},
 					Alias: "u2",
@@ -41308,9 +42905,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Users.Profile.Users.Columns(), "id"),
+					Columns: unionColumns(fo.User.Profile.User.Columns(), "id"),
 				})
-				if fo.Users.Profile.Users.Profile != nil {
+				if fo.User.Profile.User.Profile != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "", Name: "profiles"},
 						Alias: "p3",
@@ -41318,9 +42915,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Users.Profile.Users.Profile.Columns(), "id"),
+						Columns: unionColumns(fo.User.Profile.User.Profile.Columns(), "id"),
 					})
-					if fo.Users.Profile.Users.Profile.Users != nil {
+					if fo.User.Profile.User.Profile.User != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "", Name: "users"},
 							Alias: "u3",
@@ -41328,9 +42925,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Users.Profile.Users.Profile.Users.Columns(), "id"),
+							Columns: unionColumns(fo.User.Profile.User.Profile.User.Columns(), "id"),
 						})
-						if fo.Users.Profile.Users.Profile.Users.Profile != nil {
+						if fo.User.Profile.User.Profile.User.Profile != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "", Name: "profiles"},
 								Alias: "p4",
@@ -41338,7 +42935,7 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Users.Profile.Users.Profile.Users.Profile.Columns(), "id"),
+								Columns: unionColumns(fo.User.Profile.User.Profile.User.Profile.Columns(), "id"),
 							})
 						}
 					}
@@ -41561,19 +43158,19 @@ func scanProfilesWithOneToOneJoins(rows database.Rows, columns []string) ([]*Pro
 
 		// NULL detection — assign deepest chain first, then parents
 		if u3HasData && u3.ID != 0 {
-			p3.Users = u3
+			p3.User = u3
 		} else {
-			p3.Users = nil
+			p3.User = nil
 		}
 		if u2HasData && u2.ID != 0 {
-			p2.Users = u2
+			p2.User = u2
 		} else {
-			p2.Users = nil
+			p2.User = nil
 		}
 		if uHasData && u.ID != 0 {
-			p.Users = u
+			p.User = u
 		} else {
-			p.Users = nil
+			p.User = nil
 		}
 		if p4HasData && p4.ID != 0 {
 			u3.Profile = p4
@@ -49136,6 +50733,9 @@ type TimeKeyedNote struct {
 	ID      int64      `db:"id" json:"id"`
 	KeyedAt *time.Time `db:"keyed_at" json:"keyed_at"`
 	Note    string     `db:"note" json:"note"`
+
+	// TimeKeyed - one-to-one relationship with the time_keyed table.
+	TimeKeyed *TimeKeyed `db:"-" json:"time_keyed"`
 }
 
 // TimeKeyedNoteClient provides type-safe operations for the time_keyed_notes table.
@@ -49341,6 +50941,19 @@ func (c *timeKeyedNoteClient) Get(ctx context.Context, id int64, opts ...func(*C
 				return nil, fmt.Errorf("get time_keyed_note: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get time_keyed_note: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get time_keyed_note: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableTimeKeyedNotes, Schema: "",
@@ -49412,6 +51025,19 @@ func (c *timeKeyedNoteClient) GetMany(ctx context.Context, input *GetTimeKeyedNo
 				return nil, fmt.Errorf("get many time_keyed_notes: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many time_keyed_notes: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many time_keyed_notes: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableTimeKeyedNotes, Schema: "",
@@ -49464,25 +51090,58 @@ func (c *timeKeyedNoteClient) GetMany(ctx context.Context, input *GetTimeKeyedNo
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var timeKeyedNotes []*TimeKeyedNote
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("t", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		timeKeyedNotes, err = scanTimeKeyedNotes(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			timeKeyedNotes, err = scanTimeKeyedNotesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			timeKeyedNotes, err = scanTimeKeyedNotes(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return timeKeyedNotes, nil
@@ -50726,6 +52385,19 @@ func (c *timeKeyedNoteClient) Paginate(ctx context.Context, input PaginateInput[
 				return nil, fmt.Errorf("paginate time_keyed_notes: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate time_keyed_notes: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate time_keyed_notes: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTimeKeyedNotes, Schema: "",
@@ -50786,6 +52458,19 @@ func (c *timeKeyedNoteClient) Connection(ctx context.Context, input ConnectionIn
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection time_keyed_notes: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection time_keyed_notes: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection time_keyed_notes: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -51194,9 +52879,10 @@ func (f *TimeKeyedNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOp
 
 // TimeKeyedNoteFieldOptions controls column selection and relationship loading for time_keyed_notes queries.
 type TimeKeyedNoteFieldOptions struct {
-	ID      bool `json:"id"`
-	KeyedAt bool `json:"keyed_at"`
-	Note    bool `json:"note"`
+	ID        bool                   `json:"id"`
+	KeyedAt   bool                   `json:"keyed_at"`
+	Note      bool                   `json:"note"`
+	TimeKeyed *TimeKeyedFieldOptions `json:"time_keyed"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -51236,6 +52922,9 @@ func (fo *TimeKeyedNoteFieldOptions) HasSelectedColumns() bool {
 	if fo.Note {
 		return true
 	}
+	if fo.TimeKeyed != nil {
+		return true
+	}
 	return false
 }
 
@@ -51266,6 +52955,73 @@ type GetTimeKeyedNotesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *timeKeyedNoteClient) resolveO2OJoins(d sql.Dialect, fo *TimeKeyedNoteFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.TimeKeyed != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "time_keyed"},
+			Alias: "t2",
+			On:    fmt.Sprintf("t2.%s = t.%s", d.QuoteIdentifier("at"), d.QuoteIdentifier("keyed_at")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.TimeKeyed.Columns(), "at"),
+		})
+	}
+	return joins
+}
+
+// scanTimeKeyedNotesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// TimeKeyedNote entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTimeKeyedNotesWithOneToOneJoins(rows database.Rows, columns []string) ([]*TimeKeyedNote, error) {
+	var result []*TimeKeyedNote
+	for rows.Next() {
+		t := &TimeKeyedNote{}
+		t2 := &TimeKeyed{}
+		t2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.keyed_at":
+				targets[idx] = &t.KeyedAt
+			case "t.note":
+				targets[idx] = &t.Note
+			case "t2.at":
+				targets[idx] = database.NullScan(&t2.At)
+				t2HasData = true
+			case "t2.label":
+				targets[idx] = database.NullScan(&t2.Label)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan time_keyed_note with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if t2HasData && t2.At != (time.Time{}) {
+			t.TimeKeyed = t2
+		} else {
+			t.TimeKeyed = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate time_keyed_note rows: %w", err)
+	}
+	return result, nil
 }
 
 // UserCategoryPK - composite primary key for the user_categories table.
@@ -53484,6 +55240,9 @@ type UserEvent struct {
 	UserID *int64 `db:"user_id" json:"user_id"`
 	// Action - What happened
 	Action string `db:"action" json:"action"`
+
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // UserEventClient provides type-safe operations for the user_events table.
@@ -53689,6 +55448,19 @@ func (c *userEventClient) Get(ctx context.Context, id int64, opts ...func(*CallO
 				return nil, fmt.Errorf("get user_event: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get user_event: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get user_event: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	qctx := &hook.QueryContext{
 		Op: hook.OpGet, Table: TableUserEvents, Schema: "",
@@ -53760,6 +55532,19 @@ func (c *userEventClient) GetMany(ctx context.Context, input *GetUserEventsInput
 				return nil, fmt.Errorf("get many user_events: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get many user_events: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("get many user_events: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableUserEvents, Schema: "",
@@ -53812,25 +55597,58 @@ func (c *userEventClient) GetMany(ctx context.Context, input *GetUserEventsInput
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var userEvents []*UserEvent
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("u", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "u",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		userEvents, err = scanUserEvents(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			userEvents, err = scanUserEventsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			userEvents, err = scanUserEvents(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return userEvents, nil
@@ -55074,6 +56892,19 @@ func (c *userEventClient) Paginate(ctx context.Context, input PaginateInput[User
 				return nil, fmt.Errorf("paginate user_events: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate user_events: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("paginate user_events: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableUserEvents, Schema: "",
@@ -55134,6 +56965,19 @@ func (c *userEventClient) Connection(ctx context.Context, input ConnectionInput[
 			}
 			if version.Major < 8 {
 				return nil, fmt.Errorf("connection user_events: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+		// A selected one-to-one relationship is read through a LEFT JOIN
+		// whose lock names only this table (FOR UPDATE OF / FOR SHARE OF),
+		// so the joined rows stay unlocked. MySQL accepts that form from 8.0;
+		// MariaDB does not accept it.
+		if len(c.resolveO2OJoins(c.dialect, options.FieldOptions)) > 0 {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection user_events: %w", err)
+			}
+			if version.Major < 8 || version.MariaDB {
+				return nil, fmt.Errorf("connection user_events: LockMode %s with a one-to-one relationship selected requires MySQL 8.0+, not MariaDB (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -55542,9 +57386,10 @@ func (f *UserEventFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 // UserEventFieldOptions controls column selection and relationship loading for user_events queries.
 type UserEventFieldOptions struct {
-	ID     bool `json:"id"`
-	UserID bool `json:"user_id"`
-	Action bool `json:"action"`
+	ID     bool              `json:"id"`
+	UserID bool              `json:"user_id"`
+	Action bool              `json:"action"`
+	User   *UserFieldOptions `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -55584,6 +57429,9 @@ func (fo *UserEventFieldOptions) HasSelectedColumns() bool {
 	if fo.Action {
 		return true
 	}
+	if fo.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -55618,6 +57466,326 @@ type GetUserEventsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *userEventClient) resolveO2OJoins(d sql.Dialect, fo *UserEventFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.User != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "users"},
+			Alias: "u2",
+			On:    fmt.Sprintf("u2.%s = u.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.User.Columns(), "id"),
+		})
+		if fo.User.Profile != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "profiles"},
+				Alias: "p",
+				On:    fmt.Sprintf("p.%s = u2.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.User.Profile.Columns(), "id"),
+			})
+			if fo.User.Profile.User != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "", Name: "users"},
+					Alias: "u3",
+					On:    fmt.Sprintf("u3.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.User.Profile.User.Columns(), "id"),
+				})
+				if fo.User.Profile.User.Profile != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "", Name: "profiles"},
+						Alias: "p2",
+						On:    fmt.Sprintf("p2.%s = u3.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.User.Profile.User.Profile.Columns(), "id"),
+					})
+					if fo.User.Profile.User.Profile.User != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "", Name: "users"},
+							Alias: "u4",
+							On:    fmt.Sprintf("u4.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.User.Profile.User.Profile.User.Columns(), "id"),
+						})
+						if fo.User.Profile.User.Profile.User.Profile != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "", Name: "profiles"},
+								Alias: "p3",
+								On:    fmt.Sprintf("p3.%s = u4.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.User.Profile.User.Profile.User.Profile.Columns(), "id"),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	return joins
+}
+
+// scanUserEventsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// UserEvent entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanUserEventsWithOneToOneJoins(rows database.Rows, columns []string) ([]*UserEvent, error) {
+	var result []*UserEvent
+	for rows.Next() {
+		u := &UserEvent{}
+		p := &Profile{}
+		pHasData := false
+		p2 := &Profile{}
+		p2HasData := false
+		p3 := &Profile{}
+		p3HasData := false
+		u2 := &User{}
+		u2HasData := false
+		u3 := &User{}
+		u3HasData := false
+		u4 := &User{}
+		u4HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "u.id":
+				targets[idx] = &u.ID
+			case "u.user_id":
+				targets[idx] = &u.UserID
+			case "u.action":
+				targets[idx] = &u.Action
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.user_id":
+				targets[idx] = database.NullScan(&p.UserID)
+			case "p.website":
+				targets[idx] = &p.Website
+			case "p.github_handle":
+				targets[idx] = &p.GithubHandle
+			case "p.verified":
+				targets[idx] = database.NullScan(&p.Verified)
+			case "p.preferences":
+				targets[idx] = &p.Preferences
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.user_id":
+				targets[idx] = database.NullScan(&p2.UserID)
+			case "p2.website":
+				targets[idx] = &p2.Website
+			case "p2.github_handle":
+				targets[idx] = &p2.GithubHandle
+			case "p2.verified":
+				targets[idx] = database.NullScan(&p2.Verified)
+			case "p2.preferences":
+				targets[idx] = &p2.Preferences
+			case "p3.id":
+				targets[idx] = database.NullScan(&p3.ID)
+				p3HasData = true
+			case "p3.user_id":
+				targets[idx] = database.NullScan(&p3.UserID)
+			case "p3.website":
+				targets[idx] = &p3.Website
+			case "p3.github_handle":
+				targets[idx] = &p3.GithubHandle
+			case "p3.verified":
+				targets[idx] = database.NullScan(&p3.Verified)
+			case "p3.preferences":
+				targets[idx] = &p3.Preferences
+			case "u2.id":
+				targets[idx] = database.NullScan(&u2.ID)
+				u2HasData = true
+			case "u2.name":
+				targets[idx] = database.NullScan(&u2.Name)
+			case "u2.email":
+				targets[idx] = database.NullScan(&u2.Email)
+			case "u2.role":
+				targets[idx] = database.NullScan(&u2.Role)
+			case "u2.permissions":
+				targets[idx] = database.NullScan(&u2.Permissions)
+			case "u2.age":
+				targets[idx] = &u2.Age
+			case "u2.bio":
+				targets[idx] = &u2.Bio
+			case "u2.is_active":
+				targets[idx] = database.NullScan(&u2.IsActive)
+			case "u2.balance":
+				targets[idx] = database.NullScan(&u2.Balance)
+			case "u2.login_count":
+				targets[idx] = database.NullScan(&u2.LoginCount)
+			case "u2.avatar":
+				targets[idx] = &u2.Avatar
+			case "u2.metadata":
+				targets[idx] = &u2.Metadata
+			case "u2.rating":
+				targets[idx] = &u2.Rating
+			case "u2.score":
+				targets[idx] = &u2.Score
+			case "u2.tiny_flag":
+				targets[idx] = &u2.TinyFlag
+			case "u2.medium_val":
+				targets[idx] = &u2.MediumVal
+			case "u2.big_unsigned":
+				targets[idx] = &u2.BigUnsigned
+			case "u2.birth_date":
+				targets[idx] = &u2.BirthDate
+			case "u2.last_login":
+				targets[idx] = &u2.LastLogin
+			case "u2.created_at":
+				targets[idx] = database.NullScan(&u2.CreatedAt)
+			case "u2.updated_at":
+				targets[idx] = database.NullScan(&u2.UpdatedAt)
+			case "u3.id":
+				targets[idx] = database.NullScan(&u3.ID)
+				u3HasData = true
+			case "u3.name":
+				targets[idx] = database.NullScan(&u3.Name)
+			case "u3.email":
+				targets[idx] = database.NullScan(&u3.Email)
+			case "u3.role":
+				targets[idx] = database.NullScan(&u3.Role)
+			case "u3.permissions":
+				targets[idx] = database.NullScan(&u3.Permissions)
+			case "u3.age":
+				targets[idx] = &u3.Age
+			case "u3.bio":
+				targets[idx] = &u3.Bio
+			case "u3.is_active":
+				targets[idx] = database.NullScan(&u3.IsActive)
+			case "u3.balance":
+				targets[idx] = database.NullScan(&u3.Balance)
+			case "u3.login_count":
+				targets[idx] = database.NullScan(&u3.LoginCount)
+			case "u3.avatar":
+				targets[idx] = &u3.Avatar
+			case "u3.metadata":
+				targets[idx] = &u3.Metadata
+			case "u3.rating":
+				targets[idx] = &u3.Rating
+			case "u3.score":
+				targets[idx] = &u3.Score
+			case "u3.tiny_flag":
+				targets[idx] = &u3.TinyFlag
+			case "u3.medium_val":
+				targets[idx] = &u3.MediumVal
+			case "u3.big_unsigned":
+				targets[idx] = &u3.BigUnsigned
+			case "u3.birth_date":
+				targets[idx] = &u3.BirthDate
+			case "u3.last_login":
+				targets[idx] = &u3.LastLogin
+			case "u3.created_at":
+				targets[idx] = database.NullScan(&u3.CreatedAt)
+			case "u3.updated_at":
+				targets[idx] = database.NullScan(&u3.UpdatedAt)
+			case "u4.id":
+				targets[idx] = database.NullScan(&u4.ID)
+				u4HasData = true
+			case "u4.name":
+				targets[idx] = database.NullScan(&u4.Name)
+			case "u4.email":
+				targets[idx] = database.NullScan(&u4.Email)
+			case "u4.role":
+				targets[idx] = database.NullScan(&u4.Role)
+			case "u4.permissions":
+				targets[idx] = database.NullScan(&u4.Permissions)
+			case "u4.age":
+				targets[idx] = &u4.Age
+			case "u4.bio":
+				targets[idx] = &u4.Bio
+			case "u4.is_active":
+				targets[idx] = database.NullScan(&u4.IsActive)
+			case "u4.balance":
+				targets[idx] = database.NullScan(&u4.Balance)
+			case "u4.login_count":
+				targets[idx] = database.NullScan(&u4.LoginCount)
+			case "u4.avatar":
+				targets[idx] = &u4.Avatar
+			case "u4.metadata":
+				targets[idx] = &u4.Metadata
+			case "u4.rating":
+				targets[idx] = &u4.Rating
+			case "u4.score":
+				targets[idx] = &u4.Score
+			case "u4.tiny_flag":
+				targets[idx] = &u4.TinyFlag
+			case "u4.medium_val":
+				targets[idx] = &u4.MediumVal
+			case "u4.big_unsigned":
+				targets[idx] = &u4.BigUnsigned
+			case "u4.birth_date":
+				targets[idx] = &u4.BirthDate
+			case "u4.last_login":
+				targets[idx] = &u4.LastLogin
+			case "u4.created_at":
+				targets[idx] = database.NullScan(&u4.CreatedAt)
+			case "u4.updated_at":
+				targets[idx] = database.NullScan(&u4.UpdatedAt)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan user_event with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if u4HasData && u4.ID != 0 {
+			p2.User = u4
+		} else {
+			p2.User = nil
+		}
+		if u3HasData && u3.ID != 0 {
+			p.User = u3
+		} else {
+			p.User = nil
+		}
+		if u2HasData && u2.ID != 0 {
+			u.User = u2
+		} else {
+			u.User = nil
+		}
+		if p3HasData && p3.ID != 0 {
+			u4.Profile = p3
+		} else {
+			u4.Profile = nil
+		}
+		if p2HasData && p2.ID != 0 {
+			u3.Profile = p2
+		} else {
+			u3.Profile = nil
+		}
+		if pHasData && p.ID != 0 {
+			u2.Profile = p
+		} else {
+			u2.Profile = nil
+		}
+
+		result = append(result, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user_event rows: %w", err)
+	}
+	return result, nil
 }
 
 // User - Registered user accounts
@@ -60456,7 +62624,7 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 			// for it — an unselected PK reads as a LEFT JOIN miss.
 			Columns: unionColumns(fo.Profile.Columns(), "id"),
 		})
-		if fo.Profile.Users != nil {
+		if fo.Profile.User != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "", Name: "users"},
 				Alias: "u2",
@@ -60464,9 +62632,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Profile.Users.Columns(), "id"),
+				Columns: unionColumns(fo.Profile.User.Columns(), "id"),
 			})
-			if fo.Profile.Users.Profile != nil {
+			if fo.Profile.User.Profile != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "", Name: "profiles"},
 					Alias: "p2",
@@ -60474,9 +62642,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Profile.Users.Profile.Columns(), "id"),
+					Columns: unionColumns(fo.Profile.User.Profile.Columns(), "id"),
 				})
-				if fo.Profile.Users.Profile.Users != nil {
+				if fo.Profile.User.Profile.User != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "", Name: "users"},
 						Alias: "u3",
@@ -60484,9 +62652,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Profile.Users.Profile.Users.Columns(), "id"),
+						Columns: unionColumns(fo.Profile.User.Profile.User.Columns(), "id"),
 					})
-					if fo.Profile.Users.Profile.Users.Profile != nil {
+					if fo.Profile.User.Profile.User.Profile != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "", Name: "profiles"},
 							Alias: "p3",
@@ -60494,9 +62662,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Profile.Users.Profile.Users.Profile.Columns(), "id"),
+							Columns: unionColumns(fo.Profile.User.Profile.User.Profile.Columns(), "id"),
 						})
-						if fo.Profile.Users.Profile.Users.Profile.Users != nil {
+						if fo.Profile.User.Profile.User.Profile.User != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "", Name: "users"},
 								Alias: "u4",
@@ -60504,7 +62672,7 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Profile.Users.Profile.Users.Profile.Users.Columns(), "id"),
+								Columns: unionColumns(fo.Profile.User.Profile.User.Profile.User.Columns(), "id"),
 							})
 						}
 					}
@@ -60757,19 +62925,19 @@ func scanUsersWithOneToOneJoins(rows database.Rows, columns []string) ([]*User, 
 
 		// NULL detection — assign deepest chain first, then parents
 		if u4HasData && u4.ID != 0 {
-			p3.Users = u4
+			p3.User = u4
 		} else {
-			p3.Users = nil
+			p3.User = nil
 		}
 		if u3HasData && u3.ID != 0 {
-			p2.Users = u3
+			p2.User = u3
 		} else {
-			p2.Users = nil
+			p2.User = nil
 		}
 		if u2HasData && u2.ID != 0 {
-			p.Users = u2
+			p.User = u2
 		} else {
-			p.Users = nil
+			p.User = nil
 		}
 		if p3HasData && p3.ID != 0 {
 			u3.Profile = p3

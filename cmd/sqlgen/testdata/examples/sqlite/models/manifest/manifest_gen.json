@@ -2741,7 +2741,25 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "bin",
+          "kind": "o2o",
+          "target_entity": "Bin",
+          "fk": {
+            "table": "bin_items",
+            "columns": [
+              "aisle",
+              "slot"
+            ],
+            "references": [
+              "aisle",
+              "slot"
+            ],
+            "constraint": "bin_items(aisle, slot) → bins(aisle, slot)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -4057,7 +4075,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "binary_key",
+          "kind": "o2o",
+          "target_entity": "BinaryKey",
+          "fk": {
+            "table": "binary_key_events",
+            "columns": [
+              "binary_key_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "binary_key_events(binary_key_id) → binary_keys(id)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -4908,7 +4942,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "bool_keyed",
+          "kind": "o2o",
+          "target_entity": "BoolKeyed",
+          "fk": {
+            "table": "bool_keyed_notes",
+            "columns": [
+              "keyed_k"
+            ],
+            "references": [
+              "k"
+            ],
+            "constraint": "bool_keyed_notes(keyed_k) → bool_keyed(k)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -6977,7 +7027,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "parent",
+          "kind": "o2o",
+          "target_entity": "KeyClassParent",
+          "fk": {
+            "table": "key_class_children",
+            "columns": [
+              "parent_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "key_class_children(parent_id) → key_class_parents(id)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -7812,7 +7878,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "parent",
+          "kind": "o2o",
+          "target_entity": "KeyClassParent",
+          "fk": {
+            "table": "key_class_real_children",
+            "columns": [
+              "parent_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "key_class_real_children(parent_id) → key_class_parents(id)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -8681,6 +8763,21 @@
             ],
             "constraint": "order_items(order_id) → orders(id)"
           }
+        },
+        {
+          "name": "user",
+          "kind": "o2o",
+          "target_entity": "User",
+          "fk": {
+            "table": "orders",
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "orders(user_id) → users(id)"
+          }
         }
       ],
       "methods": {
@@ -9174,7 +9271,38 @@
           "check": "\"unit_price\" >= 0 AND \"quantity\" > 0"
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "order",
+          "kind": "o2o",
+          "target_entity": "Order",
+          "fk": {
+            "table": "order_items",
+            "columns": [
+              "order_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items(order_id) → orders(id)"
+          }
+        },
+        {
+          "name": "product",
+          "kind": "o2o",
+          "target_entity": "Product",
+          "fk": {
+            "table": "order_items",
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items(product_id) → products(id)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -10509,7 +10637,7 @@
       ],
       "relationships": [
         {
-          "name": "owners",
+          "name": "owner",
           "kind": "o2o",
           "target_entity": "Owner",
           "fk": {
@@ -11017,6 +11145,21 @@
         }
       ],
       "relationships": [
+        {
+          "name": "category",
+          "kind": "o2o",
+          "target_entity": "Category",
+          "fk": {
+            "table": "products",
+            "columns": [
+              "category_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "products(category_id) → categories(id)"
+          }
+        },
         {
           "name": "order_items",
           "kind": "o2m",
@@ -11753,7 +11896,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "product",
+          "kind": "o2o",
+          "target_entity": "Product",
+          "fk": {
+            "table": "product_tag_labels",
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "product_tag_labels(product_id) → products(id)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -12218,7 +12377,7 @@
       ],
       "relationships": [
         {
-          "name": "users",
+          "name": "user",
           "kind": "o2o",
           "target_entity": "User",
           "fk": {
@@ -13712,7 +13871,7 @@
       ],
       "relationships": [
         {
-          "name": "steps",
+          "name": "previous_step",
           "kind": "o2o",
           "target_entity": "Step",
           "fk": {
@@ -15110,7 +15269,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "time_keyed",
+          "kind": "o2o",
+          "target_entity": "TimeKeyed",
+          "fk": {
+            "table": "time_keyed_notes",
+            "columns": [
+              "keyed_at"
+            ],
+            "references": [
+              "at"
+            ],
+            "constraint": "time_keyed_notes(keyed_at) → time_keyed(at)"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {

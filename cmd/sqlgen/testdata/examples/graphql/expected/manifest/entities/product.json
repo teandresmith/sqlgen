@@ -182,6 +182,22 @@
   ],
   "relationships": [
     {
+      "name": "category",
+      "kind": "o2o",
+      "target_entity": "Category",
+      "fk": {
+        "table": "products",
+        "schema": "public",
+        "columns": [
+          "category_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "products_category_id_fkey"
+      }
+    },
+    {
       "name": "order_items",
       "kind": "o2m",
       "target_entity": "OrderItem",

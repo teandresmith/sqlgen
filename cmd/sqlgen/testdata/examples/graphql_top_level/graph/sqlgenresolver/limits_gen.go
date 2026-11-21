@@ -113,7 +113,8 @@ func (w depthWalker) fragment(s *ast.FragmentSpread) int {
 func isRelationshipField(typeName, field string) bool {
 	switch typeName + "." + field {
 	case
-		"Category.products":
+		"Category.products",
+		"Product.category":
 		return true
 	}
 	return false

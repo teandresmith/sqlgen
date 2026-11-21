@@ -56,6 +56,7 @@ type ComplexityRoot struct {
 		Name        func(childComplexity int) int
 		Nickname    func(childComplexity int) int
 		ObservedAt  func(childComplexity int) int
+		Parent      func(childComplexity int) int
 		ParentID    func(childComplexity int) int
 		Ratio       func(childComplexity int) int
 		SmallCount  func(childComplexity int) int
@@ -82,6 +83,7 @@ type ComplexityRoot struct {
 	}
 
 	Entry struct {
+		Account     func(childComplexity int) int
 		AccountID   func(childComplexity int) int
 		Amount      func(childComplexity int) int
 		CreatedAt   func(childComplexity int) int
@@ -268,6 +270,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Account.ObservedAt(childComplexity), true
+	case "Account.parent":
+		if e.ComplexityRoot.Account.Parent == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Account.Parent(childComplexity), true
 	case "Account.parentID":
 		if e.ComplexityRoot.Account.ParentID == nil {
 			break
@@ -356,6 +364,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.AccountListResult.TotalCount(childComplexity), true
 
+	case "Entry.account":
+		if e.ComplexityRoot.Entry.Account == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Entry.Account(childComplexity), true
 	case "Entry.accountID":
 		if e.ComplexityRoot.Entry.AccountID == nil {
 			break
@@ -863,6 +877,8 @@ func (ec *executionContext) childFields_Account(ctx context.Context, field graph
 		return ec.fieldContext_Account_accounts(ctx, field)
 	case "entries":
 		return ec.fieldContext_Account_entries(ctx, field)
+	case "parent":
+		return ec.fieldContext_Account_parent(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Account", field.Name)
 }
@@ -919,6 +935,8 @@ func (ec *executionContext) childFields_Entry(ctx context.Context, field graphql
 		return ec.fieldContext_Entry_upstreamRef(ctx, field)
 	case "createdAt":
 		return ec.fieldContext_Entry_createdAt(ctx, field)
+	case "account":
+		return ec.fieldContext_Entry_account(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Entry", field.Name)
 }
@@ -1998,6 +2016,38 @@ func (ec *executionContext) fieldContext_Account_entries(_ context.Context, fiel
 	return fc, nil
 }
 
+func (ec *executionContext) _Account_parent(ctx context.Context, field graphql.CollectedField, obj *models.Account) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Account_parent(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Parent, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Account) graphql.Marshaler {
+			return ec.marshalOAccount2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_null_wrappersᚋmodelsᚐAccount(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Account_parent(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Account",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Account(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _AccountConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Account]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2400,6 +2450,38 @@ func (ec *executionContext) _Entry_createdAt(ctx context.Context, field graphql.
 }
 func (ec *executionContext) fieldContext_Entry_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Entry", field, false, false, errors.New("field of type Time does not have child fields"))
+}
+
+func (ec *executionContext) _Entry_account(ctx context.Context, field graphql.CollectedField, obj *models.Entry) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Entry_account(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Account, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Account) graphql.Marshaler {
+			return ec.marshalOAccount2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_null_wrappersᚋmodelsᚐAccount(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Entry_account(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Entry",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Account(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _EntryConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Entry]) (ret graphql.Marshaler) {
@@ -6642,6 +6724,11 @@ func (ec *executionContext) _Account(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "parent":
+			out.Values[i] = ec._Account_parent(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -6852,6 +6939,11 @@ func (ec *executionContext) _Entry(ctx context.Context, sel ast.SelectionSet, ob
 		case "createdAt":
 			out.Values[i] = ec._Entry_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "account":
+			out.Values[i] = ec._Entry_account(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:

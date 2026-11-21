@@ -12,6 +12,10 @@ type OrderItem {
   quantity: Int!
   "unit_price"
   unitPrice: Float!
+  "one-to-one relationship with the orders table."
+  order: Order
+  "one-to-one relationship with the products table."
+  product: Product
 }
 
 type OrderItemConnection {

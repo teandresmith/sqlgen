@@ -27,6 +27,12 @@
 | `PRIMARY` | id | yes | btree |  |
 | `keyed_k` | keyed_k |  | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| bool_keyed | o2o | BoolKeyed | bool_keyed_notes.keyed_k |  |
+
 ## Query methods
 
 ### Get

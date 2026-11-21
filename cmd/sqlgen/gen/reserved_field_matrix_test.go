@@ -183,9 +183,10 @@ func TestReservedFieldNamesMatrix(t *testing.T) {
 			shape: "filterable", sqlName: "columns", reserved: "Columns", owner: "UserFieldOptions",
 		},
 		{
-			name: "a to-one relationship derived as Columns is rejected naming the field options",
+			// A detected to-one name is singular, so it never derives Columns.
+			name: "a to-one relationship declared as Columns is rejected naming the field options",
 			row:  "reserved-field-columns", item: "relationship",
-			sqlName: "columns", reserved: "Columns", owner: "UserFieldOptions",
+			override: true, reserved: "Columns", owner: "UserFieldOptions",
 		},
 		{
 			name: "a one-to-many relationship derived as Columns is rejected naming the field options",
@@ -237,9 +238,10 @@ func TestReservedFieldNamesMatrix(t *testing.T) {
 			shape: "filterable", sqlName: "has_selected_columns", reserved: "HasSelectedColumns", owner: "UserFieldOptions",
 		},
 		{
-			name: "a to-one relationship derived as HasSelectedColumns is rejected naming the field options",
+			// A detected to-one name is singular, so it never derives HasSelectedColumns.
+			name: "a to-one relationship declared as HasSelectedColumns is rejected naming the field options",
 			row:  "reserved-field-hasselectedcolumns", item: "relationship",
-			sqlName: "has_selected_columns", reserved: "HasSelectedColumns", owner: "UserFieldOptions",
+			override: true, reserved: "HasSelectedColumns", owner: "UserFieldOptions",
 		},
 		{
 			name: "a one-to-many relationship declared as HasSelectedColumns is rejected naming the field options",
