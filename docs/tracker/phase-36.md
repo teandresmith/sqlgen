@@ -277,12 +277,12 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 **PRD Reference:** Section 5.3
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Regenerate `sqlgen-example` with this build in a scratch copy (`GOWORK=off`) and build it.
-- [ ] Record the new to-one fields on `Task` and any new warning (design §10 item 6).
+- [x] Regenerate `sqlgen-example` with this build in a scratch copy (`GOWORK=off`) and build it.
+- [x] Record the new to-one fields on `Task` and any new warning (design §10 item 6).
 
 ### Acceptance Criteria
 
@@ -290,8 +290,15 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 ### Tests Required
 
-- [ ] Probe: `sqlgen generate` and `go build ./...` on the scratch copy succeed.
+- [x] Probe: `sqlgen generate` and `go build ./...` on the scratch copy succeed.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed 2026-11-20.** Uncommitted at completion. Probe only: no source, test or golden file changes.
+- **Harness:** detached worktrees of HEAD `9fb3f22e` and of `main` (`f5dac70c`, before this phase) as a baseline; a CLI built from each; two `rsync` copies of `sqlgen-example` (at `35d4d5d`, pinned to v0.1.2) with `go mod edit -replace` of `sqlgen`, `cache/redis`, `event/natsbus` and `metrics/otel` onto the matching worktree; `GOWORK=off` for every step in the example copies (each CLI was built inside its worktree's workspace). The sibling repo was not touched, and the copies and worktrees were deleted afterwards.
+- **Result:** `sqlgen generate` (with the inline gqlgen step), `go build ./...`, `go vet ./...` and `go test -short ./...` succeed on the HEAD copy. `Task` gains `Project *Project`, `Reporter *User`, `Cycle *Cycle`, `ParentTask *Task` and `Workspace *Workspace`; GraphQL `Task` gains `project`, `reporter`, `cycle`, `parentTask` and `workspace`. `Subtasks`, `Tasks`, `DependsOnTasks`, `Assignees`, `Watchers` and the other list edges are unchanged.
+- **Warnings:** both builds print only `CREATE VIEW project_stats skipped in DDL file`. No new warning.
+- **Other tables:** every relationship-field change is a new to-one edge (each tenanted table's `Workspace`, `Comment.Author`/`Task`, `Activity.Actor`, `Cycle.Team`, `Project.Team`, `TimeEntry.Task`/`User`, and `User` on `api_tokens`, `attachments` and `invitations`) or the singular rename `WorkspaceSetting.Workspaces` → `Workspace`. No hand-written code in the app reads the old name, so it builds unchanged. Besides the harness's own `go.mod`/`go.sum` replace edits, only `_gen` files, the manifest, and `.mcp.json`'s generator-version stamp (`dev`, the same in the baseline) differ.
+- **Checks:** `make check` green; `make check-examples` not triggered (tracker only).
+- **Review (sqlgen-reviewer):** acceptance 3/3, probe test 1/1, no high-confidence issue, no question. Re-ran `go build` and `go vet` (and the verify pass `go test -short`) on the HEAD copy and diffed every model's relationship fields itself, confirming this record. Applied its two doc corrections: the cleanup sentence holds once the probe directory is removed, and the "only `_gen` files" line now names the harness's `go.mod`/`go.sum` edits.
+- **Verify (2026-11-20):** acceptance 3/3, probe test 1/1; `make check` reused (diff fingerprint unchanged since the gate), `make check-examples` not triggered; `req-check` green, no registry row for the probe (design §9 lists none). The independent reviewer reproduced the probe on a fresh copy (identical output but the manifest timestamp) and agreed in full. No FIX logged. Applied its doc fixes: the `GOWORK=off` wording and the worktree cleanup (`git worktree remove`); the STATUS.md "Next" line moves at `/done`.
