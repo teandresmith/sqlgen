@@ -574,7 +574,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert-with-related.hooks | `UpsertWithRelated` has no op of its own: the mutation hook sees one call per inner write in §9.9.6 order with its own `Op` and `Table`. That is the parent `upsert`, then per edge in Go-field-name order (`Posts`, `Profile`, `Tags`): `clear` before `create` before `connect` before `link` before `disconnect`. Visibility and occupancy reads fire query hooks. The adoption's verify read and the terminal parent read fire none. The terminal read's relationship loads fire the caller's (§9.6). `SkipHooks` on the call fires no hook on any inner call | `conformance: UpsertWithRelated/the mutation hook sees one call per inner write in execution order, and neither the verify read nor the terminal read fires a query hook`; `conformance: UpsertWithRelated/SkipHooks on the call fires no hook on any inner call` | all | client-methods: UpsertWithRelated × hooks |
 
 ## §13.2 Loading Strategy
-<!-- prd: 13.2 sha256: 43f06deda121127d -->
+<!-- prd: 13.2 sha256: 602a6097cd87d963 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

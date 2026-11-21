@@ -1,6 +1,6 @@
 # Phase 36: Belongs-To Detection
 
-Status: Not Started
+Status: In Progress
 PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 > **Design.** `docs/design/BELONGS_TO_DETECTION.md`, approved 2026-11-20, is the source for every
@@ -32,22 +32,22 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 **PRD Reference:** Sections 4.13, 5.3, 13.1, 13.2
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] §5.3 intro: a foreign key gives at most one edge in each direction: a to-one edge on its holder and, unless the key is unique, a list edge on the referenced table (design §8).
-- [ ] §5.3 rule 3: an O2M edge also gives a belongs-to O2O edge on the holder, over the same key and constraint; a unique key gives the O2O edge alone.
-- [ ] §5.3 rule 5: a to-one edge is named after its naming member without `_id`, or after the referenced table when there is none or the stem names a column of the holder; codegen spells it singular.
-- [ ] §5.3 rule 6: disambiguation groups edges of one cardinality (to-one, or list) that share a source and a target.
-- [ ] §13.1: the belongs-to Detection cell reads "every foreign key on a table that is not a junction"; replace "Auto-detection emits the O2O edge on the FK-holding side only" with "The has-one view from the referenced side stays config-declared".
-- [ ] §13.1: add the FK-side rule: a detected edge's side is the one detection read; a declared `o2o` whose `fk` columns exist on both tables follows the FOREIGN KEY over them, else belongs-to.
-- [ ] §4.13: add the row "A detected relationship resolves to a column's Go field | Warning", and reword the `column_map` row so a declared relationship claiming a column's field is always an error.
-- [ ] §13.2: a chained join walks only the edges the target's own struct carries.
-- [ ] `docs/configuration.md` "Relationships": the detected to-one edge, its naming, and the collision warning.
-- [ ] Registry: add the design §6.1 rows to the owning files (`parser/schema.md` §5.3, `cli/gen.md` §13.x, `cli/config.md` §4.13) with empty Tests cells, and add the `self-o2m` detection row and the `detected-edge-column-collision` validation row.
-- [ ] Remove `docs/tracker/backlog.md` line 280 (design §3.4 item 2 measures it; 36.2 fixes it).
-- [ ] `make req-rehash` the edited sections, then `make req-check`.
+- [x] §5.3 intro: a foreign key gives at most one edge in each direction: a to-one edge on its holder and, unless the key is unique, a list edge on the referenced table (design §8).
+- [x] §5.3 rule 3: an O2M edge also gives a belongs-to O2O edge on the holder, over the same key and constraint; a unique key gives the O2O edge alone.
+- [x] §5.3 rule 5: a to-one edge is named after its naming member without `_id`, or after the referenced table when there is none or the stem names a column of the holder; codegen spells it singular.
+- [x] §5.3 rule 6: disambiguation groups edges of one cardinality (to-one, or list) that share a source and a target.
+- [x] §13.1: the belongs-to Detection cell reads "every foreign key on a table that is not a junction"; replace "Auto-detection emits the O2O edge on the FK-holding side only" with "The has-one view from the referenced side stays config-declared".
+- [x] §13.1: add the FK-side rule: a detected edge's side is the one detection read; a declared `o2o` whose `fk` columns exist on both tables follows the FOREIGN KEY over them, else belongs-to.
+- [x] §4.13: add the row "A detected relationship resolves to a column's Go field | Warning", and reword the `column_map` row so a declared relationship claiming a column's field is always an error.
+- [x] §13.2: a chained join walks only the edges the target's own struct carries.
+- [x] `docs/configuration.md` "Relationships": the detected to-one edge, its naming, and the collision warning.
+- [x] Registry: add the design §6.1 rows to the owning files (`parser/schema.md` §5.3, `cli/gen.md` §13.x, `cli/config.md` §4.13) with empty Tests cells, and add the `self-o2m` detection row and the `detected-edge-column-collision` validation row.
+- [x] Remove `docs/tracker/backlog.md` line 280 (design §3.4 item 2 measures it; 36.2 fixes it).
+- [x] `make req-rehash` the edited sections, then `make req-check`.
 
 ### Acceptance Criteria
 
@@ -57,11 +57,25 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 ### Tests Required
 
-- [ ] `make req-check` passes after the rehash.
+- [x] `make req-check` passes after the rehash.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-20.** Docs only, no code. Files: `docs/PRD.md`, `docs/configuration.md`, `docs/conformance/{parser/schema.md,cli/gen.md,cli/config.md,cli/config-fields.md,cli/api-schema.md,cli/manifest.md,cli/naming.md,client.md,runtime/sql.md}`, `docs/tracker/{phase-36.md,STATUS.md,backlog.md}`. Uncommitted at completion.
+
+- **PRD:** §5.3 intro (one edge in each direction; a to-one edge on the holder, a list edge on the referenced table unless the key is unique), rule 3 (an O2M edge also gives a belongs-to O2O edge over the same key and constraint), rule 5 (to-one naming from the naming member, its fallback, singular spelling), rule 6 (grouping by cardinality). §13.1: belongs-to Detection cell, the has-one view stays config-declared, the FK-side rule. §13.2: the chain sentence. §4.13: the new detected-edge warning row and the reworded `column_map` collision row.
+- **Copy-edits beyond design §8:** the §13.1 has-one Detection cell carries the uniqueness definition the belongs-to cell lost (it read "same"); the new §4.13 row carries the resolution-level tag; rule 6's `exclude_relationships` sentence adds "and a to-one edge's referenced table", stating ruling Q6 and design §5.1 (`BaseName` stays the referenced table) for a to-one edge that was never renamed (auto-accepted: PRD text for an unspecified case, no code or golden effect).
+- **`docs/configuration.md` "Relationships":** both directions of a foreign key, to-one naming and its fallback, the collision warning, and `exclude_relationships` by referenced table.
+- **Registry:** design §6.1 rows, one per matrix cell, with empty Tests cells (planned): `parser/schema.md` §5.3 `detect.belongs-to.{single,composite,self,non-junction-fks}.*`, `naming.to-one.{stem,fallback}.*`, `naming.rule6.by-cardinality.*` (new `self-o2m` matrix row); `cli/gen.md` new §5.3 anchor `naming.to-one.singular`, §13.1 `fkside.{detected,declared}`, §13.2 `loader.belongs-to.detected`, `chain.matches-target`, §13.4 `takeover.belongs-to.detected`; `cli/api-schema.md` §26.4 `api.belongs-to.graphql` and `cli/manifest.md` §30.4.2 `manifest.belongs-to.detected`, with no matrix cell, since §13.x states neither (auto-accepted reviewer question: docs only, no golden or surface change; `belongs-to × struct-field` stays claimed); `cli/config.md` §4.13 `collision.declared-vs-column` (on the registry's `column-name-collision` rule, the design's `column-map-name-collision`) and `collision.detected-vs-column{,.message,.severity}` (new `detected-edge-column-collision` rule, `together` and `schema` n/a). Narrowed to the new text: `parser.rel.single-o2o-unique.{postgres,mysql,sqlite}` (O2O alone, no name claim), `parser.rel.disambiguation.{postgres,mysql,sqlite}`, `parser.rel.one-edge-per-fk`, `config.column-name-collision`, `naming.field.collision.override-introduced-only`, `gen.relationships.fk-on-target`. Removed `parser.rel.edge-naming-base.o2o`, superseded by `naming.to-one.*` (its test stays claimed by `parser.rel.single-o2o-unique.postgres`). Reviewed the other rows under §4, §4.13, §5.3, §8.5, §13.1 and §13.2 (also `client.md`, `runtime/sql.md`); they hold. Rehashed those six sections.
+- **Review (sqlgen-reviewer):** PRD 9/10, one partial (the dropped §8.5 link; §8.5 does state list-name pluralization), restored. Applied its doc fixes: §8.5 Validation and the §4.13 disambiguation row match the new collision and cardinality rules; §13.1's `FKOnTarget` sentence no longer claims the column-name test for every edge; §13.1 "its edge is O2O, not O2M" → "it gives an O2O edge and no list edge"; rule 5's naming-member sentence reordered; the §4.13 phase-3 list names the new warning; `configuration.md` reflowed. Its high-confidence item, a planned row `naming.to-one.exclude-referenced-table` that no sub-item tests, is dropped (`gen.manual.exclude-relationships` covers base names) and the test gap is a backlog line.
+- **Backlog:** removed the same-name `FKOnTarget` line (design §3.4 item 2; 36.2 fixes it); added the to-one exclude-by-referenced-table test gap.
+- **Checks:** `make req-check`, `make refs-check`, `make tracker-check` and `make check` pass. No `check-examples` trigger (docs only).
+- **Verify (2026-11-20):** PRD 10/10 per the independent reviewer; applied its doc fixes (§5.3 rule 4's three-FK table also gives three belongs-to edges; `configuration.md` "renames the list edges"). Its four questions, ruled by the user 2026-11-20:
+  1. A `column_map` override renaming a column onto a detected edge's field stays the `column_map` error. The new §4.13 row (and §8.5, `configuration.md`, `collision.detected-vs-column`) covers only a field no override introduced. `TestColumnNameOverride_CollidesWithRelationshipField` and 36.4's `column_map`-message guard stay unchanged.
+  2. `exclude_relationships` matching a to-one edge by its referenced table can drop both edges of a self-referential FK or of two tables referencing each other; documented in §5.3 rule 6 and `configuration.md`, with a declared takeover keeping either.
+  3. Rule 6 does not apply rule 5's column fallback: two to-one edges renamed onto column fields are both omitted with the warning, which names the fix. No text change.
+  4. 36.5's Tests Required gains a self-referential `ShapeSourceParity` test for `detect.belongs-to.self.source-parity`, and a task to update the citations its rename makes stale (user-authorized edit to 36.5).
+- **Re-verify (2026-11-20):** all four rulings applied (reviewer 4/4, no FAIL). Applied its doc fixes: rule 6 "one table's name"; §13.4's `exclude_relationships` sentence names the base-name and referenced-table matches; `configuration.md` reflow; the stale-citation item moved to 36.5's Tasks.
 
 ## 36.1 Regression guard — a hidden FK column keeps its relationship
 
@@ -185,6 +199,7 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] `relationshipToContext`: singularize a to-one name.
 - [ ] Regenerate the goldens (`make update-golden`, `make update-golden-e2e`). Check that every change is a new to-one edge, a singular rename of an old to-one field, or a takeover keeping a declared name.
 - [ ] Rename the example tests that read the old plural to-one fields (graphql, mysql, postgres and tenancy examples; design §7 P2).
+- [ ] Registry: update the citations the rename makes stale — `parser.rel.single-o2o-unique.{mysql,sqlite}` (`TestDetectRelationships_Dialects/…: single-column UNIQUE FK is O2O named after the referenced table`) and `parser.rel.three-fk-junction.source-parity` (`ShapeSourceParity/three single-column FKs…`) — when their subtests are renamed.
 
 ### Acceptance Criteria
 
@@ -208,6 +223,7 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected belongs-to names its constraint` (PRD §30.4.2): fails before, passes after. All dialects.
 - [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace/detected belongs-to over a non-unique key` (PRD §13.4): fails before, passes after. All dialects. Plus `golden: postgres`.
 - [ ] `golden: graphql`: a detected belongs-to is a nullable `<camelName>: <Target>` field (PRD §26.4).
+- [ ] `integration: parser/introspect: TestDetectRelationships_ShapeSourceParity/self-referential foreign key gives both edges` (PRD §5.3): files and database give identical edges for a self-referential non-unique FK; add the shape to the parity schema. Fails before, passes after. All dialects. Claims `detect.belongs-to.self.source-parity`.
 - [ ] Guard: `unit: parser: TestDetectRelationships` (non-self-referential O2M names, unique FKs, junctions), `parser/introspect: TestDetectRelationships_SourceParity` and `parser: TestDetectRelationships_BothSourceParity` still pass.
 - [ ] Guard: `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_ExcludeByBaseName`, `…_DeclaredOverDetectedKeyTakesItsPlace` and `…_DeclaredOverCompositeFK` still pass.
 - [ ] Guard: `unit: cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionIsAnError` still passes.

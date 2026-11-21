@@ -9,7 +9,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 §4.13 validation rules and the package's unclaimed tests stay in [`config.md`](config.md).
 
 ## §4 Configuration System
-<!-- prd: 4 sha256: cecc30a42787c24c -->
+<!-- prd: 4 sha256: 9ea140119c3826ed -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

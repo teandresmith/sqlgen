@@ -299,7 +299,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | cond.builder.composable | Builder conditions compose with `sql.And()` / `sql.Or()` and are accepted in a comparator's `Custom` field | `unit: sql: TestComposition_NestedShapesPerDialect/and and or nest`; `unit: comparator: TestScalarOperators_SameClauseOnEveryDialect/String.Custom` | all |  |
 
 ## §13.2 Loading Strategy
-<!-- prd: 13.2 sha256: 43f06deda121127d -->
+<!-- prd: 13.2 sha256: 602a6097cd87d963 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
