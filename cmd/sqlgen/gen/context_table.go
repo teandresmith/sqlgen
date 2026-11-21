@@ -910,20 +910,21 @@ func assembleTableContext(
 }
 
 // validateResolvedFieldNames rejects a resolved Go field name that cannot
-// coexist with the rest of the generated entity. Two rules, with two different
-// gates (PRD §8.5):
+// coexist with the rest of the generated entity. Three rules, with different
+// gates (PRD §4.13, §8.5):
 //
 //   - **Reserved names**, checked on every column and relationship: the name
 //     is already declared by the templates on a struct the field lands on
 //     (<T>Filter, <T>FieldOptions, Update<T>Item) or by the increment enum
 //     type. See reserved_fields.go — that collision can never produce
 //     compiling code, so it is reported whether or not an override caused it.
-//   - **Duplicate names**, checked only when an override introduced the
-//     duplicate: another column's resolved name or a relationship field, both
-//     of which land on the same struct (templates/table/model.go.tmpl). A
-//     schema that already produces two identical field names without any
-//     override is a pre-existing condition this validation deliberately does
-//     not start failing; `go build` on the generated package still catches it.
+//   - **Duplicate names** between a column and another column or a
+//     relationship, which land on the same struct
+//     (templates/table/model.go.tmpl). A relationship on a column's field is
+//     always reported. Two columns are reported only when an override
+//     introduced the pair: a schema that already gives two columns one field
+//     is a pre-existing condition this validation does not start failing, and
+//     `go build` on the generated package still catches it.
 //   - **Duplicate relationship fields**, checked on every pair and gated on
 //     nothing: two relationships resolving to one Go field is unconditionally
 //     non-compiling, so the override gate above would only hide it. This is
@@ -961,13 +962,13 @@ func validateResolvedFieldNames(
 }
 
 // validateDuplicateRelationshipFields rejects two relationships on one table
-// resolving to the same Go field (PRD §4.8, §13.7.3 row 2). It is ungated
-// where validateDuplicateFieldNames is override-gated, because this pair can
-// never produce compiling code: the field lands twice on the entity struct and
-// twice on <Table>FieldOptions, so there is no config under which it is the
-// intent. The override gate would only delay the report to `go build` inside
-// generated code, where validate and generate both report success and the
-// build fails.
+// resolving to the same Go field (PRD §4.8, §13.7.3 row 2). It is ungated,
+// where validateDuplicateFieldNames gates only two columns on an override,
+// because this pair can never produce compiling code: the field lands twice on
+// the entity struct and twice on <Table>FieldOptions, so there is no config
+// under which it is the intent. The override gate would only delay the report
+// to `go build` inside generated code, where validate and generate both report
+// success and the build fails.
 //
 // The message names both sides symmetrically. A pair here is two declared
 // entries whose names pascalize onto one field, which
@@ -1024,20 +1025,13 @@ func quotedConstraints(rel RelationshipContext) string {
 	return "foreign keys " + strings.Join(quoted, " and ")
 }
 
-// validateDuplicateFieldNames is the override-gated half of the rule: two
-// fields on the same entity struct resolving to one Go name.
+// validateDuplicateFieldNames rejects a column and a relationship, or two
+// columns, resolving to one Go field on the entity struct. A relationship on a
+// column's field is always reported: a detected one there was already omitted
+// (omitDetectedOnColumnFields), so what remains is declared or claimed by an
+// override. Two columns are reported only when an override introduced the
+// pair.
 func validateDuplicateFieldNames(qualifiedTable string, columns []ColumnContext, rels []RelationshipContext) error {
-	overridden := false
-	for i := range columns {
-		if columns[i].FieldNameOverridden {
-			overridden = true
-			break
-		}
-	}
-	if !overridden {
-		return nil
-	}
-
 	type owner struct {
 		sqlName    string
 		kind       string
@@ -1051,7 +1045,7 @@ func validateDuplicateFieldNames(qualifiedTable string, columns []ColumnContext,
 			seen[fieldName] = o
 			return
 		}
-		if !prev.overridden && !o.overridden {
+		if prev.kind == o.kind && !prev.overridden && !o.overridden {
 			return
 		}
 		errs = append(errs, fmt.Errorf(
@@ -1857,11 +1851,47 @@ func buildRelationshipContexts(
 	if err != nil {
 		return nil, nil, err
 	}
-	warnings = append(omitted, warnings...)
+	rels, collided := omitDetectedOnColumnFields(table, tableCfg, rels, targets, qualifiedName)
+	warnings = append(append(omitted, warnings...), collided...)
 	slices.SortFunc(rels, func(a, b RelationshipContext) int {
 		return strings.Compare(a.Name, b.Name)
 	})
 	return rels, warnings, nil
+}
+
+// omitDetectedOnColumnFields drops a detected edge whose Go field is a
+// column's, with a warning naming both (PRD §4.13). It runs after the merge,
+// so an edge a declared one took over raises nothing. A field a `column_map`
+// override introduced is skipped: the edge stays, and
+// validateDuplicateFieldNames reports the override.
+func omitDetectedOnColumnFields(
+	table *parser.Table, tableCfg config.TableConfig, rels []RelationshipContext,
+	targets *relationshipTargets, qualifiedName string,
+) ([]RelationshipContext, []string) {
+	columnByField := make(map[string]string, len(table.Columns))
+	for i := range table.Columns {
+		name := table.Columns[i].Name
+		if targets.excludedColumn(table, name) != "" {
+			continue
+		}
+		if field, overridden := resolveColumnFieldName(name, tableCfg); !overridden {
+			columnByField[field] = name
+		}
+	}
+	var warnings []string
+	kept := rels[:0]
+	for _, rel := range rels {
+		column, collides := columnByField[rel.FieldName]
+		if !collides || rel.Declared {
+			kept = append(kept, rel)
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"tables.%s: the foreign-key-inferred relationship %q is omitted because its Go field %q is the field of column %q. Declare the edge in `relationships` under another name to keep it, or list %q in `exclude_relationships` to silence this (PRD §4.13, §13.4).",
+			qualifiedName, rel.Name, rel.FieldName, column, rel.Name,
+		))
+	}
+	return kept, warnings
 }
 
 // mergeDeclaredRelationships folds `tables.<t>.relationships` into the

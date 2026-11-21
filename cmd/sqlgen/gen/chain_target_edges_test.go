@@ -62,6 +62,17 @@ CREATE TABLE post_details (post_id bigint PRIMARY KEY,
 			postsCfg: config.TableConfig{ExcludeRelationships: []string{"users"}},
 			want:     []string{},
 		},
+		{
+			name: "omitted on a column field",
+			ddl: `
+CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE posts (id bigint PRIMARY KEY, users text, author_id bigint UNIQUE,
+	CONSTRAINT posts_author FOREIGN KEY (author_id) REFERENCES users (id));
+CREATE TABLE post_details (post_id bigint PRIMARY KEY,
+	CONSTRAINT post_details_post FOREIGN KEY (post_id) REFERENCES posts (id));
+`,
+			want: []string{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

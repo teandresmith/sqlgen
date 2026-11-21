@@ -1354,9 +1354,9 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_i
 // and both reach the struct — the duplicate-field shape on the declared-vs-declared
 // axis, where replacement does not apply because neither side is inferred.
 //
-// The check is ungated, unlike validateDuplicateFieldNames: the pair can never
-// produce compiling code, so a `column_map` override gate would only delay the
-// report to `go build` inside generated code.
+// The check is ungated, unlike validateDuplicateFieldNames' column pairs: the
+// pair can never produce compiling code, so a `column_map` override gate would
+// only delay the report to `go build` inside generated code.
 func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 	tests := []struct {
 		name        string

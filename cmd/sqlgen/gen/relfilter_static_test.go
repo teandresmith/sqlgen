@@ -1,6 +1,7 @@
 package gen_test
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -237,12 +238,10 @@ func TestRelationshipFilter_UnreadableListFilterFailsGeneration(t *testing.T) {
 		rel         config.TableRelationship
 		wantRel     string
 	}{
-		// No single parent column for the EXISTS subquery to correlate on.
+		// A composite-PK parent correlates on every key pair.
 		{"o2m on a composite-PK parent", true, o2m("Attachments", "documents"), "Attachments"},
 		{"m2m on a composite-PK parent", true, m2m, "Tags"},
-		// The `name` column's comparator already owns the field name.
-		{"o2m whose field name a column takes", false, o2m("Name", "documents"), "Name"},
-		// A view has no table context, so it has no filter type to reference.
+		// A view target generates its own <View>Filter.
 		{"o2m to a view", false, o2m("Summaries", "document_summaries"), "Summaries"},
 	}
 
@@ -268,6 +267,53 @@ func TestRelationshipFilter_UnreadableListFilterFailsGeneration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRelationshipFilter_UnreadableFilterFailsWithoutAMember pins that an
+// unreadable `filter:` fails the filter pass on an edge that gets no member.
+// The column-wins skip is the one way to have no member, and config cannot
+// reach it (PRD §4.13), so a built edge is renamed onto the `name` column's
+// field before the pass reruns.
+func TestRelationshipFilter_UnreadableFilterFailsWithoutAMember(t *testing.T) {
+	const bad = "name LIKE"
+	in := testInput(discriminatorSchema())
+	detectRelationships(in.Schema)
+	in.Config.Tables["assets"] = config.TableConfig{Relationships: []config.TableRelationship{
+		{Name: "Attachments", Type: "one_to_many", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "name LIKE 'x%'"},
+	}}
+	tables, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema: %v", err)
+	}
+	i := slices.IndexFunc(tables, func(tc gen.TableContext) bool { return tc.TableName == "assets" })
+	if i < 0 {
+		t.Fatal("no assets context")
+	}
+	j := slices.IndexFunc(tables[i].O2MRelationships, func(r gen.RelationshipContext) bool { return r.Name == "Attachments" })
+	if j < 0 {
+		t.Fatalf("assets has no Attachments edge: %v", tables[i].O2MRelationships)
+	}
+	tables[i].O2MRelationships[j].FieldName = "Name"
+	if err := gen.WireRelationshipFiltersForTest(tables); err != nil {
+		t.Fatalf("wiring with a readable filter: %v", err)
+	}
+	if slices.ContainsFunc(tables[i].RelationshipFilters, func(rf gen.RelationshipFilterContext) bool { return rf.FieldName == "Name" }) {
+		t.Fatal("the renamed edge got a member; the fixture no longer reaches the column-wins skip")
+	}
+
+	tables[i].O2MRelationships[j].Filter = bad
+	err = gen.WireRelationshipFiltersForTest(tables)
+	if err == nil {
+		t.Fatalf("wiring with filter %q = nil error, want one", bad)
+	}
+	for _, want := range []string{
+		"table assets: relationship Name",
+		"filter " + strconv.Quote(bad) + ": postgres: qualify filter: parsing",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to contain %q", err, want)
+		}
 	}
 }
 

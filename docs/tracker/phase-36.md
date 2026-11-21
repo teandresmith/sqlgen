@@ -179,12 +179,12 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 **PRD Reference:** Section 4.13
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] In `buildRelationshipContexts`, omit a detected edge whose resolved Go field equals a column's, with a warning naming the column and the edge and pointing to declaring it under another name (PRD §13.4).
-- [ ] Ungate `validateDuplicateFieldNames` for relationships: a declared relationship claiming a column's field is an error, with or without a `column_map` override. Column-vs-column stays override-gated.
+- [x] In `buildRelationshipContexts`, omit a detected edge whose resolved Go field equals a column's, with a warning naming the column and the edge and pointing to declaring it under another name (PRD §13.4).
+- [x] Ungate `validateDuplicateFieldNames` for relationships: a declared relationship claiming a column's field is an error, with or without a `column_map` override. Column-vs-column stays override-gated.
 
 ### Acceptance Criteria
 
@@ -193,15 +193,25 @@ PRD Sections: 4.13, 5.3, 13.1, 13.2, 13.4
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DetectedEdgeOnAColumnFieldIsOmitted` (PRD §4.13): fails before the change, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/cli: TestGenerate_DetectedEdgeOnAColumnFieldWarns` (PRD §4.13): fails before, passes after. All dialects.
-- [ ] `unit: cmd/sqlgen/gen: TestValidateDuplicateFieldNames/declared relationship on a column field` (PRD §4.13): fails before, passes after. All dialects.
-- [ ] Guard: `unit: cmd/sqlgen/gen: TestValidateResolvedFieldNames_DuplicateRelationshipField` still passes.
-- [ ] Guard: the existing `column_map` collision tests still pass with their messages unchanged.
+- [x] `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DetectedEdgeOnAColumnFieldIsOmitted` (PRD §4.13): fails before the change, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/cli: TestGenerate_DetectedEdgeOnAColumnFieldWarns` (PRD §4.13): fails before, passes after. All dialects.
+- [x] `unit: cmd/sqlgen/gen: TestValidateDuplicateFieldNames/declared relationship on a column field` (PRD §4.13): fails before, passes after. All dialects.
+- [x] Guard: `unit: cmd/sqlgen/gen: TestValidateResolvedFieldNames_DuplicateRelationshipField` still passes.
+- [x] Guard: the existing `column_map` collision tests still pass with their messages unchanged.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+- **Completed:** 2026-11-20. Uncommitted at completion.
+- **Files:** `cmd/sqlgen/gen/context_table.go` (new `omitDetectedOnColumnFields`, called from `buildRelationshipContexts` after the declared merge; `validateDuplicateFieldNames` reports a column and a relationship on one field with no override gate, two columns still only when an override introduced the pair; `validateResolvedFieldNames`' comment); `cmd/sqlgen/gen/column_field_collision_test.go` (new); `cmd/sqlgen/cli/column_field_collision_test.go` (new); `cmd/sqlgen/gen/chain_target_edges_test.go` (subtest `omitted on a column field`); `cmd/sqlgen/gen/filter_relationship_test.go`, `cmd/sqlgen/gen/relfilter_static_test.go` (also two stale case comments), `cmd/sqlgen/gen/context_table_test.go` (comment), `cmd/sqlgen/gen/export_test.go` (`WireRelationshipFiltersForTest`); `docs/conformance/cli/{config.md,gen.md,naming.md}`.
+- **Omission:** a detected edge is dropped when its Go field is the unoverridden field of a column that survives `exclude_columns`. It runs after the merge, so an edge a declared one took over warns nothing. A field a `column_map` override introduced keeps the edge and stays the `column_map` error (36.0 ruling 1). The chain reads the same `buildRelationshipContexts`, so an omitted edge is never chained.
+- **Contract run (before the change):** new-behavior tests fail for the predicted reason on all three dialects: `TestBuildRelationshipContexts_DetectedEdgeOnAColumnFieldIsOmitted` (users keeps relationship `posts` on `Posts`, no warning); `TestGenerate_DetectedEdgeOnAColumnFieldWarns` (no warning on validate or generate, `User` declares `Posts` twice, `go build`: `Posts redeclared`); `TestValidateDuplicateFieldNames/declared relationship on a column field` (no error); `TestBuildO2OJoinDetails_ChainUsesTheTargetsEdges/omitted on a column field` (chain reads `fo.Posts.Users`). Guards pass before and after: `TestValidateResolvedFieldNames_DuplicateRelationshipField`, `TestColumnNameOverride_CollisionRejected`, `TestColumnNameOverride_CollidesWithRelationshipField` (message unchanged), `TestFieldNameCollision_OnlyOverrideIntroduced`, and the added subtests `TestValidateDuplicateFieldNames/{declared relationship on its own field,column override onto a declared relationship's field,two columns on one field with no override}`, and `TestBuildRelationshipContexts_DeclaredUnderAnotherNameKeepsTheEdge` (a declared edge over the key under another name takes over with no warning).
+- **Fixtures that declared the rejected shape:** two tests declared an edge on a column's field and expected generation to succeed. `TestRelationshipFilters_ColumnComparatorKeepsItsFieldName` (PRD §11.1's "the column wins" skip, `gen.filter.member-column-wins`) now declares `Emails`, renames the built edge onto `Email` and reruns the filter pass through `WireRelationshipFiltersForTest`, since config can no longer reach the skip; it still fails with the skip disabled. `TestRelationshipFilter_UnreadableListFilterFailsGeneration/o2m whose field name a column takes` is removed (the shape is now the `column_map` error before any filter is read) and its citation dropped from `gen.subcat.malformed-filter-fails`. The remaining cases all get a member (a composite-PK parent correlates on every pair, a view target has its own filter), so the row's no-member leg is now `TestRelationshipFilter_UnreadableFilterFailsWithoutAMember`, which renames a built edge onto the `name` column's field and reruns the pass; it fails with the up-front filter parse disabled. Auto-accepted (`/fix` auto-accept rule): no golden churn, no public surface (a test-only export), and it follows the PRD §4.13 rule rather than reversing one.
+- **Golden churn:** none. `make update-golden-e2e` and `make update-golden` moved no file.
+- **Checks:** `make check` and `make check-examples` (triggered by `cmd/sqlgen/gen/**`) pass.
+- **Review (sqlgen-reviewer):** PRD 3/3, tests 5/5, fail-first confirmed independently (neutralizing only the omission call fails the new test with the `column_map` error). Its high-confidence item: the record's claim that the composite-PK and view cases cover an edge with no member was false; added `TestRelationshipFilter_UnreadableFilterFailsWithoutAMember` and cited it in `gen.subcat.malformed-filter-fails`. Applied its doc fixes: `validateDuplicateRelationshipFields`' and `TestValidateResolvedFieldNames_DuplicateRelationshipField`'s comments no longer call validateDuplicateFieldNames override-gated for relationships; the reworked filter test's comment drops "no longer"; two stale case comments in `TestRelationshipFilter_UnreadableListFilterFailsGeneration`.
+- **Auto-accepted (reviewer questions, `/fix` auto-accept rule: no golden churn, no public surface, no PRD or ruling reversed):** (1) PRD §11.1's "the column wins" sentence and `gen.filter.member-column-wins` stay; config no longer reaches the filter skip, so it is defensive, and the reworked test still pins it. (2) A declared edge on a column's field reports under `tables.<t>.column_map:` though no `column_map` entry exists; the acceptance criteria and the §4.13 row require the `column_map` error's message.
+- **Verify (2026-11-20):** PRD 3/3, tests 5/5, independent reviewer agreed and confirmed fail-first on its own (restoring the override gate fails `TestValidateDuplicateFieldNames/declared relationship on a column field` on all dialects). No FIX logged. Added guard `TestBuildRelationshipContexts_DeclaredUnderAnotherNameKeepsTheEdge` (passes before and after; it fails if the omission ran before the merge) and cited it and `TestColumnNameOverride_CollidesWithRelationshipField` in `collision.detected-vs-column`. Applied its doc fixes: `validateDuplicateRelationshipFields`' comment reflowed; this record names the added guard.
+- **Auto-accepted (reviewer question, `/fix` auto-accept rule: no code change, no golden churn, no public surface, no PRD text or ruling reversed):** an identity override (`column_map.posts.name: Posts`) counts as an override, so a detected edge on that field is the `column_map` error, not the omission. Kept: 36.0 ruling 1 keys on the override being present, and the error is the louder outcome.
 
 ## 36.5 Parser + gen — belongs-to detection and to-one naming
 

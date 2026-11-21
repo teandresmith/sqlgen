@@ -24,6 +24,12 @@ func AttachTenancyToViewsForTest(views []ViewContext, tenancyMap map[string]Tena
 	attachTenancyToViews(views, tenancyMap)
 }
 
+// WireRelationshipFiltersForTest reruns the relationship-filter pass on
+// tables, so a test can feed it a context config validation would reject.
+func WireRelationshipFiltersForTest(tables []TableContext) error {
+	return wireRelationshipFilters(tables, nil)
+}
+
 // APIImportDirForTest exposes the unexported apiImportDir helper so external
 // tests can verify the fallback logic (prefers opts.OriginalOutputDir
 // over cfg.Output.Dir).
