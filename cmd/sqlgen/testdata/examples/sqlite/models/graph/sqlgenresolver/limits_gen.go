@@ -140,6 +140,7 @@ func isRelationshipField(typeName, field string) bool {
 		"Product.orderItems",
 		"Product.productTagLabels",
 		"Profile.users",
+		"Step.steps",
 		"TimeKeyed.timeKeyedNotes",
 		"User.categories",
 		"User.orders",

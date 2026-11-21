@@ -1,0 +1,75 @@
+"""
+Step corresponds to the steps table.
+"""
+type Step {
+  "id"
+  id: Int!
+  "name"
+  name: String!
+  "previous_step_id"
+  previousStepID: Int
+  "one-to-one relationship with the steps table."
+  steps: Step
+}
+
+type StepConnection {
+  edges:      [StepEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type StepEdge {
+  node:   Step!
+  cursor: String!
+}
+
+type StepListResult {
+  items:      [Step!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input StepFilter {
+  id: NumericComparator
+  name: StringComparator
+  previousStepID: NullableNumericComparator
+  and: [StepFilter!]
+  or:  [StepFilter!]
+}
+
+enum StepSortField {
+  ID
+  NAME
+  PREVIOUS_STEP_ID
+}
+
+input StepSort {
+  field:     StepSortField!
+  direction: SortDirection!
+}
+input CreateStepInput {
+  name: String!
+  previousStepID: Int
+}
+input UpdateStepInput {
+  name: String
+  previousStepID: Int
+}
+
+extend type Query {
+  step(id: Int!): Step
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to stepList instead."
+  steps(filter: StepFilter, first: Int, after: String, last: Int, before: String): StepConnection!
+  stepList(filter: StepFilter, sort: [StepSort!], limit: Int, offset: Int): StepListResult!
+}
+
+extend type Mutation {
+  createStep(input: CreateStepInput!): Step!
+  createSteps(inputs: [CreateStepInput!]!): [Step!]!
+  updateStep(id: Int!, input: UpdateStepInput!): Step!
+  updateSteps(filter: StepFilter!, input: UpdateStepInput!): [Step!]!
+  upsertStep(input: CreateStepInput!): Step!
+  deleteStep(id: Int!): Boolean!
+}

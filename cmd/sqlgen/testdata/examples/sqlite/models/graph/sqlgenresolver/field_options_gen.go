@@ -1490,6 +1490,51 @@ func sluggedRowFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields
 	return fo
 }
 
+// stepFieldOptionsFromContext returns the
+// models.StepFieldOptions for the current GraphQL request.
+func stepFieldOptionsFromContext(ctx context.Context) *models.StepFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "StepConnection", "StepListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.StepFieldOptions{}
+	}
+	return stepFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// stepFieldOptionsFromCollected walks one level of
+// the Step selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func stepFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.StepFieldOptions {
+	fo := &models.StepFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "name":
+			fo.Name = true
+		case "previousStepID":
+			fo.PreviousStepID = true
+		case "steps":
+			fo.Steps = stepFieldOptionsFromCollected(opCtx, f.Sub)
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
 // tagFieldOptionsFromContext returns the
 // models.TagFieldOptions for the current GraphQL request.
 func tagFieldOptionsFromContext(ctx context.Context) *models.TagFieldOptions {

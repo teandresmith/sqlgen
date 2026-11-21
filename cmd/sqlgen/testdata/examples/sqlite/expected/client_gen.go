@@ -92,6 +92,7 @@ type Client struct {
 	profile            *profileClient
 	reservedWordColumn *reservedWordColumnClient
 	sluggedRow         *sluggedRowClient
+	step               *stepClient
 	tag                *tagClient
 	timeKeyed          *timeKeyedClient
 	timeKeyedNote      *timeKeyedNoteClient
@@ -143,6 +144,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		profile:            newProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		reservedWordColumn: newReservedWordColumnClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		sluggedRow:         newSluggedRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		step:               newStepClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		tag:                newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		timeKeyed:          newTimeKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		timeKeyedNote:      newTimeKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -352,6 +354,11 @@ func (c *Client) ReservedWordColumns() ReservedWordColumnClient {
 // SluggedRows returns the SluggedRowClient for SluggedRow operations.
 func (c *Client) SluggedRows() SluggedRowClient {
 	return c.sluggedRow
+}
+
+// Steps returns the StepClient for Step operations.
+func (c *Client) Steps() StepClient {
+	return c.step
 }
 
 // Tags returns the TagClient for Tag operations.

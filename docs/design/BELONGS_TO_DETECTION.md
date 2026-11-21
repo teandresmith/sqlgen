@@ -274,7 +274,7 @@ The chain depth stays 6. P2 measured the size: no example grows by more than 5%.
 | `exclude_relationships` matches the base name and the disambiguated name | §4.8, §5.3 rule 6 | `cmd/sqlgen/gen: TestBuildRelationshipContexts_ExcludeByBaseName` | guarded |
 | Two detected list edges left one name is an error naming both constraints | §4.13, §5.3 rule 6 | `cmd/sqlgen/cli: TestGenerate_DetectedNameCollisionIsAnError` | guarded |
 | A declared edge over a detected key takes its place; over another key it replaces by field with a warning | §13.4 | `cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredOverDetectedKeyTakesItsPlace`; `…_DeclaredOverCompositeFK` | guarded |
-| A declared has-one keeps `FKOnTarget` and joins the target's FK | §13.1 | `cmd/sqlgen/gen: TestBuildO2OJoinDetails_chainedFKOnTarget`; `examples/graphql: TestO2OJoin_HasOneDifferingPKNames` | guarded |
+| A declared has-one keeps `FKOnTarget` and joins the target's FK | §13.1 | `cmd/sqlgen/gen: TestBuildO2OJoinDetails_chainedFKOnTarget`; `examples/sqlite: TestO2OJoin_HasOneDifferingPKNames` | guarded |
 | A composite to-one key joins on every pair | §13.1 | `cmd/sqlgen/gen: TestBuildO2OJoinDetails_CompositeKeyJoinsEveryPair` | guarded |
 | A to-one join adds the child's tenant predicate on every chain alias | §29 | `examples/tenancy: TestO2OChain_TenantWHEREOnEveryAlias`; `…_CrossTenantRowsFilteredAtEveryChainLevel` | guarded |
 | A to-one join excludes a soft-deleted target | §17.3 | `cmd/sqlgen/gen: TestRelationshipsTemplate_softDeleteOnRelated` | guarded |

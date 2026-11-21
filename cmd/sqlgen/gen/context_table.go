@@ -2055,7 +2055,7 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		Key:                 r.Key,
 		JunctionLocal:       r.JunctionLocal,
 		JunctionReference:   r.JunctionReference,
-		FKOnTarget:          inferredFKOnTarget(schema, r, tSchema, tName, fkCol),
+		FKOnTarget:          inferredFKOnTarget(r),
 		JunctionTable:       jName,
 		JunctionSchema:      jSchema,
 		JunctionLocalFK:     localFK,
@@ -2117,9 +2117,7 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 		junctionReference = declaredKey(declaredJunctionKey(r.JunctionReferenceFK, referenceFK), target.PK)
 	} else if len(r.FK) > 0 {
 		fkCol = r.FK[0]
-		fkOnTarget = !slices.ContainsFunc(r.FK, func(column string) bool {
-			return !fkColumnOnTarget(schema, relType, target.Schema, tName, column)
-		})
+		fkOnTarget = declaredFKOnTarget(schema, relType, r.FK, source, target.Schema, tName)
 		// An O2M FK, and a has-one O2O FK, is on the target and references
 		// this table; a belongs-to FK references the target.
 		referenced := target.PK
@@ -2159,28 +2157,21 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 	return rel
 }
 
-// fkColumnOnTarget derives RelationshipContext.FKOnTarget: whether the edge's
-// FK column is declared on the target table rather than on the source. This is
-// the one place the fact is computed — the O2O join builder used to re-derive
-// it inline by scanning the same columns, and the write-side emitters need the
-// same answer (PRD §13.1).
+// fkColumnOnTarget reports whether the target table has a column named
+// fkColumn. It decides a declared O2M edge's RelationshipContext.FKOnTarget,
+// and a declared O2O edge's when the column is on the target and not on the
+// source. An O2O column of both tables is decided by declaredFKOnTarget from
+// the FOREIGN KEY over it, and a detected edge never reads it (PRD §13.1).
 //
 // The lookup is (targetSchema, targetTable) exactly as the relationship context
-// spells them, so it resolves against the same table as the rest of the
-// context. Both builders pass the target's own schema: the parser qualifies an
-// FK-inferred target, and configRelationshipToContext carries the schema the
-// declared `table:` resolved in. findSchemaTable's first-match
-// fallback is therefore reached only in a dialect without schemas.
+// spells them: configRelationshipToContext passes the schema the declared
+// `table:` resolved in, so findSchemaTable's first-match fallback is reached
+// only in a dialect without schemas.
 //
-// false is therefore three answers in one: the FK is on the source, the target
+// false is three answers in one: the FK is on the source, the target
 // is unresolved, or the edge is M2M. A write-side consumer that needs to tell
 // them apart must check the target separately rather than read false as
 // "belongs-to".
-//
-// A self-referential O2O resolves true, because source and target are one table
-// and the FK is on it either way. That is the answer the read path has always
-// produced for this shape; the two sides of the ON clause are the same table's
-// FK and PK regardless of which way round they are read.
 func fkColumnOnTarget(schema *parser.Schema, relType parser.RelationshipType, targetSchema, targetTable, fkColumn string) bool {
 	if schema == nil || fkColumn == "" {
 		return false
@@ -2200,15 +2191,53 @@ func fkColumnOnTarget(schema *parser.Schema, relType parser.RelationshipType, ta
 	})
 }
 
-// inferredFKOnTarget is fkColumnOnTarget for a detected edge. A composite key's
-// members can share their names with the referenced table's, as a tenant column
-// does, so its side comes from detection: the FK holder is the target of an O2M
-// edge and the source of an O2O one.
-func inferredFKOnTarget(schema *parser.Schema, r parser.Relationship, targetSchema, targetTable, fkColumn string) bool {
-	if len(r.Key) > 1 {
-		return r.Type == parser.OneToMany
+// inferredFKOnTarget is FKOnTarget for a detected edge. Its side is the one
+// detection read: the FK holder is the target of an O2M edge and the source of
+// an O2O one (PRD §13.1). The target's column names cannot tell: a
+// self-referential key and a key column named like the referenced one are
+// columns of both tables.
+func inferredFKOnTarget(r parser.Relationship) bool {
+	return r.Type == parser.OneToMany
+}
+
+// declaredFKOnTarget is FKOnTarget for a declared O2M or O2O edge with `fk`
+// columns. For O2M, and for an O2O whose columns are all on the target and not
+// all on the source, fkColumnOnTarget decides. For an O2O whose columns are on
+// both tables, as in a self-reference or a key column named like the
+// referenced one, the FOREIGN KEY over them decides: the table declaring it holds the key. With no such
+// FOREIGN KEY, or one on the source, the edge is belongs-to (PRD §13.1).
+func declaredFKOnTarget(schema *parser.Schema, relType parser.RelationshipType, fk config.KeyColumns, source, targetSchema, targetTable string) bool {
+	onTarget := func(column string) bool {
+		return fkColumnOnTarget(schema, relType, targetSchema, targetTable, column)
 	}
-	return fkColumnOnTarget(schema, r.Type, targetSchema, targetTable, fkColumn)
+	if !allOf(fk, onTarget) {
+		return false
+	}
+	sSchema, sName := splitQualifiedName(source)
+	src := findSchemaTable(schema, sSchema, sName)
+	if relType != parser.OneToOne || src == nil || !allOf(fk, func(column string) bool { return hasColumn(src, column) }) {
+		return true
+	}
+	if declaresForeignKeyOver(src, fk, targetSchema, targetTable) {
+		return false
+	}
+	return declaresForeignKeyOver(findSchemaTable(schema, targetSchema, targetTable), fk, sSchema, sName)
+}
+
+func allOf(cols []string, f func(string) bool) bool {
+	return !slices.ContainsFunc(cols, func(c string) bool { return !f(c) })
+}
+
+func hasColumn(t *parser.Table, name string) bool {
+	return slices.ContainsFunc(t.Columns, func(c parser.Column) bool { return c.Name == name })
+}
+
+// declaresForeignKeyOver reports whether holder declares a FOREIGN KEY over
+// exactly cols into the table refSchema.refName.
+func declaresForeignKeyOver(holder *parser.Table, cols []string, refSchema, refName string) bool {
+	return holder != nil && slices.ContainsFunc(holder.Constraints, func(c parser.Constraint) bool {
+		return c.Type == parser.ForeignKey && sameColumnSet(c.Columns, cols) && referencesTable(c, refSchema, refName)
+	})
 }
 
 // declaredRelationshipDescription returns the doc comment of a declared
@@ -3187,8 +3216,8 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	// Determine which side the FK column is on. For auto-detected O2O,
 	// the FK is on the parent (source) table. For config-defined O2O,
 	// the FK may be on the target table instead. When the FK is on the
-	// target, swap the ON clause sides. The fact itself is derived once, in
-	// fkColumnOnTarget, and read here (PRD §13.1).
+	// target, swap the ON clause sides. The fact itself is derived once, by
+	// inferredFKOnTarget or declaredFKOnTarget, and read here (PRD §13.1).
 	//
 	// The referenced side is the column the key references, the PK unless
 	// the key references a UNIQUE column (PRD §13.1). Swapped, it is the

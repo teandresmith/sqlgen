@@ -34,6 +34,7 @@ const (
 	TableProfiles             hook.TableName = "profiles"
 	TableReservedWordColumns  hook.TableName = "reserved_word_columns"
 	TableSluggedRows          hook.TableName = "slugged_rows"
+	TableSteps                hook.TableName = "steps"
 	TableTags                 hook.TableName = "tags"
 	TableTimeKeyeds           hook.TableName = "time_keyed"
 	TableTimeKeyedNotes       hook.TableName = "time_keyed_notes"

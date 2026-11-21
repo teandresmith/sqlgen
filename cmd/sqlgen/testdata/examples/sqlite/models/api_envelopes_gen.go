@@ -142,6 +142,10 @@ type SluggedRowConnection = Connection[SluggedRow]
 type SluggedRowEdge = Edge[SluggedRow]
 type SluggedRowListResult = PaginateResult[SluggedRow]
 
+type StepConnection = Connection[Step]
+type StepEdge = Edge[Step]
+type StepListResult = PaginateResult[Step]
+
 type TagConnection = Connection[Tag]
 type TagEdge = Edge[Tag]
 type TagListResult = PaginateResult[Tag]

@@ -1903,6 +1903,80 @@ func translateUpdateSluggedRowRequest(in gqlmodel.UpdateSluggedRowInput) sqlgenr
 	return out
 }
 
+// translateCreateStepInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateStepInput(in gqlmodel.CreateStepInput) *models.CreateStepInput {
+	out := &models.CreateStepInput{}
+	out.Name = in.Name
+	if in.PreviousStepID != nil {
+		v := int64(*in.PreviousStepID)
+		out.PreviousStepID = omittable.Set(&v)
+	}
+
+	return out
+}
+
+// translateUpdateStepInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateStepRequest
+// carries them to the resolver.
+func translateUpdateStepInput(in gqlmodel.UpdateStepInput) *models.UpdateStepInput {
+	out := &models.UpdateStepInput{}
+	if in.Name != nil {
+		out.Name = omittable.Set(*in.Name)
+	}
+	if val, ok := in.PreviousStepID.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.PreviousStepID.Get()
+			out.PreviousStepID = omittable.Set(zero)
+		} else {
+			v := int64(*val)
+			out.PreviousStepID = omittable.Set(&v)
+		}
+	}
+	return out
+}
+
+// hasUpdateStepSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateStepSetFields(in gqlmodel.UpdateStepInput) bool {
+	if in.Name != nil {
+		return true
+	}
+	if in.PreviousStepID.IsSet() {
+		return true
+	}
+	return false
+}
+
+// translateUpdateStepRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateStepInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateStepRequest(in gqlmodel.UpdateStepInput) sqlgenresolver.UpdateStepRequest {
+	out := sqlgenresolver.UpdateStepRequest{
+		Set:    translateUpdateStepInput(in),
+		HasSet: hasUpdateStepSetFields(in),
+	}
+	return out
+}
+
 // translateCreateTagInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×

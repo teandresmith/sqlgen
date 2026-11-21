@@ -706,6 +706,28 @@ func (s SluggedRowSorter) Slug(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "slug", Direction: direction}
 }
 
+// StepSorter provides type-safe sort helpers for the Step entity.
+// Each method returns a sql.Sort for the corresponding column.
+type StepSorter struct{}
+
+// NewStepSorter returns a new StepSorter.
+func NewStepSorter() StepSorter { return StepSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s StepSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s StepSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// PreviousStepID returns a sort for the previous_step_id column in the given direction.
+func (s StepSorter) PreviousStepID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "previous_step_id", Direction: direction}
+}
+
 // TagSorter provides type-safe sort helpers for the Tag entity.
 // Each method returns a sql.Sort for the corresponding column.
 type TagSorter struct{}
