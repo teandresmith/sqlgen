@@ -980,10 +980,11 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 - `tenancy-hooks.input-unchanged`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:197`, `cmd/sqlgen/gen/templates/table/get.go.tmpl:217`
 
 ## §29.10 Relationship Propagation
-<!-- prd: 29.10 sha256: 46e732fe5b40a130 -->
+<!-- prd: 29.10 sha256: 77db10788245ca6a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
+| tenant-rel.o2o-child-filter-in-join-on | A tenanted O2O child's tenant predicate is bound into the JOIN's `ON`, not the outer `WHERE`, so a tenanted parent whose child is absent, in another tenant, or unreferenced by a NULL foreign key keeps its row with the edge nil | `unit: cmd/sqlgen/gen: TestTenancyTemplate_o2o_bothTenanted_emitsBothFilters`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_o2o_childOnlyTenanted_emitsChildFilter`; `example: tenancy: TestRelationship_O2O_ParentKeptWithoutVisibleChild/has-one_with_no_child_row`; `example: tenancy: TestRelationship_O2O_ParentKeptWithoutVisibleChild/has-one_whose_child_is_in_another_tenant`; `example: tenancy: TestRelationship_O2O_ParentKeptWithoutVisibleChild/belongs-to_with_a_NULL_foreign_key`; `example: tenancy_postgres: TestO2OTenantJoin_NullForeignKeyKeepsParent`; `example: tenancy_mysql: TestO2OTenantJoin_NullForeignKeyKeepsParent`; `example: tenancy: TestO2OChain_TenantWHEREOnEveryAlias` | all |  |
 | tenant-rel.skip-tenancy-propagates | A parent read's `SkipTenancy` is forwarded to the child `GetMany` that loads its O2M relationship | `unit: cmd/sqlgen/gen: TestTenancyTemplate_loadRelationships_propagatesSkipTenancy` | all |  |
 | tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` | `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/o2m`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/m2m`; `example: tenancy_postgres: TestCompositeTenantFK_LoadStaysInTenant`; `example: tenancy_postgres: TestCompositeTenantFK_RelationshipFilterStaysInTenant` | all |  |
 

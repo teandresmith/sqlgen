@@ -440,10 +440,11 @@ func tenantedO2OParentContext(tenantedParent, tenantedChild bool) gen.TableConte
 	return tc
 }
 
-// o2o golden #1: tenanted parent + tenanted child → outer WHERE carries
-// both the parent and child tenant filters (belt-and-suspenders §29.10). The
-// child filter goes through the tenantedAliases map + runtime o2oJoins loop so
-// only aliases actually JOINed contribute a WHERE.
+// o2o golden #1: tenanted parent + tenanted child → the outer WHERE carries
+// the parent's tenant filter and the JOIN's ON carries the child's
+// (belt-and-suspenders §29.10). The child filter goes through the
+// tenantedAliases map + runtime o2oJoins loop so only aliases actually JOINed
+// contribute one.
 func TestTenancyTemplate_o2o_bothTenanted_emitsBothFilters(t *testing.T) {
 	tc := tenantedO2OParentContext(true, true)
 	out := renderTenancyTableBody(t, tc, "table/get")
@@ -459,11 +460,11 @@ func TestTenancyTemplate_o2o_bothTenanted_emitsBothFilters(t *testing.T) {
 		// Static map from alias → tenant column (tenantedAliases literal).
 		"tenantedAliases := map[string]string{",
 		`"c": "workspace_id",`,
-		// Runtime loop intersects the map against o2oJoins and appends only
-		// for aliases that are actually JOINed.
-		"for _, j := range o2oJoins {",
+		// Runtime loop intersects the map against o2oJoins and adds the
+		// filter to the ON of only the aliases that are actually JOINed.
+		"for i, j := range o2oJoins {",
 		"if col, ok := tenantedAliases[j.Alias]; ok {",
-		"prefixedConds = append(prefixedConds, sql.Where(j.Alias+\".\"+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))",
+		"o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+\".\"+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))",
 		"Conditions: prefixedConds,",
 	}
 	for _, want := range wants {
@@ -485,8 +486,7 @@ func TestTenancyTemplate_o2o_bothTenanted_emitsBothFilters(t *testing.T) {
 }
 
 // o2o golden #2: tenanted parent + non-tenanted child → parent filter
-// only, no child-side filter in the outer WHERE (§29.10 non-tenanted-child
-// non-error).
+// only, no child-side filter (§29.10 non-tenanted-child non-error).
 func TestTenancyTemplate_o2o_parentOnlyTenanted_noChildFilter(t *testing.T) {
 	tc := tenantedO2OParentContext(true, false)
 	out := renderTenancyTableBody(t, tc, "table/get")
@@ -497,7 +497,7 @@ func TestTenancyTemplate_o2o_parentOnlyTenanted_noChildFilter(t *testing.T) {
 	// The o2o branch must not emit a child-side tenant filter.
 	mustNotContain := []string{
 		`sql.Where("c.workspace_id")`,
-		"prefixedConds = append(prefixedConds, sql.Where",
+		"o2oJoins[i].Conditions = append(",
 	}
 	for _, s := range mustNotContain {
 		if strings.Contains(out, s) {
@@ -507,7 +507,7 @@ func TestTenancyTemplate_o2o_parentOnlyTenanted_noChildFilter(t *testing.T) {
 }
 
 // o2o golden #3: non-tenanted parent + tenanted child → child filter
-// is applied in the outer WHERE, parent has no own tenant filter (§29.10).
+// is applied in the JOIN's ON, parent has no own tenant filter (§29.10).
 // Parent client still gets a resolveTenant method since it needs to resolve
 // tenant at call time to filter the child side.
 func TestTenancyTemplate_o2o_childOnlyTenanted_emitsChildFilter(t *testing.T) {
@@ -521,9 +521,9 @@ func TestTenancyTemplate_o2o_childOnlyTenanted_emitsChildFilter(t *testing.T) {
 		// tenantedAliases map + runtime o2oJoins intersection.
 		"tenantedAliases := map[string]string{",
 		`"c": "workspace_id",`,
-		"for _, j := range o2oJoins {",
+		"for i, j := range o2oJoins {",
 		"if col, ok := tenantedAliases[j.Alias]; ok {",
-		"prefixedConds = append(prefixedConds, sql.Where(j.Alias+\".\"+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))",
+		"o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+\".\"+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))",
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {
@@ -563,9 +563,9 @@ func TestTenancyTemplate_o2o_multipleTenantedChildren_rendersMap(t *testing.T) {
 		"tenantedAliases := map[string]string{",
 		`"c": "workspace_id",`,
 		`"o": "workspace_id",`,
-		"for _, j := range o2oJoins {",
+		"for i, j := range o2oJoins {",
 		"if col, ok := tenantedAliases[j.Alias]; ok {",
-		"prefixedConds = append(prefixedConds, sql.Where(j.Alias+\".\"+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))",
+		"o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+\".\"+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))",
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {

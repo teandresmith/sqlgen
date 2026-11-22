@@ -7694,11 +7694,12 @@ func (c *checkpointClient) GetMany(ctx context.Context, input *GetCheckpointsInp
 			// Child tenant filter: intersect the statically known
 			// set of tenanted o2o targets with the JOINs actually emitted for
 			// this call. FieldOptions may select a strict prefix of an o2o
-			// chain, so chained aliases only contribute a WHERE when the
-			// runtime includes them in o2oJoins. The JOIN ON string
-			// is kept free of placeholders so PrefixConditions
-			// numbering stays stable. apply=false under tenancy.required:false
-			// + zero resolver skips the per-alias filter (cross-tenant read).
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
@@ -7708,9 +7709,9 @@ func (c *checkpointClient) GetMany(ctx context.Context, input *GetCheckpointsInp
 					tenantedAliases := map[string]string{
 						"m": "workspace_id",
 					}
-					for _, j := range o2oJoins {
+					for i, j := range o2oJoins {
 						if col, ok := tenantedAliases[j.Alias]; ok {
-							prefixedConds = append(prefixedConds, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
 						}
 					}
 				}
@@ -35312,11 +35313,12 @@ func (c *plotClient) GetMany(ctx context.Context, input *GetPlotsInput, opts ...
 			// Child tenant filter: intersect the statically known
 			// set of tenanted o2o targets with the JOINs actually emitted for
 			// this call. FieldOptions may select a strict prefix of an o2o
-			// chain, so chained aliases only contribute a WHERE when the
-			// runtime includes them in o2oJoins. The JOIN ON string
-			// is kept free of placeholders so PrefixConditions
-			// numbering stays stable. apply=false under tenancy.required:false
-			// + zero resolver skips the per-alias filter (cross-tenant read).
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
@@ -35326,9 +35328,9 @@ func (c *plotClient) GetMany(ctx context.Context, input *GetPlotsInput, opts ...
 					tenantedAliases := map[string]string{
 						"z": "workspace_id",
 					}
-					for _, j := range o2oJoins {
+					for i, j := range o2oJoins {
 						if col, ok := tenantedAliases[j.Alias]; ok {
-							prefixedConds = append(prefixedConds, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
 						}
 					}
 				}
@@ -48187,11 +48189,12 @@ func (c *sharedKidClient) GetMany(ctx context.Context, input *GetSharedKidsInput
 			// Child tenant filter: intersect the statically known
 			// set of tenanted o2o targets with the JOINs actually emitted for
 			// this call. FieldOptions may select a strict prefix of an o2o
-			// chain, so chained aliases only contribute a WHERE when the
-			// runtime includes them in o2oJoins. The JOIN ON string
-			// is kept free of placeholders so PrefixConditions
-			// numbering stays stable. apply=false under tenancy.required:false
-			// + zero resolver skips the per-alias filter (cross-tenant read).
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
@@ -48202,9 +48205,9 @@ func (c *sharedKidClient) GetMany(ctx context.Context, input *GetSharedKidsInput
 						"g": "workspace_id",
 						"p": "workspace_id",
 					}
-					for _, j := range o2oJoins {
+					for i, j := range o2oJoins {
 						if col, ok := tenantedAliases[j.Alias]; ok {
-							prefixedConds = append(prefixedConds, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
 						}
 					}
 				}
@@ -54879,11 +54882,12 @@ func (c *siteClient) GetMany(ctx context.Context, input *GetSitesInput, opts ...
 			// Child tenant filter: intersect the statically known
 			// set of tenanted o2o targets with the JOINs actually emitted for
 			// this call. FieldOptions may select a strict prefix of an o2o
-			// chain, so chained aliases only contribute a WHERE when the
-			// runtime includes them in o2oJoins. The JOIN ON string
-			// is kept free of placeholders so PrefixConditions
-			// numbering stays stable. apply=false under tenancy.required:false
-			// + zero resolver skips the per-alias filter (cross-tenant read).
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
@@ -54893,9 +54897,9 @@ func (c *siteClient) GetMany(ctx context.Context, input *GetSitesInput, opts ...
 					tenantedAliases := map[string]string{
 						"z": "workspace_id",
 					}
-					for _, j := range o2oJoins {
+					for i, j := range o2oJoins {
 						if col, ok := tenantedAliases[j.Alias]; ok {
-							prefixedConds = append(prefixedConds, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
 						}
 					}
 				}
@@ -71620,11 +71624,12 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 			// Child tenant filter: intersect the statically known
 			// set of tenanted o2o targets with the JOINs actually emitted for
 			// this call. FieldOptions may select a strict prefix of an o2o
-			// chain, so chained aliases only contribute a WHERE when the
-			// runtime includes them in o2oJoins. The JOIN ON string
-			// is kept free of placeholders so PrefixConditions
-			// numbering stays stable. apply=false under tenancy.required:false
-			// + zero resolver skips the per-alias filter (cross-tenant read).
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
@@ -71636,9 +71641,9 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 						"p": "workspace_id",
 						"s": "workspace_id",
 					}
-					for _, j := range o2oJoins {
+					for i, j := range o2oJoins {
 						if col, ok := tenantedAliases[j.Alias]; ok {
-							prefixedConds = append(prefixedConds, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
 						}
 					}
 				}

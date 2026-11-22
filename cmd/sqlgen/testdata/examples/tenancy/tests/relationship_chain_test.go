@@ -3,7 +3,8 @@ package tests
 // Tenancy × relationships — O2O chain end-to-end.
 //
 // Exercises PRD §29.10 for an O2O chain loaded through a single parent.Get /
-// parent.GetMany: every tenanted alias emitted into the outer WHERE, single
+// parent.GetMany: every tenanted alias carries a tenant predicate (the parent's
+// in the WHERE, each joined alias's in its JOIN's ON), single
 // SQL statement (no N+1), and SkipTenancy:true dropping the auto-filter at
 // every chain level.
 //
@@ -104,11 +105,11 @@ func newCapturingClient(t *testing.T, resolver tenancy.TenantResolver[uuid.UUID]
 	return client, cap
 }
 
-// countWorkspaceIDPredicates counts tenant-column predicates inside the WHERE
-// clause of a captured SELECT. The column also appears in the SELECT list (as
-// a projection and as a JOIN column alias), so a naive full-SQL count
-// double-counts projection + predicate. Slicing to the WHERE-onward substring
-// before counting isolates the predicate occurrences.
+// countWorkspaceIDPredicates counts tenant-column predicates in the JOIN ON
+// clauses and the WHERE of a captured SELECT. The column also appears in the
+// SELECT list (as a projection and as a JOIN column alias), so a naive full-SQL
+// count double-counts projection + predicate. Slicing to the FROM-onward
+// substring before counting isolates the predicate occurrences.
 //
 // Identifier quoting is stripped first, so the token `workspace_id = `
 // (lowercase, trailing space around `=`) matches both alias-qualified chain
@@ -118,7 +119,7 @@ func newCapturingClient(t *testing.T, resolver tenancy.TenantResolver[uuid.UUID]
 func countWorkspaceIDPredicates(sqlStr string) int {
 	lower := strings.ToLower(sqlStr)
 	lower = strings.ReplaceAll(lower, "\"", "")
-	idx := strings.Index(lower, " where ")
+	idx := strings.Index(lower, " from ")
 	if idx < 0 {
 		return 0
 	}
@@ -197,8 +198,9 @@ func TestO2OChain_SingleQueryForChainedLoad(t *testing.T) {
 
 // TestO2OChain_TenantWHEREOnEveryAlias is the §29.10 core invariant: every
 // tenanted alias (parent + each chained JOIN target) contributes a
-// `workspace_id = ?` predicate to the outer WHERE. With depth-2 chain selection
-// we expect 4 aliases (u, p, us, pr) → 4 `workspace_id` predicates.
+// `workspace_id = ?` predicate: the parent's in the WHERE, each joined alias's
+// in its JOIN's ON. With depth-2 chain selection we expect 4 aliases
+// (u, p, u2, p2) → 4 `workspace_id` predicates.
 //
 // Asserts SQL shape, not row output — a row-count test could pass with a
 // broken WHERE if there happens to be only one tenant's data in the DB.
@@ -255,16 +257,28 @@ func TestO2OChain_TenantWHEREOnEveryAlias(t *testing.T) {
 	}
 
 	// 4 tenant conditions: parent alias u + 3 chained aliases p, u2, p2.
-	// PRD §29.10 and the JOIN convention place every tenant condition in the outer WHERE
-	// (not the ON clause) — the count is stable against JOIN ordering.
+	// PRD §29.10 puts the parent's in the outer WHERE and each joined alias's
+	// in its JOIN's ON, where it hides the child without dropping the parent
+	// (§13.2).
 	if got := countWorkspaceIDPredicates(chainSQL); got != 4 {
 		t.Errorf(".workspace_id occurrences in chain SQL: %d, want 4 (parent u + aliases p, u2, p2)\n%s", got, chainSQL)
 	}
-	// Belt-and-suspenders: each specific alias predicate present.
-	for _, alias := range []string{"u.", "p.", "u2.", "p2."} {
-		needle := alias + `"workspace_id" = `
-		if !strings.Contains(strings.ToLower(chainSQL), needle) {
+	lower := strings.ToLower(chainSQL)
+	where := strings.Index(lower, " where ")
+	if where < 0 {
+		t.Fatalf("chain SQL has no WHERE\n%s", chainSQL)
+	}
+	for _, tc := range []struct {
+		alias   string
+		inWhere bool
+	}{{"u.", true}, {"p.", false}, {"u2.", false}, {"p2.", false}} {
+		needle := tc.alias + `"workspace_id" = `
+		i := strings.Index(lower, needle)
+		switch {
+		case i < 0:
 			t.Errorf("chain SQL missing %q predicate\n%s", needle, chainSQL)
+		case (i > where) != tc.inWhere:
+			t.Errorf("%q predicate in WHERE = %v, want %v\n%s", needle, i > where, tc.inWhere, chainSQL)
 		}
 	}
 }

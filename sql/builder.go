@@ -101,17 +101,19 @@ type SoftDeleteOptions struct {
 // JoinClause configures a LEFT JOIN in a select-join query.
 //
 // The [JoinClause.On] string is treated as opaque, pre-formatted SQL: builders
-// do not parse or number placeholders inside it. Tenant filters on a tenanted
-// child table MUST be appended to the outer [SelectOptions.Conditions] (e.g.
-// `{childAlias}.{tenantCol} = $`), not spliced into On — that convention keeps
-// placeholder numbering deterministic and driven entirely by Conditions order
-// (see [BuildSelectJoin]).
+// do not parse or number placeholders inside it. A predicate that binds a
+// value, such as a tenanted child's `{childAlias}.{tenantCol} = $`, goes in
+// [JoinClause.Conditions] instead, which the builder ANDs into the ON clause
+// and numbers (see [BuildSelectJoin]). It must not go in the outer
+// [SelectOptions.Conditions]: a WHERE term on the joined table drops every
+// parent the LEFT JOIN found no visible row for (PRD 13.2).
 type JoinClause struct {
 	Table      Table              // joined table
 	Alias      string             // table alias
 	On         string             // ON condition (pre-formatted SQL; no placeholders)
 	Columns    []string           // columns to select from joined table
 	SoftDelete *SoftDeleteOptions // if non-nil, adds exclusion filter to ON condition
+	Conditions []Condition        // bound predicates ANDed into the ON condition
 }
 
 // BuildSelect generates a SELECT statement.
@@ -138,12 +140,10 @@ func BuildSelect(d Dialect, t Table, opts SelectOptions) (string, []any) {
 // and the M2M junction read.
 // Column aliases use the "alias.column" pattern for prefix-based scanning.
 //
-// Placeholder numbering is driven entirely by opts.Conditions in slice order;
-// JOIN On strings contribute nothing (they are opaque SQL without
-// placeholders). This is the contract tenant-filter emission relies on: the
-// generator can append `{childAlias}.{tenantCol} = $` to Conditions and know
-// the placeholder will land at position N+1 relative to the previous N
-// conditions, regardless of how many JOINs precede it.
+// Placeholders number in statement order: each join's [JoinClause.Conditions]
+// in join order, then opts.Conditions in slice order. JOIN On strings
+// contribute nothing (they are opaque SQL without placeholders). The args
+// come back in the same order, which is what a positional `?` dialect needs.
 //
 // Each [Sort] names a column of the primary table, as it does for
 // [BuildSelect]. The builder qualifies it with the same qualifier the
@@ -157,7 +157,7 @@ func BuildSelectJoin(d Dialect, t Table, joins []JoinClause, opts SelectOptions)
 	b.WriteString(d.FormatTable(t))
 	b.WriteString(" ")
 	b.WriteString(opts.Alias)
-	writeJoinClauses(&b, d, joins)
+	args, pos := writeJoinClauses(&b, d, joins, 1)
 
 	// The statement aliases its table, so a correlated [Exists] condition
 	// qualifies against that alias rather than the table name (PRD 11.5).
@@ -166,8 +166,7 @@ func BuildSelectJoin(d Dialect, t Table, joins []JoinClause, opts SelectOptions)
 		qualifier = d.FormatTable(t)
 	}
 
-	pos := 1
-	args := appendWhere(&b, d, opts.Conditions, pos, qualifier)
+	args = append(args, appendWhere(&b, d, opts.Conditions, pos, qualifier)...)
 	writeOrderBy(&b, d, opts.OrderBy, qualifier)
 	writeLimitOffset(&b, d, opts.Limit, opts.Offset)
 	// The lock names the primary alias so the LEFT-JOINed rows stay unlocked:
@@ -917,7 +916,10 @@ func writeJoinColumns(b *strings.Builder, d Dialect, alias string, primaryCols [
 	}
 }
 
-func writeJoinClauses(b *strings.Builder, d Dialect, joins []JoinClause) {
+// writeJoinClauses writes each LEFT JOIN, numbering its bound conditions from
+// pos, and returns their args and the next free position.
+func writeJoinClauses(b *strings.Builder, d Dialect, joins []JoinClause, pos int) ([]any, int) {
+	var args []any
 	for _, join := range joins {
 		b.WriteString(" LEFT JOIN ")
 		b.WriteString(d.FormatTable(join.Table))
@@ -928,7 +930,15 @@ func writeJoinClauses(b *strings.Builder, d Dialect, joins []JoinClause) {
 		if join.SoftDelete != nil {
 			writeJoinSoftDeleteFilter(b, d, join.Alias, join.SoftDelete)
 		}
+		clause, condArgs, next := buildWhere(d, join.Conditions, pos, join.Alias)
+		if clause != "" {
+			b.WriteString(" AND ")
+			b.WriteString(clause)
+			args = append(args, condArgs...)
+			pos = next
+		}
 	}
+	return args, pos
 }
 
 func writeJoinSoftDeleteFilter(b *strings.Builder, d Dialect, alias string, sd *SoftDeleteOptions) {

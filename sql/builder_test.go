@@ -2939,36 +2939,126 @@ func TestTenancy_DeleteAppendsTenantCondition(t *testing.T) {
 	}
 }
 
-// TestTenancy_SelectJoinTenantInOuterWhere locks in the PRD §29.10 convention:
-// when both parent and tenanted child participate in an o2o JOIN, the child's
-// tenant filter lands in the outer WHERE (alongside the parent's), not inside
-// the JOIN ON string. Placeholder numbering follows Conditions slice order
-// with no contribution from the JOIN ON.
-func TestTenancy_SelectJoinTenantInOuterWhere(t *testing.T) {
-	products := sql.Table{Schema: "public", Name: "products"}
-	join := sql.JoinClause{
-		Table:   sql.Table{Schema: "public", Name: "companies"},
-		Alias:   "c",
-		On:      `c."id" = p."company_id"`,
-		Columns: []string{"id", "name"},
+// TestTenancy_SelectJoinTenantInJoinOn locks in where a tenanted o2o child's
+// tenant filter goes: into the LEFT JOIN's ON clause (PRD 29.10), so a parent
+// whose child is absent or invisible keeps its row (PRD 13.2). Placeholders
+// number in statement order, the ON's before the WHERE's, and the args come
+// back in that order on every dialect.
+func TestTenancy_SelectJoinTenantInJoinOn(t *testing.T) {
+	join := func(d sql.Dialect) sql.JoinClause {
+		return sql.JoinClause{
+			Table:      sql.Table{Schema: "public", Name: "companies"},
+			Alias:      "c",
+			On:         `c.` + d.QuoteIdentifier("id") + ` = p.` + d.QuoteIdentifier("company_id"),
+			Columns:    []string{"id", "name"},
+			SoftDelete: &sql.SoftDeleteOptions{Column: "deleted_at", Type: sql.SoftDeleteTimestamp},
+			Conditions: []sql.Condition{sql.Where("c." + d.QuoteIdentifier("workspace_id")).Eq("ws-child")},
+		}
 	}
-	conds := []sql.Condition{
-		sql.Where(`p."workspace_id"`).Eq("ws-abc"),
-		sql.Where(`c."workspace_id"`).Eq("ws-abc"),
+	tests := []struct {
+		name    string
+		d       sql.Dialect
+		table   sql.Table
+		wantSQL string
+	}{
+		{
+			name:    "postgres",
+			d:       pg,
+			table:   sql.Table{Schema: "public", Name: "products"},
+			wantSQL: `SELECT p."id" AS "p.id", c."id" AS "c.id", c."name" AS "c.name" FROM "public"."products" p LEFT JOIN "public"."companies" c ON c."id" = p."company_id" AND c."deleted_at" IS NULL AND c."workspace_id" = $1 WHERE p."workspace_id" = $2 AND p."name" = $3`,
+		},
+		{
+			name:    "mysql",
+			d:       my,
+			table:   sql.Table{Name: "products"},
+			wantSQL: "SELECT p.`id` AS `p.id`, c.`id` AS `c.id`, c.`name` AS `c.name` FROM `products` p LEFT JOIN `companies` c ON c.`id` = p.`company_id` AND c.`deleted_at` IS NULL AND c.`workspace_id` = ? WHERE p.`workspace_id` = ? AND p.`name` = ?",
+		},
+		{
+			name:    "sqlite",
+			d:       lite,
+			table:   sql.Table{Name: "products"},
+			wantSQL: `SELECT p."id" AS "p.id", c."id" AS "c.id", c."name" AS "c.name" FROM "products" p LEFT JOIN "companies" c ON c."id" = p."company_id" AND c."deleted_at" IS NULL AND c."workspace_id" = ? WHERE p."workspace_id" = ? AND p."name" = ?`,
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSQL, gotArgs := sql.BuildSelectJoin(tt.d, tt.table, []sql.JoinClause{join(tt.d)}, sql.SelectOptions{
+				Alias:   "p",
+				Columns: []string{"id"},
+				Conditions: []sql.Condition{
+					sql.Where("p." + tt.d.QuoteIdentifier("workspace_id")).Eq("ws-parent"),
+					sql.Where("p." + tt.d.QuoteIdentifier("name")).Eq("widget"),
+				},
+			})
+			if gotSQL != tt.wantSQL {
+				t.Errorf("BuildSelectJoin() sql =\n  %q\nwant\n  %q", gotSQL, tt.wantSQL)
+			}
+			if diff := cmp.Diff([]any{"ws-child", "ws-parent", "widget"}, gotArgs); diff != "" {
+				t.Errorf("BuildSelectJoin() args mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
 
-	gotSQL, gotArgs := sql.BuildSelectJoin(pg, products, []sql.JoinClause{join}, sql.SelectOptions{
-		Alias:      "p",
-		Columns:    []string{"id"},
-		Conditions: conds,
-	})
-
-	wantSQL := `SELECT p."id" AS "p.id", c."id" AS "c.id", c."name" AS "c.name" FROM "public"."products" p LEFT JOIN "public"."companies" c ON c."id" = p."company_id" WHERE p."workspace_id" = $1 AND c."workspace_id" = $2`
-	if gotSQL != wantSQL {
-		t.Errorf("BuildSelectJoin() sql =\n  %q\nwant\n  %q", gotSQL, wantSQL)
+// TestBuildSelectJoin_ConditionsNumberAcrossJoins pins numbering with two
+// joins that both bind ON conditions: each join's number in join order, an Or
+// stays one parenthesised conjunct, and the WHERE's come last.
+func TestBuildSelectJoin_ConditionsNumberAcrossJoins(t *testing.T) {
+	tests := []struct {
+		name    string
+		d       sql.Dialect
+		wantSQL string
+	}{
+		{
+			name:    "postgres",
+			d:       pg,
+			wantSQL: `SELECT p."id" AS "p.id", c."id" AS "c.id", o."id" AS "o.id" FROM "products" p LEFT JOIN "companies" c ON c."id" = p."company_id" AND c."workspace_id" = $1 LEFT JOIN "owners" o ON o."id" = c."owner_id" AND (o."kind" = $2 OR o."kind" = $3) WHERE p."workspace_id" = $4`,
+		},
+		{
+			name:    "mysql",
+			d:       my,
+			wantSQL: "SELECT p.`id` AS `p.id`, c.`id` AS `c.id`, o.`id` AS `o.id` FROM `products` p LEFT JOIN `companies` c ON c.`id` = p.`company_id` AND c.`workspace_id` = ? LEFT JOIN `owners` o ON o.`id` = c.`owner_id` AND (o.`kind` = ? OR o.`kind` = ?) WHERE p.`workspace_id` = ?",
+		},
+		{
+			name:    "sqlite",
+			d:       lite,
+			wantSQL: `SELECT p."id" AS "p.id", c."id" AS "c.id", o."id" AS "o.id" FROM "products" p LEFT JOIN "companies" c ON c."id" = p."company_id" AND c."workspace_id" = ? LEFT JOIN "owners" o ON o."id" = c."owner_id" AND (o."kind" = ? OR o."kind" = ?) WHERE p."workspace_id" = ?`,
+		},
 	}
-	if diff := cmp.Diff([]any{"ws-abc", "ws-abc"}, gotArgs); diff != "" {
-		t.Errorf("BuildSelectJoin() args mismatch (-want +got):\n%s", diff)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := tt.d.QuoteIdentifier
+			joins := []sql.JoinClause{
+				{
+					Table:      sql.Table{Name: "companies"},
+					Alias:      "c",
+					On:         "c." + q("id") + " = p." + q("company_id"),
+					Columns:    []string{"id"},
+					Conditions: []sql.Condition{sql.Where("c." + q("workspace_id")).Eq("ws-c")},
+				},
+				{
+					Table:   sql.Table{Name: "owners"},
+					Alias:   "o",
+					On:      "o." + q("id") + " = c." + q("owner_id"),
+					Columns: []string{"id"},
+					Conditions: []sql.Condition{sql.Or(
+						sql.Where("o."+q("kind")).Eq("a"),
+						sql.Where("o."+q("kind")).Eq("b"),
+					)},
+				},
+			}
+			gotSQL, gotArgs := sql.BuildSelectJoin(tt.d, sql.Table{Name: "products"}, joins, sql.SelectOptions{
+				Alias:      "p",
+				Columns:    []string{"id"},
+				Conditions: []sql.Condition{sql.Where("p." + q("workspace_id")).Eq("ws-p")},
+			})
+			if gotSQL != tt.wantSQL {
+				t.Errorf("BuildSelectJoin() sql =\n  %q\nwant\n  %q", gotSQL, tt.wantSQL)
+			}
+			if diff := cmp.Diff([]any{"ws-c", "a", "b", "ws-p"}, gotArgs); diff != "" {
+				t.Errorf("BuildSelectJoin() args mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 

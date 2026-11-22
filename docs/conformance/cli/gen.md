@@ -419,7 +419,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | gen.fk-convert.key-too-wide-skipped | A key that an integer FK column cannot hold is skipped before the query on an O2M, M2M or composite key, the opposite direction carries no guard, and an integer key member buckets against a float counterpart by the float's spelling | `unit: cmd/sqlgen/gen: TestGetTemplate_keyWiderThanFKStaysOutOfTheLoad`; `example: postgres: TestKeyWidth_loadsAcrossWidths`; `example: postgres_stdlib: TestKeyWidth_loadsAcrossWidths`; `example: sqlite: TestKeyClass_loadsAcrossComparators` | all |  |
 
 ## §13.4 Manual Relationship Configuration
-<!-- prd: 13.4 sha256: 73eacf3116602cec -->
+<!-- prd: 13.4 sha256: ad14e09c9641bf92 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -449,7 +449,7 @@ query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 
 ### 10.6 Relationship Loaders
 
-**o2o (inline JOIN via `sql.BuildSelectJoin`).** The generator emits `sql.JoinClause` values with a pre-formatted `On` SQL string. Placeholder numbering is computed only from the outer `Conditions`, so the cleanest place to inject the child-side tenant filter is the **outer WHERE**, not the JOIN `On` — this keeps `sql.JoinClause` semantics unchanged. Belt-and-suspenders applies only when the child is itself tenanted (§7 Q3):
+**o2o (inline JOIN via `sql.BuildSelectJoin`).** The generator emits `sql.JoinClause` values with a pre-formatted `On` SQL string, which carries no placeholders. The child-side tenant filter goes in the join's bound `Conditions`, which `BuildSelectJoin` ANDs into the `ON` and numbers before the outer `WHERE`. It must not go in the outer `WHERE`: there it turns the LEFT JOIN into an inner join and drops every parent with no visible child. Belt-and-suspenders applies only when the child is itself tenanted (§7 Q3):
 
 ```go
 // [tenancy] Inside the productClient read path when Profile (o2o) is selected
@@ -465,9 +465,10 @@ if !options.SkipTenancy {
     // [tenancy] Parent-side tenant filter (always present on tenanted parents).
     conds = append(conds, sql.Where("p.workspace_id").Eq(workspaceID))
     // [tenancy] Belt-and-suspenders — only when the child table is tenanted.
-    // Emitted per-join by the generator, omitted when the child has no tenant column.
+    // Emitted per-join by the generator into the JOIN ON, omitted when the
+    // child has no tenant column.
     if profileIsTenanted {
-        conds = append(conds, sql.Where("p2.workspace_id").Eq(workspaceID))
+        joins[0].Conditions = append(joins[0].Conditions, sql.Where("p2.workspace_id").Eq(workspaceID))
     }
 }
 

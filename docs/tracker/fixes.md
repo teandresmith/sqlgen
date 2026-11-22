@@ -23,33 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-
-### FIX-388
-
-- **Status:** Open
-- **Severity:** blocking
-- **Origin:** phase 13, cmd/sqlgen/gen/templates/table
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "A tenanted O2O read puts the child's tenant filter in the outer WHERE"); widened by Phase 36 belongs-to detection
-
-**Issue.** A tenanted table that loads a to-one edge drops every parent with no visible child: `GetMany` returns fewer rows and `Get` returns `sqlgen: resource not found`. Measured at `998f0654` on all three dialects: tenancy_postgres `Tasks().GetMany` with `FieldOptions.Cycle` → n=1 (plain → 2), `Tasks().Get(free task, Cycle)` → "get task: sqlgen: resource not found"; tenancy_mysql the same; tenancy (sqlite) the same plus `Users().Get(user without profile, Profile)` → not found. Since Phase 36 every nullable FK yields a detected belongs-to edge, so every NULL-FK row of a tenanted table is dropped when its to-one edge is loaded.
-
-**Root cause.** `cmd/sqlgen/gen/templates/table/get.go.tmpl:274-278` adds each tenanted join alias's tenant predicate to the outer `WHERE`, turning the LEFT JOIN into an effective inner join. It was placed there because `sql.JoinClause.On` cannot carry placeholders (`sql/builder.go:103-115`); the phase-13 "Outer WHERE, not JOIN ON" note concerned placeholder numbering, not a PRD ruling.
-
-**Suggested fix.**
-- Start from `.claude/prototypes/backlog/o2o-tenant-filter-in-join-on.patch` (based on `998f0654`; 21 files, +582/-290).
-- `sql/builder.go`: add `JoinClause.Conditions []Condition`; `writeJoinClauses` ANDs them into the ON after soft delete, numbering their placeholders before the WHERE's; args return in statement order so MySQL/SQLite `?` stay aligned.
-- `get.go.tmpl`: append the tenant predicate to `o2oJoins[i].Conditions` instead of the outer conditions (`resolveO2OJoins` builds a fresh slice per call). A child in another tenant then loads as a nil edge.
-- Rewrite the pin `TestTenancy_SelectJoinTenantInOuterWhere` as table-driven `TestTenancy_SelectJoinTenantInJoinOn` (pg/mysql/sqlite); update `TestO2OChain_TenantWHEREOnEveryAlias` (keep the name for registry citations) and the tenancy template-test strings; reword registry row `gap.sql.join-tenant-outer-where` (runtime/sql.md, id kept).
-- Fail-first tests: tenancy `TestRelationship_O2O_ParentKeptWithoutVisibleChild` (no child, child in tenant B, NULL FK); tenancy_postgres and tenancy_mysql `TestO2OTenantJoin_NullForeignKeyKeepsParent`.
-- PRD: §29.10 says the child predicate goes in the JOIN ON, bound; §11.5 rule 3 / BuildSelectJoin numbering says ON conditions number before WHERE.
-- Prototype results, run at `998f0654` on 2026-11-22: all new tests fail before and pass after; `go test ./sql/`, `go test ./cmd/sqlgen/gen`, `make update-golden-e2e`, examples tenancy/tenancy_postgres/tenancy_mysql/graphql, conformance features_{sqlite,postgres,postgres_stdlib,mysql}, `make check` all ok. Golden churn: models_gen.go in graphql, tenancy, tenancy_mysql, tenancy_postgres and the four features conformance models.
-
-**References.**
-- PRD §13.2 ("A LEFT JOIN returns the parent row even when the related entity does not exist"), §29.10 (o2o row), §13.4.1 (the outer-WHERE caveat), §11.5.
-- Adjacent, not in scope: the §13.4.1 discriminator interpolation could later bind through `JoinClause.Conditions`.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-389
 
 - **Status:** Open
@@ -263,6 +236,32 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-388
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 13, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "A tenanted O2O read puts the child's tenant filter in the outer WHERE"); widened by Phase 36 belongs-to detection
+
+**Issue.** A tenanted table that loads a to-one edge drops every parent with no visible child: `GetMany` returns fewer rows and `Get` returns `sqlgen: resource not found`. Measured at `998f0654` on all three dialects: tenancy_postgres `Tasks().GetMany` with `FieldOptions.Cycle` → n=1 (plain → 2), `Tasks().Get(free task, Cycle)` → "get task: sqlgen: resource not found"; tenancy_mysql the same; tenancy (sqlite) the same plus `Users().Get(user without profile, Profile)` → not found. Since Phase 36 every nullable FK yields a detected belongs-to edge, so every NULL-FK row of a tenanted table is dropped when its to-one edge is loaded.
+
+**Root cause.** `cmd/sqlgen/gen/templates/table/get.go.tmpl:274-278` adds each tenanted join alias's tenant predicate to the outer `WHERE`, turning the LEFT JOIN into an effective inner join. It was placed there because `sql.JoinClause.On` cannot carry placeholders (`sql/builder.go:103-115`); the phase-13 "Outer WHERE, not JOIN ON" note concerned placeholder numbering, not a PRD ruling.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/backlog/o2o-tenant-filter-in-join-on.patch` (based on `998f0654`; 21 files, +582/-290).
+- `sql/builder.go`: add `JoinClause.Conditions []Condition`; `writeJoinClauses` ANDs them into the ON after soft delete, numbering their placeholders before the WHERE's; args return in statement order so MySQL/SQLite `?` stay aligned.
+- `get.go.tmpl`: append the tenant predicate to `o2oJoins[i].Conditions` instead of the outer conditions (`resolveO2OJoins` builds a fresh slice per call). A child in another tenant then loads as a nil edge.
+- Rewrite the pin `TestTenancy_SelectJoinTenantInOuterWhere` as table-driven `TestTenancy_SelectJoinTenantInJoinOn` (pg/mysql/sqlite); update `TestO2OChain_TenantWHEREOnEveryAlias` (keep the name for registry citations) and the tenancy template-test strings; reword registry row `gap.sql.join-tenant-outer-where` (runtime/sql.md, id kept).
+- Fail-first tests: tenancy `TestRelationship_O2O_ParentKeptWithoutVisibleChild` (no child, child in tenant B, NULL FK); tenancy_postgres and tenancy_mysql `TestO2OTenantJoin_NullForeignKeyKeepsParent`.
+- PRD: §29.10 says the child predicate goes in the JOIN ON, bound; §11.5 rule 3 / BuildSelectJoin numbering says ON conditions number before WHERE.
+- Prototype results, run at `998f0654` on 2026-11-22: all new tests fail before and pass after; `go test ./sql/`, `go test ./cmd/sqlgen/gen`, `make update-golden-e2e`, examples tenancy/tenancy_postgres/tenancy_mysql/graphql, conformance features_{sqlite,postgres,postgres_stdlib,mysql}, `make check` all ok. Golden churn: models_gen.go in graphql, tenancy, tenancy_mysql, tenancy_postgres and the four features conformance models.
+
+**References.**
+- PRD §13.2 ("A LEFT JOIN returns the parent row even when the related entity does not exist"), §29.10 (o2o row), §13.4.1 (the outer-WHERE caveat), §11.5.
+- Adjacent, not in scope: the §13.4.1 discriminator interpolation could later bind through `JoinClause.Conditions`.
+
+**Resolution notes.** Resolved 2026-11-22 from the prototype `.claude/prototypes/backlog/o2o-tenant-filter-in-join-on.patch`, which applied cleanly at `509b028e`; regenerated goldens matched its churn exactly (12 `models_gen.go` files: graphql, tenancy, tenancy_mysql, tenancy_postgres expected+models, the four features conformance models). `sql.JoinClause` gains `Conditions []Condition`, which `BuildSelectJoin` ANDs into that join's ON after the soft-delete filter and numbers before the WHERE, returning args in statement order; `get.go.tmpl` adds each tenanted alias's predicate to `o2oJoins[i].Conditions` instead of the outer WHERE. Fail-first re-run on the final code by reverting only the template line and regenerating: tenancy `TestRelationship_O2O_ParentKeptWithoutVisibleChild` (3 subtests) and `TestO2OChain_TenantWHEREOnEveryAlias`, tenancy_postgres and tenancy_mysql `TestO2OTenantJoin_NullForeignKeyKeepsParent` fail before, pass after; `TestTenancy_SelectJoinTenantInJoinOn` (pg/mysql/sqlite) replaces `TestTenancy_SelectJoinTenantInOuterWhere`. PRD: §29.10 o2o row and belt-and-suspenders bullet (child predicate in the JOIN ON, bound), §11.5 rule 3 (ON conditions number before WHERE), Appendix A `BuildSelectJoin` row, and the §13.4.1 binding table (dropped the stale "invariant tenancy's placeholder ordering depends on"). Registry: the gap `gap.sql.join-tenant-outer-where` is applied and deleted per the README's amend-prd rule; it becomes `builder.select-join.join-conditions-in-on` (runtime/sql.md §11.5) and `tenant-rel.o2o-child-filter-in-join-on` (client.md §29.10); §11.5, §13.4, §29.10 and Appendix A rehashed. Inline: `docs/design/TENANCY.md` §10.6 o2o loader text and sketch updated to the JOIN-ON placement. Auto-review (0 high-confidence): applied its doc fixes inline (the `TestO2OChain_TenantWHEREOnEveryAlias` docstring now names the ON/WHERE split and aliases u, p, u2, p2; history sentences cut from the three new test docstrings; the registry row no longer claims an unstated soft-delete ordering) and its optional coverage item, `TestBuildSelectJoin_ConditionsNumberAcrossJoins` (two joins with bound ON conditions, one an `Or`, numbered across joins before the WHERE, pg/mysql/sqlite). `TestO2OChain_TenantWHEREOnEveryAlias` keeps its name for the registry citations.
 
 ### FIX-387
 
