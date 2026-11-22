@@ -23,7 +23,240 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+
+### FIX-388
+
+- **Status:** Open
+- **Severity:** blocking
+- **Origin:** phase 13, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "A tenanted O2O read puts the child's tenant filter in the outer WHERE"); widened by Phase 36 belongs-to detection
+
+**Issue.** A tenanted table that loads a to-one edge drops every parent with no visible child: `GetMany` returns fewer rows and `Get` returns `sqlgen: resource not found`. Measured at `998f0654` on all three dialects: tenancy_postgres `Tasks().GetMany` with `FieldOptions.Cycle` → n=1 (plain → 2), `Tasks().Get(free task, Cycle)` → "get task: sqlgen: resource not found"; tenancy_mysql the same; tenancy (sqlite) the same plus `Users().Get(user without profile, Profile)` → not found. Since Phase 36 every nullable FK yields a detected belongs-to edge, so every NULL-FK row of a tenanted table is dropped when its to-one edge is loaded.
+
+**Root cause.** `cmd/sqlgen/gen/templates/table/get.go.tmpl:274-278` adds each tenanted join alias's tenant predicate to the outer `WHERE`, turning the LEFT JOIN into an effective inner join. It was placed there because `sql.JoinClause.On` cannot carry placeholders (`sql/builder.go:103-115`); the phase-13 "Outer WHERE, not JOIN ON" note concerned placeholder numbering, not a PRD ruling.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/backlog/o2o-tenant-filter-in-join-on.patch` (based on `998f0654`; 21 files, +582/-290).
+- `sql/builder.go`: add `JoinClause.Conditions []Condition`; `writeJoinClauses` ANDs them into the ON after soft delete, numbering their placeholders before the WHERE's; args return in statement order so MySQL/SQLite `?` stay aligned.
+- `get.go.tmpl`: append the tenant predicate to `o2oJoins[i].Conditions` instead of the outer conditions (`resolveO2OJoins` builds a fresh slice per call). A child in another tenant then loads as a nil edge.
+- Rewrite the pin `TestTenancy_SelectJoinTenantInOuterWhere` as table-driven `TestTenancy_SelectJoinTenantInJoinOn` (pg/mysql/sqlite); update `TestO2OChain_TenantWHEREOnEveryAlias` (keep the name for registry citations) and the tenancy template-test strings; reword registry row `gap.sql.join-tenant-outer-where` (runtime/sql.md, id kept).
+- Fail-first tests: tenancy `TestRelationship_O2O_ParentKeptWithoutVisibleChild` (no child, child in tenant B, NULL FK); tenancy_postgres and tenancy_mysql `TestO2OTenantJoin_NullForeignKeyKeepsParent`.
+- PRD: §29.10 says the child predicate goes in the JOIN ON, bound; §11.5 rule 3 / BuildSelectJoin numbering says ON conditions number before WHERE.
+- Prototype results, run at `998f0654` on 2026-11-22: all new tests fail before and pass after; `go test ./sql/`, `go test ./cmd/sqlgen/gen`, `make update-golden-e2e`, examples tenancy/tenancy_postgres/tenancy_mysql/graphql, conformance features_{sqlite,postgres,postgres_stdlib,mysql}, `make check` all ok. Golden churn: models_gen.go in graphql, tenancy, tenancy_mysql, tenancy_postgres and the four features conformance models.
+
+**References.**
+- PRD §13.2 ("A LEFT JOIN returns the parent row even when the related entity does not exist"), §29.10 (o2o row), §13.4.1 (the outer-WHERE caveat), §11.5.
+- Adjacent, not in scope: the §13.4.1 discriminator interpolation could later bind through `JoinClause.Conditions`.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-389
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`CreateMany` on a composite-PK table fails on SQLite past roughly 1000 rows, after the writes")
+
+**Issue.** Bulk writes return an error after the rows are committed once the read-back exceeds a dialect ceiling, so a caller who retries duplicates or conflicts. Measured at `998f0654`: SQLite composite-PK `CreateMany`/`UpdateMany` n=999 → "Expression tree is too large (maximum depth 1000)" with 999 rows written; SQLite single-column `CreateMany`/`SoftDeleteMany` n=33000 → "too many SQL variables"; MySQL composite n=33000 / single n=66000 → "Error 1390 … too many placeholders"; PostgreSQL composite n=33000 → "extended protocol limited to 65535 parameters". HardDeleteMany is fine (already chunked).
+
+**Root cause.** Every bulk write re-fetches all written keys in one unbounded `GetMany`: composite keys render `Filter.PKs` as an OR of ANDs (`shared/_filter.tmpl:58`), single keys as one IN. Sites: `create.go.tmpl:444/460/474`, `update.go.tmpl` (8), `delete.go.tmpl` (12: SoftDelete/Restore Many and Where), `upsert_many.go.tmpl:456/471/486`.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/backlog/refetch-chunked-readback.patch` (based on `998f0654`; 166 files, +33k/-26k, mostly re-indentation).
+- New shared helper `refetchInChunks` (`gen/context_shared.go`); all 26 read-back sites call `GetMany` per chunk of `c.batchSize` keys. A call of ≤ batch_size keys stays one statement.
+- Remove the conformance seed's chunks-of-500 workaround (`composite_key.go`); add a conformance test of 1000 composite rows through CreateMany + UpdateMany; update two UpsertMany statement-count pins (terminal SELECT becomes ceil(M/batch_size)).
+- User ruling 2026-11-22: accept ceil(M/batch_size) read-backs; amend §25.1/§25.3 to say read-backs sit outside the write bound, as key reads already do.
+- Prototype results, run at `998f0654` on 2026-11-22: conformance CreateMany "composite keys past SQLite's expression depth limit read back every written row" and GetMany "a composite key load past one chunk…" fail with the old templates and pass after; after the fix SQLite composite 40000 / single 33000, MySQL composite 33000 / single 66000, PG composite 33000 all ok. `go test -short ./...` (cmd/sqlgen), update-golden/-e2e, conformance-fresh, test-conformance, test-examples (15), lint-conformance all ok.
+
+**References.**
+- PRD §19 ("all batch operations split their input into sub-batches … This prevents parameter count limits from being exceeded"), §25.1 (rules out "documenting the cliff instead of batching past it"), §25.3.
+- Residual, not in scope: SQLite composite still fails when batch_size ≥ 999; a user `GetMany` with ≥ 999 `Filter.PKs` on SQLite fails the same way (fix site `_filter.tmpl`, tuple IN on SQLite only).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-390
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen/templates/table/upsert_many.go.tmpl
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "On conflict, UpsertMany resets an unset nullable or DEFAULT column")
+
+**Issue.** On conflict, `UpsertMany` sets every column a row left unset to its DEFAULT (NULL without one), while single-row `Upsert` leaves it alone — silent data loss when batching partial rows. Measured at `998f0654` on PG17, MySQL 8.0.46 and SQLite: `categories` created with description "keep", then a Name-only input → `Upsert: "keep" -> "keep"`, `UpsertMany: "keep" -> "<NULL>"`.
+
+**Root cause.** `upsert_many.go.tmpl:164` builds one shared `updateColumns` for the whole sub-batch, and unset fields bind `sql.Default` (`:246-254`), so `col = EXCLUDED.col` writes the default. PRD §9.5 currently documents this (added by 5b24d6ba, registry `upsert-many.unset-takes-default`, conformance `suite/upsert.go:658/676`), but no ruling ever chose it.
+
+**Suggested fix.**
+- User ruling 2026-11-22: UpsertMany matches Upsert — a column a row leaves unset is left alone on conflict.
+- Start from `.claude/prototypes/backlog/upsertmany-unset-columns.patch` (based on `998f0654`; 154 files, +11.2k/-5.4k, mostly re-indentation).
+- New shared helper `upsertUpdateGroups` (`gen/context_shared.go`) splits each sub-batch by the set of update columns its rows set; one statement per group. VALUES rows unchanged, so inserts behave as before; homogeneous batches (every nested M2M link step) stay one statement.
+- Example test `TestUpsertMany_ConflictLeavesUnsetColumnsAlone` (pg/mysql/sqlite); flip and rename the two conformance subtests; rename and reword `upsert-many.unset-takes-default` in docs/conformance/client.md.
+- PRD: rewrite the §9.5 sentence; "one statement per sub-batch" wording in §9.2/§25.1/§25.3 becomes one per set-column group; a re-upsert no longer revives a soft-deleted row unless the row sets the soft-delete column, so reword E5 (§9.9.4) and the `gen/context_nested.go:1514` comment.
+- Prototype results, run at `998f0654` on 2026-11-22: the new test fails on all three without the template change (`"UpsertManyKeepA": "keep"` vs `"<NULL>"`) and passes with it; cmd/sqlgen `go test -short ./...`, update-golden/-e2e, test-conformance (8 modules), test-examples (15), req-check, lint all ok.
+
+**References.**
+- PRD §9.5, §9.2, §9.9.4 (E5), §25.1, §25.3. FIX-320 (kept the every-input-column rule; dropped only sequence columns).
+- Rejected alternative: `COALESCE(EXCLUDED.c, t.c)` — measured on SQLite, a DEFAULT column is still overwritten and an explicit NULL could never be written.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-391
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/config
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "An explicit `tables.<name>.cursor_keys` naming an `exclude_columns` column passes `validateCursorKeys`")
+
+**Issue.** An explicit `cursor_keys` entry naming an excluded column validates and generates with exit 0 and no warning, but `Connection` (and the GraphQL connection query) is silently missing. Measured at `998f0654`: sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}` → exit 0, `category_gen.go` has no `Connection`, the `categories(...)` connection query is gone, `go build` ok.
+
+**Root cause.** `cmd/sqlgen/config/validate.go` `validateCursorKeys` checks the raw column set; `gen/context_table.go:816` resolves against the post-exclude set and ignores `decision.Errs`.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/backlog/cursor-keys-excluded-column.patch` (based on `998f0654`; 2 files, +57).
+- `validateCursorKeys` errors per explicit key found in `ResolveTableExcludeColumns` (global ∪ table): `cursor_keys: column "name" in table public.categories is excluded by exclude_columns; a cursor key must be a generated column`.
+- Test `TestValidatePostParse_CursorKeys_ExcludedColumn` (table-level, global, and a non-key exclude control).
+- Prototype results, run at `998f0654` on 2026-11-22: table-level and global cases fail before ("error = <nil>") and pass after; E2E → "Post-parse validation error: cursor_keys: column \"name\" in table categories is excluded by exclude_columns; …"; `go test -race ./config/` and vet ok; no golden churn.
+
+**References.**
+- PRD §4.13 (explicit configuration "must be honored or flagged"), §4.8 (explicit keys "must exist on this table").
+- FIX-392 (cursor-key uniqueness warning, same validator).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-392
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/config
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`cursor_keys` uniqueness is not validated")
+
+**Issue.** Non-unique `cursor_keys` silently skip rows across `Connection` pages. Measured at `998f0654` on SQLite: products with `cursor_keys: [category_id]`, 3+3 rows, `first: 2` → page0 [1,2], page1 [4,5], page2 [] — 4 of 6 rows seen, rows 3 and 6 skipped. No PK tiebreaker is appended (generated `cursorKeys: []string{"category_id"}`).
+
+**Root cause.** Nothing checks that the resolved cursor keys cover a PK or UNIQUE set; PRD §9.8 says only that keys "Should be columns that are unique and immutable".
+
+**Suggested fix.**
+- User ruling 2026-11-22: a validate **warning** (not an error, not an auto-appended tiebreaker) when the resolved keys cover no PK, UNIQUE group or UNIQUE column.
+- Start from the ungated sketch `.claude/prototypes/backlog/cursor-keys-uniqueness-warning.sketch.patch`. It must check the post-exclude key set, and it breaks two config tests whose fixtures lack PK/UNIQUE flags (`InheritedPartialMissing`, `ExcludeColumnsRemovesAll`) — give those fixtures the flags.
+- Add a §4.13 row for the warning and a registry row; fail-first test with a non-unique key set (warns) and a PK-covering control (silent). Sketch warns in 0 of 12 examples.
+
+**References.**
+- PRD §9.8, §4.13, §14.2 ("cursor_keys determines sort" — why the tiebreaker option was rejected).
+- FIX-391.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-393
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 27, cmd/sqlgen/gen/templates/table/nested.go.tmpl
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "In tenancy_mysql a cached `Moments().Get` right after a `MomentOwners().UpdateWithRelated` connect returns the stale `owner_id=nil`")
+
+**Issue.** A cached read right after a `*WithRelated` write returns stale data on every dialect, while a flat `Update` invalidates before it returns. Measured at `998f0654` with a logging cache backend: `SET moments:pk = {"owner_id":null}` → `UpdateWithRelated` returns → `GET moments:pk → {"owner_id":null}` (stale) → only then `INVMANY`. 50-iteration loops: sqlite 50/50 stale, postgres async 50/50 stale, postgres with `WithCallbackMode(CallbackSync)` 0/50. The backlog line's UTC/zone theory is wrong: it is timing only.
+
+**Root cause.** `database/transaction.go:747` `fireCallbacksAsync` runs commit callbacks in a goroutine (the §18.6 default). `*WithRelated` methods open the root transaction themselves (`nested.go.tmpl:311/381/444`, `TxOptions{CallbackMode: c.callbackMode}`), so a caller who never asked for a transaction loses the read-your-writes a flat write gives (`cache.go.tmpl:1055` invalidates inline).
+
+**Suggested fix.**
+- User ruling 2026-11-22: run commit callbacks synchronously when the method opens the root transaction; keep the client's mode inside a caller's transaction.
+- Start from `.claude/prototypes/backlog/nested-write-invalidates-before-return.patch` (based on `998f0654`; 22 files, +2793/-487).
+- `nested.go.tmpl` gains a per-table `nestedTxOptions(ctx)`: `CallbackSync` when `database.FromContext(ctx) == nil`, else the client's mode. The three `WithTransaction` sites use it. Drop the `SkipCache` workaround from tenancy_mysql and tenancy_postgres `TestNestedTimeKeyZones`.
+- Fail-first test: tenancy `TestCache_NestedWriteInvalidatesBeforeReturn` (20 iterations, default async client).
+- PRD: amend §9.9.9 and §18.6. Note the two costs there: the call waits for the backend round trip as a flat write does, and under sync a ctx cancelled between commit and the callbacks returns "skipping commit callbacks" for a committed write.
+- Prototype results, run at `998f0654` on 2026-11-22: the new test fails before ("iteration 0: cached owner_id = <nil>, want 1") and passes after; both TestNestedTimeKeyZones without SkipCache fail before and pass after; update-golden/-e2e, examples tenancy/tenancy_postgres/tenancy_mysql/mysql/graphql, all 8 conformance modules, `make check` ok. Golden churn: one new method per nested table in graphql, mysql, tenancy, tenancy_mysql, tenancy_postgres and the 8 conformance models.
+
+**References.**
+- PRD §9.9.9, §18.6, §27.
+- Adjacent, not in scope: `UpdateMany`'s internal `WithTransaction` passes no TxOptions.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-394
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 7, cmd/sqlgen/gen/templates
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`Paginate` and `Connection` end with an unchecked `result.(*PaginateResult[T])`")
+
+**Issue.** A hook that short-circuits with `(nil, nil)` panics in `Paginate`, `Connection`, `Count`, `Exists`, `ExistsWhere` and `RawExec`. Measured at `998f0654` in the sqlite example: `Products().Paginate` → "PANIC interface conversion: interface {} is nil, not *models.PaginateResult[…Product]"; Connection, Count ("not int64"), Exists ("not bool"), view Paginate, view Count and `RawExec` ("interface is nil, not database.Result") the same; `Get` returns `(nil, nil)`.
+
+**Root cause.** Nine hook-result assertions lack the `result == nil` guard the other 27 sites have: `templates/table/pagination.go.tmpl:53,170`, `templates/view/pagination.go.tmpl:56,177`, `templates/table/count.go.tmpl:66`, `templates/view/count.go.tmpl:44`, `templates/table/exists.go.tmpl:64,126`, `templates/client.go.tmpl:365`.
+
+**Suggested fix.**
+- User ruling 2026-11-22: a nil short-circuit result is the zero value — `return nil, nil` for Paginate, Connection and RawExec; `return 0, nil` for Count; `return false, nil` for Exists and ExistsWhere.
+- Start from `.claude/prototypes/backlog/gen-hook-nil-result-guard.patch` (based on `998f0654`; 188 files, +10575/-0, guard lines only; includes the new test).
+- E2E test `examples/sqlite/tests/hook_nil_result_test.go` `TestHookNilResultDoesNotPanic` (8 subtests, table and view).
+- PRD: amend the §9.8.10 Exists/Count examples (and RawExec's if touched) to guard nil like §9.8.11/§9.8.12.
+- Prototype results, run at `998f0654` on 2026-11-22: all 8 subtests panic before and pass after; `make check`, the sqlite and events examples, conformance sqlite and features_sqlite ok; Docker-backed examples not run.
+
+**References.**
+- PRD §9.8.10, §9.8.11, §9.8.12, §21.5 ("Return a result without calling `next()`").
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-395
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 16, cmd/sqlgen/gen (API resolvers) and cmd/sqlgen/wrapper
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "The resolver helpers' PK parameters (`funcPKGoArgs`, `resolvers.go.tmpl`) are spelled from the PK column's GraphQL name without `safeGoIdent`")
+
+**Issue.** Generated GraphQL resolvers fail to compile for (1) a PK column named after a Go keyword and (2) any multi-word PK under `field_casing: snake_case`. Measured at `998f0654` on graphql example copies: `asset_kinds(type PK)` and `price_bands(PK(range, func))` → "goimports failed for models/graph/sqlgenresolver/resolvers_gen.go:410:44: expected ')', found 'type'"; fixing only the helpers leaves gqlgen re-signing seeded methods as `rangeArg`/`funcArg` with sqlgen's body → "undefined: rangeVal". With only `field_casing: snake_case` flipped → "undefined: asset_id … workspace_id" in `*_gen.resolvers.go` (gqlgen spells `asset_id` as `assetID`). Digit-before-acronym names (`line2ID` → gqlgen `line2id`) also diverge.
+
+**Root cause.** `cmd/sqlgen/gen/funcmap.go` `funcPKGoArgs` / `funcPKPassArgs` / `convertOnePKArg` use `APIPKArg.GraphQLName` raw, and `templates/api/seeds.go.tmpl` writes managed method bodies before gqlgen runs, naming parameters itself, while gqlgen names them with `ToGoPrivate(name)`.
+
+**Suggested fix.**
+- User ruling 2026-11-22: stop pre-writing managed method bodies with predicted parameter names. Let gqlgen emit its panic stubs with its own names, and have `rewritePanicStubs` splice the seed body in with parameters renamed by position (the path that already exists for operations added later). Amend PRD §26.5.6 step 4 ("Seed step").
+- Land the `APIPKArg.GoName()` (`safeGoIdent`, `typeVal`) half of `.claude/prototypes/backlog/pk-arg-reserved-word.patch` (based on `998f0654`; 4 files, +141/-26) for the Q/M helpers either way; drop its `SeedGoName` gqlgen-mirroring half in favor of the splice.
+- Tests: `TestReservedWord_PKParameterSpelling` for the helpers; a wrapper test that a keyword PK and a snake_case multi-word PK generate, build and run a second time.
+- Prototype results, run at `998f0654` on 2026-11-22 (keyword half only): reverting the helper spelling fails ("typeVal string" vs "type string", "does not parse: expected ')', found 'type'"); after the fix the probe generates, builds, vets and rebuilds; update-golden and update-golden-e2e ok, no golden churn. The splice half is not prototyped.
+
+**References.**
+- PRD §8.5 Reserved Word Handling (escape with `Val` "where that form is emitted bare in generated code — as a local variable"), §26.5.6.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-396
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 16, cmd/sqlgen/wrapper
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "gqlgen defaults an absent `resolver.layout` to `single-file`")
+
+**Issue.** A `gqlgen.yml` that omits `resolver.layout` is seeded for `follow-schema`, while gqlgen v0.17.95 defaults it to `single-file`, so every such config fails with a confusing error. Measured at `998f0654` on graphql_top_level copies: layout removed (dir only) → "config.resolver: filename must be specified with layout=single-file" with follow-schema seed files left behind; plus `filename: graph/resolver.go` → "method mutationResolver.DeleteCategory already declared"; no resolver block → "undefined: mutationResolver/queryResolver".
+
+**Root cause.** `cmd/sqlgen/wrapper/seeds.go` `parseResolverLayout` defaults an absent layout to follow-schema.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/backlog/gqlgen-absent-layout-default.patch` (based on `998f0654`; 3 files, +42/-16).
+- Default an absent layout to single-file; with no filename either, fail before seeding: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename". Fix the `resolverLayout` doc; three new `TestParseResolverLayout` cases; three wrapper_test fixtures and `cli/unused_scalar_warning_commands_test.go` state `layout: follow-schema, dir: graph`.
+- Optional one-line §26.5.6 note on the default.
+- Prototype results, run at `998f0654` on 2026-11-22: new cases fail before (err=<nil>; "follow-schema" vs "single-file") and pass after; E2E: no resolver block → loud error and no seeds; dir + filename, no layout → "generated 25 files", builds, second run builds; `go test -race ./wrapper/`, `go test -short ./cli/` ok; no golden churn.
+
+**References.**
+- PRD §26.5.6 step 2. FIX-265 (logged this as backlog).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-397
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 1, sql
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`sql.Where(col).In(&sub)` with a `*Subquery` is bound as one parameter value")
+
+**Issue.** `sql.Where(col).In(&sub)` / `Nin(&sub)` with a `*Subquery` render `col IN ($1)` / `IN (?)` with the pointer as the single arg, and the driver fails with a misleading error. Measured at `998f0654`: PG `company_id IN ($1)`, args `[]any{(*sql.Subquery)(0x…)}`; MySQL/SQLite `IN (?)` / `NOT IN (?)`; SQLite execution → "sql: converting argument $1 type: unsupported type sql.Subquery, a struct". Generated code always passes a value.
+
+**Root cause.** `sql/condition.go:153-160` `listOrSubquery` type-asserts only `Subquery`.
+
+**Suggested fix.**
+- User ruling 2026-11-22: accept `*Subquery`.
+- Start from `.claude/prototypes/backlog/sql-in-subquery-pointer.patch` (based on `998f0654`): `listOrSubquery` also unwraps a non-nil `*Subquery`; a nil pointer stays a one-value list; godoc on `In` updated; `TestInNinSubqueryPointer` in `sql/composition_test.go` (pg, pgStd, mysql, sqlite).
+- PRD §11.5 wording (PRD:2353, :8579-8580): "a single `sql.Subquery` (or `*sql.Subquery`)".
+- Prototype results, run at `998f0654` on 2026-11-22: the 4 subtests fail before and pass after; `go test ./sql/`, vet, golangci-lint, gofumpt clean; no golden churn. `Eq(&sub)` is out of scope (a scalar Subquery is not a documented form).
+
+**References.**
+- PRD §11.5.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
 
 <!-- fixes:open:end -->
 
