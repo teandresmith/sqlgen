@@ -2131,6 +2131,16 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 		if decision.Warning != "" {
 			*warnings = append(*warnings, Warning{Message: decision.Warning})
 		}
+		// gen resolves cursor keys against the post-exclude columns, so an
+		// excluded explicit key would drop Connection silently (PRD §4.13).
+		// A key missing from the table already reports "does not exist".
+		excluded := stringSet(ResolveTableExcludeColumns(tc, cfg.Generation))
+		present := columnsByName(table.Columns)
+		for _, k := range tc.CursorKeys {
+			if _, ok := present[k]; ok && excluded[k] {
+				*errs = append(*errs, fmt.Errorf("cursor_keys: column %q in table %s is excluded by exclude_columns; a cursor key must be a generated column", k, qualifiedTableName(table)))
+			}
+		}
 	}
 
 	for _, view := range views {

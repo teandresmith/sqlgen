@@ -77,30 +77,6 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-391
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 25, cmd/sqlgen/config
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "An explicit `tables.<name>.cursor_keys` naming an `exclude_columns` column passes `validateCursorKeys`")
-- **Vetted:** ready at `ca9b4128` (2026-11-23)
-
-**Issue.** An explicit `cursor_keys` entry naming an excluded column validates and generates with exit 0 and no warning, but `Connection` (and the GraphQL connection query) is silently missing. Measured at `998f0654`: sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}` → exit 0, `category_gen.go` has no `Connection`, the `categories(...)` connection query is gone, `go build` ok.
-
-**Root cause.** `cmd/sqlgen/config/validate.go` `validateCursorKeys` checks the raw column set; `gen/context_table.go:816` resolves against the post-exclude set and ignores `decision.Errs`.
-
-**Suggested fix.**
-- Start from `.claude/prototypes/FIX-391.patch` (based on `ca9b4128`; 2 files, +57/-0).
-- `validateCursorKeys` errors per explicit key found in `ResolveTableExcludeColumns` (global ∪ table): `cursor_keys: column "name" in table public.categories is excluded by exclude_columns; a cursor key must be a generated column`.
-- Test `TestValidatePostParse_CursorKeys_ExcludedColumn` (table-level, global, and a non-key exclude control).
-- Prototype results, run at `ca9b4128` on 2026-11-23: every reference re-checked and still holds (`gen/context_table.go:816`, `config.go:2370`, PRD.md:1294 and :690). Reproduction: sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}` → exit 0, only the unrelated `category_stats` view warning, no `func (c *categoryClient) Connection` (baseline `category_gen.go:1917`), the `categories(...)` connection query (baseline graphqls:68) gone, `go build ./...` ok. Fixed binary → "Post-parse validation error: cursor_keys: column \"name\" in table categories is excluded by exclude_columns; a cursor key must be a generated column", exit 2. Gates: `go test -race -count=1 ./config/` ok; vet, gofumpt and golangci-lint clean; `go test -race -count=1 ./gen/... ./` (incl. `TestE2EGoldenFiles`) ok. Fail-first: check reverted → "table-level_exclude: ValidatePostParse() error = <nil>, want the excluded-key error: true" and the same for global_exclude (control passes); existing suite without the fix passes. No golden churn: postgres_stdlib is the only example with both keys, on different tables. Patch: `.claude/prototypes/FIX-391.patch`.
-
-**References.**
-- PRD §4.13 (explicit configuration "must be honored or flagged"), §4.8 (explicit keys "must exist on this table").
-- FIX-392 (cursor-key uniqueness warning, same validator).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-392
 
 - **Status:** Open
@@ -260,6 +236,31 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-391
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/config
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "An explicit `tables.<name>.cursor_keys` naming an `exclude_columns` column passes `validateCursorKeys`")
+- **Vetted:** ready at `ca9b4128` (2026-11-23)
+
+**Issue.** An explicit `cursor_keys` entry naming an excluded column validates and generates with exit 0 and no warning, but `Connection` (and the GraphQL connection query) is silently missing. Measured at `998f0654`: sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}` → exit 0, `category_gen.go` has no `Connection`, the `categories(...)` connection query is gone, `go build` ok.
+
+**Root cause.** `cmd/sqlgen/config/validate.go` `validateCursorKeys` checks the raw column set; `gen/context_table.go:816` resolves against the post-exclude set and ignores `decision.Errs`.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/FIX-391.patch` (based on `ca9b4128`; 2 files, +57/-0).
+- `validateCursorKeys` errors per explicit key found in `ResolveTableExcludeColumns` (global ∪ table): `cursor_keys: column "name" in table public.categories is excluded by exclude_columns; a cursor key must be a generated column`.
+- Test `TestValidatePostParse_CursorKeys_ExcludedColumn` (table-level, global, and a non-key exclude control).
+- Prototype results, run at `ca9b4128` on 2026-11-23: every reference re-checked and still holds (`gen/context_table.go:816`, `config.go:2370`, PRD.md:1294 and :690). Reproduction: sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}` → exit 0, only the unrelated `category_stats` view warning, no `func (c *categoryClient) Connection` (baseline `category_gen.go:1917`), the `categories(...)` connection query (baseline graphqls:68) gone, `go build ./...` ok. Fixed binary → "Post-parse validation error: cursor_keys: column \"name\" in table categories is excluded by exclude_columns; a cursor key must be a generated column", exit 2. Gates: `go test -race -count=1 ./config/` ok; vet, gofumpt and golangci-lint clean; `go test -race -count=1 ./gen/... ./` (incl. `TestE2EGoldenFiles`) ok. Fail-first: check reverted → "table-level_exclude: ValidatePostParse() error = <nil>, want the excluded-key error: true" and the same for global_exclude (control passes); existing suite without the fix passes. No golden churn: postgres_stdlib is the only example with both keys, on different tables. Patch: `.claude/prototypes/FIX-391.patch`.
+- Auto-accepted the recommended option on 2026-11-23 (`/fix` auto-accept rule): should the excluded-key rule be a §4.13 requirement row or a PRD gap? → a PRD gap row (`gap.config.table-cursor-keys-excluded-column`), because §4.8/§4.13 do not say whether existence is checked after `exclude_columns`; gates green, no golden churn, no public surface, no PRD text or ruling reversed. A PRD amendment ("must exist on this table after `exclude_columns`") would turn it into a requirement row.
+
+**References.**
+- PRD §4.13 (explicit configuration "must be honored or flagged"), §4.8 (explicit keys "must exist on this table").
+- FIX-392 (cursor-key uniqueness warning, same validator).
+
+**Resolution notes.** `validateCursorKeys` (`cmd/sqlgen/config/validate.go`) now errors once per explicit `tables.<name>.cursor_keys` entry found in `ResolveTableExcludeColumns` (global ∪ table), so an excluded key fails validation instead of silently dropping `Connection` in gen. Prototype applied clean; the check now runs after `ResolveTableConnection` rather than before it (same errors, comment shortened). Regression test `TestValidatePostParse_CursorKeys_ExcludedColumn` (table-level, global, control); fail-first re-run: with the check disabled the table-level and global cases fail with `error = <nil>`. Registry: the test is claimed by PRD gap row `gap.config.table-cursor-keys-excluded-column` in `docs/conformance/cli/config.md` (`req-check` required a claim; the prototype ran `go test` only; see the auto-accept above). Inline from /verify: the excluded-key error fires only for a key the table has, so a globally excluded key a table lacks reports just "does not exist" (new case `excluded key missing from the table`, fail-first confirmed). Re-measured on a sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}`: `sqlgen validate` and `generate` report the error. No golden churn. Gates: `make check` ok, `make check-examples` ok.
 
 ### FIX-388
 
