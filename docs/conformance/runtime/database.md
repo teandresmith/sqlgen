@@ -114,7 +114,7 @@ mapping (§22.2). See [README.md](../README.md) for the format.
 | tx.teardown-never-waits.sqlite | A root `Commit` or `Rollback` over a leaked result set does not wait, and succeeds (sqlite) | `integration: database/stdlib: TestLeakedResultSetDoesNotStrandTheConnection/sqlite/commit`; `integration: database/stdlib: TestLeakedResultSetDoesNotStrandTheConnection/sqlite/rollback` | sqlite | transactions: teardown-never-waits × sqlite |
 
 ## §18.6 Deferred Side Effects
-<!-- prd: 18.6 sha256: 99371977108652a3 -->
+<!-- prd: 18.6 sha256: 7e97f8b0653f25e1 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

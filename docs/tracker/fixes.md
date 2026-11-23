@@ -77,33 +77,6 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-393
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 27, cmd/sqlgen/gen/templates/table/nested.go.tmpl
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "In tenancy_mysql a cached `Moments().Get` right after a `MomentOwners().UpdateWithRelated` connect returns the stale `owner_id=nil`")
-- **Vetted:** corrected at `ca9b4128` (2026-11-23)
-
-**Issue.** A cached read right after a `*WithRelated` write returns stale data on every dialect, while a flat `Update` invalidates before it returns. Measured at `998f0654` with a logging cache backend: `SET moments:pk = {"owner_id":null}` → `UpdateWithRelated` returns → `GET moments:pk → {"owner_id":null}` (stale) → only then `INVMANY`. 50-iteration loops: sqlite 50/50 stale, postgres async 50/50 stale, postgres with `WithCallbackMode(CallbackSync)` 0/50. The backlog line's UTC/zone theory is wrong: it is timing only.
-
-**Root cause.** `database/transaction.go:747` `fireCallbacksAsync` runs commit callbacks in a goroutine (the §18.6 default). `*WithRelated` methods open the root transaction themselves (`nested.go.tmpl:311/381/444`, `TxOptions{CallbackMode: c.callbackMode}`), so a caller who never asked for a transaction loses the read-your-writes a flat write gives (`cmd/sqlgen/gen/templates/cache.go.tmpl:1026-1031` invalidates inline via `entityOp(ctx)` / `viewOp(ctx)`).
-
-**Suggested fix.**
-- User ruling 2026-11-22: run commit callbacks synchronously when the method opens the root transaction; keep the client's mode inside a caller's transaction.
-- Start from `.claude/prototypes/FIX-393.patch` (based on `ca9b4128`; 26 files, +2846/-492).
-- `nested.go.tmpl` gains a per-table `nestedTxOptions(ctx)`: `CallbackSync` when `database.FromContext(ctx) == nil`, else the client's mode. The three `WithTransaction` sites (Create/Update/UpsertWithRelated) use it. Drop the `SkipCache` workaround from tenancy_mysql and tenancy_postgres `TestNestedTimeKeyZones`.
-- Fail-first test: tenancy `TestCache_NestedWriteInvalidatesBeforeReturn`, table-driven over CreateWithRelated, UpdateWithRelated and UpsertWithRelated (20 iterations each, default async client).
-- PRD: §9.9.9 first bullet (outside a transaction the method commits its own root in sync mode; inside a caller's transaction callbacks flush at the caller's root in the client's mode); §18.6 new paragraph "Nested `*WithRelated` methods outside a transaction always run sync", naming the two costs (the call waits for the cache/event round trip as a flat write does; a ctx cancelled between commit and callbacks returns "skipping commit callbacks" for a committed write — event `publish` callbacks always return nil and cache `afterCommit` swallows errors, so this is the only new error path). Registry row `with-related.callbacks-before-return` in `docs/conformance/client.md` §9.9.9; `make req-rehash` for §9.9 (client.md, cli/gen.md), §9.9.9 and §18.6 (runtime/database.md).
-- Corrected at vetting (2026-11-23): the original single test covered only UpdateWithRelated, so reverting the Create or Upsert site failed nothing; widened to three subtests. The original patch also lacked the PRD amendment and registry row, without which `req-check` fails.
-- Prototype results, run at `ca9b4128` on 2026-11-23: tenancy (sqlite) HEAD models + new test → "CreateWithRelated: iteration 0: cached owner_id = <nil>, want 1" (Update, Upsert likewise; async goroutine also logs "memory: backend is closed" after cleanup); tenancy_postgres/tenancy_mysql without SkipCache → all 4 `TestNestedTimeKeyZones` subtests fail ("o2m_connect_utc: owner_id = <nil>, want 1"). Gates: update-golden, update-golden-e2e, conformance-fresh, `go test -race ./gen/...` (with `-timeout=40m`; the default 10m timed out once under machine load), examples tenancy/tenancy_postgres/tenancy_mysql/mysql/graphql test + lint, test-conformance (8 modules), req-check, refs-check all ok. Fail-first: each site reverted alone fails its subtest ("iteration 0: cached owner_id = <nil>, want 1/21/41"); existing suite without the fix passes. Golden churn: 18 goldens, no files added — graphql, mysql, tenancy, tenancy_mysql, tenancy_postgres ~2 each; 8 conformance model sets ~1 each.
-
-**References.**
-- PRD §9.9.9, §18.6, §27.
-- Adjacent, not in scope: `UpdateMany`'s internal `WithTransaction` passes no TxOptions.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-394
 
 - **Status:** Open
@@ -209,6 +182,34 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-393
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 27, cmd/sqlgen/gen/templates/table/nested.go.tmpl
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "In tenancy_mysql a cached `Moments().Get` right after a `MomentOwners().UpdateWithRelated` connect returns the stale `owner_id=nil`")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
+
+**Issue.** A cached read right after a `*WithRelated` write returns stale data on every dialect, while a flat `Update` invalidates before it returns. Measured at `998f0654` with a logging cache backend: `SET moments:pk = {"owner_id":null}` → `UpdateWithRelated` returns → `GET moments:pk → {"owner_id":null}` (stale) → only then `INVMANY`. 50-iteration loops: sqlite 50/50 stale, postgres async 50/50 stale, postgres with `WithCallbackMode(CallbackSync)` 0/50. The backlog line's UTC/zone theory is wrong: it is timing only.
+
+**Root cause.** `database/transaction.go:747` `fireCallbacksAsync` runs commit callbacks in a goroutine (the §18.6 default). `*WithRelated` methods open the root transaction themselves (`nested.go.tmpl:311/381/444`, `TxOptions{CallbackMode: c.callbackMode}`), so a caller who never asked for a transaction loses the read-your-writes a flat write gives (`cmd/sqlgen/gen/templates/cache.go.tmpl:1026-1031` invalidates inline via `entityOp(ctx)` / `viewOp(ctx)`).
+
+**Suggested fix.**
+- User ruling 2026-11-22: run commit callbacks synchronously when the method opens the root transaction; keep the client's mode inside a caller's transaction.
+- Start from `.claude/prototypes/FIX-393.patch` (based on `ca9b4128`; 26 files, +2846/-492).
+- `nested.go.tmpl` gains a per-table `nestedTxOptions(ctx)`: `CallbackSync` when `database.FromContext(ctx) == nil`, else the client's mode. The three `WithTransaction` sites (Create/Update/UpsertWithRelated) use it. Drop the `SkipCache` workaround from tenancy_mysql and tenancy_postgres `TestNestedTimeKeyZones`.
+- Fail-first test: tenancy `TestCache_NestedWriteInvalidatesBeforeReturn`, table-driven over CreateWithRelated, UpdateWithRelated and UpsertWithRelated (20 iterations each, default async client).
+- PRD: §9.9.9 first bullet (outside a transaction the method commits its own root in sync mode; inside a caller's transaction callbacks flush at the caller's root in the client's mode); §18.6 new paragraph "Nested `*WithRelated` methods outside a transaction always run sync", naming the two costs (the call waits for the cache/event round trip as a flat write does; a ctx cancelled between commit and callbacks returns "skipping commit callbacks" for a committed write — event `publish` callbacks always return nil and cache `afterCommit` swallows errors, so this is the only new error path). Registry row `with-related.callbacks-before-return` in `docs/conformance/client.md` §9.9.9; `make req-rehash` for §9.9 (client.md, cli/gen.md), §9.9.9 and §18.6 (runtime/database.md).
+- Corrected at vetting (2026-11-23): the original single test covered only UpdateWithRelated, so reverting the Create or Upsert site failed nothing; widened to three subtests. The original patch also lacked the PRD amendment and registry row, without which `req-check` fails.
+- Prototype results, run at `ca9b4128` on 2026-11-23: tenancy (sqlite) HEAD models + new test → "CreateWithRelated: iteration 0: cached owner_id = <nil>, want 1" (Update, Upsert likewise; async goroutine also logs "memory: backend is closed" after cleanup); tenancy_postgres/tenancy_mysql without SkipCache → all 4 `TestNestedTimeKeyZones` subtests fail ("o2m_connect_utc: owner_id = <nil>, want 1"). Gates: update-golden, update-golden-e2e, conformance-fresh, `go test -race ./gen/...` (with `-timeout=40m`; the default 10m timed out once under machine load), examples tenancy/tenancy_postgres/tenancy_mysql/mysql/graphql test + lint, test-conformance (8 modules), req-check, refs-check all ok. Fail-first: each site reverted alone fails its subtest ("iteration 0: cached owner_id = <nil>, want 1/21/41"); existing suite without the fix passes. Golden churn: 18 goldens, no files added — graphql, mysql, tenancy, tenancy_mysql, tenancy_postgres ~2 each; 8 conformance model sets ~1 each.
+
+**References.**
+- PRD §9.9.9, §18.6, §27.
+- Adjacent, not in scope: `UpdateMany`'s internal `WithTransaction` passes no TxOptions.
+
+**Resolution notes.** Resolved 2026-11-23 at `e9451774` (uncommitted). The vetted prototype applied clean (fresh: no change to its files since `ca9b4128`); source hunks applied, generated files regenerated. `nested.go.tmpl` emits a per-table `nestedTxOptions(ctx)` (`CallbackSync` when `!database.InTransaction(ctx)`, else the client's mode; the root's mode governs at a savepoint), used by the three `WithTransaction` sites of Create/Update/UpsertWithRelated. Dropped the `SkipCache` workaround from tenancy_mysql and tenancy_postgres `TestNestedTimeKeyZones`. Regression test tenancy `TestCache_NestedWriteInvalidatesBeforeReturn` (4 subtests, 20 iterations each, default async client); fail-first re-run on the final code: reverting each site alone fails its subtest ("iteration 0: cached owner_id = <nil>, want 1/21/61"; reverting the Update site also fails the committed-transaction subtest, "want 22"). Diverges from the prototype in one place, from the /verify review: the prototype tested `database.FromContext(ctx) == nil`, but `NewTransaction` opens a new root when ctx holds a closed transaction, so a ctx left over from a committed `Begin`/`Commit` still got async callbacks (reviewer probe: 20/20 stale). The check is now `!database.InTransaction(ctx)`, matching `cache.go.tmpl`'s and the lock-mode guard's checks, and subtest `UpdateWithRelated with a committed transaction in ctx` pins it (fail-first against the prototype's models: "iteration 0: cached owner_id = <nil>, want 41"). Same root cause, same fix site. Inline from /verify: shortened the template comment; PRD §9.9.9 and §18.6 now say callbacks inside a caller's transaction flush in "the root transaction's mode" instead of "the client's mode" (a `Begin` with `TxOptions` overrides the client default), and §9.9.9 says a closed transaction in ctx counts as none; the registry row says so too. PRD §9.9.9 first bullet and §18.6 sync paragraph; registry row `with-related.callbacks-before-return` (`docs/conformance/client.md` §9.9.9); §9.9, §9.9.9, §18.6 rehashed (`make req-rehash`). Golden churn matches vet: 18 files (graphql, mysql, tenancy, tenancy_mysql, tenancy_postgres expected+models; 8 conformance model sets), the same files as the prototype's generated hunks, differing only in the guard and comment above; no unit-golden churn. Gates: `make check` ok; `make check-examples` ok.
+
 ### FIX-392
 
 - **Status:** Resolved

@@ -4887,6 +4887,17 @@ func (c *boardClient) nestedResolvedTenantCtx(ctx context.Context, options CallO
 	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
 }
 
+// nestedTxOptions runs commit callbacks synchronously when this method opens
+// the root transaction, so a read issued after it returns sees the write, as
+// after a flat write. Inside a caller's transaction the method is a savepoint
+// and the root's mode applies.
+func (c *boardClient) nestedTxOptions(ctx context.Context) database.TxOptions {
+	if !database.InTransaction(ctx) {
+		return database.TxOptions{CallbackMode: database.CallbackSync}
+	}
+	return database.TxOptions{CallbackMode: c.callbackMode}
+}
+
 // CreateWithRelated creates a board together with rows on its nested
 // relationships, in a single transaction.
 //
@@ -4956,7 +4967,7 @@ func (c *boardClient) CreateWithRelated(ctx context.Context, input *CreateBoardW
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("create board with related: %w", err)
 	}
@@ -5024,7 +5035,7 @@ func (c *boardClient) UpdateWithRelated(ctx context.Context, id int64, input *Up
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("update board with related: %w", err)
 	}
@@ -5085,7 +5096,7 @@ func (c *boardClient) UpsertWithRelated(ctx context.Context, input *UpsertBoardW
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("upsert board with related: %w", err)
 	}
@@ -21859,6 +21870,17 @@ func (c *tagClient) nestedResolvedTenantCtx(ctx context.Context, options CallOpt
 	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
 }
 
+// nestedTxOptions runs commit callbacks synchronously when this method opens
+// the root transaction, so a read issued after it returns sees the write, as
+// after a flat write. Inside a caller's transaction the method is a savepoint
+// and the root's mode applies.
+func (c *tagClient) nestedTxOptions(ctx context.Context) database.TxOptions {
+	if !database.InTransaction(ctx) {
+		return database.TxOptions{CallbackMode: database.CallbackSync}
+	}
+	return database.TxOptions{CallbackMode: c.callbackMode}
+}
+
 // CreateWithRelated creates a tag together with rows on its nested
 // relationships, in a single transaction.
 //
@@ -21928,7 +21950,7 @@ func (c *tagClient) CreateWithRelated(ctx context.Context, input *CreateTagWithR
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("create tag with related: %w", err)
 	}
@@ -21996,7 +22018,7 @@ func (c *tagClient) UpdateWithRelated(ctx context.Context, id int64, input *Upda
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("update tag with related: %w", err)
 	}
@@ -22057,7 +22079,7 @@ func (c *tagClient) UpsertWithRelated(ctx context.Context, input *UpsertTagWithR
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("upsert tag with related: %w", err)
 	}
@@ -34075,6 +34097,17 @@ func (c *templateClient) nestedResolvedTenantCtx(ctx context.Context, options Ca
 	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
 }
 
+// nestedTxOptions runs commit callbacks synchronously when this method opens
+// the root transaction, so a read issued after it returns sees the write, as
+// after a flat write. Inside a caller's transaction the method is a savepoint
+// and the root's mode applies.
+func (c *templateClient) nestedTxOptions(ctx context.Context) database.TxOptions {
+	if !database.InTransaction(ctx) {
+		return database.TxOptions{CallbackMode: database.CallbackSync}
+	}
+	return database.TxOptions{CallbackMode: c.callbackMode}
+}
+
 // CreateWithRelated creates a template together with rows on its nested
 // relationships, in a single transaction.
 //
@@ -34144,7 +34177,7 @@ func (c *templateClient) CreateWithRelated(ctx context.Context, input *CreateTem
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("create template with related: %w", err)
 	}
@@ -34212,7 +34245,7 @@ func (c *templateClient) UpdateWithRelated(ctx context.Context, id int64, input 
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("update template with related: %w", err)
 	}
@@ -34275,7 +34308,7 @@ func (c *templateClient) UpsertWithRelated(ctx context.Context, input *UpsertTem
 			result = reloaded
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("upsert template with related: %w", err)
 	}
