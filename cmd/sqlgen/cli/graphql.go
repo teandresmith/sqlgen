@@ -120,8 +120,8 @@ type runGraphQLGenOptions struct {
 }
 
 // runGraphQLGen builds the sqlgen-owned API context from cfg + schema,
-// derives the gqlgen merge entries, seeds the resolver delegation files,
-// and invokes the gqlgen subprocess. Returns the wrapper.GenResult so
+// derives the gqlgen merge entries and the seed delegations, and invokes the
+// gqlgen subprocess. Returns the wrapper.GenResult so
 // callers (the chained `sqlgen generate` path) can append the
 // emitted files to their reporting.
 //
@@ -205,11 +205,6 @@ func runGraphQLGen(ctx context.Context, cfg *config.RootConfig, schema *parser.S
 			ModelsAlias:              cfg.Output.Package,
 			ModelsImportPath:         apiCtx.ModelsImportPath,
 			SqlgenResolverImportPath: apiCtx.SqlgenResolverImportPath,
-			// The seed bodies reference gqlgen-emitted input
-			// types under apiCtx.GqlgenModelAlias; the rendered file
-			// preamble must include the matching aliased import.
-			GqlgenModelImportPath: apiCtx.GqlgenModelImportPath,
-			GqlgenModelAlias:      apiCtx.GqlgenModelAlias,
 		},
 		Stdout: stdout,
 		Stderr: errOut,
@@ -576,8 +571,8 @@ func scalarModelPath(s gen.APIScalarUse, resolverImportPath string) string {
 // buildSeedsAndManagedFields renders the per-table seed delegation bodies
 // and enumerates the sqlgen-managed Query.* / Mutation.* field names for a
 // `sqlgen graphql gen` invocation. The wrapper consumes
-// both: seeds get written into gqlgen-shaped files when absent, and the
-// managed-field set scopes the post-gqlgen panic-stub rewriter.
+// both: the post-gqlgen panic-stub rewriter splices the seed bodies into the
+// stubs gqlgen declares, scoped by the managed-field set.
 func buildSeedsAndManagedFields(apiCtx *gen.APIContext, cfg *config.RootConfig) ([]wrapper.TableSeed, wrapper.SqlgenManagedFieldSet, error) {
 	dialect := dialectFromConfig(cfg.Input.Dialect)
 	bodies, err := gen.RenderAPISeeds(dialect, apiCtx)

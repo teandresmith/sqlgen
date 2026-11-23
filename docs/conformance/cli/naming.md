@@ -6,7 +6,7 @@
 Naming rules (§8.5) are applied by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. It holds §8.5, the `naming` matrix and its `n/a` cells, and the §8.5 PRD gaps. Its rows claim `gen`, `config` and `cli` tests, golden and example tests.
 
 ## §8.5 Naming Rules
-<!-- prd: 8.5 sha256: 6ce220d6325ba5c7 -->
+<!-- prd: 8.5 sha256: 1e590ba7e0dffd49 -->
 
 Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym examples, the field-override surfaces, the reserved field names, the entity claims, the reserved package names, the `struct_name` example, the digit-leading sites (plus the digit-leading table rule) and the `field_casing` table. The acronym, reserved-field, reserved-package and digit-leading-table rows are generated from the spec tables of `TestNamingAcronymExamples`, `TestReservedFieldNamesMatrix`, `TestReservedPackageNamesMatrix` and `TestNamingDigitLeadingTable`. The §4.13 rules that reject a name stay in [`config.md`](config.md).
 
@@ -312,6 +312,8 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 | naming.reserved-word.createmany-input-field | In the `CreateMany` body the input field stays `input.Type` | `golden: sqlite`; `example: sqlite: TestReservedWordColumns_RoundTrip` | all |  |
 | naming.reserved-word.property-test | A property test renders generated code for every reserved word and it always parses | `unit: cmd/sqlgen/gen: TestGeneratedCode_AlwaysParses_CreateTemplate` | all |  |
 | naming.reserved-word.integration-fixture | The sqlite example's `reserved_word_columns` table generates, compiles and round-trips | `example: sqlite: TestReservedWordColumns_RoundTrip`; `golden: sqlite` | all |  |
+| naming.reserved-word.resolver-helper-parameter | A key column named after a Go reserved word is a bare parameter of the GraphQL resolver helpers and takes the `Val` escape there: in the parameter list, in the argument it is passed as, and in the model-call conversion | `unit: cmd/sqlgen/gen: TestReservedWord_PKParameterSpelling/single keyword key`; `unit: cmd/sqlgen/gen: TestReservedWord_PKParameterSpelling/composite keyword key with a converted member` | all |  |
+| naming.reserved-word.gqlgen-resolver-parameter | The resolver methods gqlgen declares name their parameters themselves (`typeArg`), and the delegation sqlgen splices into them follows gqlgen's spelling | `unit: cmd/sqlgen/wrapper: TestPostStubRewriter_RenamesSeedParamsByPosition/keyword key takes gqlgen's Arg spelling` | all |  |
 | naming.reserved-word.table-client-field | A table's or view's struct name whose camelCase form is a Go reserved word takes the `Val` escape on the unified client's unexported field, which stays typed by the entity client (`maps` → field `mapVal`, type `mapClient`) | `unit: cmd/sqlgen/gen: TestKeywordTable_UnifiedClientFieldsAreDeclared/table maps`; `unit: cmd/sqlgen/gen: TestKeywordTable_UnifiedClientFieldsAreDeclared/table ranges`; `unit: cmd/sqlgen/gen: TestKeywordTable_UnifiedClientFieldsAreDeclared/table defaults`; `unit: cmd/sqlgen/gen: TestKeywordTable_UnifiedClientFieldsAreDeclared/keyword tables joined by a relationship`; `unit: cmd/sqlgen/gen: TestKeywordTable_UnifiedClientFieldsAreDeclared/view interfaces` | all |  |
 
 ### Digit-leading handling

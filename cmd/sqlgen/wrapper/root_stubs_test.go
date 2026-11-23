@@ -15,9 +15,8 @@ import (
 
 // onlyPKResolvers is the resolver file gqlgen v0.17.95 writes for an
 // `only_pks` table under follow-schema, trimmed to the two managed fields:
-// sqlgen's seed declared OnlyPK / DeleteOnlyPK, gqlgen ignored the root
-// fieldName entries and named them OnlyPk / DeleteOnlyPk, and the seeded
-// bodies went into its WARNING block (measured).
+// sqlgen manages OnlyPK / DeleteOnlyPK, and gqlgen ignored the root fieldName
+// entries and named them OnlyPk / DeleteOnlyPk (measured).
 const onlyPKResolvers = `package graph
 
 import (

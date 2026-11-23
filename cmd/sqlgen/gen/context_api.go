@@ -722,11 +722,11 @@ type APIPKArg struct {
 	// templates do not surface this directly but it is useful for debugging
 	// and for mapping back to the parser column.
 	Name string
-	// GraphQLName is the schema-side / resolver-arg identifier in the
-	// configured FieldCasing (e.g. "userId" in camel casing, "user_id" in
-	// snake casing). Used both as the GraphQL arg name (`userId: UUID!`) and
-	// as the Go arg identifier on the gqlgen-emitted resolver method (gqlgen
-	// uses the GraphQL field name verbatim as the Go arg name).
+	// GraphQLName is the schema-side arg identifier in the configured
+	// FieldCasing (e.g. "userId" in camel casing, "user_id" in snake casing),
+	// emitted as the GraphQL arg name (`userId: UUID!`). The Go parameter is
+	// GoName; gqlgen spells its own resolver parameters independently, and the
+	// wrapper renames a spliced seed body's parameters to match by position.
 	GraphQLName string
 	// GraphQLType is the bare GraphQL scalar (e.g. "UUID", "Int", "ID"). The
 	// schema template appends "!" to express non-null-ness — every PK column
@@ -3025,6 +3025,13 @@ func buildAPIPKArgs(ent APIEntity, casing string, scalarsByName map[string]APISc
 		})
 	}
 	return out, nil
+}
+
+// GoName is the arg's GraphQL name lowered into a bare Go parameter of the
+// resolver helpers and seeds, so it takes PRD §8.5's reserved-word escape: a
+// `type` key column is the parameter `typeVal`.
+func (a APIPKArg) GoName() string {
+	return safeGoIdent(a.GraphQLName)
 }
 
 // tableHasConflictPK reports whether the table emits the

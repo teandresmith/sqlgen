@@ -1324,8 +1324,8 @@ func apiSchemaFileNames(apiCtx *APIContext) []string {
 // It reports and never deletes. Removing the schema file is not enough on its
 // own: under gqlgen's follow-schema layout the orphan's `<stem>.resolvers.go`
 // stays behind and no longer compiles, and that file is not sqlgen's to sweep —
-// §26.5.6 has sqlgen seed it and gqlgen own it, with consumer-written resolvers
-// preserved inside. The companion is named only when it exists at gqlgen's
+// §26.5.6 has gqlgen own it and sqlgen splice managed bodies into it, with
+// consumer-written resolvers preserved inside. The companion is named only when it exists at gqlgen's
 // default path. Under single-file layout there is none: once the schema file is
 // gone, gqlgen moves the stale methods into its own WARNING block.
 //

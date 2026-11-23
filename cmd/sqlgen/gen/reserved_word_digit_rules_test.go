@@ -297,6 +297,67 @@ func TestDigitLeading_PKParameterTakesColPrefix(t *testing.T) {
 	}
 }
 
+// TestReservedWord_PKParameterSpelling pins the parameter half of PRD §8.5
+// "Reserved Word Handling" for the sqlgenresolver Q/M helpers: a key column
+// named after a Go keyword is a bare parameter there, so it takes the `Val`
+// escape in the parameter list, in the argument it is passed as, and in the
+// conversion at the model-call boundary — both the bare form and the
+// `<modelGoType>(arg)` form a bigint key takes (GraphQL `Int` is Go `int`).
+func TestReservedWord_PKParameterSpelling(t *testing.T) {
+	tests := []struct {
+		name        string
+		cols        []sqlparser.Column
+		wantArgs    string
+		wantCall    string
+		wantConvert string
+	}{
+		{
+			name: "single keyword key",
+			cols: []sqlparser.Column{
+				{Name: "type", Type: "text", PrimaryKey: true},
+				{Name: "label", Type: "text"},
+			},
+			wantArgs: "typeVal string", wantCall: "typeVal", wantConvert: "typeVal",
+		},
+		{
+			name: "composite keyword key with a converted member",
+			cols: []sqlparser.Column{
+				{Name: "range", Type: "text", PrimaryKey: true},
+				{Name: "func", Type: "bigint", PrimaryKey: true},
+				{Name: "label", Type: "text"},
+			},
+			wantArgs:    "rangeVal string, funcVal int",
+			wantCall:    "rangeVal, funcVal",
+			wantConvert: "models.KindPK{Range: rangeVal, Func: int64(funcVal)}",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &sqlparser.Schema{Tables: []sqlparser.Table{{Name: "kinds", Columns: tt.cols}}}
+			in := rwdAPIInput(schema, config.FieldCasingCamel, nil)
+			in.Config.Generation.CursorKeys = []string{"label"}
+			tables, err := BuildTableContexts(in, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts: %v", err)
+			}
+			apiCtx, err := BuildAPIContext(tables, nil, nil, nil, in.Config)
+			if err != nil {
+				t.Fatalf("BuildAPIContext: %v", err)
+			}
+			args := apiCtx.Tables[0].PKArgs
+			got := []string{funcPKGoArgs(args), funcPKPassArgs(args), funcPKConvert("models", "Kind", args)}
+			want := []string{tt.wantArgs, tt.wantCall, tt.wantConvert}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("PK parameter spellings (args, pass, convert) mismatch (-want +got):\n%s", diff)
+			}
+			src := "package p\nfunc f(" + funcPKGoArgs(args) + ") { _ = []any{" + funcPKPassArgs(args) + "} }\n"
+			if _, err := parser.ParseFile(token.NewFileSet(), "p.go", src, 0); err != nil {
+				t.Errorf("helper parameter list does not parse: %v\n%s", err, src)
+			}
+		})
+	}
+}
+
 // rwdAPIInput builds a postgres GenerateInput with the GraphQL API enabled
 // under casing, and column_map renames from renames.
 func rwdAPIInput(schema *sqlparser.Schema, casing string, renames map[string]map[string]string) *GenerateInput {
