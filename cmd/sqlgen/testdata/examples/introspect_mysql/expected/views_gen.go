@@ -264,6 +264,9 @@ func (c *projectSummaryClient) Count(ctx context.Context, filter *ProjectSummary
 	if err != nil {
 		return 0, fmt.Errorf("count project_summaries: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -308,6 +311,9 @@ func (c *projectSummaryClient) Paginate(ctx context.Context, input PaginateInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate project_summaries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[ProjectSummary]), nil
 }
@@ -419,6 +425,9 @@ func (c *projectSummaryClient) Connection(ctx context.Context, input ConnectionI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection project_summaries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[ProjectSummary]), nil
 }

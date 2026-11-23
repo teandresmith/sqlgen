@@ -1712,6 +1712,9 @@ func (c *ownerClient) Exists(ctx context.Context, id int64, opts ...func(*CallOp
 	if err != nil {
 		return false, fmt.Errorf("exists owner: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1739,6 +1742,9 @@ func (c *ownerClient) ExistsWhere(ctx context.Context, filter *OwnerFilter, opts
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists owners where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1768,6 +1774,9 @@ func (c *ownerClient) Count(ctx context.Context, filter *OwnerFilter, opts ...fu
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count owners: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1817,6 +1826,9 @@ func (c *ownerClient) Paginate(ctx context.Context, input PaginateInput[OwnerFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate owners: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Owner]), nil
 }
@@ -1932,6 +1944,9 @@ func (c *ownerClient) Connection(ctx context.Context, input ConnectionInput[Owne
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection owners: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Owner]), nil
 }

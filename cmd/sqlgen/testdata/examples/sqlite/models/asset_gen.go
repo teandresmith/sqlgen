@@ -2304,6 +2304,9 @@ func (c *assetClient) Exists(ctx context.Context, id int64, opts ...func(*CallOp
 	if err != nil {
 		return false, fmt.Errorf("exists asset: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -2331,6 +2334,9 @@ func (c *assetClient) ExistsWhere(ctx context.Context, filter *AssetFilter, opts
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists assets where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -2360,6 +2366,9 @@ func (c *assetClient) Count(ctx context.Context, filter *AssetFilter, opts ...fu
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count assets: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -2409,6 +2418,9 @@ func (c *assetClient) Paginate(ctx context.Context, input PaginateInput[AssetFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate assets: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Asset]), nil
 }
@@ -2524,6 +2536,9 @@ func (c *assetClient) Connection(ctx context.Context, input ConnectionInput[Asse
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection assets: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Asset]), nil
 }

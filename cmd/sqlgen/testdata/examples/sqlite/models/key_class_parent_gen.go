@@ -1666,6 +1666,9 @@ func (c *keyClassParentClient) Exists(ctx context.Context, id int64, opts ...fun
 	if err != nil {
 		return false, fmt.Errorf("exists key_class_parent: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1693,6 +1696,9 @@ func (c *keyClassParentClient) ExistsWhere(ctx context.Context, filter *KeyClass
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists key_class_parents where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1722,6 +1728,9 @@ func (c *keyClassParentClient) Count(ctx context.Context, filter *KeyClassParent
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count key_class_parents: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1771,6 +1780,9 @@ func (c *keyClassParentClient) Paginate(ctx context.Context, input PaginateInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate key_class_parents: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[KeyClassParent]), nil
 }
@@ -1886,6 +1898,9 @@ func (c *keyClassParentClient) Connection(ctx context.Context, input ConnectionI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection key_class_parents: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[KeyClassParent]), nil
 }

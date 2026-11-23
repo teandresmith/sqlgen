@@ -229,6 +229,9 @@ func (c *categoryStatClient) Count(ctx context.Context, filter *CategoryStatFilt
 	if err != nil {
 		return 0, fmt.Errorf("count category_stats: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -273,6 +276,9 @@ func (c *categoryStatClient) Paginate(ctx context.Context, input PaginateInput[C
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate category_stats: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[CategoryStat]), nil
 }

@@ -1543,6 +1543,9 @@ func (c *binItemClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 	if err != nil {
 		return false, fmt.Errorf("exists bin_item: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1570,6 +1573,9 @@ func (c *binItemClient) ExistsWhere(ctx context.Context, filter *BinItemFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists bin_items where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1599,6 +1605,9 @@ func (c *binItemClient) Count(ctx context.Context, filter *BinItemFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count bin_items: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1648,6 +1657,9 @@ func (c *binItemClient) Paginate(ctx context.Context, input PaginateInput[BinIte
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate bin_items: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[BinItem]), nil
 }
@@ -1763,6 +1775,9 @@ func (c *binItemClient) Connection(ctx context.Context, input ConnectionInput[Bi
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection bin_items: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[BinItem]), nil
 }

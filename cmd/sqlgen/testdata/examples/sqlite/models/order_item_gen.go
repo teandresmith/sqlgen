@@ -1572,6 +1572,9 @@ func (c *orderItemClient) Exists(ctx context.Context, id int64, opts ...func(*Ca
 	if err != nil {
 		return false, fmt.Errorf("exists order_item: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1599,6 +1602,9 @@ func (c *orderItemClient) ExistsWhere(ctx context.Context, filter *OrderItemFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists order_items where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1628,6 +1634,9 @@ func (c *orderItemClient) Count(ctx context.Context, filter *OrderItemFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count order_items: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1677,6 +1686,9 @@ func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[Orde
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate order_items: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[OrderItem]), nil
 }
@@ -1792,6 +1804,9 @@ func (c *orderItemClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection order_items: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[OrderItem]), nil
 }

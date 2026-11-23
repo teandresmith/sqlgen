@@ -1509,6 +1509,9 @@ func (c *boolKeyedNoteClient) Exists(ctx context.Context, id int64, opts ...func
 	if err != nil {
 		return false, fmt.Errorf("exists bool_keyed_note: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1536,6 +1539,9 @@ func (c *boolKeyedNoteClient) ExistsWhere(ctx context.Context, filter *BoolKeyed
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists bool_keyed_notes where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1565,6 +1571,9 @@ func (c *boolKeyedNoteClient) Count(ctx context.Context, filter *BoolKeyedNoteFi
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count bool_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1614,6 +1623,9 @@ func (c *boolKeyedNoteClient) Paginate(ctx context.Context, input PaginateInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate bool_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[BoolKeyedNote]), nil
 }
@@ -1729,6 +1741,9 @@ func (c *boolKeyedNoteClient) Connection(ctx context.Context, input ConnectionIn
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection bool_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[BoolKeyedNote]), nil
 }

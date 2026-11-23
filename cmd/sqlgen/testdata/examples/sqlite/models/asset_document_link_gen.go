@@ -1193,6 +1193,9 @@ func (c *assetDocumentLinkClient) Exists(ctx context.Context, pk AssetDocumentLi
 	if err != nil {
 		return false, fmt.Errorf("exists asset_document_link: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1220,6 +1223,9 @@ func (c *assetDocumentLinkClient) ExistsWhere(ctx context.Context, filter *Asset
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists asset_document_links where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1249,6 +1255,9 @@ func (c *assetDocumentLinkClient) Count(ctx context.Context, filter *AssetDocume
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count asset_document_links: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1298,6 +1307,9 @@ func (c *assetDocumentLinkClient) Paginate(ctx context.Context, input PaginateIn
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate asset_document_links: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[AssetDocumentLink]), nil
 }
@@ -1413,6 +1425,9 @@ func (c *assetDocumentLinkClient) Connection(ctx context.Context, input Connecti
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection asset_document_links: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[AssetDocumentLink]), nil
 }

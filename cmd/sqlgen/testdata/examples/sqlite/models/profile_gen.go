@@ -1579,6 +1579,9 @@ func (c *profileClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 	if err != nil {
 		return false, fmt.Errorf("exists profile: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1606,6 +1609,9 @@ func (c *profileClient) ExistsWhere(ctx context.Context, filter *ProfileFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists profiles where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1635,6 +1641,9 @@ func (c *profileClient) Count(ctx context.Context, filter *ProfileFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count profiles: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1684,6 +1693,9 @@ func (c *profileClient) Paginate(ctx context.Context, input PaginateInput[Profil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate profiles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Profile]), nil
 }
@@ -1799,6 +1811,9 @@ func (c *profileClient) Connection(ctx context.Context, input ConnectionInput[Pr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection profiles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Profile]), nil
 }

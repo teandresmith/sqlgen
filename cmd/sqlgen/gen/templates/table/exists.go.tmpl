@@ -61,6 +61,9 @@ func (c *{{ $structCamel }}Client) Exists(ctx context.Context, {{ if .CompositeP
 	if err != nil {
 		return false, fmt.Errorf("exists {{ $singular }}: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -122,6 +125,9 @@ func (c *{{ $structCamel }}Client) ExistsWhere(ctx context.Context, filter *{{ .
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists {{ .TableName }} where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }

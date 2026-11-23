@@ -2154,6 +2154,9 @@ func (c *articleClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 	if err != nil {
 		return false, fmt.Errorf("exists article: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -2187,6 +2190,9 @@ func (c *articleClient) ExistsWhere(ctx context.Context, filter *ArticleFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists articles where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -2222,6 +2228,9 @@ func (c *articleClient) Count(ctx context.Context, filter *ArticleFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count articles: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -2272,6 +2281,9 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate articles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Article]), nil
 }
@@ -2388,6 +2400,9 @@ func (c *articleClient) Connection(ctx context.Context, input ConnectionInput[Ar
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection articles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Article]), nil
 }

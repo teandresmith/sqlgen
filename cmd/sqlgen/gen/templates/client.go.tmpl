@@ -362,6 +362,9 @@ func (c *{{ .ClientName }}) RawExec(ctx context.Context, rawSQL string, args ...
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, nil
+	}
 	return result.(database.Result), nil
 }
 

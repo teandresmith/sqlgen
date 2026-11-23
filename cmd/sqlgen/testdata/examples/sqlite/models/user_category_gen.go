@@ -1193,6 +1193,9 @@ func (c *userCategoryClient) Exists(ctx context.Context, pk UserCategoryPK, opts
 	if err != nil {
 		return false, fmt.Errorf("exists user_category: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1220,6 +1223,9 @@ func (c *userCategoryClient) ExistsWhere(ctx context.Context, filter *UserCatego
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists user_categories where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1249,6 +1255,9 @@ func (c *userCategoryClient) Count(ctx context.Context, filter *UserCategoryFilt
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count user_categories: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1298,6 +1307,9 @@ func (c *userCategoryClient) Paginate(ctx context.Context, input PaginateInput[U
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate user_categories: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[UserCategory]), nil
 }
@@ -1413,6 +1425,9 @@ func (c *userCategoryClient) Connection(ctx context.Context, input ConnectionInp
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection user_categories: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[UserCategory]), nil
 }

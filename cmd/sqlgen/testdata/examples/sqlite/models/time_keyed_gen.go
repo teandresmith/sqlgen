@@ -1457,6 +1457,9 @@ func (c *timeKeyedClient) Exists(ctx context.Context, id types.DateTime, opts ..
 	if err != nil {
 		return false, fmt.Errorf("exists time_keyed: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1484,6 +1487,9 @@ func (c *timeKeyedClient) ExistsWhere(ctx context.Context, filter *TimeKeyedFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists time_keyed where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1513,6 +1519,9 @@ func (c *timeKeyedClient) Count(ctx context.Context, filter *TimeKeyedFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count time_keyed: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1562,6 +1571,9 @@ func (c *timeKeyedClient) Paginate(ctx context.Context, input PaginateInput[Time
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate time_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[TimeKeyed]), nil
 }
@@ -1677,6 +1689,9 @@ func (c *timeKeyedClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection time_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[TimeKeyed]), nil
 }

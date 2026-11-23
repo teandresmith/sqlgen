@@ -1743,6 +1743,9 @@ func (c *documentClient) Exists(ctx context.Context, id int64, opts ...func(*Cal
 	if err != nil {
 		return false, fmt.Errorf("exists document: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1770,6 +1773,9 @@ func (c *documentClient) ExistsWhere(ctx context.Context, filter *DocumentFilter
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists documents where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1799,6 +1805,9 @@ func (c *documentClient) Count(ctx context.Context, filter *DocumentFilter, opts
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count documents: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1848,6 +1857,9 @@ func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[Docum
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate documents: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Document]), nil
 }
@@ -1963,6 +1975,9 @@ func (c *documentClient) Connection(ctx context.Context, input ConnectionInput[D
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection documents: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Document]), nil
 }

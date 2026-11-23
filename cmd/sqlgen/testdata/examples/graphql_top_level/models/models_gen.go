@@ -1701,6 +1701,9 @@ func (c *categoryClient) Exists(ctx context.Context, id int64, opts ...func(*Cal
 	if err != nil {
 		return false, fmt.Errorf("exists category: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1728,6 +1731,9 @@ func (c *categoryClient) ExistsWhere(ctx context.Context, filter *CategoryFilter
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists categories where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1757,6 +1763,9 @@ func (c *categoryClient) Count(ctx context.Context, filter *CategoryFilter, opts
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count categories: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1809,6 +1818,9 @@ func (c *categoryClient) Paginate(ctx context.Context, input PaginateInput[Categ
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate categories: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Category]), nil
 }
@@ -1927,6 +1939,9 @@ func (c *categoryClient) Connection(ctx context.Context, input ConnectionInput[C
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection categories: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Category]), nil
 }
@@ -4032,6 +4047,9 @@ func (c *productClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*
 	if err != nil {
 		return false, fmt.Errorf("exists product: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -4059,6 +4077,9 @@ func (c *productClient) ExistsWhere(ctx context.Context, filter *ProductFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists products where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -4088,6 +4109,9 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count products: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -4140,6 +4164,9 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Product]), nil
 }
@@ -4258,6 +4285,9 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Product]), nil
 }

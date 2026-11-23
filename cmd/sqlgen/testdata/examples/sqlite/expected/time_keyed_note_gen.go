@@ -1510,6 +1510,9 @@ func (c *timeKeyedNoteClient) Exists(ctx context.Context, id int64, opts ...func
 	if err != nil {
 		return false, fmt.Errorf("exists time_keyed_note: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1537,6 +1540,9 @@ func (c *timeKeyedNoteClient) ExistsWhere(ctx context.Context, filter *TimeKeyed
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists time_keyed_notes where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1566,6 +1572,9 @@ func (c *timeKeyedNoteClient) Count(ctx context.Context, filter *TimeKeyedNoteFi
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count time_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1615,6 +1624,9 @@ func (c *timeKeyedNoteClient) Paginate(ctx context.Context, input PaginateInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate time_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[TimeKeyedNote]), nil
 }
@@ -1730,6 +1742,9 @@ func (c *timeKeyedNoteClient) Connection(ctx context.Context, input ConnectionIn
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection time_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[TimeKeyedNote]), nil
 }

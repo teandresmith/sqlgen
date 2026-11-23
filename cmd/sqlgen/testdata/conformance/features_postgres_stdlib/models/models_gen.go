@@ -1623,6 +1623,9 @@ func (c *boardTagClient) Exists(ctx context.Context, pk BoardTagPK, opts ...func
 	if err != nil {
 		return false, fmt.Errorf("exists board_tag: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1662,6 +1665,9 @@ func (c *boardTagClient) ExistsWhere(ctx context.Context, filter *BoardTagFilter
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists board_tags where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1703,6 +1709,9 @@ func (c *boardTagClient) Count(ctx context.Context, filter *BoardTagFilter, opts
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count board_tags: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1755,6 +1764,9 @@ func (c *boardTagClient) Paginate(ctx context.Context, input PaginateInput[Board
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate board_tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[BoardTag]), nil
 }
@@ -1873,6 +1885,9 @@ func (c *boardTagClient) Connection(ctx context.Context, input ConnectionInput[B
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection board_tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[BoardTag]), nil
 }
@@ -5630,6 +5645,9 @@ func (c *boardClient) Exists(ctx context.Context, id int64, opts ...func(*CallOp
 	if err != nil {
 		return false, fmt.Errorf("exists board: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -5677,6 +5695,9 @@ func (c *boardClient) ExistsWhere(ctx context.Context, filter *BoardFilter, opts
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists boards where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -5726,6 +5747,9 @@ func (c *boardClient) Count(ctx context.Context, filter *BoardFilter, opts ...fu
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count boards: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -5778,6 +5802,9 @@ func (c *boardClient) Paginate(ctx context.Context, input PaginateInput[BoardFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate boards: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Board]), nil
 }
@@ -5896,6 +5923,9 @@ func (c *boardClient) Connection(ctx context.Context, input ConnectionInput[Boar
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection boards: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Board]), nil
 }
@@ -8469,6 +8499,9 @@ func (c *bulletinClient) Exists(ctx context.Context, id int64, opts ...func(*Cal
 	if err != nil {
 		return false, fmt.Errorf("exists bulletin: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -8508,6 +8541,9 @@ func (c *bulletinClient) ExistsWhere(ctx context.Context, filter *BulletinFilter
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists bulletins where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -8549,6 +8585,9 @@ func (c *bulletinClient) Count(ctx context.Context, filter *BulletinFilter, opts
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count bulletins: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -8601,6 +8640,9 @@ func (c *bulletinClient) Paginate(ctx context.Context, input PaginateInput[Bulle
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate bulletins: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Bulletin]), nil
 }
@@ -8719,6 +8761,9 @@ func (c *bulletinClient) Connection(ctx context.Context, input ConnectionInput[B
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection bulletins: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Bulletin]), nil
 }
@@ -11222,6 +11267,9 @@ func (c *cardClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpt
 	if err != nil {
 		return false, fmt.Errorf("exists card: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -11261,6 +11309,9 @@ func (c *cardClient) ExistsWhere(ctx context.Context, filter *CardFilter, opts .
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists cards where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -11302,6 +11353,9 @@ func (c *cardClient) Count(ctx context.Context, filter *CardFilter, opts ...func
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count cards: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -11354,6 +11408,9 @@ func (c *cardClient) Paginate(ctx context.Context, input PaginateInput[CardFilte
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate cards: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Card]), nil
 }
@@ -11472,6 +11529,9 @@ func (c *cardClient) Connection(ctx context.Context, input ConnectionInput[CardF
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection cards: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Card]), nil
 }
@@ -13664,6 +13724,9 @@ func (c *membershipClient) Exists(ctx context.Context, pk MembershipPK, opts ...
 	if err != nil {
 		return false, fmt.Errorf("exists membership: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -13703,6 +13766,9 @@ func (c *membershipClient) ExistsWhere(ctx context.Context, filter *MembershipFi
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists memberships where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -13744,6 +13810,9 @@ func (c *membershipClient) Count(ctx context.Context, filter *MembershipFilter, 
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count memberships: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -13796,6 +13865,9 @@ func (c *membershipClient) Paginate(ctx context.Context, input PaginateInput[Mem
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate memberships: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Membership]), nil
 }
@@ -13914,6 +13986,9 @@ func (c *membershipClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection memberships: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Membership]), nil
 }
@@ -16486,6 +16561,9 @@ func (c *noteClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpt
 	if err != nil {
 		return false, fmt.Errorf("exists note: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -16525,6 +16603,9 @@ func (c *noteClient) ExistsWhere(ctx context.Context, filter *NoteFilter, opts .
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists notes where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -16566,6 +16647,9 @@ func (c *noteClient) Count(ctx context.Context, filter *NoteFilter, opts ...func
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count notes: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -16618,6 +16702,9 @@ func (c *noteClient) Paginate(ctx context.Context, input PaginateInput[NoteFilte
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Note]), nil
 }
@@ -16736,6 +16823,9 @@ func (c *noteClient) Connection(ctx context.Context, input ConnectionInput[NoteF
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Note]), nil
 }
@@ -18605,6 +18695,9 @@ func (c *regionClient) Exists(ctx context.Context, id int64, opts ...func(*CallO
 	if err != nil {
 		return false, fmt.Errorf("exists region: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -18632,6 +18725,9 @@ func (c *regionClient) ExistsWhere(ctx context.Context, filter *RegionFilter, op
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists regions where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -18661,6 +18757,9 @@ func (c *regionClient) Count(ctx context.Context, filter *RegionFilter, opts ...
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count regions: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -18713,6 +18812,9 @@ func (c *regionClient) Paginate(ctx context.Context, input PaginateInput[RegionF
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate regions: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Region]), nil
 }
@@ -18831,6 +18933,9 @@ func (c *regionClient) Connection(ctx context.Context, input ConnectionInput[Reg
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection regions: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Region]), nil
 }
@@ -22560,6 +22665,9 @@ func (c *tagClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpti
 	if err != nil {
 		return false, fmt.Errorf("exists tag: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -22607,6 +22715,9 @@ func (c *tagClient) ExistsWhere(ctx context.Context, filter *TagFilter, opts ...
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists tags where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -22656,6 +22767,9 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count tags: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -22708,6 +22822,9 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Tag]), nil
 }
@@ -22826,6 +22943,9 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Tag]), nil
 }
@@ -26203,6 +26323,9 @@ func (c *taskClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpt
 	if err != nil {
 		return false, fmt.Errorf("exists task: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -26248,6 +26371,9 @@ func (c *taskClient) ExistsWhere(ctx context.Context, filter *TaskFilter, opts .
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists tasks where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -26295,6 +26421,9 @@ func (c *taskClient) Count(ctx context.Context, filter *TaskFilter, opts ...func
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count tasks: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -26348,6 +26477,9 @@ func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilte
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate tasks: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Task]), nil
 }
@@ -26467,6 +26599,9 @@ func (c *taskClient) Connection(ctx context.Context, input ConnectionInput[TaskF
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection tasks: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Task]), nil
 }
@@ -28974,6 +29109,9 @@ func (c *templateNoteClient) Exists(ctx context.Context, id int64, opts ...func(
 	if err != nil {
 		return false, fmt.Errorf("exists template_note: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -29013,6 +29151,9 @@ func (c *templateNoteClient) ExistsWhere(ctx context.Context, filter *TemplateNo
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists template_notes where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -29054,6 +29195,9 @@ func (c *templateNoteClient) Count(ctx context.Context, filter *TemplateNoteFilt
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count template_notes: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -29106,6 +29250,9 @@ func (c *templateNoteClient) Paginate(ctx context.Context, input PaginateInput[T
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate template_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[TemplateNote]), nil
 }
@@ -29224,6 +29371,9 @@ func (c *templateNoteClient) Connection(ctx context.Context, input ConnectionInp
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection template_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[TemplateNote]), nil
 }
@@ -31315,6 +31465,9 @@ func (c *templateTagClient) Exists(ctx context.Context, pk TemplateTagPK, opts .
 	if err != nil {
 		return false, fmt.Errorf("exists template_tag: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -31354,6 +31507,9 @@ func (c *templateTagClient) ExistsWhere(ctx context.Context, filter *TemplateTag
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists template_tags where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -31395,6 +31551,9 @@ func (c *templateTagClient) Count(ctx context.Context, filter *TemplateTagFilter
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count template_tags: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -31447,6 +31606,9 @@ func (c *templateTagClient) Paginate(ctx context.Context, input PaginateInput[Te
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate template_tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[TemplateTag]), nil
 }
@@ -31565,6 +31727,9 @@ func (c *templateTagClient) Connection(ctx context.Context, input ConnectionInpu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection template_tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[TemplateTag]), nil
 }
@@ -34875,6 +35040,9 @@ func (c *templateClient) Exists(ctx context.Context, id int64, opts ...func(*Cal
 	if err != nil {
 		return false, fmt.Errorf("exists template: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -34910,6 +35078,9 @@ func (c *templateClient) ExistsWhere(ctx context.Context, filter *TemplateFilter
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists templates where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -34947,6 +35118,9 @@ func (c *templateClient) Count(ctx context.Context, filter *TemplateFilter, opts
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count templates: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -34999,6 +35173,9 @@ func (c *templateClient) Paginate(ctx context.Context, input PaginateInput[Templ
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate templates: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Template]), nil
 }
@@ -35117,6 +35294,9 @@ func (c *templateClient) Connection(ctx context.Context, input ConnectionInput[T
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection templates: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Template]), nil
 }

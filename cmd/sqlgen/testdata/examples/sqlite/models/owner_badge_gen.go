@@ -1193,6 +1193,9 @@ func (c *ownerBadgeClient) Exists(ctx context.Context, pk OwnerBadgePK, opts ...
 	if err != nil {
 		return false, fmt.Errorf("exists owner_badge: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1220,6 +1223,9 @@ func (c *ownerBadgeClient) ExistsWhere(ctx context.Context, filter *OwnerBadgeFi
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists owner_badges where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1249,6 +1255,9 @@ func (c *ownerBadgeClient) Count(ctx context.Context, filter *OwnerBadgeFilter, 
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count owner_badges: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1298,6 +1307,9 @@ func (c *ownerBadgeClient) Paginate(ctx context.Context, input PaginateInput[Own
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate owner_badges: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[OwnerBadge]), nil
 }
@@ -1413,6 +1425,9 @@ func (c *ownerBadgeClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection owner_badges: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[OwnerBadge]), nil
 }

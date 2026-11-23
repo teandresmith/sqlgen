@@ -1511,6 +1511,9 @@ func (c *stepClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpt
 	if err != nil {
 		return false, fmt.Errorf("exists step: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1538,6 +1541,9 @@ func (c *stepClient) ExistsWhere(ctx context.Context, filter *StepFilter, opts .
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists steps where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1567,6 +1573,9 @@ func (c *stepClient) Count(ctx context.Context, filter *StepFilter, opts ...func
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count steps: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1616,6 +1625,9 @@ func (c *stepClient) Paginate(ctx context.Context, input PaginateInput[StepFilte
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate steps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Step]), nil
 }
@@ -1731,6 +1743,9 @@ func (c *stepClient) Connection(ctx context.Context, input ConnectionInput[StepF
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection steps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Step]), nil
 }

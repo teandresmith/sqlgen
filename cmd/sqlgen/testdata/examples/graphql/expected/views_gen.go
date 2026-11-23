@@ -281,6 +281,9 @@ func (c *categoryPriceTotalClient) Count(ctx context.Context, filter *CategoryPr
 	if err != nil {
 		return 0, fmt.Errorf("count category_price_totals: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -325,6 +328,9 @@ func (c *categoryPriceTotalClient) Paginate(ctx context.Context, input PaginateI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate category_price_totals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[CategoryPriceTotal]), nil
 }
@@ -436,6 +442,9 @@ func (c *categoryPriceTotalClient) Connection(ctx context.Context, input Connect
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection category_price_totals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[CategoryPriceTotal]), nil
 }
@@ -1018,6 +1027,9 @@ func (c *workspaceNoteSummaryClient) Count(ctx context.Context, filter *Workspac
 	if err != nil {
 		return 0, fmt.Errorf("count workspace_note_summary: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -1067,6 +1079,9 @@ func (c *workspaceNoteSummaryClient) Paginate(ctx context.Context, input Paginat
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate workspace_note_summary: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WorkspaceNoteSummary]), nil
 }
@@ -1184,6 +1199,9 @@ func (c *workspaceNoteSummaryClient) Connection(ctx context.Context, input Conne
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection workspace_note_summary: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[WorkspaceNoteSummary]), nil
 }

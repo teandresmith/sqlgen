@@ -1734,6 +1734,9 @@ func (c *badgeClient) Exists(ctx context.Context, id string, opts ...func(*CallO
 	if err != nil {
 		return false, fmt.Errorf("exists badge: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1761,6 +1764,9 @@ func (c *badgeClient) ExistsWhere(ctx context.Context, filter *BadgeFilter, opts
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists badges where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1790,6 +1796,9 @@ func (c *badgeClient) Count(ctx context.Context, filter *BadgeFilter, opts ...fu
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count badges: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1839,6 +1848,9 @@ func (c *badgeClient) Paginate(ctx context.Context, input PaginateInput[BadgeFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate badges: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Badge]), nil
 }
@@ -1954,6 +1966,9 @@ func (c *badgeClient) Connection(ctx context.Context, input ConnectionInput[Badg
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection badges: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Badge]), nil
 }

@@ -347,6 +347,9 @@ func (c *activeTaskClient) Count(ctx context.Context, filter *ActiveTaskFilter, 
 	if err != nil {
 		return 0, fmt.Errorf("count active_tasks: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -396,6 +399,9 @@ func (c *activeTaskClient) Paginate(ctx context.Context, input PaginateInput[Act
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate active_tasks: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[ActiveTask]), nil
 }
@@ -513,6 +519,9 @@ func (c *activeTaskClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection active_tasks: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[ActiveTask]), nil
 }

@@ -284,7 +284,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.idempotent-returns-row | A conflict that changes nothing still resolves the PK: an idempotent `Upsert` returns the conflicting row, not a not-found error. This covers the MySQL no-change OK packet and the `DO NOTHING` branch | `conformance: Upsert/a conflict that changes nothing returns the existing row`; `conformance: Upsert/a conflict on a target that covers every column it writes leaves the row as it is and returns it` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 2f1f0f0ef6fc1cf2 -->
+<!-- prd: 9.8 sha256: d5f43a8d2092a9d7 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -385,7 +385,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.single-pk | On a single-PK table `Increment(ctx, id, IncrementInput[{Table}IncrementColumn], ...)` returns only `error` and issues one `BuildIncrement` UPDATE of `input.Column` by `input.Amount` where the PK equals `id` | `unit: cmd/sqlgen/gen: TestIncrementTemplate_positiveAmount`; `unit: cmd/sqlgen/gen: TestIncrementTemplate_goldenFile` | postgres |  |
 
 ## §9.8.10 Exists / Count
-<!-- prd: 9.8.10 sha256: 075ae70c40558471 -->
+<!-- prd: 9.8.10 sha256: e73a541aaaf10303 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -397,6 +397,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | exists-where.hooks | `ExistsWhere` runs one query hook chain, as `OpExists`, with the filter as `Input` and no `PK` | `conformance: ExistsWhere/fires one exists query hook carrying the filter and no key` | all | client-methods: ExistsWhere × hooks |
 | count.soft-delete | `Count` leaves soft-deleted rows out unless the filter sets the soft-delete comparator | `conformance: Count/soft-deleted rows are not counted unless the filter sets the deleted-at comparator` | all | client-methods: Count × soft-delete |
 | count.hooks | `Count` runs one query hook chain, as `OpCount`, with the filter as `Input` and no `PK` | `conformance: Count/fires one count query hook carrying the filter` | all | client-methods: Count × hooks |
+| exists.nil-short-circuit | A hook that short-circuits `Exists` or `ExistsWhere` with a nil result and no error makes the call return `false` and a nil error | `example: sqlite: TestHookNilResultDoesNotPanic/table Exists`; `example: sqlite: TestHookNilResultDoesNotPanic/table ExistsWhere` | all |  |
+| count.nil-short-circuit | A hook that short-circuits `Count` with a nil result and no error makes the call return `0` and a nil error, on a table and on a view | `example: sqlite: TestHookNilResultDoesNotPanic/table Count`; `example: sqlite: TestHookNilResultDoesNotPanic/view Count` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `exists.nil-short-circuit`: `cmd/sqlgen/gen/templates/table/exists.go.tmpl:64,129`
+- `count.nil-short-circuit`: `cmd/sqlgen/gen/templates/table/count.go.tmpl:66`, `cmd/sqlgen/gen/templates/view/count.go.tmpl:44`
 
 ## §9.8.11 Paginate
 <!-- prd: 9.8.11 sha256: a282e6fd3ecbd73e -->
@@ -406,6 +413,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | paginate.hook-chain | `Paginate` runs one query hook chain whose `QueryContext.Op` is `hook.OpPaginate`, with the caller's input as `Input`; its inner `Count` and `GetMany` fire no hook | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile`; `conformance: Paginate/fires one paginate query hook carrying the caller's input` | all | client-methods: Paginate × hooks |
 | paginate.soft-delete | `Paginate` leaves soft-deleted rows out of the page and the total, through `Count` and `GetMany`, unless the filter sets the soft-delete comparator | `conformance: Paginate/soft-deleted rows are left out of the page and the total unless the filter sets the deleted-at comparator` | all | client-methods: Paginate × soft-delete |
 | paginate.field-selection | A narrowed `FieldOptions` on `Paginate` fills only the selected columns of each item | `conformance: Paginate/a narrowed field selection fills only the selected columns` | all | client-methods: Paginate × field-selection |
+| paginate.nil-short-circuit | A hook that short-circuits `Paginate` with a nil result and no error makes the call return a nil result and a nil error, on a table and on a view | `example: sqlite: TestHookNilResultDoesNotPanic/table Paginate`; `example: sqlite: TestHookNilResultDoesNotPanic/view Paginate` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `paginate.nil-short-circuit`: `cmd/sqlgen/gen/templates/table/pagination.go.tmpl:53`, `cmd/sqlgen/gen/templates/view/pagination.go.tmpl:56`
 
 ## §9.8.12 Connection
 <!-- prd: 9.8.12 sha256: 10616028818c0f98 -->
@@ -416,6 +428,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | cursor.keyset-quoted | The keyset condition quotes every cursor key through the dialect (`QuoteIdentifier`), and the quoted token is the condition's column | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorKeyset` | all |  |
 | cursor.decode-typed-key-cases | `decode<T>Cursor` has a case only for each `cursor_keys` column, unmarshals each value into that column's Go type, and returns `ErrInvalidCursor` for a value that binds SQL NULL | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_decodeCursor`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_decodeCursorMultiKeys` | postgres |  |
 | connection.soft-delete | `Connection` leaves soft-deleted rows out of the edges and the total unless the filter sets the soft-delete comparator | `conformance: Connection/soft-deleted rows are left out of the edges and the total unless the filter sets the deleted-at comparator` | all | client-methods: Connection × soft-delete |
+| connection.nil-short-circuit | A hook that short-circuits `Connection` with a nil result and no error makes the call return a nil result and a nil error, on a table and on a view | `example: sqlite: TestHookNilResultDoesNotPanic/table Connection`; `example: sqlite: TestHookNilResultDoesNotPanic/view Connection` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `connection.nil-short-circuit`: `cmd/sqlgen/gen/templates/table/pagination.go.tmpl:173`, `cmd/sqlgen/gen/templates/view/pagination.go.tmpl:180`
 
 ## §9.8.13 Composite Primary Key Patterns
 <!-- prd: 9.8.13 sha256: e186202c94a7834f -->
@@ -765,7 +782,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
 
-- `client.close-cache-publisher`: `cmd/sqlgen/gen/templates/client.go.tmpl:394-408`
+- `client.close-cache-publisher`: `cmd/sqlgen/gen/templates/client.go.tmpl:397-411`
 
 ## §20.5 Concurrency Safety
 <!-- prd: 20.5 sha256: 15a679cf7a1814fc -->

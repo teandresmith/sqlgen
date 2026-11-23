@@ -1664,6 +1664,9 @@ func (c *binaryKeyClient) Exists(ctx context.Context, id []byte, opts ...func(*C
 	if err != nil {
 		return false, fmt.Errorf("exists binary_key: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1691,6 +1694,9 @@ func (c *binaryKeyClient) ExistsWhere(ctx context.Context, filter *BinaryKeyFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists binary_keys where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1720,6 +1726,9 @@ func (c *binaryKeyClient) Count(ctx context.Context, filter *BinaryKeyFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count binary_keys: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1769,6 +1778,9 @@ func (c *binaryKeyClient) Paginate(ctx context.Context, input PaginateInput[Bina
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate binary_keys: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[BinaryKey]), nil
 }
@@ -1884,6 +1896,9 @@ func (c *binaryKeyClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection binary_keys: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[BinaryKey]), nil
 }

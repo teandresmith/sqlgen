@@ -1809,6 +1809,9 @@ func (c *reservedWordColumnClient) Exists(ctx context.Context, id int64, opts ..
 	if err != nil {
 		return false, fmt.Errorf("exists reserved_word_column: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1836,6 +1839,9 @@ func (c *reservedWordColumnClient) ExistsWhere(ctx context.Context, filter *Rese
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists reserved_word_columns where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1865,6 +1871,9 @@ func (c *reservedWordColumnClient) Count(ctx context.Context, filter *ReservedWo
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count reserved_word_columns: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1914,6 +1923,9 @@ func (c *reservedWordColumnClient) Paginate(ctx context.Context, input PaginateI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate reserved_word_columns: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[ReservedWordColumn]), nil
 }
@@ -2029,6 +2041,9 @@ func (c *reservedWordColumnClient) Connection(ctx context.Context, input Connect
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection reserved_word_columns: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[ReservedWordColumn]), nil
 }

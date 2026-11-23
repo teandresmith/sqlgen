@@ -2071,6 +2071,9 @@ func (c *tagClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpti
 	if err != nil {
 		return false, fmt.Errorf("exists tag: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -2104,6 +2107,9 @@ func (c *tagClient) ExistsWhere(ctx context.Context, filter *TagFilter, opts ...
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists tags where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -2139,6 +2145,9 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count tags: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -2189,6 +2198,9 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Tag]), nil
 }
@@ -2305,6 +2317,9 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Tag]), nil
 }

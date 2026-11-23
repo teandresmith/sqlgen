@@ -1425,6 +1425,9 @@ func (c *keyOnlyRowClient) Exists(ctx context.Context, id int64, opts ...func(*C
 	if err != nil {
 		return false, fmt.Errorf("exists key_only_row: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1452,6 +1455,9 @@ func (c *keyOnlyRowClient) ExistsWhere(ctx context.Context, filter *KeyOnlyRowFi
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists key_only_rows where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1481,6 +1487,9 @@ func (c *keyOnlyRowClient) Count(ctx context.Context, filter *KeyOnlyRowFilter, 
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count key_only_rows: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1530,6 +1539,9 @@ func (c *keyOnlyRowClient) Paginate(ctx context.Context, input PaginateInput[Key
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate key_only_rows: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[KeyOnlyRow]), nil
 }
@@ -1645,6 +1657,9 @@ func (c *keyOnlyRowClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection key_only_rows: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[KeyOnlyRow]), nil
 }

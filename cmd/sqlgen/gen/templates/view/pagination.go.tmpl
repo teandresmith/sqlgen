@@ -53,6 +53,9 @@ func (c *{{ $structCamel }}Client) Paginate(ctx context.Context, input PaginateI
 	if err != nil {
 		return nil, fmt.Errorf("paginate {{ .ViewName }}: %w", err)
 	}
+	if result == nil {
+		return nil, nil
+	}
 	return result.(*PaginateResult[{{ .StructName }}]), nil
 }
 {{- if .HasConnection }}
@@ -173,6 +176,9 @@ func (c *{{ $structCamel }}Client) Connection(ctx context.Context, input Connect
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection {{ .ViewName }}: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[{{ .StructName }}]), nil
 }

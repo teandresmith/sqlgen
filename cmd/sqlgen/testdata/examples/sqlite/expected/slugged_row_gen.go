@@ -1493,6 +1493,9 @@ func (c *sluggedRowClient) Exists(ctx context.Context, id int64, opts ...func(*C
 	if err != nil {
 		return false, fmt.Errorf("exists slugged_row: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1520,6 +1523,9 @@ func (c *sluggedRowClient) ExistsWhere(ctx context.Context, filter *SluggedRowFi
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists slugged_rows where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1549,6 +1555,9 @@ func (c *sluggedRowClient) Count(ctx context.Context, filter *SluggedRowFilter, 
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count slugged_rows: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1598,6 +1607,9 @@ func (c *sluggedRowClient) Paginate(ctx context.Context, input PaginateInput[Slu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate slugged_rows: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[SluggedRow]), nil
 }
@@ -1713,6 +1725,9 @@ func (c *sluggedRowClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection slugged_rows: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[SluggedRow]), nil
 }

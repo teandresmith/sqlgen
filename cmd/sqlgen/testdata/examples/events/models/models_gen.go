@@ -1607,6 +1607,9 @@ func (c *accountClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 	if err != nil {
 		return false, fmt.Errorf("exists account: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1634,6 +1637,9 @@ func (c *accountClient) ExistsWhere(ctx context.Context, filter *AccountFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists accounts where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1663,6 +1669,9 @@ func (c *accountClient) Count(ctx context.Context, filter *AccountFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count accounts: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1712,6 +1721,9 @@ func (c *accountClient) Paginate(ctx context.Context, input PaginateInput[Accoun
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate accounts: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Account]), nil
 }
@@ -1827,6 +1839,9 @@ func (c *accountClient) Connection(ctx context.Context, input ConnectionInput[Ac
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection accounts: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Account]), nil
 }
@@ -4426,6 +4441,9 @@ func (c *articleClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 	if err != nil {
 		return false, fmt.Errorf("exists article: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -4459,6 +4477,9 @@ func (c *articleClient) ExistsWhere(ctx context.Context, filter *ArticleFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists articles where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -4494,6 +4515,9 @@ func (c *articleClient) Count(ctx context.Context, filter *ArticleFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count articles: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -4544,6 +4568,9 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate articles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Article]), nil
 }
@@ -4660,6 +4687,9 @@ func (c *articleClient) Connection(ctx context.Context, input ConnectionInput[Ar
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection articles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Article]), nil
 }
@@ -6577,6 +6607,9 @@ func (c *auditLogClient) Exists(ctx context.Context, id int64, opts ...func(*Cal
 	if err != nil {
 		return false, fmt.Errorf("exists audit_log: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -6604,6 +6637,9 @@ func (c *auditLogClient) ExistsWhere(ctx context.Context, filter *AuditLogFilter
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists audit_logs where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -6633,6 +6669,9 @@ func (c *auditLogClient) Count(ctx context.Context, filter *AuditLogFilter, opts
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count audit_logs: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -6682,6 +6721,9 @@ func (c *auditLogClient) Paginate(ctx context.Context, input PaginateInput[Audit
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate audit_logs: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[AuditLog]), nil
 }
@@ -6797,6 +6839,9 @@ func (c *auditLogClient) Connection(ctx context.Context, input ConnectionInput[A
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection audit_logs: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[AuditLog]), nil
 }
@@ -8759,6 +8804,9 @@ func (c *productClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 	if err != nil {
 		return false, fmt.Errorf("exists product: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -8786,6 +8834,9 @@ func (c *productClient) ExistsWhere(ctx context.Context, filter *ProductFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists products where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -8815,6 +8866,9 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count products: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -8864,6 +8918,9 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Product]), nil
 }
@@ -8979,6 +9036,9 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Product]), nil
 }

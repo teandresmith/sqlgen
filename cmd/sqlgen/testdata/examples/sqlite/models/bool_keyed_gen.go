@@ -1456,6 +1456,9 @@ func (c *boolKeyedClient) Exists(ctx context.Context, id bool, opts ...func(*Cal
 	if err != nil {
 		return false, fmt.Errorf("exists bool_keyed: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1483,6 +1486,9 @@ func (c *boolKeyedClient) ExistsWhere(ctx context.Context, filter *BoolKeyedFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists bool_keyed where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1512,6 +1518,9 @@ func (c *boolKeyedClient) Count(ctx context.Context, filter *BoolKeyedFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count bool_keyed: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1561,6 +1570,9 @@ func (c *boolKeyedClient) Paginate(ctx context.Context, input PaginateInput[Bool
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[BoolKeyed]), nil
 }
@@ -1676,6 +1688,9 @@ func (c *boolKeyedClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[BoolKeyed]), nil
 }

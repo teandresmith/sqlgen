@@ -1817,6 +1817,9 @@ func (c *orderClient) Exists(ctx context.Context, id int64, opts ...func(*CallOp
 	if err != nil {
 		return false, fmt.Errorf("exists order: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1844,6 +1847,9 @@ func (c *orderClient) ExistsWhere(ctx context.Context, filter *OrderFilter, opts
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists orders where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1873,6 +1879,9 @@ func (c *orderClient) Count(ctx context.Context, filter *OrderFilter, opts ...fu
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count orders: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1922,6 +1931,9 @@ func (c *orderClient) Paginate(ctx context.Context, input PaginateInput[OrderFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate orders: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Order]), nil
 }
@@ -2037,6 +2049,9 @@ func (c *orderClient) Connection(ctx context.Context, input ConnectionInput[Orde
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection orders: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Order]), nil
 }

@@ -1606,6 +1606,9 @@ func (c *digitLeadingColumnClient) Exists(ctx context.Context, id int64, opts ..
 	if err != nil {
 		return false, fmt.Errorf("exists digit_leading_column: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1633,6 +1636,9 @@ func (c *digitLeadingColumnClient) ExistsWhere(ctx context.Context, filter *Digi
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists digit_leading_columns where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1662,6 +1668,9 @@ func (c *digitLeadingColumnClient) Count(ctx context.Context, filter *DigitLeadi
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count digit_leading_columns: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1711,6 +1720,9 @@ func (c *digitLeadingColumnClient) Paginate(ctx context.Context, input PaginateI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate digit_leading_columns: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[DigitLeadingColumn]), nil
 }
@@ -1826,6 +1838,9 @@ func (c *digitLeadingColumnClient) Connection(ctx context.Context, input Connect
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection digit_leading_columns: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[DigitLeadingColumn]), nil
 }

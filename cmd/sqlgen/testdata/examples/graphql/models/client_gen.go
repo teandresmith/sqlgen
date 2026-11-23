@@ -502,6 +502,9 @@ func (c *Client) RawExec(ctx context.Context, rawSQL string, args ...any) (datab
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, nil
+	}
 	return result.(database.Result), nil
 }
 

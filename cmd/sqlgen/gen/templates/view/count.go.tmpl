@@ -41,6 +41,9 @@ func (c *{{ $structCamel }}Client) Count(ctx context.Context, filter *{{ .Struct
 	if err != nil {
 		return 0, fmt.Errorf("count {{ .ViewName }}: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 {{- end -}}

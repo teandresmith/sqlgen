@@ -6882,6 +6882,9 @@ func (c *productClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*
     if err != nil {
         return false, fmt.Errorf("exists product: %w", err)
     }
+    if result == nil {
+        return false, nil
+    }
     return result.(bool), nil
 }
 
@@ -6916,6 +6919,9 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
     })
     if err != nil {
         return 0, fmt.Errorf("count products: %w", err)
+    }
+    if result == nil {
+        return 0, nil
     }
     return result.(int64), nil
 }

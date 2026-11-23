@@ -77,31 +77,6 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-394
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 7, cmd/sqlgen/gen/templates
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`Paginate` and `Connection` end with an unchecked `result.(*PaginateResult[T])`")
-- **Vetted:** corrected at `ca9b4128` (2026-11-23)
-
-**Issue.** A hook that short-circuits with `(nil, nil)` panics in `Paginate`, `Connection`, `Count`, `Exists`, `ExistsWhere` and `RawExec`. Measured at `998f0654` in the sqlite example: `Products().Paginate` → "PANIC interface conversion: interface {} is nil, not *models.PaginateResult[…Product]"; Connection, Count ("not int64"), Exists and ExistsWhere ("not bool"), view Paginate, view Connection, view Count and `RawExec` ("interface is nil, not database.Result") the same; `Get` returns `(nil, nil)`.
-
-**Root cause.** Nine hook-result assertions lack the `result == nil` guard; of the templates' 30 `result.(` sites the other 21 are safe (17 guarded, 4 comma-ok assertions in `cache.go.tmpl`): `templates/table/pagination.go.tmpl:53,170`, `templates/view/pagination.go.tmpl:56,177`, `templates/table/count.go.tmpl:66`, `templates/view/count.go.tmpl:44`, `templates/table/exists.go.tmpl:64,126`, `templates/client.go.tmpl:365`.
-
-**Suggested fix.**
-- User ruling 2026-11-22: a nil short-circuit result is the zero value — `return nil, nil` for Paginate, Connection and RawExec; `return 0, nil` for Count; `return false, nil` for Exists and ExistsWhere.
-- Start from `.claude/prototypes/FIX-394.patch` (based on `ca9b4128`; 192 files, +10671/-3, guard lines only apart from rehashed anchors; includes the new test).
-- E2E test `examples/sqlite/tests/hook_nil_result_test.go` `TestHookNilResultDoesNotPanic` (9 subtests, one per site: table Paginate, Connection, Count, Exists, ExistsWhere; view Paginate, Connection, Count; RawExec).
-- PRD: amend the §9.8.10 Exists (`return false, nil`) and Count (`return 0, nil`) examples to guard nil like §9.8.11/§9.8.12. RawExec appears only as a signature (PRD.md:10295, :10664), so it has no example body to amend. Registry rows `exists.nil-short-circuit`, `count.nil-short-circuit`, `paginate.nil-short-circuit`, `connection.nil-short-circuit` in `docs/conformance/client.md`; `make req-rehash SECTIONS="9.8 9.8.10"`.
-- Corrected at vetting (2026-11-23): the original 8 subtests had no ExistsWhere case, so reverting `exists.go.tmpl:126` went undetected; added it. Added the registry rows and rehash `req-check` needs once §9.8.10 changes.
-- Prototype results, run at `ca9b4128` on 2026-11-23: sqlite example with only the new test → all 9 subtests fail, e.g. "table Paginate with a (nil, nil) hook panicked: interface conversion: interface {} is nil, not *models.PaginateResult[…models.Product]", RawExec "interface conversion: interface is nil, not database.Result". Gates: req-check, refs-check, update-golden, update-golden-e2e, conformance-fresh, `go test -race -timeout=30m ./...` (cmd/sqlgen), sqlite example test + lint, conformance sqlite and features_sqlite all ok; Docker-backed examples and PG/MySQL conformance not run (the guard has no dialect branch). Fail-first: each of the 9 generated guards removed alone fails its own subtest with the matching panic; existing suite without the fix passes. Golden churn: ~4 unit goldens, sqlite ~76, ~4-6 in each of the other 14 examples, ~3 in each of the 8 conformance model sets; no files added.
-
-**References.**
-- PRD §9.8.10, §9.8.11, §9.8.12, §21.5 ("Return a result without calling `next()`").
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-395
 
 - **Status:** Open
@@ -182,6 +157,32 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-394
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 7, cmd/sqlgen/gen/templates
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`Paginate` and `Connection` end with an unchecked `result.(*PaginateResult[T])`")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
+
+**Issue.** A hook that short-circuits with `(nil, nil)` panics in `Paginate`, `Connection`, `Count`, `Exists`, `ExistsWhere` and `RawExec`. Measured at `998f0654` in the sqlite example: `Products().Paginate` → "PANIC interface conversion: interface {} is nil, not *models.PaginateResult[…Product]"; Connection, Count ("not int64"), Exists and ExistsWhere ("not bool"), view Paginate, view Connection, view Count and `RawExec` ("interface is nil, not database.Result") the same; `Get` returns `(nil, nil)`.
+
+**Root cause.** Nine hook-result assertions lack the `result == nil` guard; of the templates' 30 `result.(` sites the other 21 are safe (17 guarded, 4 comma-ok assertions in `cache.go.tmpl`): `templates/table/pagination.go.tmpl:53,170`, `templates/view/pagination.go.tmpl:56,177`, `templates/table/count.go.tmpl:66`, `templates/view/count.go.tmpl:44`, `templates/table/exists.go.tmpl:64,126`, `templates/client.go.tmpl:365`.
+
+**Suggested fix.**
+- User ruling 2026-11-22: a nil short-circuit result is the zero value — `return nil, nil` for Paginate, Connection and RawExec; `return 0, nil` for Count; `return false, nil` for Exists and ExistsWhere.
+- Start from `.claude/prototypes/FIX-394.patch` (based on `ca9b4128`; 192 files, +10671/-3, guard lines only apart from rehashed anchors; includes the new test).
+- E2E test `examples/sqlite/tests/hook_nil_result_test.go` `TestHookNilResultDoesNotPanic` (9 subtests, one per site: table Paginate, Connection, Count, Exists, ExistsWhere; view Paginate, Connection, Count; RawExec).
+- PRD: amend the §9.8.10 Exists (`return false, nil`) and Count (`return 0, nil`) examples to guard nil like §9.8.11/§9.8.12. RawExec appears only as a signature (PRD.md:10295, :10664), so it has no example body to amend. Registry rows `exists.nil-short-circuit`, `count.nil-short-circuit`, `paginate.nil-short-circuit`, `connection.nil-short-circuit` in `docs/conformance/client.md`; `make req-rehash SECTIONS="9.8 9.8.10"`.
+- Auto-accepted the recommended option on 2026-11-23 (`/fix` auto-accept rule): should the PRD's Raw/RawExec section state that a nil short-circuit returns `(nil, nil)`, so RawExec gets a registry row? → leave the PRD as it is (RawExec stays covered by the `TestHookNilResultDoesNotPanic/RawExec` subtest with no row), because its gates are green, it causes no golden churn, it adds no public surface, and it reverses no ruling or PRD statement (it follows the registry's "PRD-stated only" rule).
+- Corrected at vetting (2026-11-23): the original 8 subtests had no ExistsWhere case, so reverting `exists.go.tmpl:126` went undetected; added it. Added the registry rows and rehash `req-check` needs once §9.8.10 changes.
+- Prototype results, run at `ca9b4128` on 2026-11-23: sqlite example with only the new test → all 9 subtests fail, e.g. "table Paginate with a (nil, nil) hook panicked: interface conversion: interface {} is nil, not *models.PaginateResult[…models.Product]", RawExec "interface conversion: interface is nil, not database.Result". Gates: req-check, refs-check, update-golden, update-golden-e2e, conformance-fresh, `go test -race -timeout=30m ./...` (cmd/sqlgen), sqlite example test + lint, conformance sqlite and features_sqlite all ok; Docker-backed examples and PG/MySQL conformance not run (the guard has no dialect branch). Fail-first: each of the 9 generated guards removed alone fails its own subtest with the matching panic; existing suite without the fix passes. Golden churn: ~4 unit goldens, sqlite ~76, ~4-6 in each of the other 14 examples, ~3 in each of the 8 conformance model sets; no files added.
+
+**References.**
+- PRD §9.8.10, §9.8.11, §9.8.12, §21.5 ("Return a result without calling `next()`").
+
+**Resolution notes.** Resolved 2026-11-23 at `93222127` (uncommitted). The vetted prototype's template hunks applied clean (no change to its source files since `ca9b4128`). Its PRD and registry hunks also applied clean. Generated files were regenerated, not taken from the patch, and `make req-rehash SECTIONS="9.8 9.8.10"` confirmed the anchors (0 updated). The nine hook-result assertions in `table/pagination.go.tmpl` (Paginate, Connection), `view/pagination.go.tmpl` (Paginate, Connection), `table/count.go.tmpl`, `view/count.go.tmpl`, `table/exists.go.tmpl` (Exists, ExistsWhere) and `client.go.tmpl` (RawExec) now guard `result == nil` and return the zero value, as the 2026-11-22 ruling says. PRD §9.8.10 Exists/Count examples guard nil. Registry rows `exists.nil-short-circuit`, `count.nil-short-circuit`, `paginate.nil-short-circuit` and `connection.nil-short-circuit` added. Regression test sqlite `TestHookNilResultDoesNotPanic` (9 subtests). Fail-first on the final code: with the example's models reverted, all 9 subtests fail. Golden churn matches the vet: the same 192 files as the prototype (+10671/-3, the new test included); no files added. Inline from /verify: `docs/conformance/client.md` `client.close-cache-publisher` ref shifted to `client.go.tmpl:397-411` by the RawExec guard, and one-target notes added under the §9.8.10, §9.8.11 and §9.8.12 tables for the four new rows (proven on sqlite; the guard has no dialect branch). Gates: `make check` ok; `make check-examples` ok.
 
 ### FIX-393
 

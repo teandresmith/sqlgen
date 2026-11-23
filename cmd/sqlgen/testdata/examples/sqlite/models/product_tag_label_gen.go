@@ -1269,6 +1269,9 @@ func (c *productTagLabelClient) Exists(ctx context.Context, pk ProductTagLabelPK
 	if err != nil {
 		return false, fmt.Errorf("exists product_tag_label: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1296,6 +1299,9 @@ func (c *productTagLabelClient) ExistsWhere(ctx context.Context, filter *Product
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists product_tag_labels where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1325,6 +1331,9 @@ func (c *productTagLabelClient) Count(ctx context.Context, filter *ProductTagLab
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count product_tag_labels: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1374,6 +1383,9 @@ func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInpu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate product_tag_labels: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[ProductTagLabel]), nil
 }
@@ -1489,6 +1501,9 @@ func (c *productTagLabelClient) Connection(ctx context.Context, input Connection
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection product_tag_labels: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[ProductTagLabel]), nil
 }

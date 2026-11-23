@@ -2226,6 +2226,9 @@ func (c *userClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpt
 	if err != nil {
 		return false, fmt.Errorf("exists user: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -2253,6 +2256,9 @@ func (c *userClient) ExistsWhere(ctx context.Context, filter *UserFilter, opts .
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists users where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -2282,6 +2288,9 @@ func (c *userClient) Count(ctx context.Context, filter *UserFilter, opts ...func
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count users: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -2331,6 +2340,9 @@ func (c *userClient) Paginate(ctx context.Context, input PaginateInput[UserFilte
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate users: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[User]), nil
 }
@@ -2446,6 +2458,9 @@ func (c *userClient) Connection(ctx context.Context, input ConnectionInput[UserF
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection users: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[User]), nil
 }

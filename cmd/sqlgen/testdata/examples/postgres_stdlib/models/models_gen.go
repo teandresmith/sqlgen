@@ -1556,6 +1556,9 @@ func (c *eventClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*Ca
 	if err != nil {
 		return false, fmt.Errorf("exists event: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1583,6 +1586,9 @@ func (c *eventClient) ExistsWhere(ctx context.Context, filter *EventFilter, opts
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists events where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1612,6 +1618,9 @@ func (c *eventClient) Count(ctx context.Context, filter *EventFilter, opts ...fu
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count events: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1664,6 +1673,9 @@ func (c *eventClient) Paginate(ctx context.Context, input PaginateInput[EventFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate events: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Event]), nil
 }
@@ -1782,6 +1794,9 @@ func (c *eventClient) Connection(ctx context.Context, input ConnectionInput[Even
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection events: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Event]), nil
 }
@@ -3719,6 +3734,9 @@ func (c *auditUserClient) Exists(ctx context.Context, id uuid.UUID, opts ...func
 	if err != nil {
 		return false, fmt.Errorf("exists user: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -3746,6 +3764,9 @@ func (c *auditUserClient) ExistsWhere(ctx context.Context, filter *AuditUserFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists users where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -3775,6 +3796,9 @@ func (c *auditUserClient) Count(ctx context.Context, filter *AuditUserFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count users: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -3827,6 +3851,9 @@ func (c *auditUserClient) Paginate(ctx context.Context, input PaginateInput[Audi
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate users: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[AuditUser]), nil
 }
@@ -3945,6 +3972,9 @@ func (c *auditUserClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection users: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[AuditUser]), nil
 }
@@ -6407,6 +6437,9 @@ func (c *articleClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*
 	if err != nil {
 		return false, fmt.Errorf("exists article: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -6440,6 +6473,9 @@ func (c *articleClient) ExistsWhere(ctx context.Context, filter *ArticleFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists articles where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -6475,6 +6511,9 @@ func (c *articleClient) Count(ctx context.Context, filter *ArticleFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count articles: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -6528,6 +6567,9 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate articles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Article]), nil
 }
@@ -6647,6 +6689,9 @@ func (c *articleClient) Connection(ctx context.Context, input ConnectionInput[Ar
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection articles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Article]), nil
 }
@@ -8973,6 +9018,9 @@ func (c *categoryClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(
 	if err != nil {
 		return false, fmt.Errorf("exists category: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -9000,6 +9048,9 @@ func (c *categoryClient) ExistsWhere(ctx context.Context, filter *CategoryFilter
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists categories where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -9029,6 +9080,9 @@ func (c *categoryClient) Count(ctx context.Context, filter *CategoryFilter, opts
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count categories: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -9081,6 +9135,9 @@ func (c *categoryClient) Paginate(ctx context.Context, input PaginateInput[Categ
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate categories: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Category]), nil
 }
@@ -9199,6 +9256,9 @@ func (c *categoryClient) Connection(ctx context.Context, input ConnectionInput[C
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection categories: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Category]), nil
 }
@@ -11014,6 +11074,9 @@ func (c *cycleClient) Exists(ctx context.Context, id int32, opts ...func(*CallOp
 	if err != nil {
 		return false, fmt.Errorf("exists cycle: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -11041,6 +11104,9 @@ func (c *cycleClient) ExistsWhere(ctx context.Context, filter *CycleFilter, opts
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists cycles where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -11070,6 +11136,9 @@ func (c *cycleClient) Count(ctx context.Context, filter *CycleFilter, opts ...fu
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count cycles: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -11122,6 +11191,9 @@ func (c *cycleClient) Paginate(ctx context.Context, input PaginateInput[CycleFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate cycles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Cycle]), nil
 }
@@ -11240,6 +11312,9 @@ func (c *cycleClient) Connection(ctx context.Context, input ConnectionInput[Cycl
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection cycles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Cycle]), nil
 }
@@ -13248,6 +13323,9 @@ func (c *orderItemClient) Exists(ctx context.Context, id uuid.UUID, opts ...func
 	if err != nil {
 		return false, fmt.Errorf("exists order_item: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -13275,6 +13353,9 @@ func (c *orderItemClient) ExistsWhere(ctx context.Context, filter *OrderItemFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists order_items where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -13304,6 +13385,9 @@ func (c *orderItemClient) Count(ctx context.Context, filter *OrderItemFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count order_items: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -13356,6 +13440,9 @@ func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[Orde
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate order_items: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[OrderItem]), nil
 }
@@ -13474,6 +13561,9 @@ func (c *orderItemClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection order_items: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[OrderItem]), nil
 }
@@ -16157,6 +16247,9 @@ func (c *orderClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*Ca
 	if err != nil {
 		return false, fmt.Errorf("exists order: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -16184,6 +16277,9 @@ func (c *orderClient) ExistsWhere(ctx context.Context, filter *OrderFilter, opts
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists orders where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -16213,6 +16309,9 @@ func (c *orderClient) Count(ctx context.Context, filter *OrderFilter, opts ...fu
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count orders: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -16265,6 +16364,9 @@ func (c *orderClient) Paginate(ctx context.Context, input PaginateInput[OrderFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate orders: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Order]), nil
 }
@@ -16383,6 +16485,9 @@ func (c *orderClient) Connection(ctx context.Context, input ConnectionInput[Orde
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection orders: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Order]), nil
 }
@@ -18458,6 +18563,9 @@ func (c *productTagLabelClient) Exists(ctx context.Context, pk ProductTagLabelPK
 	if err != nil {
 		return false, fmt.Errorf("exists product_tag_label: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -18485,6 +18593,9 @@ func (c *productTagLabelClient) ExistsWhere(ctx context.Context, filter *Product
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists product_tag_labels where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -18514,6 +18625,9 @@ func (c *productTagLabelClient) Count(ctx context.Context, filter *ProductTagLab
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count product_tag_labels: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -18566,6 +18680,9 @@ func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInpu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate product_tag_labels: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[ProductTagLabel]), nil
 }
@@ -18684,6 +18801,9 @@ func (c *productTagLabelClient) Connection(ctx context.Context, input Connection
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection product_tag_labels: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[ProductTagLabel]), nil
 }
@@ -21309,6 +21429,9 @@ func (c *productClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*
 	if err != nil {
 		return false, fmt.Errorf("exists product: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -21336,6 +21459,9 @@ func (c *productClient) ExistsWhere(ctx context.Context, filter *ProductFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists products where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -21365,6 +21491,9 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count products: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -21417,6 +21546,9 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Product]), nil
 }
@@ -21535,6 +21667,9 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Product]), nil
 }
@@ -24010,6 +24145,9 @@ func (c *profileClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*
 	if err != nil {
 		return false, fmt.Errorf("exists profile: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -24037,6 +24175,9 @@ func (c *profileClient) ExistsWhere(ctx context.Context, filter *ProfileFilter, 
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists profiles where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -24066,6 +24207,9 @@ func (c *profileClient) Count(ctx context.Context, filter *ProfileFilter, opts .
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count profiles: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -24118,6 +24262,9 @@ func (c *profileClient) Paginate(ctx context.Context, input PaginateInput[Profil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate profiles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Profile]), nil
 }
@@ -24236,6 +24383,9 @@ func (c *profileClient) Connection(ctx context.Context, input ConnectionInput[Pr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection profiles: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Profile]), nil
 }
@@ -27098,6 +27248,9 @@ func (c *tagClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*Call
 	if err != nil {
 		return false, fmt.Errorf("exists tag: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -27131,6 +27284,9 @@ func (c *tagClient) ExistsWhere(ctx context.Context, filter *TagFilter, opts ...
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists tags where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -27166,6 +27322,9 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count tags: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -27219,6 +27378,9 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Tag]), nil
 }
@@ -27338,6 +27500,9 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Tag]), nil
 }
@@ -29015,6 +29180,9 @@ func (c *taskClient) Exists(ctx context.Context, id int32, opts ...func(*CallOpt
 	if err != nil {
 		return false, fmt.Errorf("exists task: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -29042,6 +29210,9 @@ func (c *taskClient) ExistsWhere(ctx context.Context, filter *TaskFilter, opts .
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists tasks where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -29071,6 +29242,9 @@ func (c *taskClient) Count(ctx context.Context, filter *TaskFilter, opts ...func
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count tasks: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -29123,6 +29297,9 @@ func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilte
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate tasks: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Task]), nil
 }
@@ -29241,6 +29418,9 @@ func (c *taskClient) Connection(ctx context.Context, input ConnectionInput[TaskF
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection tasks: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Task]), nil
 }
@@ -30783,6 +30963,9 @@ func (c *userCategoryClient) Exists(ctx context.Context, pk UserCategoryPK, opts
 	if err != nil {
 		return false, fmt.Errorf("exists user_category: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -30810,6 +30993,9 @@ func (c *userCategoryClient) ExistsWhere(ctx context.Context, filter *UserCatego
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists user_categories where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -30839,6 +31025,9 @@ func (c *userCategoryClient) Count(ctx context.Context, filter *UserCategoryFilt
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count user_categories: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -30891,6 +31080,9 @@ func (c *userCategoryClient) Paginate(ctx context.Context, input PaginateInput[U
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate user_categories: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[UserCategory]), nil
 }
@@ -31009,6 +31201,9 @@ func (c *userCategoryClient) Connection(ctx context.Context, input ConnectionInp
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection user_categories: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[UserCategory]), nil
 }
@@ -33415,6 +33610,9 @@ func (c *publicUserClient) Exists(ctx context.Context, id uuid.UUID, opts ...fun
 	if err != nil {
 		return false, fmt.Errorf("exists user: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -33442,6 +33640,9 @@ func (c *publicUserClient) ExistsWhere(ctx context.Context, filter *PublicUserFi
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists users where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -33471,6 +33672,9 @@ func (c *publicUserClient) Count(ctx context.Context, filter *PublicUserFilter, 
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count users: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -33523,6 +33727,9 @@ func (c *publicUserClient) Paginate(ctx context.Context, input PaginateInput[Pub
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate users: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[PublicUser]), nil
 }
@@ -33641,6 +33848,9 @@ func (c *publicUserClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection users: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[PublicUser]), nil
 }
@@ -36258,6 +36468,9 @@ func (c *warehouseClient) Exists(ctx context.Context, id uuid.UUID, opts ...func
 	if err != nil {
 		return false, fmt.Errorf("exists warehouse: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -36285,6 +36498,9 @@ func (c *warehouseClient) ExistsWhere(ctx context.Context, filter *WarehouseFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists warehouses where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -36314,6 +36530,9 @@ func (c *warehouseClient) Count(ctx context.Context, filter *WarehouseFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count warehouses: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -36366,6 +36585,9 @@ func (c *warehouseClient) Paginate(ctx context.Context, input PaginateInput[Ware
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate warehouses: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Warehouse]), nil
 }
@@ -36484,6 +36706,9 @@ func (c *warehouseClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection warehouses: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Warehouse]), nil
 }
@@ -38641,6 +38866,9 @@ func (c *widthBigClient) Exists(ctx context.Context, id int64, opts ...func(*Cal
 	if err != nil {
 		return false, fmt.Errorf("exists width_big: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -38668,6 +38896,9 @@ func (c *widthBigClient) ExistsWhere(ctx context.Context, filter *WidthBigFilter
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists width_bigs where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -38697,6 +38928,9 @@ func (c *widthBigClient) Count(ctx context.Context, filter *WidthBigFilter, opts
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count width_bigs: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -38749,6 +38983,9 @@ func (c *widthBigClient) Paginate(ctx context.Context, input PaginateInput[Width
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate width_bigs: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WidthBig]), nil
 }
@@ -38867,6 +39104,9 @@ func (c *widthBigClient) Connection(ctx context.Context, input ConnectionInput[W
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection width_bigs: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[WidthBig]), nil
 }
@@ -40484,6 +40724,9 @@ func (c *widthLinkClient) Exists(ctx context.Context, pk WidthLinkPK, opts ...fu
 	if err != nil {
 		return false, fmt.Errorf("exists width_link: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -40511,6 +40754,9 @@ func (c *widthLinkClient) ExistsWhere(ctx context.Context, filter *WidthLinkFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists width_links where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -40540,6 +40786,9 @@ func (c *widthLinkClient) Count(ctx context.Context, filter *WidthLinkFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count width_links: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -40592,6 +40841,9 @@ func (c *widthLinkClient) Paginate(ctx context.Context, input PaginateInput[Widt
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate width_links: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WidthLink]), nil
 }
@@ -40710,6 +40962,9 @@ func (c *widthLinkClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection width_links: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[WidthLink]), nil
 }
@@ -42541,6 +42796,9 @@ func (c *widthNarrowChildClient) Exists(ctx context.Context, id int64, opts ...f
 	if err != nil {
 		return false, fmt.Errorf("exists width_narrow_child: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -42568,6 +42826,9 @@ func (c *widthNarrowChildClient) ExistsWhere(ctx context.Context, filter *WidthN
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists width_narrow_children where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -42597,6 +42858,9 @@ func (c *widthNarrowChildClient) Count(ctx context.Context, filter *WidthNarrowC
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count width_narrow_children: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -42649,6 +42913,9 @@ func (c *widthNarrowChildClient) Paginate(ctx context.Context, input PaginateInp
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate width_narrow_children: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WidthNarrowChild]), nil
 }
@@ -42767,6 +43034,9 @@ func (c *widthNarrowChildClient) Connection(ctx context.Context, input Connectio
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection width_narrow_children: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[WidthNarrowChild]), nil
 }
@@ -44666,6 +44936,9 @@ func (c *widthScopedChildClient) Exists(ctx context.Context, id int64, opts ...f
 	if err != nil {
 		return false, fmt.Errorf("exists width_scoped_child: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -44693,6 +44966,9 @@ func (c *widthScopedChildClient) ExistsWhere(ctx context.Context, filter *WidthS
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists width_scoped_children where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -44722,6 +44998,9 @@ func (c *widthScopedChildClient) Count(ctx context.Context, filter *WidthScopedC
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count width_scoped_children: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -44774,6 +45053,9 @@ func (c *widthScopedChildClient) Paginate(ctx context.Context, input PaginateInp
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate width_scoped_children: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WidthScopedChild]), nil
 }
@@ -44892,6 +45174,9 @@ func (c *widthScopedChildClient) Connection(ctx context.Context, input Connectio
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection width_scoped_children: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[WidthScopedChild]), nil
 }
@@ -47096,6 +47381,9 @@ func (c *widthSmallClient) Exists(ctx context.Context, id int32, opts ...func(*C
 	if err != nil {
 		return false, fmt.Errorf("exists width_small: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -47123,6 +47411,9 @@ func (c *widthSmallClient) ExistsWhere(ctx context.Context, filter *WidthSmallFi
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists width_smalls where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -47152,6 +47443,9 @@ func (c *widthSmallClient) Count(ctx context.Context, filter *WidthSmallFilter, 
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count width_smalls: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -47204,6 +47498,9 @@ func (c *widthSmallClient) Paginate(ctx context.Context, input PaginateInput[Wid
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate width_smalls: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WidthSmall]), nil
 }
@@ -47322,6 +47619,9 @@ func (c *widthSmallClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection width_smalls: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[WidthSmall]), nil
 }
@@ -49317,6 +49617,9 @@ func (c *widthWideChildClient) Exists(ctx context.Context, id int64, opts ...fun
 	if err != nil {
 		return false, fmt.Errorf("exists width_wide_child: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -49344,6 +49647,9 @@ func (c *widthWideChildClient) ExistsWhere(ctx context.Context, filter *WidthWid
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists width_wide_children where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -49373,6 +49679,9 @@ func (c *widthWideChildClient) Count(ctx context.Context, filter *WidthWideChild
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count width_wide_children: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -49425,6 +49734,9 @@ func (c *widthWideChildClient) Paginate(ctx context.Context, input PaginateInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate width_wide_children: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WidthWideChild]), nil
 }
@@ -49543,6 +49855,9 @@ func (c *widthWideChildClient) Connection(ctx context.Context, input ConnectionI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection width_wide_children: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[WidthWideChild]), nil
 }

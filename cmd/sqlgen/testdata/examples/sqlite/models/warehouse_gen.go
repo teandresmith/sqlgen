@@ -1591,6 +1591,9 @@ func (c *warehouseClient) Exists(ctx context.Context, id int64, opts ...func(*Ca
 	if err != nil {
 		return false, fmt.Errorf("exists warehouse: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1618,6 +1621,9 @@ func (c *warehouseClient) ExistsWhere(ctx context.Context, filter *WarehouseFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists warehouses where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1647,6 +1653,9 @@ func (c *warehouseClient) Count(ctx context.Context, filter *WarehouseFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count warehouses: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1696,6 +1705,9 @@ func (c *warehouseClient) Paginate(ctx context.Context, input PaginateInput[Ware
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate warehouses: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Warehouse]), nil
 }
@@ -1811,6 +1823,9 @@ func (c *warehouseClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection warehouses: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Warehouse]), nil
 }
