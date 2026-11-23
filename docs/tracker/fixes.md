@@ -77,33 +77,6 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-392
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 25, cmd/sqlgen/config
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`cursor_keys` uniqueness is not validated")
-- **Vetted:** ready at `ca9b4128` (2026-11-23)
-
-**Issue.** Non-unique `cursor_keys` silently skip rows across `Connection` pages. Measured at `998f0654` on SQLite: products with `cursor_keys: [category_id]`, 3+3 rows, `first: 2` → page0 [1,2], page1 [4,5], page2 [] — 4 of 6 rows seen, rows 3 and 6 skipped. No PK tiebreaker is appended (generated `cursorKeys: []string{"category_id"}`).
-
-**Root cause.** Nothing checks that the resolved cursor keys cover a PK or UNIQUE set; PRD §14.2 → "Configurable" (PRD.md:9318) says only that keys "Should be columns that are unique and immutable".
-
-**Suggested fix.**
-- User ruling 2026-11-22: a validate **warning** (not an error, not an auto-appended tiebreaker) when the resolved keys cover no PK, UNIQUE group or UNIQUE column.
-- Start from `.claude/prototypes/FIX-392.patch` (based on `ca9b4128`; 6 files, +211/-17).
-- New `validateCursorKeysUniqueness` (`config/validate.go`), called from `ValidatePostParse` right after `validateCursorKeys`, on the post-exclude_columns key set (new `generatedCursorKeys` helper factored out of `resolvedCursorKeys`). It warns when the keys contain none of: every resolved-PK column, every column of a non-partial UniqueGroups entry, or one inline-UNIQUE column. It skips tables generation drops (no resolved PK per §9.4b, or matched by `exclude_tables`) and views (SchemaView carries no key information).
-- Only `TestValidatePostParse_CursorKeys_InheritedPartialMissing` breaks (not `ExcludeColumnsRemovesAll`, whose table has no PK); the fix gives `users.email` `Unique: true` in the shared `schemaTables()` fixture.
-- Test `TestValidatePostParse_CursorKeys_Uniqueness` (`config/cursor_keys_unique_test.go`, 10 subtests: explicit and inherited non-unique keys warn; PK-ending keys, default `[id]`, UNIQUE column, UNIQUE group, exclude_columns PK fallback, `primary_key.columns` override, no-PK table and `exclude_tables` stay silent).
-- New PRD §4.13 row "Resolved `cursor_keys` not covered by a unique key" (Warning); registry rows `config.cursor-keys-not-unique` (fires / .message / .severity) in `docs/conformance/cli/config.md`; `make req-rehash SECTIONS=4,4.13`. If FIX-391 lands first and also touches §4.13, re-run the rehash.
-- Prototype results, run at `ca9b4128` on 2026-11-23: sqlite example copy with `tables.products.cursor_keys: [category_id]` → no warning, generated `cursorKeys: []string{"category_id"}`; probe paging 2 categories × 3 products with `first: 2` → "page0 [1 2] / page1 [4 5] / page2 [] / seeded [1 2 3 4 5 6], seen 4 of 6". Patched `sqlgen validate` → "Warning: cursor_keys [category_id] on table products cover no primary key or UNIQUE constraint; Connection skips rows that share a cursor key value at a page boundary — add a unique column such as the primary key to the list", exit 0. Gates: `go test -race -count=1 ./config/... ./cli/...` ok, vet, golangci-lint, gofumpt clean, `make req-check` ok (6414 requirements). Fail-first: call removed → "ValidatePostParse() uniqueness warnings = [], want one containing \"cursor_keys [category_id] on table public.products\""; `len(pk) == 0` skip removed → no-PK subtest gets a false warning; raw columns instead of post-exclude → the exclude_columns fallback subtest gets a false warning; existing suite without the fix passes. 0 of 12 file-based examples warn; no golden churn. Applies alongside FIX-391 with no textual overlap (`git apply --check` measured).
-
-**References.**
-- PRD §9.8, §4.13, §14.2 → "Configurable" ("cursor_keys determines sort" — why the tiebreaker option was rejected).
-- FIX-391.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-393
 
 - **Status:** Open
@@ -236,6 +209,32 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-392
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/config
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`cursor_keys` uniqueness is not validated")
+- **Vetted:** ready at `ca9b4128` (2026-11-23)
+
+**Issue.** Non-unique `cursor_keys` silently skip rows across `Connection` pages. Measured at `998f0654` on SQLite: products with `cursor_keys: [category_id]`, 3+3 rows, `first: 2` → page0 [1,2], page1 [4,5], page2 [] — 4 of 6 rows seen, rows 3 and 6 skipped. No PK tiebreaker is appended (generated `cursorKeys: []string{"category_id"}`).
+
+**Root cause.** Nothing checks that the resolved cursor keys cover a PK or UNIQUE set; PRD §14.2 → "Configurable" (PRD.md:9319) says only that keys "Should be columns that are unique and immutable".
+
+**Suggested fix.**
+- User ruling 2026-11-22: a validate **warning** (not an error, not an auto-appended tiebreaker) when the resolved keys cover no PK, UNIQUE group or UNIQUE column.
+- Start from `.claude/prototypes/FIX-392.patch` (based on `ca9b4128`; 6 files, +211/-17).
+- New `validateCursorKeysUniqueness` (`config/validate.go`), called from `ValidatePostParse` right after `validateCursorKeys`, on the post-exclude_columns key set (new `generatedCursorKeys` helper factored out of `resolvedCursorKeys`). It warns when the keys contain none of: every resolved-PK column, every column of a non-partial UniqueGroups entry, or one inline-UNIQUE column. It skips tables generation drops (no resolved PK per §9.4b, or matched by `exclude_tables`) and views (SchemaView carries no key information).
+- Only `TestValidatePostParse_CursorKeys_InheritedPartialMissing` breaks (not `ExcludeColumnsRemovesAll`, whose table has no PK); the fix gives `users.email` `Unique: true` in the shared `schemaTables()` fixture.
+- Test `TestValidatePostParse_CursorKeys_Uniqueness` (`config/cursor_keys_unique_test.go`, 10 subtests: explicit and inherited non-unique keys warn; PK-ending keys, default `[id]`, UNIQUE column, UNIQUE group, exclude_columns PK fallback, `primary_key.columns` override, no-PK table and `exclude_tables` stay silent).
+- New PRD §4.13 row "Resolved `cursor_keys` not covered by a unique key" (Warning); registry rows `config.cursor-keys-not-unique` (fires / .message / .severity) in `docs/conformance/cli/config.md`; `make req-rehash SECTIONS=4,4.13`. If FIX-391 lands first and also touches §4.13, re-run the rehash.
+- Prototype results, run at `ca9b4128` on 2026-11-23: sqlite example copy with `tables.products.cursor_keys: [category_id]` → no warning, generated `cursorKeys: []string{"category_id"}`; probe paging 2 categories × 3 products with `first: 2` → "page0 [1 2] / page1 [4 5] / page2 [] / seeded [1 2 3 4 5 6], seen 4 of 6". Patched `sqlgen validate` → "Warning: cursor_keys [category_id] on table products cover no primary key or UNIQUE constraint; Connection skips rows that share a cursor key value at a page boundary — add a unique column such as the primary key to the list", exit 0. Gates: `go test -race -count=1 ./config/... ./cli/...` ok, vet, golangci-lint, gofumpt clean, `make req-check` ok (6414 requirements). Fail-first: call removed → "ValidatePostParse() uniqueness warnings = [], want one containing \"cursor_keys [category_id] on table public.products\""; `len(pk) == 0` skip removed → no-PK subtest gets a false warning; raw columns instead of post-exclude → the exclude_columns fallback subtest gets a false warning; existing suite without the fix passes. 0 of 12 file-based examples warn; no golden churn. Applies alongside FIX-391 with no textual overlap (`git apply --check` measured).
+
+**References.**
+- PRD §9.8, §4.13, §14.2 → "Configurable" ("cursor_keys determines sort" — why the tiebreaker option was rejected).
+- FIX-391.
+
+**Resolution notes.** Resolved 2026-11-23 at `bc25e92a` (uncommitted). The vetted prototype applied clean on top of FIX-391 (its `validateCursorKeys` hunk and §4.13 gap row sit beside, not in, this change). New `validateCursorKeysUniqueness` (`cmd/sqlgen/config/validate.go`) runs after `validateCursorKeys` in `ValidatePostParse` and warns when the post-exclude_columns keys (new `generatedCursorKeys`, factored out of `resolvedCursorKeys`) contain no full resolved PK, no full non-partial UNIQUE group and no inline-UNIQUE column; tables without a resolved PK, `exclude_tables` matches and views are skipped. Shared fixture `schemaTables()` gives `users.email` `Unique: true` so `TestValidatePostParse_CursorKeys_InheritedPartialMissing` stays silent. Regression test `TestValidatePostParse_CursorKeys_Uniqueness` (11 subtests: the vetted 10 plus `primary_key.columns override not covered by the keys warns`, added from the /verify review so the resolved-PK path is pinned; fail-first: reading `table.PrimaryKey` instead of the resolved PK fails it); fail-first re-run on the final code: call removed → "uniqueness warnings = [], want one containing \"cursor_keys [category_id] on table public.products\"". PRD §4.13 row "Resolved `cursor_keys` not covered by a unique key" (Warning), registry rows `config.cursor-keys-not-unique` (+ .message, .severity) and two n/a matrix cells in `docs/conformance/cli/config.md`; `make req-rehash SECTIONS=4,4.13` reported 0 anchors to update (the prototype's hashes already match). Inline: trimmed the measurement history from the test's doc comment; Root cause line ref `PRD.md:9318` → `PRD.md:9319` (the new §4.13 row shifted it). Gates: `make check` ok; `make check-examples` ok, no golden churn (matches vet).
 
 ### FIX-391
 
