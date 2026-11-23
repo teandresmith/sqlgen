@@ -44,6 +44,12 @@
 | --- | --- | --- | --- | --- |
 | `events_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| user | o2o | User | public.events.user_id |  |
+
 ## Query methods
 
 ### Get

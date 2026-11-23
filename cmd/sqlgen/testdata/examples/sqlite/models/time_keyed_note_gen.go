@@ -21,6 +21,9 @@ type TimeKeyedNote struct {
 	ID      int64              `db:"id" json:"id"`
 	KeyedAt types.NullDateTime `db:"keyed_at" json:"keyed_at"`
 	Note    string             `db:"note" json:"note"`
+
+	// TimeKeyed - one-to-one relationship with the time_keyed table.
+	TimeKeyed *TimeKeyed `db:"-" json:"time_keyed"`
 }
 
 // TimeKeyedNoteClient provides type-safe operations for the time_keyed_notes table.
@@ -310,25 +313,58 @@ func (c *timeKeyedNoteClient) GetMany(ctx context.Context, input *GetTimeKeyedNo
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var timeKeyedNotes []*TimeKeyedNote
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("t", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		timeKeyedNotes, err = scanTimeKeyedNotes(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			timeKeyedNotes, err = scanTimeKeyedNotesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			timeKeyedNotes, err = scanTimeKeyedNotes(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return timeKeyedNotes, nil
@@ -1997,9 +2033,10 @@ func (f *TimeKeyedNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOp
 
 // TimeKeyedNoteFieldOptions controls column selection and relationship loading for time_keyed_notes queries.
 type TimeKeyedNoteFieldOptions struct {
-	ID      bool `json:"id"`
-	KeyedAt bool `json:"keyed_at"`
-	Note    bool `json:"note"`
+	ID        bool                   `json:"id"`
+	KeyedAt   bool                   `json:"keyed_at"`
+	Note      bool                   `json:"note"`
+	TimeKeyed *TimeKeyedFieldOptions `json:"time_keyed"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -2039,6 +2076,9 @@ func (fo *TimeKeyedNoteFieldOptions) HasSelectedColumns() bool {
 	if fo.Note {
 		return true
 	}
+	if fo.TimeKeyed != nil {
+		return true
+	}
 	return false
 }
 
@@ -2069,4 +2109,71 @@ type GetTimeKeyedNotesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *timeKeyedNoteClient) resolveO2OJoins(d sql.Dialect, fo *TimeKeyedNoteFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.TimeKeyed != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "time_keyed"},
+			Alias: "t2",
+			On:    fmt.Sprintf("t2.%s = t.%s", d.QuoteIdentifier("at"), d.QuoteIdentifier("keyed_at")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.TimeKeyed.Columns(), "at"),
+		})
+	}
+	return joins
+}
+
+// scanTimeKeyedNotesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// TimeKeyedNote entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTimeKeyedNotesWithOneToOneJoins(rows database.Rows, columns []string) ([]*TimeKeyedNote, error) {
+	var result []*TimeKeyedNote
+	for rows.Next() {
+		t := &TimeKeyedNote{}
+		t2 := &TimeKeyed{}
+		t2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.keyed_at":
+				targets[idx] = &t.KeyedAt
+			case "t.note":
+				targets[idx] = &t.Note
+			case "t2.at":
+				targets[idx] = database.NullScan(&t2.At)
+				t2HasData = true
+			case "t2.label":
+				targets[idx] = database.NullScan(&t2.Label)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan time_keyed_note with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if t2HasData && t2.At != (types.DateTime{}) {
+			t.TimeKeyed = t2
+		} else {
+			t.TimeKeyed = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate time_keyed_note rows: %w", err)
+	}
+	return result, nil
 }

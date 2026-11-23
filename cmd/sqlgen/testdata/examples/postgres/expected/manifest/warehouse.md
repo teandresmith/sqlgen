@@ -41,6 +41,7 @@ Storage warehouses with type-overridden columns
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| warehouse | o2o | Warehouse | public.warehouses.nullable_ref |  |
 | warehouses | o2m | Warehouse | public.warehouses.nullable_ref |  |
 
 ## Query methods

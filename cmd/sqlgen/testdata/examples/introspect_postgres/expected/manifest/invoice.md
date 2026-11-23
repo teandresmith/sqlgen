@@ -30,6 +30,12 @@ Invoices issued to an account
 | --- | --- | --- | --- | --- |
 | `invoices_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| account | o2o | Account | billing.invoices.account_id |  |
+
 ## Query methods
 
 ### Get

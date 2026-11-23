@@ -426,6 +426,8 @@ func eventFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 			fo.Address2ID = true
 		case "s3URL":
 			fo.S3URL = true
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -769,6 +771,8 @@ func orderFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 			fo.OrderItems = &models.OrderItemRelationshipOptions{
 				FieldOptions: orderItemFieldOptionsFromCollected(opCtx, f.Sub),
 			}
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -822,6 +826,10 @@ func orderItemFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.SourceIP = true
 		case "createdAt":
 			fo.CreatedAt = true
+		case "order":
+			fo.Order = orderFieldOptionsFromCollected(opCtx, f.Sub)
+		case "product":
+			fo.Product = productFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -877,6 +885,8 @@ func productFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.UpdatedAt = true
 		case "deletedAt":
 			fo.DeletedAt = true
+		case "category":
+			fo.Category = categoryFieldOptionsFromCollected(opCtx, f.Sub)
 		case "orderItems":
 			fo.OrderItems = &models.OrderItemRelationshipOptions{
 				FieldOptions: orderItemFieldOptionsFromCollected(opCtx, f.Sub),
@@ -930,8 +940,8 @@ func profileFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.Settings = true
 		case "createdAt":
 			fo.CreatedAt = true
-		case "users":
-			fo.Users = userFieldOptionsFromCollected(opCtx, f.Sub)
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1054,6 +1064,8 @@ func taskFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gra
 			fo.CycleID = true
 		case "title":
 			fo.Title = true
+		case "cycle":
+			fo.Cycle = cycleFieldOptionsFromCollected(opCtx, f.Sub)
 		case "labels":
 			fo.Labels = &models.LabelRelationshipOptions{
 				FieldOptions: labelFieldOptionsFromCollected(opCtx, f.Sub),
@@ -1148,8 +1160,8 @@ func taskReportFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields
 			fo.TaskID = true
 		case "summary":
 			fo.Summary = true
-		case "tasks":
-			fo.Tasks = taskFieldOptionsFromCollected(opCtx, f.Sub)
+		case "task":
+			fo.Task = taskFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1264,8 +1276,8 @@ func userBadgeFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.UserID = true
 		case "label":
 			fo.Label = true
-		case "users":
-			fo.Users = userFieldOptionsFromCollected(opCtx, f.Sub)
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1355,8 +1367,8 @@ func userCredentialFieldOptionsFromCollected(opCtx *graphql.OperationContext, fi
 			fo.LastLoginAt = true
 		case "createdAt":
 			fo.CreatedAt = true
-		case "users":
-			fo.Users = userFieldOptionsFromCollected(opCtx, f.Sub)
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {

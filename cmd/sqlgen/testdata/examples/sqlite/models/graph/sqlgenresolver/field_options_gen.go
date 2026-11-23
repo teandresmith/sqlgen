@@ -344,6 +344,8 @@ func binItemFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.Slot = true
 		case "name":
 			fo.Name = true
+		case "bin":
+			fo.Bin = binFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -480,6 +482,8 @@ func binaryKeyEventFieldOptionsFromCollected(opCtx *graphql.OperationContext, fi
 			fo.BinaryKeyID = true
 		case "label":
 			fo.Label = true
+		case "binaryKey":
+			fo.BinaryKey = binaryKeyFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -568,6 +572,8 @@ func boolKeyedNoteFieldOptionsFromCollected(opCtx *graphql.OperationContext, fie
 			fo.KeyedK = true
 		case "note":
 			fo.Note = true
+		case "boolKeyed":
+			fo.BoolKeyed = boolKeyedFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -809,6 +815,8 @@ func keyClassChildFieldOptionsFromCollected(opCtx *graphql.OperationContext, fie
 			fo.ID = true
 		case "parentID":
 			fo.ParentID = true
+		case "parent":
+			fo.Parent = keyClassParentFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -897,6 +905,8 @@ func keyClassRealChildFieldOptionsFromCollected(opCtx *graphql.OperationContext,
 			fo.ID = true
 		case "parentID":
 			fo.ParentID = true
+		case "parent":
+			fo.Parent = keyClassParentFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -989,6 +999,8 @@ func orderFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 			fo.OrderItems = &models.OrderItemRelationshipOptions{
 				FieldOptions: orderItemFieldOptionsFromCollected(opCtx, f.Sub),
 			}
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1036,6 +1048,10 @@ func orderItemFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.Quantity = true
 		case "unitPrice":
 			fo.UnitPrice = true
+		case "order":
+			fo.Order = orderFieldOptionsFromCollected(opCtx, f.Sub)
+		case "product":
+			fo.Product = productFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1168,8 +1184,8 @@ func ownerProfileFieldOptionsFromCollected(opCtx *graphql.OperationContext, fiel
 			fo.OwnerID = true
 		case "bio":
 			fo.Bio = true
-		case "owners":
-			fo.Owners = ownerFieldOptionsFromCollected(opCtx, f.Sub)
+		case "owner":
+			fo.Owner = ownerFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1223,6 +1239,8 @@ func productFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.SKU = true
 		case "createdAt":
 			fo.CreatedAt = true
+		case "category":
+			fo.Category = categoryFieldOptionsFromCollected(opCtx, f.Sub)
 		case "orderItems":
 			fo.OrderItems = &models.OrderItemRelationshipOptions{
 				FieldOptions: orderItemFieldOptionsFromCollected(opCtx, f.Sub),
@@ -1323,6 +1341,8 @@ func productTagLabelFieldOptionsFromCollected(opCtx *graphql.OperationContext, f
 			fo.Label = true
 		case "description":
 			fo.Description = true
+		case "product":
+			fo.Product = productFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1372,8 +1392,8 @@ func profileFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.GithubHandle = true
 		case "verified":
 			fo.Verified = true
-		case "users":
-			fo.Users = userFieldOptionsFromCollected(opCtx, f.Sub)
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1476,6 +1496,51 @@ func sluggedRowFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields
 			fo.Name = true
 		case "slug":
 			fo.Slug = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
+// stepFieldOptionsFromContext returns the
+// models.StepFieldOptions for the current GraphQL request.
+func stepFieldOptionsFromContext(ctx context.Context) *models.StepFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "StepConnection", "StepListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.StepFieldOptions{}
+	}
+	return stepFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// stepFieldOptionsFromCollected walks one level of
+// the Step selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func stepFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.StepFieldOptions {
+	fo := &models.StepFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "name":
+			fo.Name = true
+		case "previousStepID":
+			fo.PreviousStepID = true
+		case "previousStep":
+			fo.PreviousStep = stepFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1607,6 +1672,8 @@ func timeKeyedNoteFieldOptionsFromCollected(opCtx *graphql.OperationContext, fie
 			fo.KeyedAt = true
 		case "note":
 			fo.Note = true
+		case "timeKeyed":
+			fo.TimeKeyed = timeKeyedFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {

@@ -2404,7 +2404,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 		{
 			name:   "auto-detected O2O holds the FK on the source",
 			table:  "profiles",
-			field:  "Users",
+			field:  "User",
 			want:   false,
 			reason: "profiles.user_id is on the source table, not on users",
 		},
@@ -2442,7 +2442,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 	// The two O2O edges disagree on FKOnTarget while agreeing on Side, which is
 	// the whole reason Side cannot stand in for it (PRD §13.1).
 	t.Run("both O2O edges declare the same Side", func(t *testing.T) {
-		for _, c := range []struct{ table, field string }{{"profiles", "Users"}, {"assets", "PrimaryDocument"}} {
+		for _, c := range []struct{ table, field string }{{"profiles", "User"}, {"assets", "PrimaryDocument"}} {
 			if got := rel(t, c.table, c.field).Side; got != parser.SideParent {
 				t.Errorf("%s.%s Side = %v, want SideParent", c.table, c.field, got)
 			}
@@ -2450,12 +2450,9 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 	})
 }
 
-// Chained O2O joins are built from contexts that findO2ORelationships creates by
-// calling relationshipToContext / configRelationshipToContext *directly*, not
-// through buildRelationshipContexts. Deriving FKOnTarget anywhere but inside
-// those two constructors leaves a chained edge at the zero value, which silently
-// inverts its JOIN ON clause. Pin the ON clause of a chain whose second hop
-// holds its FK on the target.
+// A chained edge's FKOnTarget must survive the chain's own derivation of the
+// target's edges; at the zero value it silently inverts the JOIN ON clause.
+// Pin the ON clause of a chain whose second hop holds its FK on the target.
 func TestBuildO2OJoinDetails_chainedFKOnTarget(t *testing.T) {
 	schema := &parser.Schema{
 		Tables: []parser.Table{

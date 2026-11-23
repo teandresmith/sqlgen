@@ -118,6 +118,22 @@
           "constraint": "moment_tag_links_tag_id_fkey"
         }
       }
+    },
+    {
+      "name": "owner",
+      "kind": "o2o",
+      "target_entity": "MomentOwner",
+      "fk": {
+        "table": "moments",
+        "schema": "public",
+        "columns": [
+          "owner_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "moments_owner_id_fkey"
+      }
     }
   ],
   "methods": {

@@ -102,7 +102,7 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 			name: "time key next to a key of another type",
 			schema: "CREATE TABLE stamps (k timestamptz PRIMARY KEY);\n" +
 				"CREATE TABLE stamp_kids (id serial PRIMARY KEY, k text REFERENCES stamps(k));",
-			want: []string{`"stamp_kids" pairs public.stamp_kids.k (text) with public.stamps.k (timestamptz), a time column next to a column of another type`},
+			want: []string{`"stamp" pairs public.stamp_kids.k (text) with public.stamps.k (timestamptz), a time column next to a column of another type`},
 		},
 		{
 			name:   "column name override colliding with another field",

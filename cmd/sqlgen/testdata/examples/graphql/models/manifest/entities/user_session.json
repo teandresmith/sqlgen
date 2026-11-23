@@ -106,7 +106,24 @@
       "comment": ""
     }
   ],
-  "relationships": [],
+  "relationships": [
+    {
+      "name": "user",
+      "kind": "o2o",
+      "target_entity": "User",
+      "fk": {
+        "table": "user_sessions",
+        "schema": "public",
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "user_sessions_user_id_fkey"
+      }
+    }
+  ],
   "methods": {
     "query": [
       {

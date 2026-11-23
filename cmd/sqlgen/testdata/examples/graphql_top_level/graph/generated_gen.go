@@ -91,6 +91,7 @@ type ComplexityRoot struct {
 	}
 
 	Product struct {
+		Category   func(childComplexity int) int
 		CategoryID func(childComplexity int) int
 		CreatedAt  func(childComplexity int) int
 		ID         func(childComplexity int) int
@@ -424,6 +425,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.PageInfo.StartCursor(childComplexity), true
 
+	case "Product.category":
+		if e.ComplexityRoot.Product.Category == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Product.Category(childComplexity), true
 	case "Product.categoryID":
 		if e.ComplexityRoot.Product.CategoryID == nil {
 			break
@@ -786,6 +793,8 @@ func (ec *executionContext) childFields_Product(ctx context.Context, field graph
 		return ec.fieldContext_Product_categoryID(ctx, field)
 	case "createdAt":
 		return ec.fieldContext_Product_createdAt(ctx, field)
+	case "category":
+		return ec.fieldContext_Product_category(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Product", field.Name)
 }
@@ -2537,6 +2546,38 @@ func (ec *executionContext) _Product_createdAt(ctx context.Context, field graphq
 }
 func (ec *executionContext) fieldContext_Product_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Product", field, false, false, errors.New("field of type Time does not have child fields"))
+}
+
+func (ec *executionContext) _Product_category(ctx context.Context, field graphql.CollectedField, obj *models.Product) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Product_category(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Category, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Category) graphql.Marshaler {
+			return ec.marshalOCategory2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphql_top_levelᚋmodelsᚐCategory(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Product_category(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Product",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Category(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _ProductConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Product]) (ret graphql.Marshaler) {
@@ -5707,6 +5748,11 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 		case "createdAt":
 			out.Values[i] = ec._Product_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "category":
+			out.Values[i] = ec._Product_category(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:

@@ -573,17 +573,36 @@ func TestFilterTemplate_NilRelationshipMemberContributesNoSQL(t *testing.T) {
 // TestRelationshipFilters_ColumnComparatorKeepsItsFieldName pins the collision
 // rule (PRD §11.1): a list relationship whose Go field name a column comparator
 // already takes gets no relationship member, and the column's comparator stays.
+// Config cannot produce the pair (PRD §4.13 omits a detected edge there
+// and rejects a declared one), so the test renames a built edge onto the
+// column's field and reruns the filter pass.
 func TestRelationshipFilters_ColumnComparatorKeepsItsFieldName(t *testing.T) {
-	tables := relFilterTablesOn(t, config.DialectPostgres, func(cfg *config.RootConfig) {
-		cfg.Tables["users"] = config.TableConfig{
-			Relationships: []config.TableRelationship{
-				// Over a key no foreign key declares, so the detected orders
-				// edge stays as the control below.
-				{Name: "Email", Type: "one_to_many", Table: "orders", FK: config.KeyColumns{"workspace_id"}},
-			},
-		}
-	})
-	users := tables["users"]
+	in := testInput(relFilterSchema())
+	detectRelationships(in.Schema)
+	in.Config.Tables["users"] = config.TableConfig{
+		Relationships: []config.TableRelationship{
+			// Over a key no foreign key declares, so the detected orders
+			// edge stays as the control below.
+			{Name: "Emails", Type: "one_to_many", Table: "orders", FK: config.KeyColumns{"workspace_id"}},
+		},
+	}
+	tables, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema: %v", err)
+	}
+	i := slices.IndexFunc(tables, func(tc gen.TableContext) bool { return tc.TableName == "users" })
+	if i < 0 {
+		t.Fatal("no users context")
+	}
+	j := slices.IndexFunc(tables[i].O2MRelationships, func(r gen.RelationshipContext) bool { return r.Name == "Emails" })
+	if j < 0 {
+		t.Fatalf("users has no Emails edge: %v", tables[i].O2MRelationships)
+	}
+	tables[i].O2MRelationships[j].FieldName = "Email"
+	if err := gen.WireRelationshipFiltersForTest(tables); err != nil {
+		t.Fatalf("wiring relationship filters: %v", err)
+	}
+	users := tables[i]
 
 	if slices.Contains(relFilterNames(users.RelationshipFilters), "Email") {
 		t.Errorf("users relationship filters = %v, want no Email member; the email column owns the name", relFilterNames(users.RelationshipFilters))

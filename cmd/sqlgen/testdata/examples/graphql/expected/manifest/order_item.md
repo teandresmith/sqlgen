@@ -32,6 +32,13 @@
 | `idx_order_items_order_product` | order_id, product_id |  | btree |  |
 | `order_items_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| order | o2o | Order | public.order_items.order_id |  |
+| product | o2o | Product | public.order_items.product_id |  |
+
 ## Query methods
 
 ### Get

@@ -134,6 +134,8 @@ func productFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.CategoryID = true
 		case "createdAt":
 			fo.CreatedAt = true
+		case "category":
+			fo.Category = categoryFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {

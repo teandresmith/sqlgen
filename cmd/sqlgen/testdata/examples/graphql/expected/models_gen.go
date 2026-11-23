@@ -16158,6 +16158,9 @@ type Event struct {
 	Line2ID     *string             `db:"line2_id" json:"line2_id"`
 	Address2ID  *string             `db:"address2_id" json:"address2_id"`
 	S3URL       *string             `db:"s3_url" json:"s3_url"`
+
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // EventClient provides type-safe operations for the events table.
@@ -16493,25 +16496,58 @@ func (c *eventClient) GetMany(ctx context.Context, input *GetEventsInput, opts .
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var events []*Event
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("e", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "e",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		events, err = scanEvents(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			events, err = scanEventsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			events, err = scanEvents(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return events, nil
@@ -19132,27 +19168,28 @@ func (f *EventFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 
 // EventFieldOptions controls column selection and relationship loading for events queries.
 type EventFieldOptions struct {
-	ID          bool `json:"id"`
-	UserID      bool `json:"user_id"`
-	Action      bool `json:"action"`
-	OccurredAt  bool `json:"occurred_at"`
-	ProcessedAt bool `json:"processed_at"`
-	Adjustment  bool `json:"adjustment"`
-	RetryCount  bool `json:"retry_count"`
-	Succeeded   bool `json:"succeeded"`
-	MAC         bool `json:"mac"`
-	OSName      bool `json:"os_name"`
-	IOCount     bool `json:"io_count"`
-	PKVal       bool `json:"pk_val"`
-	FKVal       bool `json:"fk_val"`
-	ASCIIArt    bool `json:"ascii_art"`
-	CSVData     bool `json:"csv_data"`
-	TCPPort     bool `json:"tcp_port"`
-	Utf8Body    bool `json:"utf8_body"`
-	HTTP2Flag   bool `json:"http2_flag"`
-	Line2ID     bool `json:"line2_id"`
-	Address2ID  bool `json:"address2_id"`
-	S3URL       bool `json:"s3_url"`
+	ID          bool              `json:"id"`
+	UserID      bool              `json:"user_id"`
+	Action      bool              `json:"action"`
+	OccurredAt  bool              `json:"occurred_at"`
+	ProcessedAt bool              `json:"processed_at"`
+	Adjustment  bool              `json:"adjustment"`
+	RetryCount  bool              `json:"retry_count"`
+	Succeeded   bool              `json:"succeeded"`
+	MAC         bool              `json:"mac"`
+	OSName      bool              `json:"os_name"`
+	IOCount     bool              `json:"io_count"`
+	PKVal       bool              `json:"pk_val"`
+	FKVal       bool              `json:"fk_val"`
+	ASCIIArt    bool              `json:"ascii_art"`
+	CSVData     bool              `json:"csv_data"`
+	TCPPort     bool              `json:"tcp_port"`
+	Utf8Body    bool              `json:"utf8_body"`
+	HTTP2Flag   bool              `json:"http2_flag"`
+	Line2ID     bool              `json:"line2_id"`
+	Address2ID  bool              `json:"address2_id"`
+	S3URL       bool              `json:"s3_url"`
+	User        *UserFieldOptions `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -19318,6 +19355,9 @@ func (fo *EventFieldOptions) HasSelectedColumns() bool {
 	if fo.S3URL {
 		return true
 	}
+	if fo.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -19385,6 +19425,308 @@ type GetEventsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *eventClient) resolveO2OJoins(d sql.Dialect, fo *EventFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.User != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "users"},
+			Alias: "u",
+			On:    fmt.Sprintf("u.%s = e.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.User.Columns(), "id"),
+			SoftDelete: &sql.SoftDeleteOptions{
+				Column: "deleted_at",
+				Type:   sql.SoftDeleteTimestamp,
+			},
+		})
+		if fo.User.Badge != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "public", Name: "user_badges"},
+				Alias: "b",
+				On:    fmt.Sprintf("b.%s = u.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.User.Badge.Columns(), "id"),
+			})
+			if fo.User.Badge.User != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "public", Name: "users"},
+					Alias: "u2",
+					On:    fmt.Sprintf("u2.%s = b.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.User.Badge.User.Columns(), "id"),
+					SoftDelete: &sql.SoftDeleteOptions{
+						Column: "deleted_at",
+						Type:   sql.SoftDeleteTimestamp,
+					},
+				})
+				if fo.User.Badge.User.Badge != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "public", Name: "user_badges"},
+						Alias: "b2",
+						On:    fmt.Sprintf("b2.%s = u2.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.User.Badge.User.Badge.Columns(), "id"),
+					})
+					if fo.User.Badge.User.Badge.User != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "public", Name: "users"},
+							Alias: "u3",
+							On:    fmt.Sprintf("u3.%s = b2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.User.Badge.User.Badge.User.Columns(), "id"),
+							SoftDelete: &sql.SoftDeleteOptions{
+								Column: "deleted_at",
+								Type:   sql.SoftDeleteTimestamp,
+							},
+						})
+						if fo.User.Badge.User.Badge.User.Badge != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "public", Name: "user_badges"},
+								Alias: "b3",
+								On:    fmt.Sprintf("b3.%s = u3.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.User.Badge.User.Badge.User.Badge.Columns(), "id"),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	return joins
+}
+
+// scanEventsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Event entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanEventsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Event, error) {
+	var result []*Event
+	for rows.Next() {
+		e := &Event{}
+		b := &UserBadge{}
+		bHasData := false
+		b2 := &UserBadge{}
+		b2HasData := false
+		b3 := &UserBadge{}
+		b3HasData := false
+		u := &User{}
+		uHasData := false
+		u2 := &User{}
+		u2HasData := false
+		u3 := &User{}
+		u3HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "e.id":
+				targets[idx] = &e.ID
+			case "e.user_id":
+				targets[idx] = &e.UserID
+			case "e.action":
+				targets[idx] = &e.Action
+			case "e.occurred_at":
+				targets[idx] = &e.OccurredAt
+			case "e.processed_at":
+				targets[idx] = &e.ProcessedAt
+			case "e.adjustment":
+				targets[idx] = &e.Adjustment
+			case "e.retry_count":
+				targets[idx] = &e.RetryCount
+			case "e.succeeded":
+				targets[idx] = &e.Succeeded
+			case "e.mac":
+				targets[idx] = &e.MAC
+			case "e.os_name":
+				targets[idx] = &e.OSName
+			case "e.io_count":
+				targets[idx] = &e.IOCount
+			case "e.pk_val":
+				targets[idx] = &e.PKVal
+			case "e.fk_val":
+				targets[idx] = &e.FKVal
+			case "e.ascii_art":
+				targets[idx] = &e.ASCIIArt
+			case "e.csv_data":
+				targets[idx] = &e.CSVData
+			case "e.tcp_port":
+				targets[idx] = &e.TCPPort
+			case "e.utf8_body":
+				targets[idx] = &e.Utf8Body
+			case "e.http2_flag":
+				targets[idx] = &e.HTTP2Flag
+			case "e.line2_id":
+				targets[idx] = &e.Line2ID
+			case "e.address2_id":
+				targets[idx] = &e.Address2ID
+			case "e.s3_url":
+				targets[idx] = &e.S3URL
+			case "b.id":
+				targets[idx] = database.NullScan(&b.ID)
+				bHasData = true
+			case "b.user_id":
+				targets[idx] = &b.UserID
+			case "b.label":
+				targets[idx] = database.NullScan(&b.Label)
+			case "b2.id":
+				targets[idx] = database.NullScan(&b2.ID)
+				b2HasData = true
+			case "b2.user_id":
+				targets[idx] = &b2.UserID
+			case "b2.label":
+				targets[idx] = database.NullScan(&b2.Label)
+			case "b3.id":
+				targets[idx] = database.NullScan(&b3.ID)
+				b3HasData = true
+			case "b3.user_id":
+				targets[idx] = &b3.UserID
+			case "b3.label":
+				targets[idx] = database.NullScan(&b3.Label)
+			case "u.id":
+				targets[idx] = database.NullScan(&u.ID)
+				uHasData = true
+			case "u.email":
+				targets[idx] = database.NullScan(&u.Email)
+			case "u.name":
+				targets[idx] = database.NullScan(&u.Name)
+			case "u.metadata":
+				targets[idx] = &u.Metadata
+			case "u.is_active":
+				targets[idx] = database.NullScan(&u.IsActive)
+			case "u.password_hash":
+				targets[idx] = database.NullScan(&u.PasswordHash)
+			case "u.new_password":
+				targets[idx] = &u.NewPassword
+			case "u.last_login_at":
+				targets[idx] = &u.LastLoginAt
+			case "u.internal_score":
+				targets[idx] = &u.InternalScore
+			case "u.ip_addr":
+				targets[idx] = &u.ClientIP
+			case "u.created_at":
+				targets[idx] = database.NullScan(&u.CreatedAt)
+			case "u.updated_at":
+				targets[idx] = &u.UpdatedAt
+			case "u.deleted_at":
+				targets[idx] = &u.DeletedAt
+			case "u2.id":
+				targets[idx] = database.NullScan(&u2.ID)
+				u2HasData = true
+			case "u2.email":
+				targets[idx] = database.NullScan(&u2.Email)
+			case "u2.name":
+				targets[idx] = database.NullScan(&u2.Name)
+			case "u2.metadata":
+				targets[idx] = &u2.Metadata
+			case "u2.is_active":
+				targets[idx] = database.NullScan(&u2.IsActive)
+			case "u2.password_hash":
+				targets[idx] = database.NullScan(&u2.PasswordHash)
+			case "u2.new_password":
+				targets[idx] = &u2.NewPassword
+			case "u2.last_login_at":
+				targets[idx] = &u2.LastLoginAt
+			case "u2.internal_score":
+				targets[idx] = &u2.InternalScore
+			case "u2.ip_addr":
+				targets[idx] = &u2.ClientIP
+			case "u2.created_at":
+				targets[idx] = database.NullScan(&u2.CreatedAt)
+			case "u2.updated_at":
+				targets[idx] = &u2.UpdatedAt
+			case "u2.deleted_at":
+				targets[idx] = &u2.DeletedAt
+			case "u3.id":
+				targets[idx] = database.NullScan(&u3.ID)
+				u3HasData = true
+			case "u3.email":
+				targets[idx] = database.NullScan(&u3.Email)
+			case "u3.name":
+				targets[idx] = database.NullScan(&u3.Name)
+			case "u3.metadata":
+				targets[idx] = &u3.Metadata
+			case "u3.is_active":
+				targets[idx] = database.NullScan(&u3.IsActive)
+			case "u3.password_hash":
+				targets[idx] = database.NullScan(&u3.PasswordHash)
+			case "u3.new_password":
+				targets[idx] = &u3.NewPassword
+			case "u3.last_login_at":
+				targets[idx] = &u3.LastLoginAt
+			case "u3.internal_score":
+				targets[idx] = &u3.InternalScore
+			case "u3.ip_addr":
+				targets[idx] = &u3.ClientIP
+			case "u3.created_at":
+				targets[idx] = database.NullScan(&u3.CreatedAt)
+			case "u3.updated_at":
+				targets[idx] = &u3.UpdatedAt
+			case "u3.deleted_at":
+				targets[idx] = &u3.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan event with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if u3HasData && u3.ID != (uuid.UUID{}) {
+			b2.User = u3
+		} else {
+			b2.User = nil
+		}
+		if u2HasData && u2.ID != (uuid.UUID{}) {
+			b.User = u2
+		} else {
+			b.User = nil
+		}
+		if uHasData && u.ID != (uuid.UUID{}) {
+			e.User = u
+		} else {
+			e.User = nil
+		}
+		if b3HasData && b3.ID != 0 {
+			u3.Badge = b3
+		} else {
+			u3.Badge = nil
+		}
+		if b2HasData && b2.ID != 0 {
+			u2.Badge = b2
+		} else {
+			u2.Badge = nil
+		}
+		if bHasData && b.ID != 0 {
+			u.Badge = b
+		} else {
+			u.Badge = nil
+		}
+
+		result = append(result, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate event rows: %w", err)
+	}
+	return result, nil
 }
 
 type FilterProbe struct {
@@ -35134,6 +35476,11 @@ type OrderItem struct {
 	// SourceIP - Client address the line item was submitted from
 	SourceIP  *netip.Addr `db:"source_ip" json:"source_ip"`
 	CreatedAt time.Time   `db:"created_at" json:"created_at"`
+
+	// Order - one-to-one relationship with the orders table.
+	Order *Order `db:"-" json:"order"`
+	// Product - one-to-one relationship with the products table.
+	Product *Product `db:"-" json:"product"`
 }
 
 // OrderItemClient provides type-safe operations for the order_items table.
@@ -35443,25 +35790,58 @@ func (c *orderItemClient) GetMany(ctx context.Context, input *GetOrderItemsInput
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var orderItems []*OrderItem
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("o", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "o",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		orderItems, err = scanOrderItems(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			orderItems, err = scanOrderItemsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			orderItems, err = scanOrderItems(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return orderItems, nil
@@ -37451,14 +37831,16 @@ func (f *OrderItemFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 // OrderItemFieldOptions controls column selection and relationship loading for order_items queries.
 type OrderItemFieldOptions struct {
-	ID          bool `json:"id"`
-	OrderID     bool `json:"order_id"`
-	ProductID   bool `json:"product_id"`
-	Quantity    bool `json:"quantity"`
-	UnitPrice   bool `json:"unit_price"`
-	ExternalRef bool `json:"external_ref"`
-	SourceIP    bool `json:"source_ip"`
-	CreatedAt   bool `json:"created_at"`
+	ID          bool                 `json:"id"`
+	OrderID     bool                 `json:"order_id"`
+	ProductID   bool                 `json:"product_id"`
+	Quantity    bool                 `json:"quantity"`
+	UnitPrice   bool                 `json:"unit_price"`
+	ExternalRef bool                 `json:"external_ref"`
+	SourceIP    bool                 `json:"source_ip"`
+	CreatedAt   bool                 `json:"created_at"`
+	Order       *OrderFieldOptions   `json:"order"`
+	Product     *ProductFieldOptions `json:"product"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -37533,6 +37915,12 @@ func (fo *OrderItemFieldOptions) HasSelectedColumns() bool {
 	if fo.CreatedAt {
 		return true
 	}
+	if fo.Order != nil {
+		return true
+	}
+	if fo.Product != nil {
+		return true
+	}
 	return false
 }
 
@@ -37580,6 +37968,362 @@ type GetOrderItemsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *orderItemClient) resolveO2OJoins(d sql.Dialect, fo *OrderItemFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Order != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "orders"},
+			Alias: "o2",
+			On:    fmt.Sprintf("o2.%s = o.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("order_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Order.Columns(), "id"),
+			SoftDelete: &sql.SoftDeleteOptions{
+				Column: "deleted_at",
+				Type:   sql.SoftDeleteTimestamp,
+			},
+		})
+		if fo.Order.User != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "public", Name: "users"},
+				Alias: "u",
+				On:    fmt.Sprintf("u.%s = o2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Order.User.Columns(), "id"),
+				SoftDelete: &sql.SoftDeleteOptions{
+					Column: "deleted_at",
+					Type:   sql.SoftDeleteTimestamp,
+				},
+			})
+			if fo.Order.User.Badge != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "public", Name: "user_badges"},
+					Alias: "b",
+					On:    fmt.Sprintf("b.%s = u.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.Order.User.Badge.Columns(), "id"),
+				})
+				if fo.Order.User.Badge.User != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "public", Name: "users"},
+						Alias: "u2",
+						On:    fmt.Sprintf("u2.%s = b.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.Order.User.Badge.User.Columns(), "id"),
+						SoftDelete: &sql.SoftDeleteOptions{
+							Column: "deleted_at",
+							Type:   sql.SoftDeleteTimestamp,
+						},
+					})
+					if fo.Order.User.Badge.User.Badge != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "public", Name: "user_badges"},
+							Alias: "b2",
+							On:    fmt.Sprintf("b2.%s = u2.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.Order.User.Badge.User.Badge.Columns(), "id"),
+						})
+						if fo.Order.User.Badge.User.Badge.User != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "public", Name: "users"},
+								Alias: "u3",
+								On:    fmt.Sprintf("u3.%s = b2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.Order.User.Badge.User.Badge.User.Columns(), "id"),
+								SoftDelete: &sql.SoftDeleteOptions{
+									Column: "deleted_at",
+									Type:   sql.SoftDeleteTimestamp,
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	if fo.Product != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "products"},
+			Alias: "p",
+			On:    fmt.Sprintf("p.%s = o.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("product_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Product.Columns(), "id"),
+			SoftDelete: &sql.SoftDeleteOptions{
+				Column: "deleted_at",
+				Type:   sql.SoftDeleteTimestamp,
+			},
+		})
+		if fo.Product.Category != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "public", Name: "categories"},
+				Alias: "c",
+				On:    fmt.Sprintf("c.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("category_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Product.Category.Columns(), "id"),
+			})
+		}
+	}
+	return joins
+}
+
+// scanOrderItemsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// OrderItem entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanOrderItemsWithOneToOneJoins(rows database.Rows, columns []string) ([]*OrderItem, error) {
+	var result []*OrderItem
+	for rows.Next() {
+		o := &OrderItem{}
+		b := &UserBadge{}
+		bHasData := false
+		b2 := &UserBadge{}
+		b2HasData := false
+		c := &Category{}
+		cHasData := false
+		o2 := &Order{}
+		o2HasData := false
+		p := &Product{}
+		pHasData := false
+		u := &User{}
+		uHasData := false
+		u2 := &User{}
+		u2HasData := false
+		u3 := &User{}
+		u3HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "o.id":
+				targets[idx] = &o.ID
+			case "o.order_id":
+				targets[idx] = &o.OrderID
+			case "o.product_id":
+				targets[idx] = &o.ProductID
+			case "o.quantity":
+				targets[idx] = &o.Quantity
+			case "o.unit_price":
+				targets[idx] = &o.UnitPrice
+			case "o.external_ref":
+				targets[idx] = &o.ExternalRef
+			case "o.source_ip":
+				targets[idx] = &o.SourceIP
+			case "o.created_at":
+				targets[idx] = &o.CreatedAt
+			case "b.id":
+				targets[idx] = database.NullScan(&b.ID)
+				bHasData = true
+			case "b.user_id":
+				targets[idx] = &b.UserID
+			case "b.label":
+				targets[idx] = database.NullScan(&b.Label)
+			case "b2.id":
+				targets[idx] = database.NullScan(&b2.ID)
+				b2HasData = true
+			case "b2.user_id":
+				targets[idx] = &b2.UserID
+			case "b2.label":
+				targets[idx] = database.NullScan(&b2.Label)
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "c.description":
+				targets[idx] = &c.Description
+			case "c.created_at":
+				targets[idx] = database.NullScan(&c.CreatedAt)
+			case "o2.id":
+				targets[idx] = database.NullScan(&o2.ID)
+				o2HasData = true
+			case "o2.user_id":
+				targets[idx] = database.NullScan(&o2.UserID)
+			case "o2.total":
+				targets[idx] = database.NullScan(&o2.Total)
+			case "o2.notes":
+				targets[idx] = &o2.Notes
+			case "o2.created_at":
+				targets[idx] = database.NullScan(&o2.CreatedAt)
+			case "o2.updated_at":
+				targets[idx] = &o2.UpdatedAt
+			case "o2.deleted_at":
+				targets[idx] = &o2.DeletedAt
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.name":
+				targets[idx] = database.NullScan(&p.Name)
+			case "p.description":
+				targets[idx] = &p.Description
+			case "p.price":
+				targets[idx] = database.NullScan(&p.Price)
+			case "p.stock":
+				targets[idx] = database.NullScan(&p.Stock)
+			case "p.category_id":
+				targets[idx] = database.NullScan(&p.CategoryID)
+			case "p.created_at":
+				targets[idx] = database.NullScan(&p.CreatedAt)
+			case "p.updated_at":
+				targets[idx] = &p.UpdatedAt
+			case "p.deleted_at":
+				targets[idx] = &p.DeletedAt
+			case "u.id":
+				targets[idx] = database.NullScan(&u.ID)
+				uHasData = true
+			case "u.email":
+				targets[idx] = database.NullScan(&u.Email)
+			case "u.name":
+				targets[idx] = database.NullScan(&u.Name)
+			case "u.metadata":
+				targets[idx] = &u.Metadata
+			case "u.is_active":
+				targets[idx] = database.NullScan(&u.IsActive)
+			case "u.password_hash":
+				targets[idx] = database.NullScan(&u.PasswordHash)
+			case "u.new_password":
+				targets[idx] = &u.NewPassword
+			case "u.last_login_at":
+				targets[idx] = &u.LastLoginAt
+			case "u.internal_score":
+				targets[idx] = &u.InternalScore
+			case "u.ip_addr":
+				targets[idx] = &u.ClientIP
+			case "u.created_at":
+				targets[idx] = database.NullScan(&u.CreatedAt)
+			case "u.updated_at":
+				targets[idx] = &u.UpdatedAt
+			case "u.deleted_at":
+				targets[idx] = &u.DeletedAt
+			case "u2.id":
+				targets[idx] = database.NullScan(&u2.ID)
+				u2HasData = true
+			case "u2.email":
+				targets[idx] = database.NullScan(&u2.Email)
+			case "u2.name":
+				targets[idx] = database.NullScan(&u2.Name)
+			case "u2.metadata":
+				targets[idx] = &u2.Metadata
+			case "u2.is_active":
+				targets[idx] = database.NullScan(&u2.IsActive)
+			case "u2.password_hash":
+				targets[idx] = database.NullScan(&u2.PasswordHash)
+			case "u2.new_password":
+				targets[idx] = &u2.NewPassword
+			case "u2.last_login_at":
+				targets[idx] = &u2.LastLoginAt
+			case "u2.internal_score":
+				targets[idx] = &u2.InternalScore
+			case "u2.ip_addr":
+				targets[idx] = &u2.ClientIP
+			case "u2.created_at":
+				targets[idx] = database.NullScan(&u2.CreatedAt)
+			case "u2.updated_at":
+				targets[idx] = &u2.UpdatedAt
+			case "u2.deleted_at":
+				targets[idx] = &u2.DeletedAt
+			case "u3.id":
+				targets[idx] = database.NullScan(&u3.ID)
+				u3HasData = true
+			case "u3.email":
+				targets[idx] = database.NullScan(&u3.Email)
+			case "u3.name":
+				targets[idx] = database.NullScan(&u3.Name)
+			case "u3.metadata":
+				targets[idx] = &u3.Metadata
+			case "u3.is_active":
+				targets[idx] = database.NullScan(&u3.IsActive)
+			case "u3.password_hash":
+				targets[idx] = database.NullScan(&u3.PasswordHash)
+			case "u3.new_password":
+				targets[idx] = &u3.NewPassword
+			case "u3.last_login_at":
+				targets[idx] = &u3.LastLoginAt
+			case "u3.internal_score":
+				targets[idx] = &u3.InternalScore
+			case "u3.ip_addr":
+				targets[idx] = &u3.ClientIP
+			case "u3.created_at":
+				targets[idx] = database.NullScan(&u3.CreatedAt)
+			case "u3.updated_at":
+				targets[idx] = &u3.UpdatedAt
+			case "u3.deleted_at":
+				targets[idx] = &u3.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan order_item with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if u3HasData && u3.ID != (uuid.UUID{}) {
+			b2.User = u3
+		} else {
+			b2.User = nil
+		}
+		if u2HasData && u2.ID != (uuid.UUID{}) {
+			b.User = u2
+		} else {
+			b.User = nil
+		}
+		if uHasData && u.ID != (uuid.UUID{}) {
+			o2.User = u
+		} else {
+			o2.User = nil
+		}
+		if pHasData && p.ID != (uuid.UUID{}) {
+			o.Product = p
+		} else {
+			o.Product = nil
+		}
+		if o2HasData && o2.ID != (uuid.UUID{}) {
+			o.Order = o2
+		} else {
+			o.Order = nil
+		}
+		if cHasData && c.ID != 0 {
+			p.Category = c
+		} else {
+			p.Category = nil
+		}
+		if b2HasData && b2.ID != 0 {
+			u2.Badge = b2
+		} else {
+			u2.Badge = nil
+		}
+		if bHasData && b.ID != 0 {
+			u.Badge = b
+		} else {
+			u.Badge = nil
+		}
+
+		result = append(result, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate order_item rows: %w", err)
+	}
+	return result, nil
+}
+
 type Order struct {
 	ID        uuid.UUID       `db:"id" json:"id"`
 	UserID    uuid.UUID       `db:"user_id" json:"user_id"`
@@ -37591,6 +38335,8 @@ type Order struct {
 
 	// OrderItems - one-to-many relationship with the order_items table.
 	OrderItems []*OrderItem `db:"-" json:"order_items"`
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // OrderClient provides type-safe operations for the orders table.
@@ -37973,25 +38719,58 @@ func (c *orderClient) GetMany(ctx context.Context, input *GetOrdersInput, opts .
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var orders []*Order
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("o", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "o",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		orders, err = scanOrders(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			orders, err = scanOrdersWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			orders, err = scanOrders(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -40126,6 +40905,7 @@ func orderNestedParentFieldOptions(fo *OrderFieldOptions) *OrderFieldOptions {
 	}
 	scalars := *fo
 	scalars.OrderItems = nil
+	scalars.User = nil
 	scalars.ID = true
 	return &scalars
 }
@@ -40138,7 +40918,7 @@ func orderNestedSelectsRelationship(fo *OrderFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.OrderItems != nil
+	return fo.OrderItems != nil || fo.User != nil
 }
 
 // CreateWithRelated creates a order together with rows on its nested
@@ -41126,6 +41906,7 @@ type OrderFieldOptions struct {
 	UpdatedAt  bool                          `json:"updated_at"`
 	DeletedAt  bool                          `json:"deleted_at"`
 	OrderItems *OrderItemRelationshipOptions `json:"order_items"`
+	User       *UserFieldOptions             `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -41196,6 +41977,9 @@ func (fo *OrderFieldOptions) HasSelectedColumns() bool {
 	if fo.OrderItems != nil {
 		return true
 	}
+	if fo.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -41244,6 +42028,280 @@ type GetOrdersInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *orderClient) resolveO2OJoins(d sql.Dialect, fo *OrderFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.User != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "users"},
+			Alias: "u",
+			On:    fmt.Sprintf("u.%s = o.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.User.Columns(), "id"),
+			SoftDelete: &sql.SoftDeleteOptions{
+				Column: "deleted_at",
+				Type:   sql.SoftDeleteTimestamp,
+			},
+		})
+		if fo.User.Badge != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "public", Name: "user_badges"},
+				Alias: "b",
+				On:    fmt.Sprintf("b.%s = u.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.User.Badge.Columns(), "id"),
+			})
+			if fo.User.Badge.User != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "public", Name: "users"},
+					Alias: "u2",
+					On:    fmt.Sprintf("u2.%s = b.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.User.Badge.User.Columns(), "id"),
+					SoftDelete: &sql.SoftDeleteOptions{
+						Column: "deleted_at",
+						Type:   sql.SoftDeleteTimestamp,
+					},
+				})
+				if fo.User.Badge.User.Badge != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "public", Name: "user_badges"},
+						Alias: "b2",
+						On:    fmt.Sprintf("b2.%s = u2.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.User.Badge.User.Badge.Columns(), "id"),
+					})
+					if fo.User.Badge.User.Badge.User != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "public", Name: "users"},
+							Alias: "u3",
+							On:    fmt.Sprintf("u3.%s = b2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.User.Badge.User.Badge.User.Columns(), "id"),
+							SoftDelete: &sql.SoftDeleteOptions{
+								Column: "deleted_at",
+								Type:   sql.SoftDeleteTimestamp,
+							},
+						})
+						if fo.User.Badge.User.Badge.User.Badge != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "public", Name: "user_badges"},
+								Alias: "b3",
+								On:    fmt.Sprintf("b3.%s = u3.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.User.Badge.User.Badge.User.Badge.Columns(), "id"),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	return joins
+}
+
+// scanOrdersWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Order entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanOrdersWithOneToOneJoins(rows database.Rows, columns []string) ([]*Order, error) {
+	var result []*Order
+	for rows.Next() {
+		o := &Order{}
+		b := &UserBadge{}
+		bHasData := false
+		b2 := &UserBadge{}
+		b2HasData := false
+		b3 := &UserBadge{}
+		b3HasData := false
+		u := &User{}
+		uHasData := false
+		u2 := &User{}
+		u2HasData := false
+		u3 := &User{}
+		u3HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "o.id":
+				targets[idx] = &o.ID
+			case "o.user_id":
+				targets[idx] = &o.UserID
+			case "o.total":
+				targets[idx] = &o.Total
+			case "o.notes":
+				targets[idx] = &o.Notes
+			case "o.created_at":
+				targets[idx] = &o.CreatedAt
+			case "o.updated_at":
+				targets[idx] = &o.UpdatedAt
+			case "o.deleted_at":
+				targets[idx] = &o.DeletedAt
+			case "b.id":
+				targets[idx] = database.NullScan(&b.ID)
+				bHasData = true
+			case "b.user_id":
+				targets[idx] = &b.UserID
+			case "b.label":
+				targets[idx] = database.NullScan(&b.Label)
+			case "b2.id":
+				targets[idx] = database.NullScan(&b2.ID)
+				b2HasData = true
+			case "b2.user_id":
+				targets[idx] = &b2.UserID
+			case "b2.label":
+				targets[idx] = database.NullScan(&b2.Label)
+			case "b3.id":
+				targets[idx] = database.NullScan(&b3.ID)
+				b3HasData = true
+			case "b3.user_id":
+				targets[idx] = &b3.UserID
+			case "b3.label":
+				targets[idx] = database.NullScan(&b3.Label)
+			case "u.id":
+				targets[idx] = database.NullScan(&u.ID)
+				uHasData = true
+			case "u.email":
+				targets[idx] = database.NullScan(&u.Email)
+			case "u.name":
+				targets[idx] = database.NullScan(&u.Name)
+			case "u.metadata":
+				targets[idx] = &u.Metadata
+			case "u.is_active":
+				targets[idx] = database.NullScan(&u.IsActive)
+			case "u.password_hash":
+				targets[idx] = database.NullScan(&u.PasswordHash)
+			case "u.new_password":
+				targets[idx] = &u.NewPassword
+			case "u.last_login_at":
+				targets[idx] = &u.LastLoginAt
+			case "u.internal_score":
+				targets[idx] = &u.InternalScore
+			case "u.ip_addr":
+				targets[idx] = &u.ClientIP
+			case "u.created_at":
+				targets[idx] = database.NullScan(&u.CreatedAt)
+			case "u.updated_at":
+				targets[idx] = &u.UpdatedAt
+			case "u.deleted_at":
+				targets[idx] = &u.DeletedAt
+			case "u2.id":
+				targets[idx] = database.NullScan(&u2.ID)
+				u2HasData = true
+			case "u2.email":
+				targets[idx] = database.NullScan(&u2.Email)
+			case "u2.name":
+				targets[idx] = database.NullScan(&u2.Name)
+			case "u2.metadata":
+				targets[idx] = &u2.Metadata
+			case "u2.is_active":
+				targets[idx] = database.NullScan(&u2.IsActive)
+			case "u2.password_hash":
+				targets[idx] = database.NullScan(&u2.PasswordHash)
+			case "u2.new_password":
+				targets[idx] = &u2.NewPassword
+			case "u2.last_login_at":
+				targets[idx] = &u2.LastLoginAt
+			case "u2.internal_score":
+				targets[idx] = &u2.InternalScore
+			case "u2.ip_addr":
+				targets[idx] = &u2.ClientIP
+			case "u2.created_at":
+				targets[idx] = database.NullScan(&u2.CreatedAt)
+			case "u2.updated_at":
+				targets[idx] = &u2.UpdatedAt
+			case "u2.deleted_at":
+				targets[idx] = &u2.DeletedAt
+			case "u3.id":
+				targets[idx] = database.NullScan(&u3.ID)
+				u3HasData = true
+			case "u3.email":
+				targets[idx] = database.NullScan(&u3.Email)
+			case "u3.name":
+				targets[idx] = database.NullScan(&u3.Name)
+			case "u3.metadata":
+				targets[idx] = &u3.Metadata
+			case "u3.is_active":
+				targets[idx] = database.NullScan(&u3.IsActive)
+			case "u3.password_hash":
+				targets[idx] = database.NullScan(&u3.PasswordHash)
+			case "u3.new_password":
+				targets[idx] = &u3.NewPassword
+			case "u3.last_login_at":
+				targets[idx] = &u3.LastLoginAt
+			case "u3.internal_score":
+				targets[idx] = &u3.InternalScore
+			case "u3.ip_addr":
+				targets[idx] = &u3.ClientIP
+			case "u3.created_at":
+				targets[idx] = database.NullScan(&u3.CreatedAt)
+			case "u3.updated_at":
+				targets[idx] = &u3.UpdatedAt
+			case "u3.deleted_at":
+				targets[idx] = &u3.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan order with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if u3HasData && u3.ID != (uuid.UUID{}) {
+			b2.User = u3
+		} else {
+			b2.User = nil
+		}
+		if u2HasData && u2.ID != (uuid.UUID{}) {
+			b.User = u2
+		} else {
+			b.User = nil
+		}
+		if uHasData && u.ID != (uuid.UUID{}) {
+			o.User = u
+		} else {
+			o.User = nil
+		}
+		if b3HasData && b3.ID != 0 {
+			u3.Badge = b3
+		} else {
+			u3.Badge = nil
+		}
+		if b2HasData && b2.ID != 0 {
+			u2.Badge = b2
+		} else {
+			u2.Badge = nil
+		}
+		if bHasData && b.ID != 0 {
+			u.Badge = b
+		} else {
+			u.Badge = nil
+		}
+
+		result = append(result, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate order rows: %w", err)
+	}
+	return result, nil
+}
+
 type Product struct {
 	ID          uuid.UUID       `db:"id" json:"id"`
 	Name        string          `db:"name" json:"name"`
@@ -41255,6 +42313,8 @@ type Product struct {
 	UpdatedAt   *time.Time      `db:"updated_at" json:"updated_at"`
 	DeletedAt   *time.Time      `db:"deleted_at" json:"deleted_at"`
 
+	// Category - one-to-one relationship with the categories table.
+	Category *Category `db:"-" json:"category"`
 	// OrderItems - one-to-many relationship with the order_items table.
 	OrderItems []*OrderItem `db:"-" json:"order_items"`
 }
@@ -41643,25 +42703,58 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var products []*Product
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("p", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "p",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		products, err = scanProducts(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			products, err = scanProductsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			products, err = scanProducts(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -43821,6 +44914,7 @@ func productNestedParentFieldOptions(fo *ProductFieldOptions) *ProductFieldOptio
 		return nil
 	}
 	scalars := *fo
+	scalars.Category = nil
 	scalars.OrderItems = nil
 	scalars.ID = true
 	return &scalars
@@ -43834,7 +44928,7 @@ func productNestedSelectsRelationship(fo *ProductFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.OrderItems != nil
+	return fo.Category != nil || fo.OrderItems != nil
 }
 
 // CreateWithRelated creates a product together with rows on its nested
@@ -44856,6 +45950,7 @@ type ProductFieldOptions struct {
 	CreatedAt   bool                          `json:"created_at"`
 	UpdatedAt   bool                          `json:"updated_at"`
 	DeletedAt   bool                          `json:"deleted_at"`
+	Category    *CategoryFieldOptions         `json:"category"`
 	OrderItems  *OrderItemRelationshipOptions `json:"order_items"`
 }
 
@@ -44938,6 +46033,9 @@ func (fo *ProductFieldOptions) HasSelectedColumns() bool {
 	if fo.DeletedAt {
 		return true
 	}
+	if fo.Category != nil {
+		return true
+	}
 	if fo.OrderItems != nil {
 		return true
 	}
@@ -44986,6 +46084,89 @@ type GetProductsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *productClient) resolveO2OJoins(d sql.Dialect, fo *ProductFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Category != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "categories"},
+			Alias: "c",
+			On:    fmt.Sprintf("c.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("category_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Category.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanProductsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Product entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanProductsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Product, error) {
+	var result []*Product
+	for rows.Next() {
+		p := &Product{}
+		c := &Category{}
+		cHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "p.id":
+				targets[idx] = &p.ID
+			case "p.name":
+				targets[idx] = &p.Name
+			case "p.description":
+				targets[idx] = &p.Description
+			case "p.price":
+				targets[idx] = &p.Price
+			case "p.stock":
+				targets[idx] = &p.Stock
+			case "p.category_id":
+				targets[idx] = &p.CategoryID
+			case "p.created_at":
+				targets[idx] = &p.CreatedAt
+			case "p.updated_at":
+				targets[idx] = &p.UpdatedAt
+			case "p.deleted_at":
+				targets[idx] = &p.DeletedAt
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "c.description":
+				targets[idx] = &c.Description
+			case "c.created_at":
+				targets[idx] = database.NullScan(&c.CreatedAt)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan product with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if cHasData && c.ID != 0 {
+			p.Category = c
+		} else {
+			p.Category = nil
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate product rows: %w", err)
+	}
+	return result, nil
+}
+
 type Profile struct {
 	ID        uuid.UUID  `db:"id" json:"id"`
 	UserID    uuid.UUID  `db:"user_id" json:"user_id"`
@@ -44994,8 +46175,8 @@ type Profile struct {
 	Settings  types.JSON `db:"settings" json:"settings"`
 	CreatedAt time.Time  `db:"created_at" json:"created_at"`
 
-	// Users - one-to-one relationship with the users table.
-	Users *User `db:"-" json:"users"`
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // ProfileClient provides type-safe operations for the profiles table.
@@ -47245,7 +48426,7 @@ type ProfileFieldOptions struct {
 	AvatarURL bool              `json:"avatar_url"`
 	Settings  bool              `json:"settings"`
 	CreatedAt bool              `json:"created_at"`
-	Users     *UserFieldOptions `json:"users"`
+	User      *UserFieldOptions `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -47306,7 +48487,7 @@ func (fo *ProfileFieldOptions) HasSelectedColumns() bool {
 	if fo.CreatedAt {
 		return true
 	}
-	if fo.Users != nil {
+	if fo.User != nil {
 		return true
 	}
 	return false
@@ -47355,7 +48536,7 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 		return nil
 	}
 	var joins []sql.JoinClause
-	if fo.Users != nil {
+	if fo.User != nil {
 		joins = append(joins, sql.JoinClause{
 			Table: sql.Table{Schema: "public", Name: "users"},
 			Alias: "u",
@@ -47363,13 +48544,13 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 			// The NULL-detection below reads the target's PK off the scanned
 			// row, so the join carries it even when FieldOptions did not ask
 			// for it — an unselected PK reads as a LEFT JOIN miss.
-			Columns: unionColumns(fo.Users.Columns(), "id"),
+			Columns: unionColumns(fo.User.Columns(), "id"),
 			SoftDelete: &sql.SoftDeleteOptions{
 				Column: "deleted_at",
 				Type:   sql.SoftDeleteTimestamp,
 			},
 		})
-		if fo.Users.Badge != nil {
+		if fo.User.Badge != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "public", Name: "user_badges"},
 				Alias: "b",
@@ -47377,9 +48558,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Users.Badge.Columns(), "id"),
+				Columns: unionColumns(fo.User.Badge.Columns(), "id"),
 			})
-			if fo.Users.Badge.Users != nil {
+			if fo.User.Badge.User != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "public", Name: "users"},
 					Alias: "u2",
@@ -47387,13 +48568,13 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Users.Badge.Users.Columns(), "id"),
+					Columns: unionColumns(fo.User.Badge.User.Columns(), "id"),
 					SoftDelete: &sql.SoftDeleteOptions{
 						Column: "deleted_at",
 						Type:   sql.SoftDeleteTimestamp,
 					},
 				})
-				if fo.Users.Badge.Users.Badge != nil {
+				if fo.User.Badge.User.Badge != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "public", Name: "user_badges"},
 						Alias: "b2",
@@ -47401,9 +48582,9 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Users.Badge.Users.Badge.Columns(), "id"),
+						Columns: unionColumns(fo.User.Badge.User.Badge.Columns(), "id"),
 					})
-					if fo.Users.Badge.Users.Badge.Users != nil {
+					if fo.User.Badge.User.Badge.User != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "public", Name: "users"},
 							Alias: "u3",
@@ -47411,13 +48592,13 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Users.Badge.Users.Badge.Users.Columns(), "id"),
+							Columns: unionColumns(fo.User.Badge.User.Badge.User.Columns(), "id"),
 							SoftDelete: &sql.SoftDeleteOptions{
 								Column: "deleted_at",
 								Type:   sql.SoftDeleteTimestamp,
 							},
 						})
-						if fo.Users.Badge.Users.Badge.Users.Badge != nil {
+						if fo.User.Badge.User.Badge.User.Badge != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "public", Name: "user_badges"},
 								Alias: "b3",
@@ -47425,7 +48606,7 @@ func (c *profileClient) resolveO2OJoins(d sql.Dialect, fo *ProfileFieldOptions) 
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Users.Badge.Users.Badge.Users.Badge.Columns(), "id"),
+								Columns: unionColumns(fo.User.Badge.User.Badge.User.Badge.Columns(), "id"),
 							})
 						}
 					}
@@ -47582,19 +48763,19 @@ func scanProfilesWithOneToOneJoins(rows database.Rows, columns []string) ([]*Pro
 
 		// NULL detection — assign deepest chain first, then parents
 		if u3HasData && u3.ID != (uuid.UUID{}) {
-			b2.Users = u3
+			b2.User = u3
 		} else {
-			b2.Users = nil
+			b2.User = nil
 		}
 		if u2HasData && u2.ID != (uuid.UUID{}) {
-			b.Users = u2
+			b.User = u2
 		} else {
-			b.Users = nil
+			b.User = nil
 		}
 		if uHasData && u.ID != (uuid.UUID{}) {
-			p.Users = u
+			p.User = u
 		} else {
-			p.Users = nil
+			p.User = nil
 		}
 		if b3HasData && b3.ID != 0 {
 			u3.Badge = b3
@@ -53041,8 +54222,8 @@ type TaskReport struct {
 	TaskID      uuid.UUID `db:"task_id" json:"task_id"`
 	Summary     string    `db:"summary" json:"summary"`
 
-	// Tasks - one-to-one relationship with the tasks table.
-	Tasks *Task `db:"-" json:"tasks"`
+	// Task - one-to-one relationship with the tasks table.
+	Task *Task `db:"-" json:"task"`
 }
 
 // TaskReportClient provides type-safe operations for the task_reports table.
@@ -53456,11 +54637,12 @@ func (c *taskReportClient) GetMany(ctx context.Context, input *GetTaskReportsInp
 			// Child tenant filter: intersect the statically known
 			// set of tenanted o2o targets with the JOINs actually emitted for
 			// this call. FieldOptions may select a strict prefix of an o2o
-			// chain, so chained aliases only contribute a WHERE when the
-			// runtime includes them in o2oJoins. The JOIN ON string
-			// is kept free of placeholders so PrefixConditions
-			// numbering stays stable. apply=false under tenancy.required:false
-			// + zero resolver skips the per-alias filter (cross-tenant read).
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
@@ -53468,11 +54650,12 @@ func (c *taskReportClient) GetMany(ctx context.Context, input *GetTaskReportsInp
 				}
 				if apply {
 					tenantedAliases := map[string]string{
+						"c":  "workspace_id",
 						"t2": "workspace_id",
 					}
-					for _, j := range o2oJoins {
+					for i, j := range o2oJoins {
 						if col, ok := tenantedAliases[j.Alias]; ok {
-							prefixedConds = append(prefixedConds, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
 						}
 					}
 				}
@@ -55807,7 +56990,7 @@ type TaskReportFieldOptions struct {
 	WorkspaceID bool              `json:"workspace_id"`
 	TaskID      bool              `json:"task_id"`
 	Summary     bool              `json:"summary"`
-	Tasks       *TaskFieldOptions `json:"tasks"`
+	Task        *TaskFieldOptions `json:"task"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -55854,7 +57037,7 @@ func (fo *TaskReportFieldOptions) HasSelectedColumns() bool {
 	if fo.Summary {
 		return true
 	}
-	if fo.Tasks != nil {
+	if fo.Task != nil {
 		return true
 	}
 	return false
@@ -55899,7 +57082,7 @@ func (c *taskReportClient) resolveO2OJoins(d sql.Dialect, fo *TaskReportFieldOpt
 		return nil
 	}
 	var joins []sql.JoinClause
-	if fo.Tasks != nil {
+	if fo.Task != nil {
 		joins = append(joins, sql.JoinClause{
 			Table: sql.Table{Schema: "public", Name: "tasks"},
 			Alias: "t2",
@@ -55907,8 +57090,19 @@ func (c *taskReportClient) resolveO2OJoins(d sql.Dialect, fo *TaskReportFieldOpt
 			// The NULL-detection below reads the target's PK off the scanned
 			// row, so the join carries it even when FieldOptions did not ask
 			// for it — an unselected PK reads as a LEFT JOIN miss.
-			Columns: unionColumns(fo.Tasks.Columns(), "id"),
+			Columns: unionColumns(fo.Task.Columns(), "id"),
 		})
+		if fo.Task.Cycle != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "public", Name: "cycles"},
+				Alias: "c",
+				On:    fmt.Sprintf("c.%s = t2.%s", d.QuoteIdentifier("workspace_id"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND c.%s = t2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("cycle_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Task.Cycle.Columns(), "id"),
+			})
+		}
 	}
 	return joins
 }
@@ -55920,6 +57114,8 @@ func scanTaskReportsWithOneToOneJoins(rows database.Rows, columns []string) ([]*
 	var result []*TaskReport
 	for rows.Next() {
 		t := &TaskReport{}
+		c := &Cycle{}
+		cHasData := false
 		t2 := &Task{}
 		t2HasData := false
 
@@ -55934,6 +57130,13 @@ func scanTaskReportsWithOneToOneJoins(rows database.Rows, columns []string) ([]*
 				targets[idx] = &t.TaskID
 			case "t.summary":
 				targets[idx] = &t.Summary
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.workspace_id":
+				targets[idx] = database.NullScan(&c.WorkspaceID)
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
 			case "t2.id":
 				targets[idx] = database.NullScan(&t2.ID)
 				t2HasData = true
@@ -55952,9 +57155,14 @@ func scanTaskReportsWithOneToOneJoins(rows database.Rows, columns []string) ([]*
 
 		// NULL detection — assign deepest chain first, then parents
 		if t2HasData && t2.ID != (uuid.UUID{}) {
-			t.Tasks = t2
+			t.Task = t2
 		} else {
-			t.Tasks = nil
+			t.Task = nil
+		}
+		if cHasData && c.ID != (uuid.UUID{}) {
+			t2.Cycle = c
+		} else {
+			t2.Cycle = nil
 		}
 
 		result = append(result, t)
@@ -55971,6 +57179,8 @@ type Task struct {
 	CycleID     *uuid.UUID `db:"cycle_id" json:"cycle_id"`
 	Title       string     `db:"title" json:"title"`
 
+	// Cycle - one-to-one relationship with the cycles table.
+	Cycle *Cycle `db:"-" json:"cycle"`
 	// Labels - many-to-many relationship with the labels table.
 	Labels []*Label `db:"-" json:"labels"`
 }
@@ -56447,25 +57657,85 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var tasks []*Task
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			prefixedConds := sql.PrefixConditions("t", conds)
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			// Child tenant filter: intersect the statically known
+			// set of tenanted o2o targets with the JOINs actually emitted for
+			// this call. FieldOptions may select a strict prefix of an o2o
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					return nil, fmt.Errorf("resolve tenant: %w", err)
+				}
+				if apply {
+					tenantedAliases := map[string]string{
+						"c": "workspace_id",
+					}
+					for i, j := range o2oJoins {
+						if col, ok := tenantedAliases[j.Alias]; ok {
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+						}
+					}
+				}
+			}
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: prefixedConds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		tasks, err = scanTasks(rows, columns)
-		if err != nil {
-			return nil, err
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			tasks, err = scanTasksWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			tasks, err = scanTasks(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -58497,6 +59767,7 @@ func taskNestedParentFieldOptions(fo *TaskFieldOptions) *TaskFieldOptions {
 		return nil
 	}
 	scalars := *fo
+	scalars.Cycle = nil
 	scalars.Labels = nil
 	scalars.ID = true
 	scalars.WorkspaceID = true
@@ -58511,7 +59782,7 @@ func taskNestedSelectsRelationship(fo *TaskFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.Labels != nil
+	return fo.Cycle != nil || fo.Labels != nil
 }
 
 // nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
@@ -59695,6 +60966,7 @@ type TaskFieldOptions struct {
 	WorkspaceID bool                      `json:"workspace_id"`
 	CycleID     bool                      `json:"cycle_id"`
 	Title       bool                      `json:"title"`
+	Cycle       *CycleFieldOptions        `json:"cycle"`
 	Labels      *LabelRelationshipOptions `json:"labels"`
 }
 
@@ -59742,6 +61014,9 @@ func (fo *TaskFieldOptions) HasSelectedColumns() bool {
 	if fo.Title {
 		return true
 	}
+	if fo.Cycle != nil {
+		return true
+	}
 	if fo.Labels != nil {
 		return true
 	}
@@ -59787,13 +61062,84 @@ type GetTasksInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *taskClient) resolveO2OJoins(d sql.Dialect, fo *TaskFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Cycle != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "cycles"},
+			Alias: "c",
+			On:    fmt.Sprintf("c.%s = t.%s", d.QuoteIdentifier("workspace_id"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND c.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("cycle_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Cycle.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanTasksWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Task entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTasksWithOneToOneJoins(rows database.Rows, columns []string) ([]*Task, error) {
+	var result []*Task
+	for rows.Next() {
+		t := &Task{}
+		c := &Cycle{}
+		cHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.workspace_id":
+				targets[idx] = &t.WorkspaceID
+			case "t.cycle_id":
+				targets[idx] = &t.CycleID
+			case "t.title":
+				targets[idx] = &t.Title
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.workspace_id":
+				targets[idx] = database.NullScan(&c.WorkspaceID)
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan task with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if cHasData && c.ID != (uuid.UUID{}) {
+			t.Cycle = c
+		} else {
+			t.Cycle = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task rows: %w", err)
+	}
+	return result, nil
+}
+
 type UserBadge struct {
 	ID     int64      `db:"id" json:"id"`
 	UserID *uuid.UUID `db:"user_id" json:"user_id"`
 	Label  string     `db:"label" json:"label"`
 
-	// Users - one-to-one relationship with the users table.
-	Users *User `db:"-" json:"users"`
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // UserBadgeClient provides type-safe operations for the user_badges table.
@@ -61858,7 +63204,7 @@ type UserBadgeFieldOptions struct {
 	ID     bool              `json:"id"`
 	UserID bool              `json:"user_id"`
 	Label  bool              `json:"label"`
-	Users  *UserFieldOptions `json:"users"`
+	User   *UserFieldOptions `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -61898,7 +63244,7 @@ func (fo *UserBadgeFieldOptions) HasSelectedColumns() bool {
 	if fo.Label {
 		return true
 	}
-	if fo.Users != nil {
+	if fo.User != nil {
 		return true
 	}
 	return false
@@ -61940,7 +63286,7 @@ func (c *userBadgeClient) resolveO2OJoins(d sql.Dialect, fo *UserBadgeFieldOptio
 		return nil
 	}
 	var joins []sql.JoinClause
-	if fo.Users != nil {
+	if fo.User != nil {
 		joins = append(joins, sql.JoinClause{
 			Table: sql.Table{Schema: "public", Name: "users"},
 			Alias: "u2",
@@ -61948,13 +63294,13 @@ func (c *userBadgeClient) resolveO2OJoins(d sql.Dialect, fo *UserBadgeFieldOptio
 			// The NULL-detection below reads the target's PK off the scanned
 			// row, so the join carries it even when FieldOptions did not ask
 			// for it — an unselected PK reads as a LEFT JOIN miss.
-			Columns: unionColumns(fo.Users.Columns(), "id"),
+			Columns: unionColumns(fo.User.Columns(), "id"),
 			SoftDelete: &sql.SoftDeleteOptions{
 				Column: "deleted_at",
 				Type:   sql.SoftDeleteTimestamp,
 			},
 		})
-		if fo.Users.Badge != nil {
+		if fo.User.Badge != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "public", Name: "user_badges"},
 				Alias: "b",
@@ -61962,9 +63308,9 @@ func (c *userBadgeClient) resolveO2OJoins(d sql.Dialect, fo *UserBadgeFieldOptio
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Users.Badge.Columns(), "id"),
+				Columns: unionColumns(fo.User.Badge.Columns(), "id"),
 			})
-			if fo.Users.Badge.Users != nil {
+			if fo.User.Badge.User != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "public", Name: "users"},
 					Alias: "u3",
@@ -61972,13 +63318,13 @@ func (c *userBadgeClient) resolveO2OJoins(d sql.Dialect, fo *UserBadgeFieldOptio
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Users.Badge.Users.Columns(), "id"),
+					Columns: unionColumns(fo.User.Badge.User.Columns(), "id"),
 					SoftDelete: &sql.SoftDeleteOptions{
 						Column: "deleted_at",
 						Type:   sql.SoftDeleteTimestamp,
 					},
 				})
-				if fo.Users.Badge.Users.Badge != nil {
+				if fo.User.Badge.User.Badge != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "public", Name: "user_badges"},
 						Alias: "b2",
@@ -61986,9 +63332,9 @@ func (c *userBadgeClient) resolveO2OJoins(d sql.Dialect, fo *UserBadgeFieldOptio
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Users.Badge.Users.Badge.Columns(), "id"),
+						Columns: unionColumns(fo.User.Badge.User.Badge.Columns(), "id"),
 					})
-					if fo.Users.Badge.Users.Badge.Users != nil {
+					if fo.User.Badge.User.Badge.User != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "public", Name: "users"},
 							Alias: "u4",
@@ -61996,13 +63342,13 @@ func (c *userBadgeClient) resolveO2OJoins(d sql.Dialect, fo *UserBadgeFieldOptio
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Users.Badge.Users.Badge.Users.Columns(), "id"),
+							Columns: unionColumns(fo.User.Badge.User.Badge.User.Columns(), "id"),
 							SoftDelete: &sql.SoftDeleteOptions{
 								Column: "deleted_at",
 								Type:   sql.SoftDeleteTimestamp,
 							},
 						})
-						if fo.Users.Badge.Users.Badge.Users.Badge != nil {
+						if fo.User.Badge.User.Badge.User.Badge != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "public", Name: "user_badges"},
 								Alias: "b3",
@@ -62010,7 +63356,7 @@ func (c *userBadgeClient) resolveO2OJoins(d sql.Dialect, fo *UserBadgeFieldOptio
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Users.Badge.Users.Badge.Users.Badge.Columns(), "id"),
+								Columns: unionColumns(fo.User.Badge.User.Badge.User.Badge.Columns(), "id"),
 							})
 						}
 					}
@@ -62161,19 +63507,19 @@ func scanUserBadgesWithOneToOneJoins(rows database.Rows, columns []string) ([]*U
 
 		// NULL detection — assign deepest chain first, then parents
 		if u4HasData && u4.ID != (uuid.UUID{}) {
-			b2.Users = u4
+			b2.User = u4
 		} else {
-			b2.Users = nil
+			b2.User = nil
 		}
 		if u3HasData && u3.ID != (uuid.UUID{}) {
-			b.Users = u3
+			b.User = u3
 		} else {
-			b.Users = nil
+			b.User = nil
 		}
 		if u2HasData && u2.ID != (uuid.UUID{}) {
-			u.Users = u2
+			u.User = u2
 		} else {
-			u.Users = nil
+			u.User = nil
 		}
 		if b3HasData && b3.ID != 0 {
 			u4.Badge = b3
@@ -64020,8 +65366,8 @@ type UserCredential struct {
 	LastLoginAt *time.Time `db:"last_login_at" json:"last_login_at"`
 	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
 
-	// Users - one-to-one relationship with the users table.
-	Users *User `db:"-" json:"users"`
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // UserCredentialClient provides type-safe operations for the user_credentials table.
@@ -66040,7 +67386,7 @@ type UserCredentialFieldOptions struct {
 	ExternalID  bool              `json:"external_id"`
 	LastLoginAt bool              `json:"last_login_at"`
 	CreatedAt   bool              `json:"created_at"`
-	Users       *UserFieldOptions `json:"users"`
+	User        *UserFieldOptions `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -66094,7 +67440,7 @@ func (fo *UserCredentialFieldOptions) HasSelectedColumns() bool {
 	if fo.CreatedAt {
 		return true
 	}
-	if fo.Users != nil {
+	if fo.User != nil {
 		return true
 	}
 	return false
@@ -66141,7 +67487,7 @@ func (c *userCredentialClient) resolveO2OJoins(d sql.Dialect, fo *UserCredential
 		return nil
 	}
 	var joins []sql.JoinClause
-	if fo.Users != nil {
+	if fo.User != nil {
 		joins = append(joins, sql.JoinClause{
 			Table: sql.Table{Schema: "public", Name: "users"},
 			Alias: "u2",
@@ -66149,13 +67495,13 @@ func (c *userCredentialClient) resolveO2OJoins(d sql.Dialect, fo *UserCredential
 			// The NULL-detection below reads the target's PK off the scanned
 			// row, so the join carries it even when FieldOptions did not ask
 			// for it — an unselected PK reads as a LEFT JOIN miss.
-			Columns: unionColumns(fo.Users.Columns(), "id"),
+			Columns: unionColumns(fo.User.Columns(), "id"),
 			SoftDelete: &sql.SoftDeleteOptions{
 				Column: "deleted_at",
 				Type:   sql.SoftDeleteTimestamp,
 			},
 		})
-		if fo.Users.Badge != nil {
+		if fo.User.Badge != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "public", Name: "user_badges"},
 				Alias: "b",
@@ -66163,9 +67509,9 @@ func (c *userCredentialClient) resolveO2OJoins(d sql.Dialect, fo *UserCredential
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Users.Badge.Columns(), "id"),
+				Columns: unionColumns(fo.User.Badge.Columns(), "id"),
 			})
-			if fo.Users.Badge.Users != nil {
+			if fo.User.Badge.User != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "public", Name: "users"},
 					Alias: "u3",
@@ -66173,13 +67519,13 @@ func (c *userCredentialClient) resolveO2OJoins(d sql.Dialect, fo *UserCredential
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Users.Badge.Users.Columns(), "id"),
+					Columns: unionColumns(fo.User.Badge.User.Columns(), "id"),
 					SoftDelete: &sql.SoftDeleteOptions{
 						Column: "deleted_at",
 						Type:   sql.SoftDeleteTimestamp,
 					},
 				})
-				if fo.Users.Badge.Users.Badge != nil {
+				if fo.User.Badge.User.Badge != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "public", Name: "user_badges"},
 						Alias: "b2",
@@ -66187,9 +67533,9 @@ func (c *userCredentialClient) resolveO2OJoins(d sql.Dialect, fo *UserCredential
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Users.Badge.Users.Badge.Columns(), "id"),
+						Columns: unionColumns(fo.User.Badge.User.Badge.Columns(), "id"),
 					})
-					if fo.Users.Badge.Users.Badge.Users != nil {
+					if fo.User.Badge.User.Badge.User != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "public", Name: "users"},
 							Alias: "u4",
@@ -66197,13 +67543,13 @@ func (c *userCredentialClient) resolveO2OJoins(d sql.Dialect, fo *UserCredential
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Users.Badge.Users.Badge.Users.Columns(), "id"),
+							Columns: unionColumns(fo.User.Badge.User.Badge.User.Columns(), "id"),
 							SoftDelete: &sql.SoftDeleteOptions{
 								Column: "deleted_at",
 								Type:   sql.SoftDeleteTimestamp,
 							},
 						})
-						if fo.Users.Badge.Users.Badge.Users.Badge != nil {
+						if fo.User.Badge.User.Badge.User.Badge != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "public", Name: "user_badges"},
 								Alias: "b3",
@@ -66211,7 +67557,7 @@ func (c *userCredentialClient) resolveO2OJoins(d sql.Dialect, fo *UserCredential
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Users.Badge.Users.Badge.Users.Badge.Columns(), "id"),
+								Columns: unionColumns(fo.User.Badge.User.Badge.User.Badge.Columns(), "id"),
 							})
 						}
 					}
@@ -66366,19 +67712,19 @@ func scanUserCredentialsWithOneToOneJoins(rows database.Rows, columns []string) 
 
 		// NULL detection — assign deepest chain first, then parents
 		if u4HasData && u4.ID != (uuid.UUID{}) {
-			b2.Users = u4
+			b2.User = u4
 		} else {
-			b2.Users = nil
+			b2.User = nil
 		}
 		if u3HasData && u3.ID != (uuid.UUID{}) {
-			b.Users = u3
+			b.User = u3
 		} else {
-			b.Users = nil
+			b.User = nil
 		}
 		if u2HasData && u2.ID != (uuid.UUID{}) {
-			u.Users = u2
+			u.User = u2
 		} else {
-			u.Users = nil
+			u.User = nil
 		}
 		if b3HasData && b3.ID != 0 {
 			u4.Badge = b3
@@ -66409,6 +67755,9 @@ type UserSession struct {
 	UserID    uuid.UUID `db:"user_id" json:"user_id"`
 	TokenHash string    `db:"token_hash" json:"token_hash"`
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
+
+	// User - one-to-one relationship with the users table.
+	User *User `db:"-" json:"user"`
 }
 
 // UserSessionClient provides type-safe operations for the user_sessions table.
@@ -66706,25 +68055,58 @@ func (c *userSessionClient) GetMany(ctx context.Context, input *GetUserSessionsI
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var userSessions []*UserSession
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("u", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "u",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		userSessions, err = scanUserSessions(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			userSessions, err = scanUserSessionsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			userSessions, err = scanUserSessions(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return userSessions, nil
@@ -68501,10 +69883,11 @@ func (f *UserSessionFilter) ToConditions(dialect sql.Dialect, opts ...FilterOpti
 
 // UserSessionFieldOptions controls column selection and relationship loading for user_sessions queries.
 type UserSessionFieldOptions struct {
-	ID        bool `json:"id"`
-	UserID    bool `json:"user_id"`
-	TokenHash bool `json:"token_hash"`
-	CreatedAt bool `json:"created_at"`
+	ID        bool              `json:"id"`
+	UserID    bool              `json:"user_id"`
+	TokenHash bool              `json:"token_hash"`
+	CreatedAt bool              `json:"created_at"`
+	User      *UserFieldOptions `json:"user"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -68551,6 +69934,9 @@ func (fo *UserSessionFieldOptions) HasSelectedColumns() bool {
 	if fo.CreatedAt {
 		return true
 	}
+	if fo.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -68584,6 +69970,274 @@ type GetUserSessionsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *userSessionClient) resolveO2OJoins(d sql.Dialect, fo *UserSessionFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.User != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "users"},
+			Alias: "u2",
+			On:    fmt.Sprintf("u2.%s = u.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.User.Columns(), "id"),
+			SoftDelete: &sql.SoftDeleteOptions{
+				Column: "deleted_at",
+				Type:   sql.SoftDeleteTimestamp,
+			},
+		})
+		if fo.User.Badge != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "public", Name: "user_badges"},
+				Alias: "b",
+				On:    fmt.Sprintf("b.%s = u2.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.User.Badge.Columns(), "id"),
+			})
+			if fo.User.Badge.User != nil {
+				joins = append(joins, sql.JoinClause{
+					Table: sql.Table{Schema: "public", Name: "users"},
+					Alias: "u3",
+					On:    fmt.Sprintf("u3.%s = b.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+					// The NULL-detection below reads the target's PK off the scanned
+					// row, so the join carries it even when FieldOptions did not ask
+					// for it — an unselected PK reads as a LEFT JOIN miss.
+					Columns: unionColumns(fo.User.Badge.User.Columns(), "id"),
+					SoftDelete: &sql.SoftDeleteOptions{
+						Column: "deleted_at",
+						Type:   sql.SoftDeleteTimestamp,
+					},
+				})
+				if fo.User.Badge.User.Badge != nil {
+					joins = append(joins, sql.JoinClause{
+						Table: sql.Table{Schema: "public", Name: "user_badges"},
+						Alias: "b2",
+						On:    fmt.Sprintf("b2.%s = u3.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+						// The NULL-detection below reads the target's PK off the scanned
+						// row, so the join carries it even when FieldOptions did not ask
+						// for it — an unselected PK reads as a LEFT JOIN miss.
+						Columns: unionColumns(fo.User.Badge.User.Badge.Columns(), "id"),
+					})
+					if fo.User.Badge.User.Badge.User != nil {
+						joins = append(joins, sql.JoinClause{
+							Table: sql.Table{Schema: "public", Name: "users"},
+							Alias: "u4",
+							On:    fmt.Sprintf("u4.%s = b2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("user_id")),
+							// The NULL-detection below reads the target's PK off the scanned
+							// row, so the join carries it even when FieldOptions did not ask
+							// for it — an unselected PK reads as a LEFT JOIN miss.
+							Columns: unionColumns(fo.User.Badge.User.Badge.User.Columns(), "id"),
+							SoftDelete: &sql.SoftDeleteOptions{
+								Column: "deleted_at",
+								Type:   sql.SoftDeleteTimestamp,
+							},
+						})
+						if fo.User.Badge.User.Badge.User.Badge != nil {
+							joins = append(joins, sql.JoinClause{
+								Table: sql.Table{Schema: "public", Name: "user_badges"},
+								Alias: "b3",
+								On:    fmt.Sprintf("b3.%s = u4.%s", d.QuoteIdentifier("user_id"), d.QuoteIdentifier("id")),
+								// The NULL-detection below reads the target's PK off the scanned
+								// row, so the join carries it even when FieldOptions did not ask
+								// for it — an unselected PK reads as a LEFT JOIN miss.
+								Columns: unionColumns(fo.User.Badge.User.Badge.User.Badge.Columns(), "id"),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+	return joins
+}
+
+// scanUserSessionsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// UserSession entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanUserSessionsWithOneToOneJoins(rows database.Rows, columns []string) ([]*UserSession, error) {
+	var result []*UserSession
+	for rows.Next() {
+		u := &UserSession{}
+		b := &UserBadge{}
+		bHasData := false
+		b2 := &UserBadge{}
+		b2HasData := false
+		b3 := &UserBadge{}
+		b3HasData := false
+		u2 := &User{}
+		u2HasData := false
+		u3 := &User{}
+		u3HasData := false
+		u4 := &User{}
+		u4HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "u.id":
+				targets[idx] = &u.ID
+			case "u.user_id":
+				targets[idx] = &u.UserID
+			case "u.token_hash":
+				targets[idx] = &u.TokenHash
+			case "u.created_at":
+				targets[idx] = &u.CreatedAt
+			case "b.id":
+				targets[idx] = database.NullScan(&b.ID)
+				bHasData = true
+			case "b.user_id":
+				targets[idx] = &b.UserID
+			case "b.label":
+				targets[idx] = database.NullScan(&b.Label)
+			case "b2.id":
+				targets[idx] = database.NullScan(&b2.ID)
+				b2HasData = true
+			case "b2.user_id":
+				targets[idx] = &b2.UserID
+			case "b2.label":
+				targets[idx] = database.NullScan(&b2.Label)
+			case "b3.id":
+				targets[idx] = database.NullScan(&b3.ID)
+				b3HasData = true
+			case "b3.user_id":
+				targets[idx] = &b3.UserID
+			case "b3.label":
+				targets[idx] = database.NullScan(&b3.Label)
+			case "u2.id":
+				targets[idx] = database.NullScan(&u2.ID)
+				u2HasData = true
+			case "u2.email":
+				targets[idx] = database.NullScan(&u2.Email)
+			case "u2.name":
+				targets[idx] = database.NullScan(&u2.Name)
+			case "u2.metadata":
+				targets[idx] = &u2.Metadata
+			case "u2.is_active":
+				targets[idx] = database.NullScan(&u2.IsActive)
+			case "u2.password_hash":
+				targets[idx] = database.NullScan(&u2.PasswordHash)
+			case "u2.new_password":
+				targets[idx] = &u2.NewPassword
+			case "u2.last_login_at":
+				targets[idx] = &u2.LastLoginAt
+			case "u2.internal_score":
+				targets[idx] = &u2.InternalScore
+			case "u2.ip_addr":
+				targets[idx] = &u2.ClientIP
+			case "u2.created_at":
+				targets[idx] = database.NullScan(&u2.CreatedAt)
+			case "u2.updated_at":
+				targets[idx] = &u2.UpdatedAt
+			case "u2.deleted_at":
+				targets[idx] = &u2.DeletedAt
+			case "u3.id":
+				targets[idx] = database.NullScan(&u3.ID)
+				u3HasData = true
+			case "u3.email":
+				targets[idx] = database.NullScan(&u3.Email)
+			case "u3.name":
+				targets[idx] = database.NullScan(&u3.Name)
+			case "u3.metadata":
+				targets[idx] = &u3.Metadata
+			case "u3.is_active":
+				targets[idx] = database.NullScan(&u3.IsActive)
+			case "u3.password_hash":
+				targets[idx] = database.NullScan(&u3.PasswordHash)
+			case "u3.new_password":
+				targets[idx] = &u3.NewPassword
+			case "u3.last_login_at":
+				targets[idx] = &u3.LastLoginAt
+			case "u3.internal_score":
+				targets[idx] = &u3.InternalScore
+			case "u3.ip_addr":
+				targets[idx] = &u3.ClientIP
+			case "u3.created_at":
+				targets[idx] = database.NullScan(&u3.CreatedAt)
+			case "u3.updated_at":
+				targets[idx] = &u3.UpdatedAt
+			case "u3.deleted_at":
+				targets[idx] = &u3.DeletedAt
+			case "u4.id":
+				targets[idx] = database.NullScan(&u4.ID)
+				u4HasData = true
+			case "u4.email":
+				targets[idx] = database.NullScan(&u4.Email)
+			case "u4.name":
+				targets[idx] = database.NullScan(&u4.Name)
+			case "u4.metadata":
+				targets[idx] = &u4.Metadata
+			case "u4.is_active":
+				targets[idx] = database.NullScan(&u4.IsActive)
+			case "u4.password_hash":
+				targets[idx] = database.NullScan(&u4.PasswordHash)
+			case "u4.new_password":
+				targets[idx] = &u4.NewPassword
+			case "u4.last_login_at":
+				targets[idx] = &u4.LastLoginAt
+			case "u4.internal_score":
+				targets[idx] = &u4.InternalScore
+			case "u4.ip_addr":
+				targets[idx] = &u4.ClientIP
+			case "u4.created_at":
+				targets[idx] = database.NullScan(&u4.CreatedAt)
+			case "u4.updated_at":
+				targets[idx] = &u4.UpdatedAt
+			case "u4.deleted_at":
+				targets[idx] = &u4.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan user_session with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if u4HasData && u4.ID != (uuid.UUID{}) {
+			b2.User = u4
+		} else {
+			b2.User = nil
+		}
+		if u3HasData && u3.ID != (uuid.UUID{}) {
+			b.User = u3
+		} else {
+			b.User = nil
+		}
+		if u2HasData && u2.ID != (uuid.UUID{}) {
+			u.User = u2
+		} else {
+			u.User = nil
+		}
+		if b3HasData && b3.ID != 0 {
+			u4.Badge = b3
+		} else {
+			u4.Badge = nil
+		}
+		if b2HasData && b2.ID != 0 {
+			u3.Badge = b2
+		} else {
+			u3.Badge = nil
+		}
+		if bHasData && b.ID != 0 {
+			u2.Badge = b
+		} else {
+			u2.Badge = nil
+		}
+
+		result = append(result, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user_session rows: %w", err)
+	}
+	return result, nil
 }
 
 type User struct {
@@ -74268,7 +75922,7 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 			// for it — an unselected PK reads as a LEFT JOIN miss.
 			Columns: unionColumns(fo.Badge.Columns(), "id"),
 		})
-		if fo.Badge.Users != nil {
+		if fo.Badge.User != nil {
 			joins = append(joins, sql.JoinClause{
 				Table: sql.Table{Schema: "public", Name: "users"},
 				Alias: "u2",
@@ -74276,13 +75930,13 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 				// The NULL-detection below reads the target's PK off the scanned
 				// row, so the join carries it even when FieldOptions did not ask
 				// for it — an unselected PK reads as a LEFT JOIN miss.
-				Columns: unionColumns(fo.Badge.Users.Columns(), "id"),
+				Columns: unionColumns(fo.Badge.User.Columns(), "id"),
 				SoftDelete: &sql.SoftDeleteOptions{
 					Column: "deleted_at",
 					Type:   sql.SoftDeleteTimestamp,
 				},
 			})
-			if fo.Badge.Users.Badge != nil {
+			if fo.Badge.User.Badge != nil {
 				joins = append(joins, sql.JoinClause{
 					Table: sql.Table{Schema: "public", Name: "user_badges"},
 					Alias: "b2",
@@ -74290,9 +75944,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 					// The NULL-detection below reads the target's PK off the scanned
 					// row, so the join carries it even when FieldOptions did not ask
 					// for it — an unselected PK reads as a LEFT JOIN miss.
-					Columns: unionColumns(fo.Badge.Users.Badge.Columns(), "id"),
+					Columns: unionColumns(fo.Badge.User.Badge.Columns(), "id"),
 				})
-				if fo.Badge.Users.Badge.Users != nil {
+				if fo.Badge.User.Badge.User != nil {
 					joins = append(joins, sql.JoinClause{
 						Table: sql.Table{Schema: "public", Name: "users"},
 						Alias: "u3",
@@ -74300,13 +75954,13 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 						// The NULL-detection below reads the target's PK off the scanned
 						// row, so the join carries it even when FieldOptions did not ask
 						// for it — an unselected PK reads as a LEFT JOIN miss.
-						Columns: unionColumns(fo.Badge.Users.Badge.Users.Columns(), "id"),
+						Columns: unionColumns(fo.Badge.User.Badge.User.Columns(), "id"),
 						SoftDelete: &sql.SoftDeleteOptions{
 							Column: "deleted_at",
 							Type:   sql.SoftDeleteTimestamp,
 						},
 					})
-					if fo.Badge.Users.Badge.Users.Badge != nil {
+					if fo.Badge.User.Badge.User.Badge != nil {
 						joins = append(joins, sql.JoinClause{
 							Table: sql.Table{Schema: "public", Name: "user_badges"},
 							Alias: "b3",
@@ -74314,9 +75968,9 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 							// The NULL-detection below reads the target's PK off the scanned
 							// row, so the join carries it even when FieldOptions did not ask
 							// for it — an unselected PK reads as a LEFT JOIN miss.
-							Columns: unionColumns(fo.Badge.Users.Badge.Users.Badge.Columns(), "id"),
+							Columns: unionColumns(fo.Badge.User.Badge.User.Badge.Columns(), "id"),
 						})
-						if fo.Badge.Users.Badge.Users.Badge.Users != nil {
+						if fo.Badge.User.Badge.User.Badge.User != nil {
 							joins = append(joins, sql.JoinClause{
 								Table: sql.Table{Schema: "public", Name: "users"},
 								Alias: "u4",
@@ -74324,7 +75978,7 @@ func (c *userClient) resolveO2OJoins(d sql.Dialect, fo *UserFieldOptions) []sql.
 								// The NULL-detection below reads the target's PK off the scanned
 								// row, so the join carries it even when FieldOptions did not ask
 								// for it — an unselected PK reads as a LEFT JOIN miss.
-								Columns: unionColumns(fo.Badge.Users.Badge.Users.Badge.Users.Columns(), "id"),
+								Columns: unionColumns(fo.Badge.User.Badge.User.Badge.User.Columns(), "id"),
 								SoftDelete: &sql.SoftDeleteOptions{
 									Column: "deleted_at",
 									Type:   sql.SoftDeleteTimestamp,
@@ -74499,19 +76153,19 @@ func scanUsersWithOneToOneJoins(rows database.Rows, columns []string) ([]*User, 
 
 		// NULL detection — assign deepest chain first, then parents
 		if u4HasData && u4.ID != (uuid.UUID{}) {
-			b3.Users = u4
+			b3.User = u4
 		} else {
-			b3.Users = nil
+			b3.User = nil
 		}
 		if u3HasData && u3.ID != (uuid.UUID{}) {
-			b2.Users = u3
+			b2.User = u3
 		} else {
-			b2.Users = nil
+			b2.User = nil
 		}
 		if u2HasData && u2.ID != (uuid.UUID{}) {
-			b.Users = u2
+			b.User = u2
 		} else {
-			b.Users = nil
+			b.User = nil
 		}
 		if b3HasData && b3.ID != 0 {
 			u3.Badge = b3

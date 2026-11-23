@@ -25,6 +25,12 @@
 | --- | --- | --- | --- | --- |
 | `width_narrow_children_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| big | o2o | WidthBig | public.width_narrow_children.big_id |  |
+
 ## Query methods
 
 ### Get

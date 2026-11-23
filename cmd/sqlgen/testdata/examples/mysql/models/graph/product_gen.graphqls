@@ -20,6 +20,8 @@ type Product {
   attributes: JSON!
   "Row creation timestamp"
   createdAt: Time!
+  "one-to-one relationship with the categories table."
+  category: Category
   "one-to-many relationship with the order_items table."
   orderItems: [OrderItem!]!
   "one-to-many relationship with the product_tag_labels table."

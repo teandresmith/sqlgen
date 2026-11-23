@@ -2388,6 +2388,9 @@ type Product struct {
 	Price      decimal.Decimal `db:"price" json:"price"`
 	CategoryID int64           `db:"category_id" json:"category_id"`
 	CreatedAt  time.Time       `db:"created_at" json:"created_at"`
+
+	// Category - one-to-one relationship with the categories table.
+	Category *Category `db:"-" json:"category"`
 }
 
 // ProductClient provides type-safe operations for the products table.
@@ -2691,25 +2694,58 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var products []*Product
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("p", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "p",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		products, err = scanProducts(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			products, err = scanProductsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			products, err = scanProducts(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return products, nil
@@ -4557,11 +4593,12 @@ func (f *ProductFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) 
 
 // ProductFieldOptions controls column selection and relationship loading for products queries.
 type ProductFieldOptions struct {
-	ID         bool `json:"id"`
-	Name       bool `json:"name"`
-	Price      bool `json:"price"`
-	CategoryID bool `json:"category_id"`
-	CreatedAt  bool `json:"created_at"`
+	ID         bool                  `json:"id"`
+	Name       bool                  `json:"name"`
+	Price      bool                  `json:"price"`
+	CategoryID bool                  `json:"category_id"`
+	CreatedAt  bool                  `json:"created_at"`
+	Category   *CategoryFieldOptions `json:"category"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -4615,6 +4652,9 @@ func (fo *ProductFieldOptions) HasSelectedColumns() bool {
 	if fo.CreatedAt {
 		return true
 	}
+	if fo.Category != nil {
+		return true
+	}
 	return false
 }
 
@@ -4650,4 +4690,79 @@ type GetProductsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *productClient) resolveO2OJoins(d sql.Dialect, fo *ProductFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Category != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "categories"},
+			Alias: "c",
+			On:    fmt.Sprintf("c.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("category_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Category.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanProductsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Product entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanProductsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Product, error) {
+	var result []*Product
+	for rows.Next() {
+		p := &Product{}
+		c := &Category{}
+		cHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "p.id":
+				targets[idx] = &p.ID
+			case "p.name":
+				targets[idx] = &p.Name
+			case "p.price":
+				targets[idx] = &p.Price
+			case "p.category_id":
+				targets[idx] = &p.CategoryID
+			case "p.created_at":
+				targets[idx] = &p.CreatedAt
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "c.description":
+				targets[idx] = &c.Description
+			case "c.created_at":
+				targets[idx] = database.NullScan(&c.CreatedAt)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan product with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if cHasData && c.ID != 0 {
+			p.Category = c
+		} else {
+			p.Category = nil
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate product rows: %w", err)
+	}
+	return result, nil
 }

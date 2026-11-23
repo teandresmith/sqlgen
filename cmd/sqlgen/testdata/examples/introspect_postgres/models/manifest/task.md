@@ -33,6 +33,8 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| assignee | o2o | Account | public.tasks.assignee_id |  |
+| project | o2o | Project | public.tasks.project_id |  |
 | task_labels | o2m | TaskLabel | public.task_labels.task_id |  |
 
 ## Query methods

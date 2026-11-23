@@ -202,7 +202,7 @@ func TestGenerate_CompositeKeyStructFields(t *testing.T) {
 	for _, tt := range []struct {
 		name, table, field, goType string
 	}{
-		{"belongs-to", "task_reports", "Tasks", "*Task"},
+		{"belongs-to", "task_reports", "Task", "*Task"},
 		{"has-one", "order_items", "Receipt", "*ItemReceipt"},
 		{"m2m", "tasks", "Labels", "[]*Label"},
 	} {

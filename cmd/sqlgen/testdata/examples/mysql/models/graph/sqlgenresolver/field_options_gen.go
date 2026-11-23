@@ -289,6 +289,8 @@ func binItemFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.Slot = true
 		case "name":
 			fo.Name = true
+		case "bin":
+			fo.Bin = binFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -377,6 +379,8 @@ func boolKeyedNoteFieldOptionsFromCollected(opCtx *graphql.OperationContext, fie
 			fo.KeyedK = true
 		case "note":
 			fo.Note = true
+		case "boolKeyed":
+			fo.BoolKeyed = boolKeyedFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -669,6 +673,8 @@ func orderFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 			fo.OrderItems = &models.OrderItemRelationshipOptions{
 				FieldOptions: orderItemFieldOptionsFromCollected(opCtx, f.Sub),
 			}
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -716,6 +722,10 @@ func orderItemFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.Quantity = true
 		case "unitPrice":
 			fo.UnitPrice = true
+		case "order":
+			fo.Order = orderFieldOptionsFromCollected(opCtx, f.Sub)
+		case "product":
+			fo.Product = productFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -771,6 +781,8 @@ func productFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.Attributes = true
 		case "createdAt":
 			fo.CreatedAt = true
+		case "category":
+			fo.Category = categoryFieldOptionsFromCollected(opCtx, f.Sub)
 		case "orderItems":
 			fo.OrderItems = &models.OrderItemRelationshipOptions{
 				FieldOptions: orderItemFieldOptionsFromCollected(opCtx, f.Sub),
@@ -871,6 +883,8 @@ func productTagLabelFieldOptionsFromCollected(opCtx *graphql.OperationContext, f
 			fo.Label = true
 		case "description":
 			fo.Description = true
+		case "product":
+			fo.Product = productFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -922,8 +936,8 @@ func profileFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.Verified = true
 		case "preferences":
 			fo.Preferences = true
-		case "users":
-			fo.Users = userFieldOptionsFromCollected(opCtx, f.Sub)
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1098,6 +1112,8 @@ func timeKeyedNoteFieldOptionsFromCollected(opCtx *graphql.OperationContext, fie
 			fo.KeyedAt = true
 		case "note":
 			fo.Note = true
+		case "timeKeyed":
+			fo.TimeKeyed = timeKeyedFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -1278,6 +1294,8 @@ func userEventFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields 
 			fo.UserID = true
 		case "action":
 			fo.Action = true
+		case "user":
+			fo.User = userFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {

@@ -377,6 +377,11 @@ type CreateSluggedRowInput struct {
 	Name *string `json:"name,omitempty"`
 }
 
+type CreateStepInput struct {
+	Name           string `json:"name"`
+	PreviousStepID *int   `json:"previousStepID,omitempty"`
+}
+
 type CreateTagInput struct {
 	Name      string `json:"name"`
 	IsDeleted *bool  `json:"isDeleted,omitempty"`
@@ -801,6 +806,19 @@ type SluggedRowSort struct {
 	Direction SortDirection       `json:"direction"`
 }
 
+type StepFilter struct {
+	ID             *NumericComparator         `json:"id,omitempty"`
+	Name           *StringComparator          `json:"name,omitempty"`
+	PreviousStepID *NullableNumericComparator `json:"previousStepID,omitempty"`
+	And            []*StepFilter              `json:"and,omitempty"`
+	Or             []*StepFilter              `json:"or,omitempty"`
+}
+
+type StepSort struct {
+	Field     StepSortField `json:"field"`
+	Direction SortDirection `json:"direction"`
+}
+
 type StringComparator struct {
 	Eq         *string  `json:"eq,omitempty"`
 	Neq        *string  `json:"neq,omitempty"`
@@ -1023,6 +1041,11 @@ type UpdateReservedWordColumnInput struct {
 
 type UpdateSluggedRowInput struct {
 	Name *string `json:"name,omitempty"`
+}
+
+type UpdateStepInput struct {
+	Name           *string                 `json:"name,omitempty"`
+	PreviousStepID graphql.Omittable[*int] `json:"previousStepID,omitempty"`
 }
 
 type UpdateTagInput struct {
@@ -2933,6 +2956,63 @@ func (e *SortDirection) UnmarshalJSON(b []byte) error {
 }
 
 func (e SortDirection) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type StepSortField string
+
+const (
+	StepSortFieldID             StepSortField = "ID"
+	StepSortFieldName           StepSortField = "NAME"
+	StepSortFieldPreviousStepID StepSortField = "PREVIOUS_STEP_ID"
+)
+
+var AllStepSortField = []StepSortField{
+	StepSortFieldID,
+	StepSortFieldName,
+	StepSortFieldPreviousStepID,
+}
+
+func (e StepSortField) IsValid() bool {
+	switch e {
+	case StepSortFieldID, StepSortFieldName, StepSortFieldPreviousStepID:
+		return true
+	}
+	return false
+}
+
+func (e StepSortField) String() string {
+	return string(e)
+}
+
+func (e *StepSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = StepSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid StepSortField", str)
+	}
+	return nil
+}
+
+func (e StepSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *StepSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e StepSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

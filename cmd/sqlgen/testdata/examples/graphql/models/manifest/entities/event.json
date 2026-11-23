@@ -292,7 +292,24 @@
       "comment": ""
     }
   ],
-  "relationships": [],
+  "relationships": [
+    {
+      "name": "user",
+      "kind": "o2o",
+      "target_entity": "User",
+      "fk": {
+        "table": "events",
+        "schema": "public",
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "events_user_id_fkey"
+      }
+    }
+  ],
   "methods": {
     "query": [
       {

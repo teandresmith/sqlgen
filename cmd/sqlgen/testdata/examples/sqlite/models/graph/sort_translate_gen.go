@@ -1155,6 +1155,42 @@ func sluggedRowSortFieldToColumn(f gqlmodel.SluggedRowSortField) string {
 	return ""
 }
 
+// translateStepSort converts a gqlgen-generated
+// []*StepSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateStepSort(in []*gqlmodel.StepSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    stepSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// stepSortFieldToColumn resolves a gqlgen
+// StepSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func stepSortFieldToColumn(f gqlmodel.StepSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "NAME":
+		return "name"
+	case "PREVIOUS_STEP_ID":
+		return "previous_step_id"
+	}
+	return ""
+}
+
 // translateTagSort converts a gqlgen-generated
 // []*TagSort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.

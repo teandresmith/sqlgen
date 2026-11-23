@@ -245,10 +245,11 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | comparator.custom.pg-only | `JSONB` and `Slice[T]` have a `Custom` field whose conditions they return as written | `unit: comparator: TestJSONB_Parse/Custom passthrough`; `unit: comparator: TestSlice_Parse/Custom passthrough` | postgres |  |
 
 ## §11.5 Condition Composition
-<!-- prd: 11.5 sha256: 51942804e7dcd14e -->
+<!-- prd: 11.5 sha256: 5fe9eac646544482 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
+| builder.select-join.join-conditions-in-on | `BuildSelectJoin` ANDs each join's bound `JoinClause.Conditions` into that join's `ON` and numbers their placeholders before the `WHERE`'s (`… ON c."id" = p."company_id" AND c."workspace_id" = $1 WHERE p."workspace_id" = $2`), returning the args in statement order so a positional `?` stays aligned | `unit: sql: TestTenancy_SelectJoinTenantInJoinOn/postgres`; `unit: sql: TestTenancy_SelectJoinTenantInJoinOn/mysql`; `unit: sql: TestTenancy_SelectJoinTenantInJoinOn/sqlite`; `unit: sql: TestBuildSelectJoin_ConditionsNumberAcrossJoins/postgres`; `unit: sql: TestBuildSelectJoin_ConditionsNumberAcrossJoins/mysql`; `unit: sql: TestBuildSelectJoin_ConditionsNumberAcrossJoins/sqlite` | all |  |
 | cond.and.placeholder-numbering | `And(conditions...)` joins its conditions with AND as one term, their placeholders numbered in operand order within the enclosing statement's sequence | `unit: sql: TestWhereAndComposition`; `unit: sql: TestKeysetConditions_QuotedColumn`; `unit: sql: TestComposition_NestedShapesPerDialect/and and or nest` | all | condition-composition: and × placeholder-numbering |
 | cond.and.nested | An `And` nested inside an `And` or an `Or` renders as its own AND group | `unit: sql: TestWhereNestedAndOr`; `unit: sql: TestKeysetConditions_QuotedColumn`; `unit: sql: TestComposition_NestedShapesPerDialect/and and or nest`; `unit: sql: TestComposition_NestedShapesPerDialect/and inside and` | all | condition-composition: and × nested-in-and-or |
 | cond.or.placeholder-numbering | `Or(conditions...)` joins its conditions with OR as one term, their placeholders numbered in operand order within the enclosing statement's sequence | `unit: sql: TestWhereOrComposition`; `unit: sql: TestKeysetConditions_QuotedColumn`; `unit: sql: TestComposition_NestedShapesPerDialect/and and or nest`; `unit: sql: TestComposition_NestedShapesPerDialect/bare subquery inside or` | all | condition-composition: or × placeholder-numbering |
@@ -299,7 +300,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | cond.builder.composable | Builder conditions compose with `sql.And()` / `sql.Or()` and are accepted in a comparator's `Custom` field | `unit: sql: TestComposition_NestedShapesPerDialect/and and or nest`; `unit: comparator: TestScalarOperators_SameClauseOnEveryDialect/String.Custom` | all |  |
 
 ## §13.2 Loading Strategy
-<!-- prd: 13.2 sha256: 43f06deda121127d -->
+<!-- prd: 13.2 sha256: 602a6097cd87d963 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -327,7 +328,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | builder.hard-delete.returning | `BuildHardDelete` appends the `RETURNING` projection that `HardDeleteWhere`'s PostgreSQL/SQLite capture reads (`RETURNING "c", …`), and none on MySQL | `unit: sql: TestBuildHardDelete/postgres with returning`; `unit: sql: TestBuildHardDelete/sqlite with returning`; `unit: sql: TestBuildHardDelete/mysql with returning ignored` | all | sql-builders: BuildHardDelete × returning |
 
 ## §Appendix A SQL Builder Functions
-<!-- prd: Appendix A sha256: 9eb2019034119006 -->
+<!-- prd: Appendix A sha256: 51d4f513a207f85e -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -436,7 +437,6 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 | gap.sql.increment-returning-unlisted | `BuildIncrementReturning` emits `BuildIncrement`'s statement with `RETURNING` appended on PostgreSQL and SQLite and none on MySQL, and equals `BuildIncrement` with no returning column. §29.5's `Increment` tenant capture uses it, but Appendix A does not list it | `unit: sql: TestBuildIncrementReturning/postgres appends returning clause`; `unit: sql: TestBuildIncrementReturning/sqlite appends returning clause`; `unit: sql: TestBuildIncrementReturning/mysql omits returning clause`; `unit: sql: TestBuildIncrementReturning/empty returning columns matches BuildIncrement` | §Appendix A, §29.5 | |
 | gap.sql.insert-update-column-order | `BuildInsert` and `BuildMultiInsert` sort their column list by name, reordering each row's values to match, and `BuildUpdate` sorts its SET list by name; §9.7 states the sort for `BuildSelect` only | `unit: sql: TestBuildInsert/postgres single row`; `unit: sql: TestBuildMultiInsert/postgres multi-row`; `unit: sql: TestBuildUpdate/sorted column order in SET` | §Appendix A, §9.7 | |
 | gap.sql.isand-isor-accessors | The exported `Condition.IsAnd()` / `Condition.IsOr()` return a composition's operands. The PRD never names them; the rendered AND / OR join they back is claimed through the builder tests | `unit: sql: TestAnd`; `unit: sql: TestOr`; `unit: sql: TestNestedComposition` | §11.5 |  |
-| gap.sql.join-tenant-outer-where | The O2O child's tenant predicate goes in the outer `WHERE` of the `LEFT JOIN` (`… ON c."id" = p."company_id" WHERE p."workspace_id" = $1 AND c."workspace_id" = $2`). §29.10 does not say where it goes, and in the outer `WHERE` it drops a parent that has no child row, against §13.2's LEFT JOIN guarantee | `unit: sql: TestTenancy_SelectJoinTenantInOuterWhere` | §29.10, §13.2 | |
 | gap.sql.lockmode-string | `LockMode.String()` returns `none`, `for_update`, `for_share`, `for_update_nowait`, `for_update_skip_locked`, and `unknown` for any other value | `unit: sql: TestLockMode_String` | §9.6a | |
 | gap.sql.multi-insert-empty | `BuildMultiInsert` with no value row returns `""` and nil args, with or without a conflict target; §9.4c's "sends no statement" is the generated method's job | `unit: sql: TestBuildMultiInsert/zero-length batch`; `unit: sql: TestBuildMultiInsertUpsert/zero-length batch with a conflict target` | §Appendix A, §9.4c | |
 | gap.sql.multi-insert-no-columns | `BuildMultiInsert` with value rows but no column emits `INSERT INTO "public"."users" () VALUES (), ()`, which PostgreSQL and SQLite reject; Appendix A's "Same as BuildInsert" does not carry `BuildInsert`'s `DEFAULT VALUES` form over. Generated code never sends it (§10.3 names the key column in each `CreateMany` row). Found by probe; no test pins it | | §Appendix A, §10.3 | |

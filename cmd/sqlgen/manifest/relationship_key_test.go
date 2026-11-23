@@ -297,6 +297,27 @@ CREATE TABLE user_tags (user_id bigint NOT NULL, tag_id bigint NOT NULL, PRIMARY
 			}
 		})
 	}
+
+	// A non-unique foreign key's detected belongs-to is an o2o on the holder,
+	// over the key and constraint its list edge has (PRD §5.3 rule 3).
+	t.Run("detected belongs-to names its constraint", func(t *testing.T) {
+		for _, dialect := range allDialects {
+			t.Run(string(dialect), func(t *testing.T) {
+				got := relationshipOf(t, dialect, namedPosts, dialectConfig(dialect), "Post", "author", nil)
+				schema := ""
+				if dialect == config.DialectPostgres {
+					schema = "public"
+				}
+				want := manifest.Relationship{
+					Name: "author", Kind: "o2o", TargetEntity: "User",
+					FK: &manifest.FK{Table: "posts", Schema: schema, Columns: []string{"author_id"}, References: []string{"id"}, Constraint: "posts_author"},
+				}
+				if diff := cmp.Diff(want, got); diff != "" {
+					t.Errorf("relationship mismatch (-want +got):\n%s", diff)
+				}
+			})
+		}
+	})
 }
 
 // TestEmitJSON_SchemaVersion pins PRD §30.4: the emitted document's

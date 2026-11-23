@@ -322,3 +322,12 @@ CREATE TABLE bin_items (
     name TEXT NOT NULL,
     FOREIGN KEY (aisle, slot) REFERENCES bins (aisle, slot)
 );
+
+-- steps: a self-referential belongs-to. The unique previous_step_id gives a
+-- detected O2O edge whose key is on the row itself, so it loads the previous
+-- step, not the next one.
+CREATE TABLE steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    previous_step_id INTEGER UNIQUE REFERENCES steps(id)
+);

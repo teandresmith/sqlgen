@@ -3823,6 +3823,33 @@ Closure is `/close-phase 35`, with no sub-item of its own. It flips the design d
 
 **Out of scope (design §2.2):** a rename map, a rename-drift warning, changes to detection naming, and declared edges into non-PK UNIQUE keys.
 
+## Phase 36: Belongs-To Detection
+
+> **Status: Complete (closed 2026-11-21).** Design doc `docs/design/BELONGS_TO_DETECTION.md` (SYNCED 2026-11-21; approved 2026-11-20; rulings Q1–Q6 settled 2026-11-20, §11). Prototype `.claude/prototypes/BELONGS_TO_DETECTION.patch`. Source: research after the `sqlgen-example` v0.1.2 findings. The example app has 43 foreign keys and no to-one navigation.
+
+**Why.**
+- **A row can't reach its parent.** A non-unique foreign key gives only its list edge on the referenced table, so `Project.tasks` is generated and `Task.project` isn't (design §1.1).
+- **Four bugs on the to-one path** would spread with detection. They are a self-referential or same-name `o2o` joining the wrong rows, a detected edge colliding with a column's field, and chained joins walking an edge the target dropped. The last is a Phase 35 regression (design §3.4).
+
+**Normative spec:** design doc §5. 36.0 writes it into PRD §4.13, §5.3, §13.1 and §13.2, plus `docs/configuration.md` (design §8).
+
+**Depends on:** nothing open.
+
+**Sub-items** (`docs/tracker/phase-36.md`), design §9:
+- **36.0** — **PRD sync, `configuration.md`, registry rows.** No code. *Blocks every other sub-item.*
+- **36.1** — **Regression guard:** a hidden FK column keeps its relationship object exposable (§32). Passes on today's code.
+- **36.2** — **FK side from the key's holder.** Detected edges read their side from detection; a declared `o2o` with columns on both tables follows its FOREIGN KEY. *Depends on 36.1.*
+- **36.3** — **Chains walk the target's own edges** (takeover, base-name exclusion). *Depends on 36.1.*
+- **36.4** — **Detected-edge collisions with a column** are omitted with a warning; a declared one is an error. *Depends on 36.1.*
+- **36.5** — **Belongs-to detection and to-one naming.** `keyEdges`, stem naming, singular to-one fields, rule 6 by cardinality. Wide golden churn. *Depends on 36.2–36.4.*
+- **36.6** — **`sqlgen-example` probe.** *Depends on 36.5.*
+
+Closure is `/close-phase 36`, with no sub-item of its own. It flips the design doc to SYNCED.
+
+**Tests required:** the design §6.1 rows (fail first), the §6.2 guards, the `sqlgen-example` probe (design §10 item 6), and `make check` / `make check-examples` green.
+
+**Out of scope (design §2.2):** junction-table belongs-to edges, has-one detection, M2M naming, a rename-drift warning, nested writes, and the manifest `o2o` / `m2o` split.
+
 ## Deferred Features
 
 These remain deferred until consumer demand justifies the implementation cost. Phase 15 establishes the unified client surface as feature-complete for direct Go consumers; Phase 16 extends it to GraphQL consumers. The deferred items below extend further or address adjacent surfaces.

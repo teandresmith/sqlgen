@@ -40,7 +40,7 @@ func TestGraphQLSchema_CompositeKeyRelationshipFields(t *testing.T) {
 		name, entity, block, want string
 	}{
 		{"composite o2m", "Cycle", "type Cycle", "tasks: [Task!]!"},
-		{"composite o2o", "TaskReport", "type TaskReport", "tasks: Task"},
+		{"composite o2o", "TaskReport", "type TaskReport", "task: Task"},
 		{"composite m2m", "Task", "type Task", "labels: [Label!]!"},
 		{"composite-PK parent", "OrderItem", "type OrderItem", "itemNotes: [ItemNote!]!"},
 		{"composite o2m filter", "Cycle", "input CycleFilter", "tasks: TaskFilter"},

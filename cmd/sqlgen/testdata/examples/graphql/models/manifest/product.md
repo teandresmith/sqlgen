@@ -36,6 +36,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| category | o2o | Category | public.products.category_id |  |
 | order_items | o2m | OrderItem | public.order_items.product_id |  |
 
 ## Query methods

@@ -26,6 +26,12 @@
 | --- | --- | --- | --- | --- |
 | `workspace_notes_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| workspace | o2o | Workspace | public.workspace_notes.workspace_id |  |
+
 ## Query methods
 
 ### Get

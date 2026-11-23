@@ -26,6 +26,12 @@
 | --- | --- | --- | --- | --- |
 | `binary_key_events_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| binary_key | o2o | BinaryKey | binary_key_events.binary_key_id |  |
+
 ## Query methods
 
 ### Get

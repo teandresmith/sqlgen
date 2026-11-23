@@ -8,6 +8,8 @@ type BinaryKeyEvent {
   binaryKeyID: Bytes!
   "label"
   label: String!
+  "one-to-one relationship with the binary_keys table."
+  binaryKey: BinaryKey
 }
 
 type BinaryKeyEventConnection {

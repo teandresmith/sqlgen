@@ -7276,6 +7276,9 @@ type Checkpoint struct {
 	MilestoneCode *string   `db:"milestone_code" json:"milestone_code"`
 	MilestoneID   *int64    `db:"milestone_id" json:"milestone_id"`
 	Title         string    `db:"title" json:"title"`
+
+	// Milestone - one-to-one relationship with the milestones table.
+	Milestone *Milestone `db:"-" json:"milestone"`
 }
 
 // CheckpointClient provides type-safe operations for the checkpoints table.
@@ -7679,25 +7682,85 @@ func (c *checkpointClient) GetMany(ctx context.Context, input *GetCheckpointsInp
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var checkpoints []*Checkpoint
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			prefixedConds := sql.PrefixConditions("c", conds)
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			// Child tenant filter: intersect the statically known
+			// set of tenanted o2o targets with the JOINs actually emitted for
+			// this call. FieldOptions may select a strict prefix of an o2o
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					return nil, fmt.Errorf("resolve tenant: %w", err)
+				}
+				if apply {
+					tenantedAliases := map[string]string{
+						"m": "workspace_id",
+					}
+					for i, j := range o2oJoins {
+						if col, ok := tenantedAliases[j.Alias]; ok {
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+						}
+					}
+				}
+			}
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: prefixedConds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "c",
+				LockMode:   options.LockMode,
+			})
 
-		checkpoints, err = scanCheckpoints(rows, columns)
-		if err != nil {
-			return nil, err
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			checkpoints, err = scanCheckpointsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			checkpoints, err = scanCheckpoints(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return checkpoints, nil
@@ -10007,11 +10070,12 @@ func (f *CheckpointFilter) ToConditions(dialect sql.Dialect, opts ...FilterOptio
 
 // CheckpointFieldOptions controls column selection and relationship loading for checkpoints queries.
 type CheckpointFieldOptions struct {
-	ID            bool `json:"id"`
-	WorkspaceID   bool `json:"workspace_id"`
-	MilestoneCode bool `json:"milestone_code"`
-	MilestoneID   bool `json:"milestone_id"`
-	Title         bool `json:"title"`
+	ID            bool                   `json:"id"`
+	WorkspaceID   bool                   `json:"workspace_id"`
+	MilestoneCode bool                   `json:"milestone_code"`
+	MilestoneID   bool                   `json:"milestone_id"`
+	Title         bool                   `json:"title"`
+	Milestone     *MilestoneFieldOptions `json:"milestone"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -10065,6 +10129,9 @@ func (fo *CheckpointFieldOptions) HasSelectedColumns() bool {
 	if fo.Title {
 		return true
 	}
+	if fo.Milestone != nil {
+		return true
+	}
 	return false
 }
 
@@ -10099,6 +10166,79 @@ type GetCheckpointsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *checkpointClient) resolveO2OJoins(d sql.Dialect, fo *CheckpointFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Milestone != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "milestones"},
+			Alias: "m",
+			On:    fmt.Sprintf("m.%s = c.%s", d.QuoteIdentifier("code"), d.QuoteIdentifier("milestone_code")) + fmt.Sprintf(" AND m.%s = c.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("milestone_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Milestone.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanCheckpointsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Checkpoint entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanCheckpointsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Checkpoint, error) {
+	var result []*Checkpoint
+	for rows.Next() {
+		c := &Checkpoint{}
+		m := &Milestone{}
+		mHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "c.id":
+				targets[idx] = &c.ID
+			case "c.workspace_id":
+				targets[idx] = &c.WorkspaceID
+			case "c.milestone_code":
+				targets[idx] = &c.MilestoneCode
+			case "c.milestone_id":
+				targets[idx] = &c.MilestoneID
+			case "c.title":
+				targets[idx] = &c.Title
+			case "m.id":
+				targets[idx] = database.NullScan(&m.ID)
+				mHasData = true
+			case "m.workspace_id":
+				targets[idx] = database.NullScan(&m.WorkspaceID)
+			case "m.code":
+				targets[idx] = database.NullScan(&m.Code)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan checkpoint with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if mHasData && m.ID != 0 {
+			c.Milestone = m
+		} else {
+			c.Milestone = nil
+		}
+
+		result = append(result, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate checkpoint rows: %w", err)
+	}
+	return result, nil
 }
 
 type Cycle struct {
@@ -31882,6 +32022,8 @@ type Moment struct {
 
 	// MomentTags - many-to-many relationship with the moment_tags table.
 	MomentTags []*MomentTag `db:"-" json:"moment_tags"`
+	// Owner - one-to-one relationship with the moment_owners table.
+	Owner *MomentOwner `db:"-" json:"owner"`
 }
 
 // MomentClient provides type-safe operations for the moments table.
@@ -32210,25 +32352,58 @@ func (c *momentClient) GetMany(ctx context.Context, input *GetMomentsInput, opts
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var moments []*Moment
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("m", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "m",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		moments, err = scanMoments(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			moments, err = scanMomentsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			moments, err = scanMoments(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -33581,6 +33756,7 @@ func momentNestedParentFieldOptions(fo *MomentFieldOptions) *MomentFieldOptions 
 	}
 	scalars := *fo
 	scalars.MomentTags = nil
+	scalars.Owner = nil
 	scalars.At = true
 	return &scalars
 }
@@ -33593,7 +33769,7 @@ func momentNestedSelectsRelationship(fo *MomentFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.MomentTags != nil
+	return fo.MomentTags != nil || fo.Owner != nil
 }
 
 // CreateWithRelated creates a moment together with rows on its nested
@@ -34563,6 +34739,7 @@ type MomentFieldOptions struct {
 	OwnerID    bool                          `json:"owner_id"`
 	Label      bool                          `json:"label"`
 	MomentTags *MomentTagRelationshipOptions `json:"moment_tags"`
+	Owner      *MomentOwnerFieldOptions      `json:"owner"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -34605,6 +34782,9 @@ func (fo *MomentFieldOptions) HasSelectedColumns() bool {
 	if fo.MomentTags != nil {
 		return true
 	}
+	if fo.Owner != nil {
+		return true
+	}
 	return false
 }
 
@@ -34645,11 +34825,81 @@ type GetMomentsInput struct {
 	requiredColumns []string
 }
 
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *momentClient) resolveO2OJoins(d sql.Dialect, fo *MomentFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Owner != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "moment_owners"},
+			Alias: "o",
+			On:    fmt.Sprintf("o.%s = m.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("owner_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Owner.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanMomentsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Moment entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanMomentsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Moment, error) {
+	var result []*Moment
+	for rows.Next() {
+		m := &Moment{}
+		o := &MomentOwner{}
+		oHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "m.at":
+				targets[idx] = &m.At
+			case "m.owner_id":
+				targets[idx] = &m.OwnerID
+			case "m.label":
+				targets[idx] = &m.Label
+			case "o.id":
+				targets[idx] = database.NullScan(&o.ID)
+				oHasData = true
+			case "o.name":
+				targets[idx] = database.NullScan(&o.Name)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan moment with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if oHasData && o.ID != 0 {
+			m.Owner = o
+		} else {
+			m.Owner = nil
+		}
+
+		result = append(result, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate moment rows: %w", err)
+	}
+	return result, nil
+}
+
 type Plot struct {
 	ID          int64     `db:"id" json:"id"`
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
 	ZoneRegion  *string   `db:"zone_region" json:"zone_region"`
 	ZoneID      *int64    `db:"zone_id" json:"zone_id"`
+
+	// Zone - one-to-one relationship with the zones table.
+	Zone *Zone `db:"-" json:"zone"`
 }
 
 // PlotClient provides type-safe operations for the plots table.
@@ -35051,25 +35301,85 @@ func (c *plotClient) GetMany(ctx context.Context, input *GetPlotsInput, opts ...
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var plots []*Plot
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			prefixedConds := sql.PrefixConditions("p", conds)
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			// Child tenant filter: intersect the statically known
+			// set of tenanted o2o targets with the JOINs actually emitted for
+			// this call. FieldOptions may select a strict prefix of an o2o
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					return nil, fmt.Errorf("resolve tenant: %w", err)
+				}
+				if apply {
+					tenantedAliases := map[string]string{
+						"z": "workspace_id",
+					}
+					for i, j := range o2oJoins {
+						if col, ok := tenantedAliases[j.Alias]; ok {
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+						}
+					}
+				}
+			}
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: prefixedConds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "p",
+				LockMode:   options.LockMode,
+			})
 
-		plots, err = scanPlots(rows, columns)
-		if err != nil {
-			return nil, err
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			plots, err = scanPlotsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			plots, err = scanPlots(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return plots, nil
@@ -37350,10 +37660,11 @@ func (f *PlotFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []s
 
 // PlotFieldOptions controls column selection and relationship loading for plots queries.
 type PlotFieldOptions struct {
-	ID          bool `json:"id"`
-	WorkspaceID bool `json:"workspace_id"`
-	ZoneRegion  bool `json:"zone_region"`
-	ZoneID      bool `json:"zone_id"`
+	ID          bool              `json:"id"`
+	WorkspaceID bool              `json:"workspace_id"`
+	ZoneRegion  bool              `json:"zone_region"`
+	ZoneID      bool              `json:"zone_id"`
+	Zone        *ZoneFieldOptions `json:"zone"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -37400,6 +37711,9 @@ func (fo *PlotFieldOptions) HasSelectedColumns() bool {
 	if fo.ZoneID {
 		return true
 	}
+	if fo.Zone != nil {
+		return true
+	}
 	return false
 }
 
@@ -37432,6 +37746,77 @@ type GetPlotsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *plotClient) resolveO2OJoins(d sql.Dialect, fo *PlotFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Zone != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "zones"},
+			Alias: "z",
+			On:    fmt.Sprintf("z.%s = p.%s", d.QuoteIdentifier("region"), d.QuoteIdentifier("zone_region")) + fmt.Sprintf(" AND z.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("zone_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Zone.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanPlotsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Plot entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanPlotsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Plot, error) {
+	var result []*Plot
+	for rows.Next() {
+		p := &Plot{}
+		z := &Zone{}
+		zHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "p.id":
+				targets[idx] = &p.ID
+			case "p.workspace_id":
+				targets[idx] = &p.WorkspaceID
+			case "p.zone_region":
+				targets[idx] = &p.ZoneRegion
+			case "p.zone_id":
+				targets[idx] = &p.ZoneID
+			case "z.id":
+				targets[idx] = database.NullScan(&z.ID)
+				zHasData = true
+			case "z.workspace_id":
+				targets[idx] = database.NullScan(&z.WorkspaceID)
+			case "z.region":
+				targets[idx] = database.NullScan(&z.Region)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan plot with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if zHasData && z.ID != 0 {
+			p.Zone = z
+		} else {
+			p.Zone = nil
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate plot rows: %w", err)
+	}
+	return result, nil
 }
 
 // ProjectPK - composite primary key for the projects table.
@@ -47384,6 +47769,11 @@ type SharedKid struct {
 	Org         *string   `db:"org" json:"org"`
 	ParentID    *int64    `db:"parent_id" json:"parent_id"`
 	GuardianID  *int64    `db:"guardian_id" json:"guardian_id"`
+
+	// Guardian - one-to-one relationship with the shared_guardians table.
+	Guardian *SharedGuardian `db:"-" json:"guardian"`
+	// Parent - one-to-one relationship with the shared_parents table.
+	Parent *SharedParent `db:"-" json:"parent"`
 }
 
 // SharedKidClient provides type-safe operations for the shared_kids table.
@@ -47787,25 +48177,86 @@ func (c *sharedKidClient) GetMany(ctx context.Context, input *GetSharedKidsInput
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var sharedKids []*SharedKid
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			prefixedConds := sql.PrefixConditions("s", conds)
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			// Child tenant filter: intersect the statically known
+			// set of tenanted o2o targets with the JOINs actually emitted for
+			// this call. FieldOptions may select a strict prefix of an o2o
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					return nil, fmt.Errorf("resolve tenant: %w", err)
+				}
+				if apply {
+					tenantedAliases := map[string]string{
+						"g": "workspace_id",
+						"p": "workspace_id",
+					}
+					for i, j := range o2oJoins {
+						if col, ok := tenantedAliases[j.Alias]; ok {
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+						}
+					}
+				}
+			}
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: prefixedConds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "s",
+				LockMode:   options.LockMode,
+			})
 
-		sharedKids, err = scanSharedKids(rows, columns)
-		if err != nil {
-			return nil, err
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			sharedKids, err = scanSharedKidsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			sharedKids, err = scanSharedKids(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return sharedKids, nil
@@ -50133,11 +50584,13 @@ func (f *SharedKidFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption
 
 // SharedKidFieldOptions controls column selection and relationship loading for shared_kids queries.
 type SharedKidFieldOptions struct {
-	ID          bool `json:"id"`
-	WorkspaceID bool `json:"workspace_id"`
-	Org         bool `json:"org"`
-	ParentID    bool `json:"parent_id"`
-	GuardianID  bool `json:"guardian_id"`
+	ID          bool                        `json:"id"`
+	WorkspaceID bool                        `json:"workspace_id"`
+	Org         bool                        `json:"org"`
+	ParentID    bool                        `json:"parent_id"`
+	GuardianID  bool                        `json:"guardian_id"`
+	Guardian    *SharedGuardianFieldOptions `json:"guardian"`
+	Parent      *SharedParentFieldOptions   `json:"parent"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -50191,6 +50644,12 @@ func (fo *SharedKidFieldOptions) HasSelectedColumns() bool {
 	if fo.GuardianID {
 		return true
 	}
+	if fo.Guardian != nil {
+		return true
+	}
+	if fo.Parent != nil {
+		return true
+	}
 	return false
 }
 
@@ -50225,6 +50684,104 @@ type GetSharedKidsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *sharedKidClient) resolveO2OJoins(d sql.Dialect, fo *SharedKidFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Guardian != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "shared_guardians"},
+			Alias: "g",
+			On:    fmt.Sprintf("g.%s = s.%s", d.QuoteIdentifier("org"), d.QuoteIdentifier("org")) + fmt.Sprintf(" AND g.%s = s.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("guardian_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Guardian.Columns(), "id"),
+		})
+	}
+	if fo.Parent != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "shared_parents"},
+			Alias: "p",
+			On:    fmt.Sprintf("p.%s = s.%s", d.QuoteIdentifier("org"), d.QuoteIdentifier("org")) + fmt.Sprintf(" AND p.%s = s.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Parent.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanSharedKidsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// SharedKid entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanSharedKidsWithOneToOneJoins(rows database.Rows, columns []string) ([]*SharedKid, error) {
+	var result []*SharedKid
+	for rows.Next() {
+		s := &SharedKid{}
+		g := &SharedGuardian{}
+		gHasData := false
+		p := &SharedParent{}
+		pHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "s.id":
+				targets[idx] = &s.ID
+			case "s.workspace_id":
+				targets[idx] = &s.WorkspaceID
+			case "s.org":
+				targets[idx] = &s.Org
+			case "s.parent_id":
+				targets[idx] = &s.ParentID
+			case "s.guardian_id":
+				targets[idx] = &s.GuardianID
+			case "g.id":
+				targets[idx] = database.NullScan(&g.ID)
+				gHasData = true
+			case "g.workspace_id":
+				targets[idx] = database.NullScan(&g.WorkspaceID)
+			case "g.org":
+				targets[idx] = database.NullScan(&g.Org)
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			case "p.workspace_id":
+				targets[idx] = database.NullScan(&p.WorkspaceID)
+			case "p.org":
+				targets[idx] = database.NullScan(&p.Org)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan shared_kid with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if pHasData && p.ID != 0 {
+			s.Parent = p
+		} else {
+			s.Parent = nil
+		}
+		if gHasData && g.ID != 0 {
+			s.Guardian = g
+		} else {
+			s.Guardian = nil
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shared_kid rows: %w", err)
+	}
+	return result, nil
 }
 
 type SharedParent struct {
@@ -53909,6 +54466,9 @@ type Site struct {
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
 	ZoneRegion  *string   `db:"zone_region" json:"zone_region"`
 	ZoneID      *int64    `db:"zone_id" json:"zone_id"`
+
+	// Zone - one-to-one relationship with the zones table.
+	Zone *Zone `db:"-" json:"zone"`
 }
 
 // SiteClient provides type-safe operations for the sites table.
@@ -54310,25 +54870,85 @@ func (c *siteClient) GetMany(ctx context.Context, input *GetSitesInput, opts ...
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var sites []*Site
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			prefixedConds := sql.PrefixConditions("s", conds)
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			// Child tenant filter: intersect the statically known
+			// set of tenanted o2o targets with the JOINs actually emitted for
+			// this call. FieldOptions may select a strict prefix of an o2o
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					return nil, fmt.Errorf("resolve tenant: %w", err)
+				}
+				if apply {
+					tenantedAliases := map[string]string{
+						"z": "workspace_id",
+					}
+					for i, j := range o2oJoins {
+						if col, ok := tenantedAliases[j.Alias]; ok {
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+						}
+					}
+				}
+			}
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: prefixedConds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "s",
+				LockMode:   options.LockMode,
+			})
 
-		sites, err = scanSites(rows, columns)
-		if err != nil {
-			return nil, err
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			sites, err = scanSitesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			sites, err = scanSites(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return sites, nil
@@ -56609,10 +57229,11 @@ func (f *SiteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []s
 
 // SiteFieldOptions controls column selection and relationship loading for sites queries.
 type SiteFieldOptions struct {
-	ID          bool `json:"id"`
-	WorkspaceID bool `json:"workspace_id"`
-	ZoneRegion  bool `json:"zone_region"`
-	ZoneID      bool `json:"zone_id"`
+	ID          bool              `json:"id"`
+	WorkspaceID bool              `json:"workspace_id"`
+	ZoneRegion  bool              `json:"zone_region"`
+	ZoneID      bool              `json:"zone_id"`
+	Zone        *ZoneFieldOptions `json:"zone"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -56659,6 +57280,9 @@ func (fo *SiteFieldOptions) HasSelectedColumns() bool {
 	if fo.ZoneID {
 		return true
 	}
+	if fo.Zone != nil {
+		return true
+	}
 	return false
 }
 
@@ -56691,6 +57315,77 @@ type GetSitesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *siteClient) resolveO2OJoins(d sql.Dialect, fo *SiteFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Zone != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "zones"},
+			Alias: "z",
+			On:    fmt.Sprintf("z.%s = s.%s", d.QuoteIdentifier("region"), d.QuoteIdentifier("zone_region")) + fmt.Sprintf(" AND z.%s = s.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("zone_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Zone.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanSitesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Site entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanSitesWithOneToOneJoins(rows database.Rows, columns []string) ([]*Site, error) {
+	var result []*Site
+	for rows.Next() {
+		s := &Site{}
+		z := &Zone{}
+		zHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "s.id":
+				targets[idx] = &s.ID
+			case "s.workspace_id":
+				targets[idx] = &s.WorkspaceID
+			case "s.zone_region":
+				targets[idx] = &s.ZoneRegion
+			case "s.zone_id":
+				targets[idx] = &s.ZoneID
+			case "z.id":
+				targets[idx] = database.NullScan(&z.ID)
+				zHasData = true
+			case "z.workspace_id":
+				targets[idx] = database.NullScan(&z.WorkspaceID)
+			case "z.region":
+				targets[idx] = database.NullScan(&z.Region)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan site with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if zHasData && z.ID != 0 {
+			s.Zone = z
+		} else {
+			s.Zone = nil
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate site rows: %w", err)
+	}
+	return result, nil
 }
 
 type Sprint struct {
@@ -70423,10 +71118,16 @@ type Task struct {
 
 	// Badges - many-to-many relationship with the badges table.
 	Badges []*Badge `db:"-" json:"badges"`
+	// Cycle - one-to-one relationship with the cycles table.
+	Cycle *Cycle `db:"-" json:"cycle"`
 	// Labels - many-to-many relationship with the labels table.
 	Labels []*Label `db:"-" json:"labels"`
+	// Project - one-to-one relationship with the projects table.
+	Project *Project `db:"-" json:"project"`
 	// Reviewers - many-to-many relationship with the reviewers table.
 	Reviewers []*Reviewer `db:"-" json:"reviewers"`
+	// Sprint - one-to-one relationship with the sprints table.
+	Sprint *Sprint `db:"-" json:"sprint"`
 }
 
 // TaskClient provides type-safe operations for the tasks table.
@@ -70911,25 +71612,87 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var tasks []*Task
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			prefixedConds := sql.PrefixConditions("t", conds)
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			// Child tenant filter: intersect the statically known
+			// set of tenanted o2o targets with the JOINs actually emitted for
+			// this call. FieldOptions may select a strict prefix of an o2o
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					return nil, fmt.Errorf("resolve tenant: %w", err)
+				}
+				if apply {
+					tenantedAliases := map[string]string{
+						"c": "workspace_id",
+						"p": "workspace_id",
+						"s": "workspace_id",
+					}
+					for i, j := range o2oJoins {
+						if col, ok := tenantedAliases[j.Alias]; ok {
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+						}
+					}
+				}
+			}
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: prefixedConds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		tasks, err = scanTasks(rows, columns)
-		if err != nil {
-			return nil, err
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			tasks, err = scanTasksWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			tasks, err = scanTasks(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
@@ -73444,8 +74207,11 @@ func taskNestedParentFieldOptions(fo *TaskFieldOptions) *TaskFieldOptions {
 	}
 	scalars := *fo
 	scalars.Badges = nil
+	scalars.Cycle = nil
 	scalars.Labels = nil
+	scalars.Project = nil
 	scalars.Reviewers = nil
+	scalars.Sprint = nil
 	scalars.ID = true
 	scalars.WorkspaceID = true
 	return &scalars
@@ -73459,7 +74225,7 @@ func taskNestedSelectsRelationship(fo *TaskFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.Badges != nil || fo.Labels != nil || fo.Reviewers != nil
+	return fo.Badges != nil || fo.Cycle != nil || fo.Labels != nil || fo.Project != nil || fo.Reviewers != nil || fo.Sprint != nil
 }
 
 // nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
@@ -75094,8 +75860,11 @@ type TaskFieldOptions struct {
 	ProjectCode bool                         `json:"project_code"`
 	Title       bool                         `json:"title"`
 	Badges      *BadgeRelationshipOptions    `json:"badges"`
+	Cycle       *CycleFieldOptions           `json:"cycle"`
 	Labels      *LabelRelationshipOptions    `json:"labels"`
+	Project     *ProjectFieldOptions         `json:"project"`
 	Reviewers   *ReviewerRelationshipOptions `json:"reviewers"`
+	Sprint      *SprintFieldOptions          `json:"sprint"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -75159,10 +75928,19 @@ func (fo *TaskFieldOptions) HasSelectedColumns() bool {
 	if fo.Badges != nil {
 		return true
 	}
+	if fo.Cycle != nil {
+		return true
+	}
 	if fo.Labels != nil {
 		return true
 	}
+	if fo.Project != nil {
+		return true
+	}
 	if fo.Reviewers != nil {
+		return true
+	}
+	if fo.Sprint != nil {
 		return true
 	}
 	return false
@@ -75222,6 +76000,131 @@ type GetTasksInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *taskClient) resolveO2OJoins(d sql.Dialect, fo *TaskFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Cycle != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "cycles"},
+			Alias: "c",
+			On:    fmt.Sprintf("c.%s = t.%s", d.QuoteIdentifier("workspace_id"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND c.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("cycle_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Cycle.Columns(), "id"),
+		})
+	}
+	if fo.Project != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "projects"},
+			Alias: "p",
+			On:    fmt.Sprintf("p.%s = t.%s", d.QuoteIdentifier("workspace_id"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND p.%s = t.%s", d.QuoteIdentifier("code"), d.QuoteIdentifier("project_code")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Project.Columns(), "workspace_id"),
+		})
+	}
+	if fo.Sprint != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "sprints"},
+			Alias: "s",
+			On:    fmt.Sprintf("s.%s = t.%s", d.QuoteIdentifier("workspace_id"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND s.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("sprint_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Sprint.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanTasksWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Task entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTasksWithOneToOneJoins(rows database.Rows, columns []string) ([]*Task, error) {
+	var result []*Task
+	for rows.Next() {
+		t := &Task{}
+		c := &Cycle{}
+		cHasData := false
+		p := &Project{}
+		pHasData := false
+		s := &Sprint{}
+		sHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.workspace_id":
+				targets[idx] = &t.WorkspaceID
+			case "t.cycle_id":
+				targets[idx] = &t.CycleID
+			case "t.sprint_id":
+				targets[idx] = &t.SprintID
+			case "t.project_code":
+				targets[idx] = &t.ProjectCode
+			case "t.title":
+				targets[idx] = &t.Title
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.workspace_id":
+				targets[idx] = database.NullScan(&c.WorkspaceID)
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "p.workspace_id":
+				targets[idx] = database.NullScan(&p.WorkspaceID)
+				pHasData = true
+			case "p.code":
+				targets[idx] = database.NullScan(&p.Code)
+			case "p.name":
+				targets[idx] = database.NullScan(&p.Name)
+			case "s.id":
+				targets[idx] = database.NullScan(&s.ID)
+				sHasData = true
+			case "s.workspace_id":
+				targets[idx] = database.NullScan(&s.WorkspaceID)
+			case "s.name":
+				targets[idx] = database.NullScan(&s.Name)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan task with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if sHasData && s.ID != 0 {
+			t.Sprint = s
+		} else {
+			t.Sprint = nil
+		}
+		if pHasData && p.WorkspaceID != (uuid.UUID{}) {
+			t.Project = p
+		} else {
+			t.Project = nil
+		}
+		if cHasData && c.ID != 0 {
+			t.Cycle = c
+		} else {
+			t.Cycle = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task rows: %w", err)
+	}
+	return result, nil
 }
 
 // TemplateLabelPK - composite primary key for the template_labels table.
@@ -77525,6 +78428,9 @@ type TemplateNote struct {
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
 	TemplateID  *int64    `db:"template_id" json:"template_id"`
 	Body        string    `db:"body" json:"body"`
+
+	// Template - one-to-one relationship with the templates table.
+	Template *Template `db:"-" json:"template"`
 }
 
 // TemplateNoteClient provides type-safe operations for the template_notes table.
@@ -77926,25 +78832,58 @@ func (c *templateNoteClient) GetMany(ctx context.Context, input *GetTemplateNote
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var templateNotes []*TemplateNote
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("t", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		templateNotes, err = scanTemplateNotes(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			templateNotes, err = scanTemplateNotesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			templateNotes, err = scanTemplateNotes(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return templateNotes, nil
@@ -80207,10 +81146,11 @@ func (f *TemplateNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOpt
 
 // TemplateNoteFieldOptions controls column selection and relationship loading for template_notes queries.
 type TemplateNoteFieldOptions struct {
-	ID          bool `json:"id"`
-	WorkspaceID bool `json:"workspace_id"`
-	TemplateID  bool `json:"template_id"`
-	Body        bool `json:"body"`
+	ID          bool                  `json:"id"`
+	WorkspaceID bool                  `json:"workspace_id"`
+	TemplateID  bool                  `json:"template_id"`
+	Body        bool                  `json:"body"`
+	Template    *TemplateFieldOptions `json:"template"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -80257,6 +81197,9 @@ func (fo *TemplateNoteFieldOptions) HasSelectedColumns() bool {
 	if fo.Body {
 		return true
 	}
+	if fo.Template != nil {
+		return true
+	}
 	return false
 }
 
@@ -80289,6 +81232,77 @@ type GetTemplateNotesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *templateNoteClient) resolveO2OJoins(d sql.Dialect, fo *TemplateNoteFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Template != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "templates"},
+			Alias: "t2",
+			On:    fmt.Sprintf("t2.%s = t.%s", d.QuoteIdentifier("owner_workspace"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND t2.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("template_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Template.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanTemplateNotesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// TemplateNote entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTemplateNotesWithOneToOneJoins(rows database.Rows, columns []string) ([]*TemplateNote, error) {
+	var result []*TemplateNote
+	for rows.Next() {
+		t := &TemplateNote{}
+		t2 := &Template{}
+		t2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.workspace_id":
+				targets[idx] = &t.WorkspaceID
+			case "t.template_id":
+				targets[idx] = &t.TemplateID
+			case "t.body":
+				targets[idx] = &t.Body
+			case "t2.id":
+				targets[idx] = database.NullScan(&t2.ID)
+				t2HasData = true
+			case "t2.owner_workspace":
+				targets[idx] = database.NullScan(&t2.OwnerWorkspace)
+			case "t2.name":
+				targets[idx] = database.NullScan(&t2.Name)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan template_note with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if t2HasData && t2.ID != 0 {
+			t.Template = t2
+		} else {
+			t.Template = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate template_note rows: %w", err)
+	}
+	return result, nil
 }
 
 // TemplateStampPK - composite primary key for the template_stamps table.
@@ -82592,6 +83606,9 @@ type TemplateStep struct {
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
 	TemplateID  int64     `db:"template_id" json:"template_id"`
 	Title       string    `db:"title" json:"title"`
+
+	// Template - one-to-one relationship with the templates table.
+	Template *Template `db:"-" json:"template"`
 }
 
 // TemplateStepClient provides type-safe operations for the template_steps table.
@@ -82993,25 +84010,58 @@ func (c *templateStepClient) GetMany(ctx context.Context, input *GetTemplateStep
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var templateSteps []*TemplateStep
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("t", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		templateSteps, err = scanTemplateSteps(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			templateSteps, err = scanTemplateStepsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			templateSteps, err = scanTemplateSteps(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return templateSteps, nil
@@ -85256,10 +86306,11 @@ func (f *TemplateStepFilter) ToConditions(dialect sql.Dialect, opts ...FilterOpt
 
 // TemplateStepFieldOptions controls column selection and relationship loading for template_steps queries.
 type TemplateStepFieldOptions struct {
-	ID          bool `json:"id"`
-	WorkspaceID bool `json:"workspace_id"`
-	TemplateID  bool `json:"template_id"`
-	Title       bool `json:"title"`
+	ID          bool                  `json:"id"`
+	WorkspaceID bool                  `json:"workspace_id"`
+	TemplateID  bool                  `json:"template_id"`
+	Title       bool                  `json:"title"`
+	Template    *TemplateFieldOptions `json:"template"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -85306,6 +86357,9 @@ func (fo *TemplateStepFieldOptions) HasSelectedColumns() bool {
 	if fo.Title {
 		return true
 	}
+	if fo.Template != nil {
+		return true
+	}
 	return false
 }
 
@@ -85338,6 +86392,77 @@ type GetTemplateStepsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *templateStepClient) resolveO2OJoins(d sql.Dialect, fo *TemplateStepFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Template != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "templates"},
+			Alias: "t2",
+			On:    fmt.Sprintf("t2.%s = t.%s", d.QuoteIdentifier("owner_workspace"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND t2.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("template_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Template.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanTemplateStepsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// TemplateStep entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTemplateStepsWithOneToOneJoins(rows database.Rows, columns []string) ([]*TemplateStep, error) {
+	var result []*TemplateStep
+	for rows.Next() {
+		t := &TemplateStep{}
+		t2 := &Template{}
+		t2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.workspace_id":
+				targets[idx] = &t.WorkspaceID
+			case "t.template_id":
+				targets[idx] = &t.TemplateID
+			case "t.title":
+				targets[idx] = &t.Title
+			case "t2.id":
+				targets[idx] = database.NullScan(&t2.ID)
+				t2HasData = true
+			case "t2.owner_workspace":
+				targets[idx] = database.NullScan(&t2.OwnerWorkspace)
+			case "t2.name":
+				targets[idx] = database.NullScan(&t2.Name)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan template_step with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if t2HasData && t2.ID != 0 {
+			t.Template = t2
+		} else {
+			t.Template = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate template_step rows: %w", err)
+	}
+	return result, nil
 }
 
 type Template struct {
@@ -89862,6 +90987,9 @@ type WorkspaceNote struct {
 	ID          int64     `db:"id" json:"id"`
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
 	Body        string    `db:"body" json:"body"`
+
+	// Workspace - one-to-one relationship with the workspaces table.
+	Workspace *Workspace `db:"-" json:"workspace"`
 }
 
 // WorkspaceNoteClient provides type-safe operations for the workspace_notes table.
@@ -90261,25 +91389,58 @@ func (c *workspaceNoteClient) GetMany(ctx context.Context, input *GetWorkspaceNo
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var workspaceNotes []*WorkspaceNote
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("w", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "w",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		workspaceNotes, err = scanWorkspaceNotes(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			workspaceNotes, err = scanWorkspaceNotesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			workspaceNotes, err = scanWorkspaceNotes(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return workspaceNotes, nil
@@ -92495,9 +93656,10 @@ func (f *WorkspaceNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOp
 
 // WorkspaceNoteFieldOptions controls column selection and relationship loading for workspace_notes queries.
 type WorkspaceNoteFieldOptions struct {
-	ID          bool `json:"id"`
-	WorkspaceID bool `json:"workspace_id"`
-	Body        bool `json:"body"`
+	ID          bool                   `json:"id"`
+	WorkspaceID bool                   `json:"workspace_id"`
+	Body        bool                   `json:"body"`
+	Workspace   *WorkspaceFieldOptions `json:"workspace"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -92537,6 +93699,9 @@ func (fo *WorkspaceNoteFieldOptions) HasSelectedColumns() bool {
 	if fo.Body {
 		return true
 	}
+	if fo.Workspace != nil {
+		return true
+	}
 	return false
 }
 
@@ -92567,6 +93732,73 @@ type GetWorkspaceNotesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *workspaceNoteClient) resolveO2OJoins(d sql.Dialect, fo *WorkspaceNoteFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Workspace != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "workspaces"},
+			Alias: "w2",
+			On:    fmt.Sprintf("w2.%s = w.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("workspace_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Workspace.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanWorkspaceNotesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// WorkspaceNote entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanWorkspaceNotesWithOneToOneJoins(rows database.Rows, columns []string) ([]*WorkspaceNote, error) {
+	var result []*WorkspaceNote
+	for rows.Next() {
+		w := &WorkspaceNote{}
+		w2 := &Workspace{}
+		w2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "w.id":
+				targets[idx] = &w.ID
+			case "w.workspace_id":
+				targets[idx] = &w.WorkspaceID
+			case "w.body":
+				targets[idx] = &w.Body
+			case "w2.id":
+				targets[idx] = database.NullScan(&w2.ID)
+				w2HasData = true
+			case "w2.name":
+				targets[idx] = database.NullScan(&w2.Name)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan workspace_note with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if w2HasData && w2.ID != (uuid.UUID{}) {
+			w.Workspace = w2
+		} else {
+			w.Workspace = nil
+		}
+
+		result = append(result, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate workspace_note rows: %w", err)
+	}
+	return result, nil
 }
 
 type Workspace struct {

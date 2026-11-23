@@ -44,6 +44,8 @@ type Event {
   address2ID: String
   "s3_url"
   s3URL: String
+  "one-to-one relationship with the users table."
+  user: User
 }
 
 type EventConnection {

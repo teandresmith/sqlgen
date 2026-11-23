@@ -11,7 +11,7 @@ type TaskReport {
   "summary"
   summary: String!
   "one-to-one relationship with the tasks table."
-  tasks: Task
+  task: Task
 }
 
 type TaskReportConnection {

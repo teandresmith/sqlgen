@@ -99,7 +99,7 @@ CREATE TABLE links (id integer PRIMARY KEY, tags text[] NOT NULL REFERENCES thin
 			"postgres one-to-one", "postgres", "pgx",
 			`CREATE TABLE things (id integer PRIMARY KEY, tags text[] NOT NULL UNIQUE);
 CREATE TABLE refs (id integer PRIMARY KEY, tags text[] UNIQUE REFERENCES things(tags));`, "",
-			"", "Things *Thing",
+			"", "Thing *Thing",
 		},
 		{
 			// refs is reached from heads through a keyable one-to-one, so its
@@ -108,13 +108,13 @@ CREATE TABLE refs (id integer PRIMARY KEY, tags text[] UNIQUE REFERENCES things(
 			`CREATE TABLE things (id integer PRIMARY KEY, tags text[] NOT NULL UNIQUE);
 CREATE TABLE refs (id integer PRIMARY KEY, tags text[] UNIQUE REFERENCES things(tags));
 CREATE TABLE heads (id integer PRIMARY KEY, ref_id integer NOT NULL UNIQUE REFERENCES refs(id));`, "",
-			"", "Things *Thing",
+			"", "Thing *Thing",
 		},
 		{
 			"mysql set one-to-one", "mysql", "stdlib",
 			`CREATE TABLE things (id int PRIMARY KEY, sk set('a', 'b') NOT NULL, UNIQUE KEY uq_sk (sk));
 CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'), UNIQUE KEY uq_rsk (sk), CONSTRAINT fk_sk FOREIGN KEY (sk) REFERENCES things(sk));`, "",
-			"", "Things *Thing",
+			"", "Thing *Thing",
 		},
 		{
 			"declared one-to-one", "mysql", "stdlib",

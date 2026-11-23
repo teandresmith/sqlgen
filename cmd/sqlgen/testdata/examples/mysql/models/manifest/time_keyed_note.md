@@ -27,6 +27,12 @@
 | `PRIMARY` | id | yes | btree |  |
 | `keyed_at` | keyed_at |  | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| time_keyed | o2o | TimeKeyed | time_keyed_notes.keyed_at |  |
+
 ## Query methods
 
 ### Get

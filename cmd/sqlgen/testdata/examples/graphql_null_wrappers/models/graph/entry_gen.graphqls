@@ -14,6 +14,8 @@ type Entry {
   upstreamRef: UUID
   "created_at"
   createdAt: Time!
+  "one-to-one relationship with the accounts table."
+  account: Account
 }
 
 type EntryConnection {

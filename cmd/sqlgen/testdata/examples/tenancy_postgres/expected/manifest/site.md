@@ -27,6 +27,12 @@
 | --- | --- | --- | --- | --- |
 | `sites_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| zone | o2o | Zone | public.sites.(zone_region, zone_id) |  |
+
 ## Query methods
 
 ### Get

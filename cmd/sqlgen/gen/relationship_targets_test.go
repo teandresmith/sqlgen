@@ -826,14 +826,14 @@ func TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge(t *testing.T) {
 	}{
 		{
 			name:       "nothing excluded",
-			wantFields: map[string][]string{"cycles": {"Tasks"}, "profiles": {"Users"}, "posts": {"Tags"}, "tags": {"Posts"}},
+			wantFields: map[string][]string{"cycles": {"Tasks"}, "profiles": {"User"}, "posts": {"Tags"}, "tags": {"Posts"}},
 		},
 		{
 			name: "o2m fk column",
 			mutate: func(cfg *config.RootConfig) {
 				cfg.Tables["tasks"] = config.TableConfig{ExcludeColumns: []string{"cycle_id"}}
 			},
-			wantFields:   map[string][]string{"cycles": nil, "profiles": {"Users"}, "posts": {"Tags"}, "tags": {"Posts"}},
+			wantFields:   map[string][]string{"cycles": nil, "profiles": {"User"}, "posts": {"Tags"}, "tags": {"Posts"}},
 			wantWarnings: []string{omittedWarning("public.cycles", "tasks", "public.tasks.cycle_id")},
 		},
 		{
@@ -847,7 +847,7 @@ func TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge(t *testing.T) {
 			mutate: func(cfg *config.RootConfig) {
 				cfg.Tables["post_tags"] = config.TableConfig{ExcludeColumns: []string{"tag_id"}}
 			},
-			wantFields: map[string][]string{"cycles": {"Tasks"}, "profiles": {"Users"}, "posts": nil, "tags": nil},
+			wantFields: map[string][]string{"cycles": {"Tasks"}, "profiles": {"User"}, "posts": nil, "tags": nil},
 			wantWarnings: []string{
 				omittedWarning("public.posts", "tags", "public.post_tags.tag_id"),
 				omittedWarning("public.tags", "posts", "public.post_tags.tag_id"),
@@ -861,7 +861,7 @@ func TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge(t *testing.T) {
 					PrimaryKey:     &config.TablePrimaryKeyConfig{Columns: []string{"code"}},
 				}
 			},
-			wantFields:   map[string][]string{"cycles": nil, "profiles": {"Users"}, "posts": {"Tags"}, "tags": {"Posts"}},
+			wantFields:   map[string][]string{"cycles": nil, "profiles": {"User"}, "posts": {"Tags"}, "tags": {"Posts"}},
 			wantWarnings: []string{omittedWarning("public.cycles", "tasks", "public.cycles.id")},
 		},
 		{
@@ -870,7 +870,7 @@ func TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge(t *testing.T) {
 				cfg.Tables["tasks"] = config.TableConfig{ExcludeColumns: []string{"cycle_id"}}
 				cfg.Tables["cycles"] = config.TableConfig{ExcludeRelationships: []string{"tasks"}}
 			},
-			wantFields: map[string][]string{"cycles": nil, "profiles": {"Users"}, "posts": {"Tags"}, "tags": {"Posts"}},
+			wantFields: map[string][]string{"cycles": nil, "profiles": {"User"}, "posts": {"Tags"}, "tags": {"Posts"}},
 		},
 	}
 	for _, tt := range tests {

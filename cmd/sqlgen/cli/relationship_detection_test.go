@@ -113,7 +113,7 @@ func TestGenerate_CompositeKeyEdgeIsGenerated(t *testing.T) {
 			`fmt.Sprintf(" AND t2.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("task_id"))`,
 		}},
 		{"chained o2o", []string{
-			`fmt.Sprintf("t.%s = r.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("report_id"))`,
+			`fmt.Sprintf("r2.%s = r.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("report_id"))`,
 		}},
 		{"tenant junction m2m", []string{
 			`Columns: []string{"workspace_id", "task_id"},`,
@@ -138,7 +138,7 @@ func TestGenerate_CompositeKeyEdgeIsGenerated(t *testing.T) {
 			t.Fatal("generated Go has no report_notes resolver")
 		}
 		body, _, _ = strings.Cut(body, "\n}\n")
-		want := `fmt.Sprintf(" AND t2.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("task_id"))`
+		want := `fmt.Sprintf(" AND t.%s = r2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("task_id"))`
 		if !strings.Contains(body, want) {
 			t.Errorf("report_notes resolver is missing %q:\n%s", want, body)
 		}
@@ -403,16 +403,24 @@ generation:
         table: profiles
         fk: user_at
 `
+	// Without the belongs-to edge, which reports the pair first, the list
+	// edge's direction is refused too.
+	const listOnly = "tables:\n  stamp_kids:\n    exclude_relationships: [stamps]\n"
 	tests := []struct{ name, schema, tables, want string }{
 		{
 			"datetime key, text fk", `CREATE TABLE stamps (k datetime PRIMARY KEY);
-CREATE TABLE stamp_kids (id integer PRIMARY KEY, k text REFERENCES stamps (k));`, "",
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, k text REFERENCES stamps (k));`, listOnly,
 			`tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime), a time column next to a column of another storage class: no loader can compare them, since neither side spells the time as the other stores it. Declare both columns with the same storage class`,
 		},
 		{
 			"text key, datetime fk", `CREATE TABLE stamps (k text PRIMARY KEY);
-CREATE TABLE stamp_kids (id integer PRIMARY KEY, k datetime REFERENCES stamps (k));`, "",
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, k datetime REFERENCES stamps (k));`, listOnly,
 			`tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (datetime) with stamps.k (text)`,
+		},
+		{
+			"belongs-to over a text fk into a datetime key", `CREATE TABLE stamps (k datetime PRIMARY KEY);
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, k text REFERENCES stamps (k));`, "",
+			`tables.stamp_kids.relationships: "stamp" pairs stamp_kids.k (text) with stamps.k (datetime)`,
 		},
 		{
 			"declared datetime fk into an integer key", `CREATE TABLE users (id integer PRIMARY KEY);

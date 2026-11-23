@@ -31,7 +31,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
-| owners | o2o | Owner | owner_profiles.owner_id |  |
+| owner | o2o | Owner | owner_profiles.owner_id |  |
 
 ## Query methods
 

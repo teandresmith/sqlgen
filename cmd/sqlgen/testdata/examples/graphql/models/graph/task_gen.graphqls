@@ -10,6 +10,8 @@ type Task {
   cycleID: UUID
   "title"
   title: String!
+  "one-to-one relationship with the cycles table."
+  cycle: Cycle
   "many-to-many relationship with the labels table."
   labels: [Label!]!
 }

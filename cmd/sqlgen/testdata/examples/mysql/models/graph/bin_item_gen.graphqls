@@ -10,6 +10,8 @@ type BinItem {
   slot: Int
   "name"
   name: String!
+  "one-to-one relationship with the bins table."
+  bin: Bin
 }
 
 type BinItemConnection {

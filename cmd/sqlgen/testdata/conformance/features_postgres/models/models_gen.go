@@ -9250,6 +9250,9 @@ type Card struct {
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
 	BoardID     *int64    `db:"board_id" json:"board_id"`
 	Title       string    `db:"title" json:"title"`
+
+	// Board - one-to-one relationship with the boards table.
+	Board *Board `db:"-" json:"board"`
 }
 
 // CardClient provides type-safe operations for the cards table.
@@ -9651,25 +9654,85 @@ func (c *cardClient) GetMany(ctx context.Context, input *GetCardsInput, opts ...
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var cards []*Card
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			prefixedConds := sql.PrefixConditions("c", conds)
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			// Child tenant filter: intersect the statically known
+			// set of tenanted o2o targets with the JOINs actually emitted for
+			// this call. FieldOptions may select a strict prefix of an o2o
+			// chain, so chained aliases only contribute a filter when the
+			// runtime includes them in o2oJoins. The filter goes in the JOIN's
+			// ON clause, not the WHERE, so a parent whose child is absent or
+			// in another tenant keeps its row with the edge nil. apply=false
+			// under tenancy.required:false + zero resolver skips the
+			// per-alias filter (cross-tenant read).
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					return nil, fmt.Errorf("resolve tenant: %w", err)
+				}
+				if apply {
+					tenantedAliases := map[string]string{
+						"b": "workspace_id",
+					}
+					for i, j := range o2oJoins {
+						if col, ok := tenantedAliases[j.Alias]; ok {
+							o2oJoins[i].Conditions = append(j.Conditions, sql.Where(j.Alias+"."+c.dialect.QuoteIdentifier(col)).Eq(resolvedTenant))
+						}
+					}
+				}
+			}
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: prefixedConds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "c",
+				LockMode:   options.LockMode,
+			})
 
-		cards, err = scanCards(rows, columns)
-		if err != nil {
-			return nil, err
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			cards, err = scanCardsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			cards, err = scanCards(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return cards, nil
@@ -11932,10 +11995,11 @@ func (f *CardFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []s
 
 // CardFieldOptions controls column selection and relationship loading for cards queries.
 type CardFieldOptions struct {
-	ID          bool `json:"id"`
-	WorkspaceID bool `json:"workspace_id"`
-	BoardID     bool `json:"board_id"`
-	Title       bool `json:"title"`
+	ID          bool               `json:"id"`
+	WorkspaceID bool               `json:"workspace_id"`
+	BoardID     bool               `json:"board_id"`
+	Title       bool               `json:"title"`
+	Board       *BoardFieldOptions `json:"board"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -11982,6 +12046,9 @@ func (fo *CardFieldOptions) HasSelectedColumns() bool {
 	if fo.Title {
 		return true
 	}
+	if fo.Board != nil {
+		return true
+	}
 	return false
 }
 
@@ -12014,6 +12081,77 @@ type GetCardsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *cardClient) resolveO2OJoins(d sql.Dialect, fo *CardFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Board != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "boards"},
+			Alias: "b",
+			On:    fmt.Sprintf("b.%s = c.%s", d.QuoteIdentifier("workspace_id"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND b.%s = c.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("board_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Board.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanCardsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// Card entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanCardsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Card, error) {
+	var result []*Card
+	for rows.Next() {
+		c := &Card{}
+		b := &Board{}
+		bHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "c.id":
+				targets[idx] = &c.ID
+			case "c.workspace_id":
+				targets[idx] = &c.WorkspaceID
+			case "c.board_id":
+				targets[idx] = &c.BoardID
+			case "c.title":
+				targets[idx] = &c.Title
+			case "b.id":
+				targets[idx] = database.NullScan(&b.ID)
+				bHasData = true
+			case "b.workspace_id":
+				targets[idx] = database.NullScan(&b.WorkspaceID)
+			case "b.name":
+				targets[idx] = database.NullScan(&b.Name)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan card with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if bHasData && b.ID != 0 {
+			c.Board = b
+		} else {
+			c.Board = nil
+		}
+
+		result = append(result, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate card rows: %w", err)
+	}
+	return result, nil
 }
 
 // MembershipPK - composite primary key for the memberships table.
@@ -27176,6 +27314,9 @@ type TemplateNote struct {
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
 	TemplateID  *int64    `db:"template_id" json:"template_id"`
 	Body        string    `db:"body" json:"body"`
+
+	// Template - one-to-one relationship with the templates table.
+	Template *Template `db:"-" json:"template"`
 }
 
 // TemplateNoteClient provides type-safe operations for the template_notes table.
@@ -27577,25 +27718,58 @@ func (c *templateNoteClient) GetMany(ctx context.Context, input *GetTemplateNote
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var templateNotes []*TemplateNote
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("t", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "t",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		templateNotes, err = scanTemplateNotes(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			templateNotes, err = scanTemplateNotesWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			templateNotes, err = scanTemplateNotes(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return templateNotes, nil
@@ -29858,10 +30032,11 @@ func (f *TemplateNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOpt
 
 // TemplateNoteFieldOptions controls column selection and relationship loading for template_notes queries.
 type TemplateNoteFieldOptions struct {
-	ID          bool `json:"id"`
-	WorkspaceID bool `json:"workspace_id"`
-	TemplateID  bool `json:"template_id"`
-	Body        bool `json:"body"`
+	ID          bool                  `json:"id"`
+	WorkspaceID bool                  `json:"workspace_id"`
+	TemplateID  bool                  `json:"template_id"`
+	Body        bool                  `json:"body"`
+	Template    *TemplateFieldOptions `json:"template"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -29908,6 +30083,9 @@ func (fo *TemplateNoteFieldOptions) HasSelectedColumns() bool {
 	if fo.Body {
 		return true
 	}
+	if fo.Template != nil {
+		return true
+	}
 	return false
 }
 
@@ -29940,6 +30118,77 @@ type GetTemplateNotesInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *templateNoteClient) resolveO2OJoins(d sql.Dialect, fo *TemplateNoteFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Template != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "public", Name: "templates"},
+			Alias: "t2",
+			On:    fmt.Sprintf("t2.%s = t.%s", d.QuoteIdentifier("owner_workspace"), d.QuoteIdentifier("workspace_id")) + fmt.Sprintf(" AND t2.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("template_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Template.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanTemplateNotesWithOneToOneJoins scans rows from a LEFT JOIN query into
+// TemplateNote entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanTemplateNotesWithOneToOneJoins(rows database.Rows, columns []string) ([]*TemplateNote, error) {
+	var result []*TemplateNote
+	for rows.Next() {
+		t := &TemplateNote{}
+		t2 := &Template{}
+		t2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "t.id":
+				targets[idx] = &t.ID
+			case "t.workspace_id":
+				targets[idx] = &t.WorkspaceID
+			case "t.template_id":
+				targets[idx] = &t.TemplateID
+			case "t.body":
+				targets[idx] = &t.Body
+			case "t2.id":
+				targets[idx] = database.NullScan(&t2.ID)
+				t2HasData = true
+			case "t2.owner_workspace":
+				targets[idx] = database.NullScan(&t2.OwnerWorkspace)
+			case "t2.name":
+				targets[idx] = database.NullScan(&t2.Name)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan template_note with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if t2HasData && t2.ID != 0 {
+			t.Template = t2
+		} else {
+			t.Template = nil
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate template_note rows: %w", err)
+	}
+	return result, nil
 }
 
 // TemplateTagPK - composite primary key for the template_tags table.

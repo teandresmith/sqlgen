@@ -23,21 +23,21 @@ func TestDetectRelationships_Dialects(t *testing.T) {
 	}{
 		// --- O2O ---
 		{
-			name:    "mysql: single-column UNIQUE FK is O2O named after the referenced table",
+			name:    "mysql: single-column UNIQUE FK is O2O alone",
 			dialect: "mysql",
 			ddl: `
 CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE profiles (id bigint PRIMARY KEY, user_id bigint UNIQUE,
   CONSTRAINT profiles_user FOREIGN KEY (user_id) REFERENCES users (id));`,
-			want: []string{"O2O profiles -> users users [user_id→id] profiles_user"},
+			want: []string{"O2O profiles -> users user (users) [user_id→id] profiles_user"},
 		},
 		{
-			name:    "sqlite: single-column UNIQUE FK is O2O named after the referenced table",
+			name:    "sqlite: single-column UNIQUE FK is O2O alone",
 			dialect: "sqlite",
 			ddl: `
 CREATE TABLE users (id INTEGER PRIMARY KEY);
 CREATE TABLE profiles (id INTEGER PRIMARY KEY, user_id INTEGER UNIQUE REFERENCES users (id));`,
-			want: []string{"O2O profiles -> users users [user_id→id] profiles(user_id) → users(id)"},
+			want: []string{"O2O profiles -> users user (users) [user_id→id] profiles(user_id) → users(id)"},
 		},
 		{
 			name:    "mysql: FK on the sole primary-key column is O2O",
@@ -46,7 +46,7 @@ CREATE TABLE profiles (id INTEGER PRIMARY KEY, user_id INTEGER UNIQUE REFERENCES
 CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE user_credentials (user_id bigint PRIMARY KEY, secret text,
   CONSTRAINT credentials_user FOREIGN KEY (user_id) REFERENCES users (id));`,
-			want: []string{"O2O user_credentials -> users users [user_id→id] credentials_user"},
+			want: []string{"O2O user_credentials -> users user (users) [user_id→id] credentials_user"},
 		},
 		{
 			name:    "sqlite: FK on the sole primary-key column is O2O",
@@ -54,7 +54,7 @@ CREATE TABLE user_credentials (user_id bigint PRIMARY KEY, secret text,
 			ddl: `
 CREATE TABLE users (id INTEGER PRIMARY KEY);
 CREATE TABLE user_credentials (user_id INTEGER PRIMARY KEY REFERENCES users (id), secret TEXT);`,
-			want: []string{"O2O user_credentials -> users users [user_id→id] user_credentials(user_id) → users(id)"},
+			want: []string{"O2O user_credentials -> users user (users) [user_id→id] user_credentials(user_id) → users(id)"},
 		},
 		{
 			name:        "postgres: a declared primary key an override moves no longer makes the edge O2O",
@@ -63,7 +63,7 @@ CREATE TABLE user_credentials (user_id INTEGER PRIMARY KEY REFERENCES users (id)
 			ddl: `
 CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE user_credentials (user_id bigint PRIMARY KEY REFERENCES users (id), code text NOT NULL);`,
-			want: []string{"O2M public.users -> public.user_credentials user_credentials [user_id→id] user_credentials_user_id_fkey"},
+			want: []string{"O2M public.users -> public.user_credentials user_credentials [user_id→id] user_credentials_user_id_fkey", "O2O public.user_credentials -> public.users user (users) [user_id→id] user_credentials_user_id_fkey"},
 		},
 		{
 			name:        "mysql: a declared primary key an override moves no longer makes the edge O2O",
@@ -73,7 +73,7 @@ CREATE TABLE user_credentials (user_id bigint PRIMARY KEY REFERENCES users (id),
 CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE user_credentials (user_id bigint PRIMARY KEY, code varchar(20) NOT NULL,
   CONSTRAINT credentials_user FOREIGN KEY (user_id) REFERENCES users (id));`,
-			want: []string{"O2M users -> user_credentials user_credentials [user_id→id] credentials_user"},
+			want: []string{"O2M users -> user_credentials user_credentials [user_id→id] credentials_user", "O2O user_credentials -> users user (users) [user_id→id] credentials_user"},
 		},
 		{
 			name:        "sqlite: a declared primary key an override moves no longer makes the edge O2O",
@@ -82,7 +82,7 @@ CREATE TABLE user_credentials (user_id bigint PRIMARY KEY, code varchar(20) NOT 
 			ddl: `
 CREATE TABLE users (id INTEGER PRIMARY KEY);
 CREATE TABLE user_credentials (user_id INTEGER PRIMARY KEY REFERENCES users (id), code TEXT NOT NULL);`,
-			want: []string{"O2M users -> user_credentials user_credentials [user_id→id] user_credentials(user_id) → users(id)"},
+			want: []string{"O2M users -> user_credentials user_credentials [user_id→id] user_credentials(user_id) → users(id)", "O2O user_credentials -> users user (users) [user_id→id] user_credentials(user_id) → users(id)"},
 		},
 		{
 			name:    "sqlite: partial UNIQUE on the FK column does not make it O2O",
@@ -91,7 +91,7 @@ CREATE TABLE user_credentials (user_id INTEGER PRIMARY KEY REFERENCES users (id)
 CREATE TABLE users (id INTEGER PRIMARY KEY);
 CREATE TABLE sessions (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users (id), active INTEGER NOT NULL);
 CREATE UNIQUE INDEX one_active_session ON sessions (user_id) WHERE active = 1;`,
-			want: []string{"O2M users -> sessions sessions [user_id→id] sessions(user_id) → users(id)"},
+			want: []string{"O2M users -> sessions sessions [user_id→id] sessions(user_id) → users(id)", "O2O sessions -> users user (users) [user_id→id] sessions(user_id) → users(id)"},
 		},
 		// --- column order ---
 		{
@@ -101,7 +101,7 @@ CREATE UNIQUE INDEX one_active_session ON sessions (user_id) WHERE active = 1;`,
 CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (id, workspace_id), KEY (workspace_id, id));
 CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint,
   CONSTRAINT tasks_cycle FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
-			want: []string{"O2M cycles -> tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_cycle"},
+			want: []string{"O2M cycles -> tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_cycle", "O2O tasks -> cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks_cycle"},
 		},
 		// --- target keys ---
 		{
@@ -112,7 +112,7 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_i
 CREATE TABLE cycles (id bigint PRIMARY KEY, code varchar(20) NOT NULL);
 CREATE TABLE tasks (id bigint PRIMARY KEY, cycle_id bigint,
   CONSTRAINT tasks_cycle FOREIGN KEY (cycle_id) REFERENCES cycles (id));`,
-			want: []string{"O2M cycles -> tasks tasks [cycle_id→id] tasks_cycle"},
+			want: []string{"O2M cycles -> tasks tasks [cycle_id→id] tasks_cycle", "O2O tasks -> cycles cycle (cycles) [cycle_id→id] tasks_cycle"},
 		},
 		{
 			name:        "sqlite: FK into the declared primary key an override moves keeps its edge",
@@ -121,7 +121,7 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, cycle_id bigint,
 			ddl: `
 CREATE TABLE cycles (id INTEGER PRIMARY KEY, code TEXT NOT NULL);
 CREATE TABLE tasks (id INTEGER PRIMARY KEY, cycle_id INTEGER REFERENCES cycles (id));`,
-			want: []string{"O2M cycles -> tasks tasks [cycle_id→id] tasks(cycle_id) → cycles(id)"},
+			want: []string{"O2M cycles -> tasks tasks [cycle_id→id] tasks(cycle_id) → cycles(id)", "O2O tasks -> cycles cycle (cycles) [cycle_id→id] tasks(cycle_id) → cycles(id)"},
 		},
 		{
 			name:        "postgres: FK into an override-resolved primary key gives an edge",
@@ -130,7 +130,7 @@ CREATE TABLE tasks (id INTEGER PRIMARY KEY, cycle_id INTEGER REFERENCES cycles (
 			ddl: `
 CREATE TABLE cycles (id bigint PRIMARY KEY, code text NOT NULL);
 CREATE TABLE tasks (id bigint PRIMARY KEY, cycle_code text REFERENCES cycles (code));`,
-			want: []string{"O2M public.cycles -> public.tasks tasks [cycle_code→code] tasks_cycle_code_fkey"},
+			want: []string{"O2M public.cycles -> public.tasks tasks [cycle_code→code] tasks_cycle_code_fkey", "O2O public.tasks -> public.cycles cycles [cycle_code→code] tasks_cycle_code_fkey"},
 		},
 		{
 			name:        "mysql: FK into an override-resolved primary key gives an edge",
@@ -140,7 +140,7 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, cycle_code text REFERENCES cycles (co
 CREATE TABLE cycles (id bigint PRIMARY KEY, code varchar(20) NOT NULL, KEY (code));
 CREATE TABLE tasks (id bigint PRIMARY KEY, cycle_code varchar(20),
   CONSTRAINT tasks_code FOREIGN KEY (cycle_code) REFERENCES cycles (code));`,
-			want: []string{"O2M cycles -> tasks tasks [cycle_code→code] tasks_code"},
+			want: []string{"O2M cycles -> tasks tasks [cycle_code→code] tasks_code", "O2O tasks -> cycles cycles [cycle_code→code] tasks_code"},
 		},
 		{
 			name:        "sqlite: FK into an override-resolved primary key gives an edge",
@@ -149,7 +149,7 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, cycle_code varchar(20),
 			ddl: `
 CREATE TABLE cycles (id INTEGER PRIMARY KEY, code TEXT NOT NULL);
 CREATE TABLE tasks (id INTEGER PRIMARY KEY, cycle_code TEXT REFERENCES cycles (code));`,
-			want: []string{"O2M cycles -> tasks tasks [cycle_code→code] tasks(cycle_code) → cycles(code)"},
+			want: []string{"O2M cycles -> tasks tasks [cycle_code→code] tasks(cycle_code) → cycles(code)", "O2O tasks -> cycles cycles [cycle_code→code] tasks(cycle_code) → cycles(code)"},
 		},
 		{
 			name:    "postgres: REFERENCES with no column list joins the target's primary key",
@@ -157,7 +157,7 @@ CREATE TABLE tasks (id INTEGER PRIMARY KEY, cycle_code TEXT REFERENCES cycles (c
 			ddl: `
 CREATE TABLE accounts (label text, num bigint PRIMARY KEY);
 CREATE TABLE posts (id bigint PRIMARY KEY, account_num bigint REFERENCES accounts);`,
-			want: []string{"O2M public.accounts -> public.posts posts [account_num→num] posts_account_num_fkey"},
+			want: []string{"O2M public.accounts -> public.posts posts [account_num→num] posts_account_num_fkey", "O2O public.posts -> public.accounts accounts [account_num→num] posts_account_num_fkey"},
 		},
 		{
 			name:    "sqlite: REFERENCES with no column list joins the target's primary key",
@@ -165,7 +165,7 @@ CREATE TABLE posts (id bigint PRIMARY KEY, account_num bigint REFERENCES account
 			ddl: `
 CREATE TABLE accounts (label TEXT, num INTEGER PRIMARY KEY);
 CREATE TABLE posts (id INTEGER PRIMARY KEY, account_num INTEGER REFERENCES accounts);`,
-			want: []string{"O2M accounts -> posts posts [account_num→num] posts(account_num) → accounts(num)"},
+			want: []string{"O2M accounts -> posts posts [account_num→num] posts(account_num) → accounts(num)", "O2O posts -> accounts accounts [account_num→num] posts(account_num) → accounts(num)"},
 		},
 		{
 			name:    "postgres: FK into non-key columns gives no edge and a warning naming the constraint",
@@ -185,7 +185,7 @@ CREATE TABLE users (id bigint PRIMARY KEY);
 CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint, account_id bigint,
   CONSTRAINT posts_author FOREIGN KEY (author_id) REFERENCES users (id),
   CONSTRAINT posts_account FOREIGN KEY (account_id) REFERENCES accounts (id));`,
-			want: []string{"O2M users -> posts posts [author_id→id] posts_author"},
+			want: []string{"O2M users -> posts posts [author_id→id] posts_author", "O2O posts -> users author (users) [author_id→id] posts_author"},
 		},
 		{
 			name:    "sqlite: FK into a table the schema does not hold gives no edge",
@@ -193,7 +193,7 @@ CREATE TABLE posts (id bigint PRIMARY KEY, author_id bigint, account_id bigint,
 			ddl: `
 CREATE TABLE users (id INTEGER PRIMARY KEY);
 CREATE TABLE posts (id INTEGER PRIMARY KEY, author_id INTEGER REFERENCES users (id), account_id INTEGER REFERENCES accounts (id));`,
-			want: []string{"O2M users -> posts posts [author_id→id] posts(author_id) → users(id)"},
+			want: []string{"O2M users -> posts posts [author_id→id] posts(author_id) → users(id)", "O2O posts -> users author (users) [author_id→id] posts(author_id) → users(id)"},
 		},
 		// --- redundant keys ---
 		{
@@ -204,7 +204,7 @@ CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE
 CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint,
   CONSTRAINT tasks_cycle FOREIGN KEY (cycle_id) REFERENCES cycles (id),
   CONSTRAINT tasks_ws_cycle FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
-			want: []string{"O2M cycles -> tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_ws_cycle"},
+			want: []string{"O2M cycles -> tasks tasks [workspace_id→workspace_id cycle_id→id] tasks_ws_cycle", "O2O tasks -> cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks_ws_cycle"},
 		},
 		{
 			name:    "sqlite: FK whose pairs lie within another FK to the same target gives no edge",
@@ -213,7 +213,7 @@ CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_i
 CREATE TABLE cycles (id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, UNIQUE (workspace_id, id));
 CREATE TABLE tasks (id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL, cycle_id INTEGER REFERENCES cycles (id),
   FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`,
-			want: []string{"O2M cycles -> tasks tasks [workspace_id→workspace_id cycle_id→id] tasks(workspace_id, cycle_id) → cycles(workspace_id, id)"},
+			want: []string{"O2M cycles -> tasks tasks [workspace_id→workspace_id cycle_id→id] tasks(workspace_id, cycle_id) → cycles(workspace_id, id)", "O2O tasks -> cycles cycle (cycles) [workspace_id→workspace_id cycle_id→id] tasks(workspace_id, cycle_id) → cycles(workspace_id, id)"},
 		},
 		{
 			name:    "mysql: of identical FKs the name that sorts first gives the edge whatever its column order",
@@ -223,7 +223,7 @@ CREATE TABLE t (x int NOT NULL, y int NOT NULL, PRIMARY KEY (x, y));
 CREATE TABLE c (id int PRIMARY KEY, a int, b int,
   CONSTRAINT z_decl FOREIGN KEY (a, b) REFERENCES t (x, y),
   CONSTRAINT a_decl FOREIGN KEY (b, a) REFERENCES t (y, x));`,
-			want: []string{"O2M t -> c c [b→y a→x] a_decl"},
+			want: []string{"O2M t -> c c [b→y a→x] a_decl", "O2O c -> t t [b→y a→x] a_decl"},
 		},
 		// --- junctions ---
 		{
@@ -288,7 +288,9 @@ CREATE TABLE product_tags (id INTEGER PRIMARY KEY, product_id INTEGER REFERENCES
 CREATE UNIQUE INDEX product_tags_active ON product_tags (product_id, tag_id) WHERE active = 1;`,
 			want: []string{
 				"O2M products -> product_tags product_tags [product_id→id] product_tags(product_id) → products(id)",
+				"O2O product_tags -> products product (products) [product_id→id] product_tags(product_id) → products(id)",
 				"O2M tags -> product_tags product_tags [tag_id→id] product_tags(tag_id) → tags(id)",
+				"O2O product_tags -> tags tag (tags) [tag_id→id] product_tags(tag_id) → tags(id)",
 			},
 		},
 		{
@@ -307,7 +309,9 @@ CREATE TABLE task_labels (workspace_id bigint NOT NULL, task_id bigint NOT NULL,
   CONSTRAINT tl_label FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id));`,
 			want: []string{
 				"O2M workspaces -> tasks tasks [workspace_id→id] tasks_ws",
+				"O2O tasks -> workspaces workspace (workspaces) [workspace_id→id] tasks_ws",
 				"O2M workspaces -> labels labels [workspace_id→id] labels_ws",
+				"O2O labels -> workspaces workspace (workspaces) [workspace_id→id] labels_ws",
 				"M2M tasks -> labels labels via task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id] tl_task / tl_label",
 				"M2M labels -> tasks tasks via task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] tl_label / tl_task",
 			},
@@ -325,13 +329,15 @@ CREATE TABLE task_labels (workspace_id INTEGER NOT NULL REFERENCES workspaces (i
   FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id));`,
 			want: []string{
 				"O2M workspaces -> tasks tasks [workspace_id→id] tasks(workspace_id) → workspaces(id)",
+				"O2O tasks -> workspaces workspace (workspaces) [workspace_id→id] tasks(workspace_id) → workspaces(id)",
 				"O2M workspaces -> labels labels [workspace_id→id] labels(workspace_id) → workspaces(id)",
+				"O2O labels -> workspaces workspace (workspaces) [workspace_id→id] labels(workspace_id) → workspaces(id)",
 				"M2M tasks -> labels labels via task_labels [workspace_id→workspace_id task_id→id] [workspace_id→workspace_id label_id→id] task_labels(workspace_id, task_id) → tasks(workspace_id, id) / task_labels(workspace_id, label_id) → labels(workspace_id, id)",
 				"M2M labels -> tasks tasks via task_labels [workspace_id→workspace_id label_id→id] [workspace_id→workspace_id task_id→id] task_labels(workspace_id, label_id) → labels(workspace_id, id) / task_labels(workspace_id, task_id) → tasks(workspace_id, id)",
 			},
 		},
 		{
-			name:    "mysql: three single-column FKs in the primary key give three O2M edges",
+			name:    "mysql: three single-column FKs in the primary key give three O2M and three belongs-to edges",
 			dialect: "mysql",
 			ddl: `
 CREATE TABLE workspaces (id bigint PRIMARY KEY);
@@ -344,12 +350,15 @@ CREATE TABLE task_labels (workspace_id bigint NOT NULL, task_id bigint NOT NULL,
   CONSTRAINT tl_label FOREIGN KEY (label_id) REFERENCES labels (id));`,
 			want: []string{
 				"O2M workspaces -> task_labels task_labels [workspace_id→id] tl_ws",
+				"O2O task_labels -> workspaces workspace (workspaces) [workspace_id→id] tl_ws",
 				"O2M tasks -> task_labels task_labels [task_id→id] tl_task",
+				"O2O task_labels -> tasks task (tasks) [task_id→id] tl_task",
 				"O2M labels -> task_labels task_labels [label_id→id] tl_label",
+				"O2O task_labels -> labels label (labels) [label_id→id] tl_label",
 			},
 		},
 		{
-			name:    "sqlite: three single-column FKs in the primary key give three O2M edges",
+			name:    "sqlite: three single-column FKs in the primary key give three O2M and three belongs-to edges",
 			dialect: "sqlite",
 			ddl: `
 CREATE TABLE workspaces (id INTEGER PRIMARY KEY);
@@ -359,8 +368,11 @@ CREATE TABLE task_labels (workspace_id INTEGER NOT NULL REFERENCES workspaces (i
   PRIMARY KEY (workspace_id, task_id, label_id));`,
 			want: []string{
 				"O2M workspaces -> task_labels task_labels [workspace_id→id] task_labels(workspace_id) → workspaces(id)",
+				"O2O task_labels -> workspaces workspace (workspaces) [workspace_id→id] task_labels(workspace_id) → workspaces(id)",
 				"O2M tasks -> task_labels task_labels [task_id→id] task_labels(task_id) → tasks(id)",
+				"O2O task_labels -> tasks task (tasks) [task_id→id] task_labels(task_id) → tasks(id)",
 				"O2M labels -> task_labels task_labels [label_id→id] task_labels(label_id) → labels(id)",
+				"O2O task_labels -> labels label (labels) [label_id→id] task_labels(label_id) → labels(id)",
 			},
 		},
 		{
@@ -397,7 +409,9 @@ CREATE TABLE user_tags (user_id bigint NOT NULL, tag_id bigint NOT NULL,
   CONSTRAINT ut_tag FOREIGN KEY (tag_id) REFERENCES tags (id));`,
 			want: []string{
 				"O2M users -> user_tags user_tags [user_id→id] ut_user",
+				"O2O user_tags -> users user (users) [user_id→id] ut_user",
 				"O2M tags -> user_tags user_tags [tag_id→id] ut_tag",
+				"O2O user_tags -> tags tag (tags) [tag_id→id] ut_tag",
 			},
 		},
 		{
@@ -410,7 +424,9 @@ CREATE TABLE tags (id INTEGER PRIMARY KEY);
 CREATE TABLE user_tags (user_id INTEGER NOT NULL REFERENCES users (id), tag_id INTEGER NOT NULL REFERENCES tags (id));`,
 			want: []string{
 				"O2M users -> user_tags user_tags [user_id→id] user_tags(user_id) → users(id)",
+				"O2O user_tags -> users user (users) [user_id→id] user_tags(user_id) → users(id)",
 				"O2M tags -> user_tags user_tags [tag_id→id] user_tags(tag_id) → tags(id)",
+				"O2O user_tags -> tags tag (tags) [tag_id→id] user_tags(tag_id) → tags(id)",
 			},
 		},
 		{

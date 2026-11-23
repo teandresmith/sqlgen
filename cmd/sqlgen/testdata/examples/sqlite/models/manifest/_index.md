@@ -40,6 +40,7 @@ Features: audit_columns, graphql, soft_delete, views
 | Profile | `profiles` | table | [profile.md](profile.md) |  |
 | ReservedWordColumn | `reserved_word_columns` | table | [reserved_word_column.md](reserved_word_column.md) |  |
 | SluggedRow | `slugged_rows` | table | [slugged_row.md](slugged_row.md) |  |
+| Step | `steps` | table | [step.md](step.md) |  |
 | Tag | `tags` | table | [tag.md](tag.md) |  |
 | TimeKeyed | `time_keyed` | table | [time_keyed.md](time_keyed.md) |  |
 | TimeKeyedNote | `time_keyed_notes` | table | [time_keyed_note.md](time_keyed_note.md) |  |

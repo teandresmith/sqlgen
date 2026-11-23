@@ -168,6 +168,24 @@
       }
     },
     {
+      "name": "cycle",
+      "kind": "o2o",
+      "target_entity": "Cycle",
+      "fk": {
+        "table": "tasks",
+        "schema": "public",
+        "columns": [
+          "workspace_id",
+          "cycle_id"
+        ],
+        "references": [
+          "workspace_id",
+          "id"
+        ],
+        "constraint": "tasks_workspace_id_cycle_id_fkey"
+      }
+    },
+    {
       "name": "labels",
       "kind": "m2m",
       "target_entity": "Label",
@@ -199,6 +217,24 @@
       }
     },
     {
+      "name": "project",
+      "kind": "o2o",
+      "target_entity": "Project",
+      "fk": {
+        "table": "tasks",
+        "schema": "public",
+        "columns": [
+          "workspace_id",
+          "project_code"
+        ],
+        "references": [
+          "workspace_id",
+          "code"
+        ],
+        "constraint": "tasks_workspace_id_project_code_fkey"
+      }
+    },
+    {
       "name": "reviewers",
       "kind": "m2m",
       "target_entity": "Reviewer",
@@ -227,6 +263,24 @@
           ],
           "constraint": "task_reviewers_workspace_id_reviewer_id_fkey"
         }
+      }
+    },
+    {
+      "name": "sprint",
+      "kind": "o2o",
+      "target_entity": "Sprint",
+      "fk": {
+        "table": "tasks",
+        "schema": "public",
+        "columns": [
+          "workspace_id",
+          "sprint_id"
+        ],
+        "references": [
+          "workspace_id",
+          "id"
+        ],
+        "constraint": "tasks_workspace_id_sprint_id_fkey"
       }
     }
   ],

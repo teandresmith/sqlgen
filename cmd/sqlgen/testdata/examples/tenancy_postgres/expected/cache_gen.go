@@ -1070,7 +1070,9 @@ func hasAnyRelationshipCheckpoint(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Milestone != nil {
+		return true
+	}
 	return false
 }
 
@@ -2417,6 +2419,9 @@ func hasAnyRelationshipMoment(fo any) bool {
 	if typed.MomentTags != nil {
 		return true
 	}
+	if typed.Owner != nil {
+		return true
+	}
 	return false
 }
 
@@ -3439,7 +3444,9 @@ func hasAnyRelationshipPlot(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Zone != nil {
+		return true
+	}
 	return false
 }
 
@@ -4515,7 +4522,12 @@ func hasAnyRelationshipSharedKid(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Guardian != nil {
+		return true
+	}
+	if typed.Parent != nil {
+		return true
+	}
 	return false
 }
 
@@ -5049,7 +5061,9 @@ func hasAnyRelationshipSite(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Zone != nil {
+		return true
+	}
 	return false
 }
 
@@ -5840,10 +5854,19 @@ func hasAnyRelationshipTask(fo any) bool {
 	if typed.Badges != nil {
 		return true
 	}
+	if typed.Cycle != nil {
+		return true
+	}
 	if typed.Labels != nil {
 		return true
 	}
+	if typed.Project != nil {
+		return true
+	}
 	if typed.Reviewers != nil {
+		return true
+	}
+	if typed.Sprint != nil {
 		return true
 	}
 	return false
@@ -7455,7 +7478,9 @@ func hasAnyRelationshipTemplateNote(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Template != nil {
+		return true
+	}
 	return false
 }
 
@@ -7997,7 +8022,9 @@ func hasAnyRelationshipTemplateStep(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Template != nil {
+		return true
+	}
 	return false
 }
 
@@ -8517,7 +8544,9 @@ func hasAnyRelationshipWorkspaceNote(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Workspace != nil {
+		return true
+	}
 	return false
 }
 

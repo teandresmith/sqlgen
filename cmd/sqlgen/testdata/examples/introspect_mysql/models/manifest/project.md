@@ -35,6 +35,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| account | o2o | Account | projects.account_id |  |
 | tasks | o2m | Task | tasks.project_id |  |
 
 ## Query methods

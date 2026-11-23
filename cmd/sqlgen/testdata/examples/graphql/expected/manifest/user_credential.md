@@ -32,7 +32,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
-| users | o2o | User | public.user_credentials.user_id |  |
+| user | o2o | User | public.user_credentials.user_id |  |
 
 ## Query methods
 

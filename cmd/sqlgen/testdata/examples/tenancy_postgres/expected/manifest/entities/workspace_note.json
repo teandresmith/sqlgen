@@ -97,7 +97,24 @@
       "comment": ""
     }
   ],
-  "relationships": [],
+  "relationships": [
+    {
+      "name": "workspace",
+      "kind": "o2o",
+      "target_entity": "Workspace",
+      "fk": {
+        "table": "workspace_notes",
+        "schema": "public",
+        "columns": [
+          "workspace_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "workspace_notes_workspace_id_fkey"
+      }
+    }
+  ],
   "methods": {
     "query": [
       {

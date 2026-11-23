@@ -36,7 +36,7 @@ Extended user profile information
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
-| users | o2o | User | profiles.user_id |  |
+| user | o2o | User | profiles.user_id |  |
 
 ## Query methods
 

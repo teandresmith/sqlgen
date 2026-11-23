@@ -910,20 +910,21 @@ func assembleTableContext(
 }
 
 // validateResolvedFieldNames rejects a resolved Go field name that cannot
-// coexist with the rest of the generated entity. Two rules, with two different
-// gates (PRD §8.5):
+// coexist with the rest of the generated entity. Three rules, with different
+// gates (PRD §4.13, §8.5):
 //
 //   - **Reserved names**, checked on every column and relationship: the name
 //     is already declared by the templates on a struct the field lands on
 //     (<T>Filter, <T>FieldOptions, Update<T>Item) or by the increment enum
 //     type. See reserved_fields.go — that collision can never produce
 //     compiling code, so it is reported whether or not an override caused it.
-//   - **Duplicate names**, checked only when an override introduced the
-//     duplicate: another column's resolved name or a relationship field, both
-//     of which land on the same struct (templates/table/model.go.tmpl). A
-//     schema that already produces two identical field names without any
-//     override is a pre-existing condition this validation deliberately does
-//     not start failing; `go build` on the generated package still catches it.
+//   - **Duplicate names** between a column and another column or a
+//     relationship, which land on the same struct
+//     (templates/table/model.go.tmpl). A relationship on a column's field is
+//     always reported. Two columns are reported only when an override
+//     introduced the pair: a schema that already gives two columns one field
+//     is a pre-existing condition this validation does not start failing, and
+//     `go build` on the generated package still catches it.
 //   - **Duplicate relationship fields**, checked on every pair and gated on
 //     nothing: two relationships resolving to one Go field is unconditionally
 //     non-compiling, so the override gate above would only hide it. This is
@@ -961,13 +962,13 @@ func validateResolvedFieldNames(
 }
 
 // validateDuplicateRelationshipFields rejects two relationships on one table
-// resolving to the same Go field (PRD §4.8, §13.7.3 row 2). It is ungated
-// where validateDuplicateFieldNames is override-gated, because this pair can
-// never produce compiling code: the field lands twice on the entity struct and
-// twice on <Table>FieldOptions, so there is no config under which it is the
-// intent. The override gate would only delay the report to `go build` inside
-// generated code, where validate and generate both report success and the
-// build fails.
+// resolving to the same Go field (PRD §4.8, §13.7.3 row 2). It is ungated,
+// where validateDuplicateFieldNames gates only two columns on an override,
+// because this pair can never produce compiling code: the field lands twice on
+// the entity struct and twice on <Table>FieldOptions, so there is no config
+// under which it is the intent. The override gate would only delay the report
+// to `go build` inside generated code, where validate and generate both report
+// success and the build fails.
 //
 // The message names both sides symmetrically. A pair here is two declared
 // entries whose names pascalize onto one field, which
@@ -1024,20 +1025,13 @@ func quotedConstraints(rel RelationshipContext) string {
 	return "foreign keys " + strings.Join(quoted, " and ")
 }
 
-// validateDuplicateFieldNames is the override-gated half of the rule: two
-// fields on the same entity struct resolving to one Go name.
+// validateDuplicateFieldNames rejects a column and a relationship, or two
+// columns, resolving to one Go field on the entity struct. A relationship on a
+// column's field is always reported: a detected one there was already omitted
+// (omitDetectedOnColumnFields), so what remains is declared or claimed by an
+// override. Two columns are reported only when an override introduced the
+// pair.
 func validateDuplicateFieldNames(qualifiedTable string, columns []ColumnContext, rels []RelationshipContext) error {
-	overridden := false
-	for i := range columns {
-		if columns[i].FieldNameOverridden {
-			overridden = true
-			break
-		}
-	}
-	if !overridden {
-		return nil
-	}
-
 	type owner struct {
 		sqlName    string
 		kind       string
@@ -1051,7 +1045,7 @@ func validateDuplicateFieldNames(qualifiedTable string, columns []ColumnContext,
 			seen[fieldName] = o
 			return
 		}
-		if !prev.overridden && !o.overridden {
+		if prev.kind == o.kind && !prev.overridden && !o.overridden {
 			return
 		}
 		errs = append(errs, fmt.Errorf(
@@ -1857,11 +1851,47 @@ func buildRelationshipContexts(
 	if err != nil {
 		return nil, nil, err
 	}
-	warnings = append(omitted, warnings...)
+	rels, collided := omitDetectedOnColumnFields(table, tableCfg, rels, targets, qualifiedName)
+	warnings = append(append(omitted, warnings...), collided...)
 	slices.SortFunc(rels, func(a, b RelationshipContext) int {
 		return strings.Compare(a.Name, b.Name)
 	})
 	return rels, warnings, nil
+}
+
+// omitDetectedOnColumnFields drops a detected edge whose Go field is a
+// column's, with a warning naming both (PRD §4.13). It runs after the merge,
+// so an edge a declared one took over raises nothing. A field a `column_map`
+// override introduced is skipped: the edge stays, and
+// validateDuplicateFieldNames reports the override.
+func omitDetectedOnColumnFields(
+	table *parser.Table, tableCfg config.TableConfig, rels []RelationshipContext,
+	targets *relationshipTargets, qualifiedName string,
+) ([]RelationshipContext, []string) {
+	columnByField := make(map[string]string, len(table.Columns))
+	for i := range table.Columns {
+		name := table.Columns[i].Name
+		if targets.excludedColumn(table, name) != "" {
+			continue
+		}
+		if field, overridden := resolveColumnFieldName(name, tableCfg); !overridden {
+			columnByField[field] = name
+		}
+	}
+	var warnings []string
+	kept := rels[:0]
+	for _, rel := range rels {
+		column, collides := columnByField[rel.FieldName]
+		if !collides || rel.Declared {
+			kept = append(kept, rel)
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"tables.%s: the foreign-key-inferred relationship %q is omitted because its Go field %q is the field of column %q. Declare the edge in `relationships` under another name to keep it, or list %q in `exclude_relationships` to silence this (PRD §4.13, §13.4).",
+			qualifiedName, rel.Name, rel.FieldName, column, rel.Name,
+		))
+	}
+	return kept, warnings
 }
 
 // mergeDeclaredRelationships folds `tables.<t>.relationships` into the
@@ -2023,6 +2053,10 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 	name := r.Name
 	if r.Type == parser.OneToMany || r.Type == parser.ManyToMany {
 		name = toPlural(name)
+	} else {
+		// A to-one edge is spelled singular (PRD §5.3 rule 5), so one named
+		// after its referenced table reads `users` → `User *User`.
+		name = toSingular(name)
 	}
 	fieldName, goType := relationshipFieldAndType(name, r.Type, targetStruct)
 
@@ -2055,7 +2089,7 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		Key:                 r.Key,
 		JunctionLocal:       r.JunctionLocal,
 		JunctionReference:   r.JunctionReference,
-		FKOnTarget:          inferredFKOnTarget(schema, r, tSchema, tName, fkCol),
+		FKOnTarget:          inferredFKOnTarget(r),
 		JunctionTable:       jName,
 		JunctionSchema:      jSchema,
 		JunctionLocalFK:     localFK,
@@ -2117,9 +2151,7 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 		junctionReference = declaredKey(declaredJunctionKey(r.JunctionReferenceFK, referenceFK), target.PK)
 	} else if len(r.FK) > 0 {
 		fkCol = r.FK[0]
-		fkOnTarget = !slices.ContainsFunc(r.FK, func(column string) bool {
-			return !fkColumnOnTarget(schema, relType, target.Schema, tName, column)
-		})
+		fkOnTarget = declaredFKOnTarget(schema, relType, r.FK, source, target.Schema, tName)
 		// An O2M FK, and a has-one O2O FK, is on the target and references
 		// this table; a belongs-to FK references the target.
 		referenced := target.PK
@@ -2159,28 +2191,21 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 	return rel
 }
 
-// fkColumnOnTarget derives RelationshipContext.FKOnTarget: whether the edge's
-// FK column is declared on the target table rather than on the source. This is
-// the one place the fact is computed — the O2O join builder used to re-derive
-// it inline by scanning the same columns, and the write-side emitters need the
-// same answer (PRD §13.1).
+// fkColumnOnTarget reports whether the target table has a column named
+// fkColumn. It decides a declared O2M edge's RelationshipContext.FKOnTarget,
+// and a declared O2O edge's when the column is on the target and not on the
+// source. An O2O column of both tables is decided by declaredFKOnTarget from
+// the FOREIGN KEY over it, and a detected edge never reads it (PRD §13.1).
 //
 // The lookup is (targetSchema, targetTable) exactly as the relationship context
-// spells them, so it resolves against the same table as the rest of the
-// context. Both builders pass the target's own schema: the parser qualifies an
-// FK-inferred target, and configRelationshipToContext carries the schema the
-// declared `table:` resolved in. findSchemaTable's first-match
-// fallback is therefore reached only in a dialect without schemas.
+// spells them: configRelationshipToContext passes the schema the declared
+// `table:` resolved in, so findSchemaTable's first-match fallback is reached
+// only in a dialect without schemas.
 //
-// false is therefore three answers in one: the FK is on the source, the target
+// false is three answers in one: the FK is on the source, the target
 // is unresolved, or the edge is M2M. A write-side consumer that needs to tell
 // them apart must check the target separately rather than read false as
 // "belongs-to".
-//
-// A self-referential O2O resolves true, because source and target are one table
-// and the FK is on it either way. That is the answer the read path has always
-// produced for this shape; the two sides of the ON clause are the same table's
-// FK and PK regardless of which way round they are read.
 func fkColumnOnTarget(schema *parser.Schema, relType parser.RelationshipType, targetSchema, targetTable, fkColumn string) bool {
 	if schema == nil || fkColumn == "" {
 		return false
@@ -2200,15 +2225,53 @@ func fkColumnOnTarget(schema *parser.Schema, relType parser.RelationshipType, ta
 	})
 }
 
-// inferredFKOnTarget is fkColumnOnTarget for a detected edge. A composite key's
-// members can share their names with the referenced table's, as a tenant column
-// does, so its side comes from detection: the FK holder is the target of an O2M
-// edge and the source of an O2O one.
-func inferredFKOnTarget(schema *parser.Schema, r parser.Relationship, targetSchema, targetTable, fkColumn string) bool {
-	if len(r.Key) > 1 {
-		return r.Type == parser.OneToMany
+// inferredFKOnTarget is FKOnTarget for a detected edge. Its side is the one
+// detection read: the FK holder is the target of an O2M edge and the source of
+// an O2O one (PRD §13.1). The target's column names cannot tell: a
+// self-referential key and a key column named like the referenced one are
+// columns of both tables.
+func inferredFKOnTarget(r parser.Relationship) bool {
+	return r.Type == parser.OneToMany
+}
+
+// declaredFKOnTarget is FKOnTarget for a declared O2M or O2O edge with `fk`
+// columns. For O2M, and for an O2O whose columns are all on the target and not
+// all on the source, fkColumnOnTarget decides. For an O2O whose columns are on
+// both tables, as in a self-reference or a key column named like the
+// referenced one, the FOREIGN KEY over them decides: the table declaring it holds the key. With no such
+// FOREIGN KEY, or one on the source, the edge is belongs-to (PRD §13.1).
+func declaredFKOnTarget(schema *parser.Schema, relType parser.RelationshipType, fk config.KeyColumns, source, targetSchema, targetTable string) bool {
+	onTarget := func(column string) bool {
+		return fkColumnOnTarget(schema, relType, targetSchema, targetTable, column)
 	}
-	return fkColumnOnTarget(schema, r.Type, targetSchema, targetTable, fkColumn)
+	if !allOf(fk, onTarget) {
+		return false
+	}
+	sSchema, sName := splitQualifiedName(source)
+	src := findSchemaTable(schema, sSchema, sName)
+	if relType != parser.OneToOne || src == nil || !allOf(fk, func(column string) bool { return hasColumn(src, column) }) {
+		return true
+	}
+	if declaresForeignKeyOver(src, fk, targetSchema, targetTable) {
+		return false
+	}
+	return declaresForeignKeyOver(findSchemaTable(schema, targetSchema, targetTable), fk, sSchema, sName)
+}
+
+func allOf(cols []string, f func(string) bool) bool {
+	return !slices.ContainsFunc(cols, func(c string) bool { return !f(c) })
+}
+
+func hasColumn(t *parser.Table, name string) bool {
+	return slices.ContainsFunc(t.Columns, func(c parser.Column) bool { return c.Name == name })
+}
+
+// declaresForeignKeyOver reports whether holder declares a FOREIGN KEY over
+// exactly cols into the table refSchema.refName.
+func declaresForeignKeyOver(holder *parser.Table, cols []string, refSchema, refName string) bool {
+	return holder != nil && slices.ContainsFunc(holder.Constraints, func(c parser.Constraint) bool {
+		return c.Type == parser.ForeignKey && sameColumnSet(c.Columns, cols) && referencesTable(c, refSchema, refName)
+	})
 }
 
 // declaredRelationshipDescription returns the doc comment of a declared
@@ -3187,8 +3250,8 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	// Determine which side the FK column is on. For auto-detected O2O,
 	// the FK is on the parent (source) table. For config-defined O2O,
 	// the FK may be on the target table instead. When the FK is on the
-	// target, swap the ON clause sides. The fact itself is derived once, in
-	// fkColumnOnTarget, and read here (PRD §13.1).
+	// target, swap the ON clause sides. The fact itself is derived once, by
+	// inferredFKOnTarget or declaredFKOnTarget, and read here (PRD §13.1).
 	//
 	// The referenced side is the column the key references, the PK unless
 	// the key references a UNIQUE column (PRD §13.1). Swapped, it is the
@@ -3243,7 +3306,7 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	// Discover chained O2O relationships on the target table
 	targetRels := findO2ORelationships(input.Schema, targetTable, targetCfg, input.relTargets)
 	for _, chainRel := range targetRels {
-		chained, err := buildSingleO2ODetail(input, chainRel.rel, alias, pkCol.Name, usedAliases, varName, foPath, depth+1)
+		chained, err := buildSingleO2ODetail(input, chainRel, alias, pkCol.Name, usedAliases, varName, foPath, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -3255,60 +3318,18 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	return &detail, nil
 }
 
-// chainedRelInfo wraps a relationship context for chain discovery.
-type chainedRelInfo struct {
-	rel RelationshipContext
-}
-
-// findO2ORelationships finds O2O relationships for a target table.
-func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg config.TableConfig, targets *relationshipTargets) []chainedRelInfo {
-	excludeSet := make(map[string]bool)
-	for _, name := range tableCfg.ExcludeRelationships {
-		excludeSet[name] = true
+// findO2ORelationships returns the O2O edges a chain walks from table, built
+// as table's own context builds them, so a chain never names a field the
+// target lacks (PRD §13.2, §13.4). The target may not be built yet, so they
+// are derived, not read. On error it returns nil; the target's own build
+// reports it.
+func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg config.TableConfig, targets *relationshipTargets) []RelationshipContext {
+	rels, _, err := buildRelationshipContexts(schema, table, tableCfg, targets)
+	if err != nil {
+		return nil
 	}
-
-	qualifiedName := table.Name
-	if table.Schema != "" {
-		qualifiedName = table.Schema + "." + table.Name
-	}
-
-	var results []chainedRelInfo
-	for _, r := range schema.Relationships {
-		if r.SourceTable != qualifiedName || r.Type != parser.OneToOne {
-			continue
-		}
-		if excludeSet[r.Name] {
-			continue
-		}
-		// Skipped rather than reported: buildRelationshipContexts reports it.
-		if !targets.generates(r.TargetTable) || targets.excludedKeyMember(schema, r) != "" {
-			continue
-		}
-		results = append(results, chainedRelInfo{
-			rel: relationshipToContext(schema, r, targets),
-		})
-	}
-
-	for _, r := range tableCfg.Relationships {
-		relType := parseRelationshipType(r.Type)
-		// A nameless entry is skipped as mergeDeclaredRelationships skips it:
-		// config validation reports the missing `name:` (PRD §4.8).
-		if relType != parser.OneToOne || r.Name == "" {
-			continue
-		}
-		if excludeSet[r.Name] {
-			continue
-		}
-		// Skipped rather than reported: this table's own build reports the
-		// same edge, since a chained target is itself a generated table.
-		if checkDeclaredTarget(r, targets, "") != nil {
-			continue
-		}
-		results = append(results, chainedRelInfo{
-			rel: configRelationshipToContext(schema, r, qualifiedName, targets),
-		})
-	}
-	return results
+	o2o, _, _ := classifyRelationships(rels)
+	return o2o
 }
 
 // o2oJoinPredicate returns the alias-qualified sub-categorization predicate an

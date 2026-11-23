@@ -35,8 +35,11 @@
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
 | badges | m2m | Badge | public.task_badges (task_id → badge_code) |  |
+| cycle | o2o | Cycle | public.tasks.(workspace_id, cycle_id) |  |
 | labels | m2m | Label | public.task_labels ((workspace_id, task_id) → (workspace_id, label_id)) |  |
+| project | o2o | Project | public.tasks.(workspace_id, project_code) |  |
 | reviewers | m2m | Reviewer | public.task_reviewers ((workspace_id, task_id) → (workspace_id, reviewer_id)) |  |
+| sprint | o2o | Sprint | public.tasks.(workspace_id, sprint_id) |  |
 
 ## Query methods
 

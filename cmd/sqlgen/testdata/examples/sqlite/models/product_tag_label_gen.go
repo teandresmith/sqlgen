@@ -27,6 +27,9 @@ type ProductTagLabel struct {
 	TagName     string  `db:"tag_name" json:"tag_name"`
 	Label       string  `db:"label" json:"label"`
 	Description *string `db:"description" json:"description"`
+
+	// Product - one-to-one relationship with the products table.
+	Product *Product `db:"-" json:"product"`
 }
 
 // ProductTagLabelClient provides type-safe operations for the product_tag_labels table.
@@ -320,25 +323,58 @@ func (c *productTagLabelClient) GetMany(ctx context.Context, input *GetProductTa
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var productTagLabels []*ProductTagLabel
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("p", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "p",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		productTagLabels, err = scanProductTagLabels(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			productTagLabels, err = scanProductTagLabelsWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			productTagLabels, err = scanProductTagLabels(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return productTagLabels, nil
@@ -1791,10 +1827,11 @@ func (f *ProductTagLabelFilter) ToConditions(dialect sql.Dialect, opts ...Filter
 
 // ProductTagLabelFieldOptions controls column selection and relationship loading for product_tag_labels queries.
 type ProductTagLabelFieldOptions struct {
-	ProductID   bool `json:"product_id"`
-	TagName     bool `json:"tag_name"`
-	Label       bool `json:"label"`
-	Description bool `json:"description"`
+	ProductID   bool                 `json:"product_id"`
+	TagName     bool                 `json:"tag_name"`
+	Label       bool                 `json:"label"`
+	Description bool                 `json:"description"`
+	Product     *ProductFieldOptions `json:"product"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -1841,6 +1878,9 @@ func (fo *ProductTagLabelFieldOptions) HasSelectedColumns() bool {
 	if fo.Description {
 		return true
 	}
+	if fo.Product != nil {
+		return true
+	}
 	return false
 }
 
@@ -1872,4 +1912,110 @@ type GetProductTagLabelsInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *productTagLabelClient) resolveO2OJoins(d sql.Dialect, fo *ProductTagLabelFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Product != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "products"},
+			Alias: "p2",
+			On:    fmt.Sprintf("p2.%s = p.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("product_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Product.Columns(), "id"),
+		})
+		if fo.Product.Category != nil {
+			joins = append(joins, sql.JoinClause{
+				Table: sql.Table{Schema: "", Name: "categories"},
+				Alias: "c",
+				On:    fmt.Sprintf("c.%s = p2.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("category_id")),
+				// The NULL-detection below reads the target's PK off the scanned
+				// row, so the join carries it even when FieldOptions did not ask
+				// for it — an unselected PK reads as a LEFT JOIN miss.
+				Columns: unionColumns(fo.Product.Category.Columns(), "id"),
+			})
+		}
+	}
+	return joins
+}
+
+// scanProductTagLabelsWithOneToOneJoins scans rows from a LEFT JOIN query into
+// ProductTagLabel entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanProductTagLabelsWithOneToOneJoins(rows database.Rows, columns []string) ([]*ProductTagLabel, error) {
+	var result []*ProductTagLabel
+	for rows.Next() {
+		p := &ProductTagLabel{}
+		c := &Category{}
+		cHasData := false
+		p2 := &Product{}
+		p2HasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "p.product_id":
+				targets[idx] = &p.ProductID
+			case "p.tag_name":
+				targets[idx] = &p.TagName
+			case "p.label":
+				targets[idx] = &p.Label
+			case "p.description":
+				targets[idx] = &p.Description
+			case "c.id":
+				targets[idx] = database.NullScan(&c.ID)
+				cHasData = true
+			case "c.name":
+				targets[idx] = database.NullScan(&c.Name)
+			case "c.description":
+				targets[idx] = &c.Description
+			case "p2.id":
+				targets[idx] = database.NullScan(&p2.ID)
+				p2HasData = true
+			case "p2.category_id":
+				targets[idx] = database.NullScan(&p2.CategoryID)
+			case "p2.title":
+				targets[idx] = database.NullScan(&p2.Title)
+			case "p2.price":
+				targets[idx] = database.NullScan(&p2.Price)
+			case "p2.weight_kg":
+				targets[idx] = &p2.WeightKg
+			case "p2.in_stock":
+				targets[idx] = database.NullScan(&p2.InStock)
+			case "p2.sku":
+				targets[idx] = database.NullScan(&p2.SKU)
+			case "p2.created_at":
+				targets[idx] = database.NullScan(&p2.CreatedAt)
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan product_tag_label with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if p2HasData && p2.ID != 0 {
+			p.Product = p2
+		} else {
+			p.Product = nil
+		}
+		if cHasData && c.ID != 0 {
+			p2.Category = c
+		} else {
+			p2.Category = nil
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate product_tag_label rows: %w", err)
+	}
+	return result, nil
 }

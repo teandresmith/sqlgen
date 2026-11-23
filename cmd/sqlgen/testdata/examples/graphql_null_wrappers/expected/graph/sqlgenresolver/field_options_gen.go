@@ -113,6 +113,8 @@ func accountFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []
 			fo.Entries = &models.EntryRelationshipOptions{
 				FieldOptions: entryFieldOptionsFromCollected(opCtx, f.Sub),
 			}
+		case "parent":
+			fo.Parent = accountFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -162,6 +164,8 @@ func entryFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []gr
 			fo.UpstreamRef = true
 		case "createdAt":
 			fo.CreatedAt = true
+		case "account":
+			fo.Account = accountFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {

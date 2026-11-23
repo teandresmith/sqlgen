@@ -31,6 +31,7 @@
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
 | moment_tags | m2m | MomentTag | public.moment_tag_links (moment_at → tag_id) |  |
+| owner | o2o | MomentOwner | public.moments.owner_id |  |
 
 ## Query methods
 

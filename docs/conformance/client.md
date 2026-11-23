@@ -574,7 +574,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert-with-related.hooks | `UpsertWithRelated` has no op of its own: the mutation hook sees one call per inner write in §9.9.6 order with its own `Op` and `Table`. That is the parent `upsert`, then per edge in Go-field-name order (`Posts`, `Profile`, `Tags`): `clear` before `create` before `connect` before `link` before `disconnect`. Visibility and occupancy reads fire query hooks. The adoption's verify read and the terminal parent read fire none. The terminal read's relationship loads fire the caller's (§9.6). `SkipHooks` on the call fires no hook on any inner call | `conformance: UpsertWithRelated/the mutation hook sees one call per inner write in execution order, and neither the verify read nor the terminal read fires a query hook`; `conformance: UpsertWithRelated/SkipHooks on the call fires no hook on any inner call` | all | client-methods: UpsertWithRelated × hooks |
 
 ## §13.2 Loading Strategy
-<!-- prd: 13.2 sha256: 43f06deda121127d -->
+<!-- prd: 13.2 sha256: 602a6097cd87d963 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -980,10 +980,11 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 - `tenancy-hooks.input-unchanged`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:197`, `cmd/sqlgen/gen/templates/table/get.go.tmpl:217`
 
 ## §29.10 Relationship Propagation
-<!-- prd: 29.10 sha256: 46e732fe5b40a130 -->
+<!-- prd: 29.10 sha256: 77db10788245ca6a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
+| tenant-rel.o2o-child-filter-in-join-on | A tenanted O2O child's tenant predicate is bound into the JOIN's `ON`, not the outer `WHERE`, so a tenanted parent whose child is absent, in another tenant, or unreferenced by a NULL foreign key keeps its row with the edge nil | `unit: cmd/sqlgen/gen: TestTenancyTemplate_o2o_bothTenanted_emitsBothFilters`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_o2o_childOnlyTenanted_emitsChildFilter`; `example: tenancy: TestRelationship_O2O_ParentKeptWithoutVisibleChild/has-one_with_no_child_row`; `example: tenancy: TestRelationship_O2O_ParentKeptWithoutVisibleChild/has-one_whose_child_is_in_another_tenant`; `example: tenancy: TestRelationship_O2O_ParentKeptWithoutVisibleChild/belongs-to_with_a_NULL_foreign_key`; `example: tenancy_postgres: TestO2OTenantJoin_NullForeignKeyKeepsParent`; `example: tenancy_mysql: TestO2OTenantJoin_NullForeignKeyKeepsParent`; `example: tenancy: TestO2OChain_TenantWHEREOnEveryAlias` | all |  |
 | tenant-rel.skip-tenancy-propagates | A parent read's `SkipTenancy` is forwarded to the child `GetMany` that loads its O2M relationship | `unit: cmd/sqlgen/gen: TestTenancyTemplate_loadRelationships_propagatesSkipTenancy` | all |  |
 | tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` | `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/o2m`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/m2m`; `example: tenancy_postgres: TestCompositeTenantFK_LoadStaysInTenant`; `example: tenancy_postgres: TestCompositeTenantFK_RelationshipFilterStaysInTenant` | all |  |
 

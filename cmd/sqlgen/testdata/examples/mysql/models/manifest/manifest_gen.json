@@ -2316,7 +2316,25 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "bin",
+          "kind": "o2o",
+          "target_entity": "Bin",
+          "fk": {
+            "table": "bin_items",
+            "columns": [
+              "aisle",
+              "slot"
+            ],
+            "references": [
+              "aisle",
+              "slot"
+            ],
+            "constraint": "bin_items_ibfk_1"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -3242,7 +3260,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "bool_keyed",
+          "kind": "o2o",
+          "target_entity": "BoolKeyed",
+          "fk": {
+            "table": "bool_keyed_notes",
+            "columns": [
+              "keyed_k"
+            ],
+            "references": [
+              "k"
+            ],
+            "constraint": "bool_keyed_notes_ibfk_1"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -5887,6 +5921,21 @@
             ],
             "constraint": "order_items_ibfk_1"
           }
+        },
+        {
+          "name": "user",
+          "kind": "o2o",
+          "target_entity": "User",
+          "fk": {
+            "table": "orders",
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "orders_ibfk_1"
+          }
         }
       ],
       "methods": {
@@ -6441,7 +6490,38 @@
           "check": "unit_price >= 0 and quantity > 0"
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "order",
+          "kind": "o2o",
+          "target_entity": "Order",
+          "fk": {
+            "table": "order_items",
+            "columns": [
+              "order_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items_ibfk_1"
+          }
+        },
+        {
+          "name": "product",
+          "kind": "o2o",
+          "target_entity": "Product",
+          "fk": {
+            "table": "order_items",
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items_ibfk_2"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -6985,6 +7065,21 @@
         }
       ],
       "relationships": [
+        {
+          "name": "category",
+          "kind": "o2o",
+          "target_entity": "Category",
+          "fk": {
+            "table": "products",
+            "columns": [
+              "category_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "products_ibfk_1"
+          }
+        },
         {
           "name": "order_items",
           "kind": "o2m",
@@ -7780,7 +7875,23 @@
           "comment": "Optional description"
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "product",
+          "kind": "o2o",
+          "target_entity": "Product",
+          "fk": {
+            "table": "product_tag_labels",
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "product_tag_labels_ibfk_1"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -8256,7 +8367,7 @@
       ],
       "relationships": [
         {
-          "name": "users",
+          "name": "user",
           "kind": "o2o",
           "target_entity": "User",
           "fk": {
@@ -10178,7 +10289,23 @@
           "comment": ""
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "time_keyed",
+          "kind": "o2o",
+          "target_entity": "TimeKeyed",
+          "fk": {
+            "table": "time_keyed_notes",
+            "columns": [
+              "keyed_at"
+            ],
+            "references": [
+              "at"
+            ],
+            "constraint": "time_keyed_notes_ibfk_1"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {
@@ -11974,7 +12101,23 @@
           "comment": "What happened"
         }
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "name": "user",
+          "kind": "o2o",
+          "target_entity": "User",
+          "fk": {
+            "table": "user_events",
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "user_events_ibfk_1"
+          }
+        }
+      ],
       "methods": {
         "query": [
           {

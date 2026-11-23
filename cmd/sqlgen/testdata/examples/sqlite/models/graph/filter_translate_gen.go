@@ -1324,6 +1324,45 @@ func translateSluggedRowFilter(in *gqlmodel.SluggedRowFilter) *models.SluggedRow
 	return out
 }
 
+// translateStepFilter converts the gqlgen-generated
+// StepFilter into a *models.StepFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateStepFilter(in *gqlmodel.StepFilter) *models.StepFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.StepFilter{}
+	if in.ID != nil {
+		out.ID = translateNumericComparatorInt64(in.ID)
+	}
+	if in.Name != nil {
+		out.Name = translateStringComparator(in.Name)
+	}
+	if in.PreviousStepID != nil {
+		out.PreviousStepID = translateNullableNumericComparatorInt64(in.PreviousStepID)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.StepFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateStepFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.StepFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateStepFilter(sub))
+		}
+	}
+	return out
+}
+
 // translateTagFilter converts the gqlgen-generated
 // TagFilter into a *models.TagFilter.
 // Returns nil when the input is nil so the model layer's "nil filter ⇒ no

@@ -26,6 +26,12 @@
 | --- | --- | --- | --- | --- |
 | `task_labels_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| task | o2o | Task | task_labels.task_id |  |
+
 ## Query methods
 
 ### Get

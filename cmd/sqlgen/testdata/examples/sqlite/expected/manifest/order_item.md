@@ -34,6 +34,13 @@
 - `quantity`: `"unit_price" >= 0 AND "quantity" > 0`
 - `unit_price`: `"unit_price" >= 0 AND "quantity" > 0`
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| order | o2o | Order | order_items.order_id |  |
+| product | o2o | Product | order_items.product_id |  |
+
 ## Query methods
 
 ### Get

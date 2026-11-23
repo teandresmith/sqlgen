@@ -162,7 +162,40 @@
       "comment": ""
     }
   ],
-  "relationships": [],
+  "relationships": [
+    {
+      "name": "order",
+      "kind": "o2o",
+      "target_entity": "Order",
+      "fk": {
+        "table": "order_items",
+        "schema": "public",
+        "columns": [
+          "order_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "order_items_order_id_fkey"
+      }
+    },
+    {
+      "name": "product",
+      "kind": "o2o",
+      "target_entity": "Product",
+      "fk": {
+        "table": "order_items",
+        "schema": "public",
+        "columns": [
+          "product_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "order_items_product_id_fkey"
+      }
+    }
+  ],
   "methods": {
     "query": [
       {

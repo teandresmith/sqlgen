@@ -413,7 +413,9 @@ func hasAnyRelationshipArticle(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.User != nil {
+		return true
+	}
 	return false
 }
 
@@ -1480,6 +1482,9 @@ func hasAnyRelationshipMoment(fo any) bool {
 		return false
 	}
 	if typed.MomentTags != nil {
+		return true
+	}
+	if typed.Owner != nil {
 		return true
 	}
 	return false
@@ -2783,6 +2788,9 @@ func hasAnyRelationshipPost(fo any) bool {
 		return false
 	}
 	if typed.Tags != nil {
+		return true
+	}
+	if typed.User != nil {
 		return true
 	}
 	return false
@@ -4380,7 +4388,9 @@ func hasAnyRelationshipTask(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Cycle != nil {
+		return true
+	}
 	return false
 }
 
@@ -5459,7 +5469,9 @@ func hasAnyRelationshipTemplateStep(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Template != nil {
+		return true
+	}
 	return false
 }
 
@@ -5998,7 +6010,7 @@ func hasAnyRelationshipUserProfile(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	if typed.Users != nil {
+	if typed.User != nil {
 		return true
 	}
 	return false
@@ -6524,7 +6536,9 @@ func hasAnyRelationshipWorkspaceNote(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	_ = typed
+	if typed.Workspace != nil {
+		return true
+	}
 	return false
 }
 

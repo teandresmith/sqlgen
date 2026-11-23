@@ -15,7 +15,7 @@ type Profile {
   "User preference settings"
   preferences: JSON
   "one-to-one relationship with the users table."
-  users: User
+  user: User
 }
 
 type ProfileConnection {

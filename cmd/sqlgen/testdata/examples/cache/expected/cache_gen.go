@@ -943,7 +943,7 @@ func hasAnyRelationshipProfile(fo any) bool {
 	if !ok || typed == nil {
 		return false
 	}
-	if typed.Users != nil {
+	if typed.User != nil {
 		return true
 	}
 	return false

@@ -8,6 +8,8 @@ type UserEvent {
   userID: Int
   "What happened"
   action: String!
+  "one-to-one relationship with the users table."
+  user: User
 }
 
 type UserEventConnection {

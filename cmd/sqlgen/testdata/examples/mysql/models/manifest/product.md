@@ -40,6 +40,7 @@ Catalog of products available for sale
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
+| category | o2o | Category | products.category_id |  |
 | order_items | o2m | OrderItem | order_items.product_id |  |
 | product_tag_labels | o2m | ProductTagLabel | product_tag_labels.product_id |  |
 

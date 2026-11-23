@@ -175,6 +175,7 @@ type ComplexityRoot struct {
 
 	BinItem struct {
 		Aisle func(childComplexity int) int
+		Bin   func(childComplexity int) int
 		ID    func(childComplexity int) int
 		Name  func(childComplexity int) int
 		Slot  func(childComplexity int) int
@@ -251,6 +252,7 @@ type ComplexityRoot struct {
 	}
 
 	BinaryKeyEvent struct {
+		BinaryKey   func(childComplexity int) int
 		BinaryKeyID func(childComplexity int) int
 		ID          func(childComplexity int) int
 		Label       func(childComplexity int) int
@@ -309,9 +311,10 @@ type ComplexityRoot struct {
 	}
 
 	BoolKeyedNote struct {
-		ID     func(childComplexity int) int
-		KeyedK func(childComplexity int) int
-		Note   func(childComplexity int) int
+		BoolKeyed func(childComplexity int) int
+		ID        func(childComplexity int) int
+		KeyedK    func(childComplexity int) int
+		Note      func(childComplexity int) int
 	}
 
 	BoolKeyedNoteConnection struct {
@@ -446,6 +449,7 @@ type ComplexityRoot struct {
 
 	KeyClassChild struct {
 		ID       func(childComplexity int) int
+		Parent   func(childComplexity int) int
 		ParentID func(childComplexity int) int
 	}
 
@@ -495,6 +499,7 @@ type ComplexityRoot struct {
 
 	KeyClassRealChild struct {
 		ID       func(childComplexity int) int
+		Parent   func(childComplexity int) int
 		ParentID func(childComplexity int) int
 	}
 
@@ -593,6 +598,8 @@ type ComplexityRoot struct {
 		CreateReservedWordColumns  func(childComplexity int, inputs []*model.CreateReservedWordColumnInput) int
 		CreateSluggedRow           func(childComplexity int, input model.CreateSluggedRowInput) int
 		CreateSluggedRows          func(childComplexity int, inputs []*model.CreateSluggedRowInput) int
+		CreateStep                 func(childComplexity int, input model.CreateStepInput) int
+		CreateSteps                func(childComplexity int, inputs []*model.CreateStepInput) int
 		CreateTag                  func(childComplexity int, input model.CreateTagInput) int
 		CreateTags                 func(childComplexity int, inputs []*model.CreateTagInput) int
 		CreateTimeKeyed            func(childComplexity int, input model.CreateTimeKeyedInput) int
@@ -632,6 +639,7 @@ type ComplexityRoot struct {
 		DeleteProfile              func(childComplexity int, id int) int
 		DeleteReservedWordColumn   func(childComplexity int, id int) int
 		DeleteSluggedRow           func(childComplexity int, id int) int
+		DeleteStep                 func(childComplexity int, id int) int
 		DeleteTimeKeyed            func(childComplexity int, at types.DateTime) int
 		DeleteTimeKeyedNote        func(childComplexity int, id int) int
 		DeleteUser                 func(childComplexity int, id int) int
@@ -689,6 +697,8 @@ type ComplexityRoot struct {
 		UpdateReservedWordColumns  func(childComplexity int, filter model.ReservedWordColumnFilter, input model.UpdateReservedWordColumnInput) int
 		UpdateSluggedRow           func(childComplexity int, id int, input model.UpdateSluggedRowInput) int
 		UpdateSluggedRows          func(childComplexity int, filter model.SluggedRowFilter, input model.UpdateSluggedRowInput) int
+		UpdateStep                 func(childComplexity int, id int, input model.UpdateStepInput) int
+		UpdateSteps                func(childComplexity int, filter model.StepFilter, input model.UpdateStepInput) int
 		UpdateTag                  func(childComplexity int, id int, input model.UpdateTagInput) int
 		UpdateTags                 func(childComplexity int, filter model.TagFilter, input model.UpdateTagInput) int
 		UpdateTimeKeyed            func(childComplexity int, at types.DateTime, input model.UpdateTimeKeyedInput) int
@@ -725,6 +735,7 @@ type ComplexityRoot struct {
 		UpsertProfile              func(childComplexity int, input model.CreateProfileInput) int
 		UpsertReservedWordColumn   func(childComplexity int, input model.CreateReservedWordColumnInput) int
 		UpsertSluggedRow           func(childComplexity int, input model.CreateSluggedRowInput) int
+		UpsertStep                 func(childComplexity int, input model.CreateStepInput) int
 		UpsertTag                  func(childComplexity int, input model.CreateTagInput) int
 		UpsertTimeKeyed            func(childComplexity int, input model.CreateTimeKeyedInput) int
 		UpsertTimeKeyedNote        func(childComplexity int, input model.CreateTimeKeyedNoteInput) int
@@ -740,6 +751,7 @@ type ComplexityRoot struct {
 		OrderedAt  func(childComplexity int) int
 		Status     func(childComplexity int) int
 		Total      func(childComplexity int) int
+		User       func(childComplexity int) int
 		UserID     func(childComplexity int) int
 	}
 
@@ -756,7 +768,9 @@ type ComplexityRoot struct {
 
 	OrderItem struct {
 		ID        func(childComplexity int) int
+		Order     func(childComplexity int) int
 		OrderID   func(childComplexity int) int
+		Product   func(childComplexity int) int
 		ProductID func(childComplexity int) int
 		Quantity  func(childComplexity int) int
 		UnitPrice func(childComplexity int) int
@@ -842,8 +856,8 @@ type ComplexityRoot struct {
 	OwnerProfile struct {
 		Bio     func(childComplexity int) int
 		ID      func(childComplexity int) int
+		Owner   func(childComplexity int) int
 		OwnerID func(childComplexity int) int
-		Owners  func(childComplexity int) int
 	}
 
 	OwnerProfileConnection struct {
@@ -873,6 +887,7 @@ type ComplexityRoot struct {
 	}
 
 	Product struct {
+		Category         func(childComplexity int) int
 		CategoryID       func(childComplexity int) int
 		CreatedAt        func(childComplexity int) int
 		ID               func(childComplexity int) int
@@ -934,6 +949,7 @@ type ComplexityRoot struct {
 	ProductTagLabel struct {
 		Description func(childComplexity int) int
 		Label       func(childComplexity int) int
+		Product     func(childComplexity int) int
 		ProductID   func(childComplexity int) int
 		TagName     func(childComplexity int) int
 	}
@@ -960,8 +976,8 @@ type ComplexityRoot struct {
 	Profile struct {
 		GithubHandle func(childComplexity int) int
 		ID           func(childComplexity int) int
+		User         func(childComplexity int) int
 		UserID       func(childComplexity int) int
-		Users        func(childComplexity int) int
 		Verified     func(childComplexity int) int
 		Website      func(childComplexity int) int
 	}
@@ -1074,6 +1090,9 @@ type ComplexityRoot struct {
 		SluggedRow             func(childComplexity int, id int) int
 		SluggedRowList         func(childComplexity int, filter *model.SluggedRowFilter, sort []*model.SluggedRowSort, limit *int, offset *int) int
 		SluggedRows            func(childComplexity int, filter *model.SluggedRowFilter, first *int, after *string, last *int, before *string) int
+		Step                   func(childComplexity int, id int) int
+		StepList               func(childComplexity int, filter *model.StepFilter, sort []*model.StepSort, limit *int, offset *int) int
+		Steps                  func(childComplexity int, filter *model.StepFilter, first *int, after *string, last *int, before *string) int
 		Tag                    func(childComplexity int, id int) int
 		TagList                func(childComplexity int, filter *model.TagFilter, sort []*model.TagSort, limit *int, offset *int) int
 		Tags                   func(childComplexity int, filter *model.TagFilter, first *int, after *string, last *int, before *string) int
@@ -1152,6 +1171,32 @@ type ComplexityRoot struct {
 		TotalCount func(childComplexity int) int
 	}
 
+	Step struct {
+		ID             func(childComplexity int) int
+		Name           func(childComplexity int) int
+		PreviousStep   func(childComplexity int) int
+		PreviousStepID func(childComplexity int) int
+	}
+
+	StepConnection struct {
+		Edges      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	StepEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	StepListResult struct {
+		HasMore    func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		Offset     func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
 	Tag struct {
 		ID        func(childComplexity int) int
 		IsDeleted func(childComplexity int) int
@@ -1203,9 +1248,10 @@ type ComplexityRoot struct {
 	}
 
 	TimeKeyedNote struct {
-		ID      func(childComplexity int) int
-		KeyedAt func(childComplexity int) int
-		Note    func(childComplexity int) int
+		ID        func(childComplexity int) int
+		KeyedAt   func(childComplexity int) int
+		Note      func(childComplexity int) int
+		TimeKeyed func(childComplexity int) int
 	}
 
 	TimeKeyedNoteConnection struct {
@@ -1477,6 +1523,12 @@ type MutationResolver interface {
 	UpdateSluggedRows(ctx context.Context, filter model.SluggedRowFilter, input model.UpdateSluggedRowInput) ([]*models.SluggedRow, error)
 	UpsertSluggedRow(ctx context.Context, input model.CreateSluggedRowInput) (*models.SluggedRow, error)
 	DeleteSluggedRow(ctx context.Context, id int) (bool, error)
+	CreateStep(ctx context.Context, input model.CreateStepInput) (*models.Step, error)
+	CreateSteps(ctx context.Context, inputs []*model.CreateStepInput) ([]*models.Step, error)
+	UpdateStep(ctx context.Context, id int, input model.UpdateStepInput) (*models.Step, error)
+	UpdateSteps(ctx context.Context, filter model.StepFilter, input model.UpdateStepInput) ([]*models.Step, error)
+	UpsertStep(ctx context.Context, input model.CreateStepInput) (*models.Step, error)
+	DeleteStep(ctx context.Context, id int) (bool, error)
 	CreateTag(ctx context.Context, input model.CreateTagInput) (*models.Tag, error)
 	CreateTags(ctx context.Context, inputs []*model.CreateTagInput) ([]*models.Tag, error)
 	UpdateTag(ctx context.Context, id int, input model.UpdateTagInput) (*models.Tag, error)
@@ -1603,6 +1655,9 @@ type QueryResolver interface {
 	SluggedRow(ctx context.Context, id int) (*models.SluggedRow, error)
 	SluggedRows(ctx context.Context, filter *model.SluggedRowFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.SluggedRow], error)
 	SluggedRowList(ctx context.Context, filter *model.SluggedRowFilter, sort []*model.SluggedRowSort, limit *int, offset *int) (*models.PaginateResult[models.SluggedRow], error)
+	Step(ctx context.Context, id int) (*models.Step, error)
+	Steps(ctx context.Context, filter *model.StepFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Step], error)
+	StepList(ctx context.Context, filter *model.StepFilter, sort []*model.StepSort, limit *int, offset *int) (*models.PaginateResult[models.Step], error)
 	Tag(ctx context.Context, id int) (*models.Tag, error)
 	Tags(ctx context.Context, filter *model.TagFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Tag], error)
 	TagList(ctx context.Context, filter *model.TagFilter, sort []*model.TagSort, limit *int, offset *int) (*models.PaginateResult[models.Tag], error)
@@ -2104,6 +2159,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.BinItem.Aisle(childComplexity), true
+	case "BinItem.bin":
+		if e.ComplexityRoot.BinItem.Bin == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItem.Bin(childComplexity), true
 	case "BinItem.id":
 		if e.ComplexityRoot.BinItem.ID == nil {
 			break
@@ -2356,6 +2417,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.BinaryKeyEdge.Node(childComplexity), true
 
+	case "BinaryKeyEvent.binaryKey":
+		if e.ComplexityRoot.BinaryKeyEvent.BinaryKey == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinaryKeyEvent.BinaryKey(childComplexity), true
 	case "BinaryKeyEvent.binaryKeyID":
 		if e.ComplexityRoot.BinaryKeyEvent.BinaryKeyID == nil {
 			break
@@ -2551,6 +2618,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.BoolKeyedListResult.TotalCount(childComplexity), true
 
+	case "BoolKeyedNote.boolKeyed":
+		if e.ComplexityRoot.BoolKeyedNote.BoolKeyed == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNote.BoolKeyed(childComplexity), true
 	case "BoolKeyedNote.id":
 		if e.ComplexityRoot.BoolKeyedNote.ID == nil {
 			break
@@ -3033,6 +3106,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.KeyClassChild.ID(childComplexity), true
+	case "KeyClassChild.parent":
+		if e.ComplexityRoot.KeyClassChild.Parent == nil {
+			break
+		}
+
+		return e.ComplexityRoot.KeyClassChild.Parent(childComplexity), true
 	case "KeyClassChild.parentID":
 		if e.ComplexityRoot.KeyClassChild.ParentID == nil {
 			break
@@ -3191,6 +3270,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.KeyClassRealChild.ID(childComplexity), true
+	case "KeyClassRealChild.parent":
+		if e.ComplexityRoot.KeyClassRealChild.Parent == nil {
+			break
+		}
+
+		return e.ComplexityRoot.KeyClassRealChild.Parent(childComplexity), true
 	case "KeyClassRealChild.parentID":
 		if e.ComplexityRoot.KeyClassRealChild.ParentID == nil {
 			break
@@ -3903,6 +3988,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.CreateSluggedRows(childComplexity, args["inputs"].([]*model.CreateSluggedRowInput)), true
+	case "Mutation.createStep":
+		if e.ComplexityRoot.Mutation.CreateStep == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createStep_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateStep(childComplexity, args["input"].(model.CreateStepInput)), true
+	case "Mutation.createSteps":
+		if e.ComplexityRoot.Mutation.CreateSteps == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createSteps_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateSteps(childComplexity, args["inputs"].([]*model.CreateStepInput)), true
 	case "Mutation.createTag":
 		if e.ComplexityRoot.Mutation.CreateTag == nil {
 			break
@@ -4332,6 +4439,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.DeleteSluggedRow(childComplexity, args["id"].(int)), true
+	case "Mutation.deleteStep":
+		if e.ComplexityRoot.Mutation.DeleteStep == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteStep_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteStep(childComplexity, args["id"].(int)), true
 	case "Mutation.deleteTimeKeyed":
 		if e.ComplexityRoot.Mutation.DeleteTimeKeyed == nil {
 			break
@@ -4959,6 +5077,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpdateSluggedRows(childComplexity, args["filter"].(model.SluggedRowFilter), args["input"].(model.UpdateSluggedRowInput)), true
+	case "Mutation.updateStep":
+		if e.ComplexityRoot.Mutation.UpdateStep == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateStep_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateStep(childComplexity, args["id"].(int), args["input"].(model.UpdateStepInput)), true
+	case "Mutation.updateSteps":
+		if e.ComplexityRoot.Mutation.UpdateSteps == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateSteps_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateSteps(childComplexity, args["filter"].(model.StepFilter), args["input"].(model.UpdateStepInput)), true
 	case "Mutation.updateTag":
 		if e.ComplexityRoot.Mutation.UpdateTag == nil {
 			break
@@ -5355,6 +5495,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpsertSluggedRow(childComplexity, args["input"].(model.CreateSluggedRowInput)), true
+	case "Mutation.upsertStep":
+		if e.ComplexityRoot.Mutation.UpsertStep == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertStep_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertStep(childComplexity, args["input"].(model.CreateStepInput)), true
 	case "Mutation.upsertTag":
 		if e.ComplexityRoot.Mutation.UpsertTag == nil {
 			break
@@ -5458,6 +5609,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Order.Total(childComplexity), true
+	case "Order.user":
+		if e.ComplexityRoot.Order.User == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Order.User(childComplexity), true
 	case "Order.userID":
 		if e.ComplexityRoot.Order.UserID == nil {
 			break
@@ -5503,12 +5660,24 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.OrderItem.ID(childComplexity), true
+	case "OrderItem.order":
+		if e.ComplexityRoot.OrderItem.Order == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OrderItem.Order(childComplexity), true
 	case "OrderItem.orderID":
 		if e.ComplexityRoot.OrderItem.OrderID == nil {
 			break
 		}
 
 		return e.ComplexityRoot.OrderItem.OrderID(childComplexity), true
+	case "OrderItem.product":
+		if e.ComplexityRoot.OrderItem.Product == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OrderItem.Product(childComplexity), true
 	case "OrderItem.productID":
 		if e.ComplexityRoot.OrderItem.ProductID == nil {
 			break
@@ -5798,18 +5967,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.OwnerProfile.ID(childComplexity), true
+	case "OwnerProfile.owner":
+		if e.ComplexityRoot.OwnerProfile.Owner == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OwnerProfile.Owner(childComplexity), true
 	case "OwnerProfile.ownerID":
 		if e.ComplexityRoot.OwnerProfile.OwnerID == nil {
 			break
 		}
 
 		return e.ComplexityRoot.OwnerProfile.OwnerID(childComplexity), true
-	case "OwnerProfile.owners":
-		if e.ComplexityRoot.OwnerProfile.Owners == nil {
-			break
-		}
-
-		return e.ComplexityRoot.OwnerProfile.Owners(childComplexity), true
 
 	case "OwnerProfileConnection.edges":
 		if e.ComplexityRoot.OwnerProfileConnection.Edges == nil {
@@ -5899,6 +6068,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.PageInfo.StartCursor(childComplexity), true
 
+	case "Product.category":
+		if e.ComplexityRoot.Product.Category == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Product.Category(childComplexity), true
 	case "Product.categoryID":
 		if e.ComplexityRoot.Product.CategoryID == nil {
 			break
@@ -6129,6 +6304,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.ProductTagLabel.Label(childComplexity), true
+	case "ProductTagLabel.product":
+		if e.ComplexityRoot.ProductTagLabel.Product == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductTagLabel.Product(childComplexity), true
 	case "ProductTagLabel.productID":
 		if e.ComplexityRoot.ProductTagLabel.ProductID == nil {
 			break
@@ -6217,18 +6398,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Profile.ID(childComplexity), true
+	case "Profile.user":
+		if e.ComplexityRoot.Profile.User == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Profile.User(childComplexity), true
 	case "Profile.userID":
 		if e.ComplexityRoot.Profile.UserID == nil {
 			break
 		}
 
 		return e.ComplexityRoot.Profile.UserID(childComplexity), true
-	case "Profile.users":
-		if e.ComplexityRoot.Profile.Users == nil {
-			break
-		}
-
-		return e.ComplexityRoot.Profile.Users(childComplexity), true
 	case "Profile.verified":
 		if e.ComplexityRoot.Profile.Verified == nil {
 			break
@@ -7274,6 +7455,39 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.SluggedRows(childComplexity, args["filter"].(*model.SluggedRowFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
+	case "Query.step":
+		if e.ComplexityRoot.Query.Step == nil {
+			break
+		}
+
+		args, err := ec.field_Query_step_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.Step(childComplexity, args["id"].(int)), true
+	case "Query.stepList":
+		if e.ComplexityRoot.Query.StepList == nil {
+			break
+		}
+
+		args, err := ec.field_Query_stepList_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.StepList(childComplexity, args["filter"].(*model.StepFilter), args["sort"].([]*model.StepSort), args["limit"].(*int), args["offset"].(*int)), true
+	case "Query.steps":
+		if e.ComplexityRoot.Query.Steps == nil {
+			break
+		}
+
+		args, err := ec.field_Query_steps_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.Steps(childComplexity, args["filter"].(*model.StepFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
 	case "Query.tag":
 		if e.ComplexityRoot.Query.Tag == nil {
 			break
@@ -7685,6 +7899,94 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.SluggedRowListResult.TotalCount(childComplexity), true
 
+	case "Step.id":
+		if e.ComplexityRoot.Step.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Step.ID(childComplexity), true
+	case "Step.name":
+		if e.ComplexityRoot.Step.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Step.Name(childComplexity), true
+	case "Step.previousStep":
+		if e.ComplexityRoot.Step.PreviousStep == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Step.PreviousStep(childComplexity), true
+	case "Step.previousStepID":
+		if e.ComplexityRoot.Step.PreviousStepID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Step.PreviousStepID(childComplexity), true
+
+	case "StepConnection.edges":
+		if e.ComplexityRoot.StepConnection.Edges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepConnection.Edges(childComplexity), true
+	case "StepConnection.pageInfo":
+		if e.ComplexityRoot.StepConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepConnection.PageInfo(childComplexity), true
+	case "StepConnection.totalCount":
+		if e.ComplexityRoot.StepConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepConnection.TotalCount(childComplexity), true
+
+	case "StepEdge.cursor":
+		if e.ComplexityRoot.StepEdge.Cursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepEdge.Cursor(childComplexity), true
+	case "StepEdge.node":
+		if e.ComplexityRoot.StepEdge.Node == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepEdge.Node(childComplexity), true
+
+	case "StepListResult.hasMore":
+		if e.ComplexityRoot.StepListResult.HasMore == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepListResult.HasMore(childComplexity), true
+	case "StepListResult.items":
+		if e.ComplexityRoot.StepListResult.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepListResult.Items(childComplexity), true
+	case "StepListResult.limit":
+		if e.ComplexityRoot.StepListResult.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepListResult.Limit(childComplexity), true
+	case "StepListResult.offset":
+		if e.ComplexityRoot.StepListResult.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepListResult.Offset(childComplexity), true
+	case "StepListResult.totalCount":
+		if e.ComplexityRoot.StepListResult.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.StepListResult.TotalCount(childComplexity), true
+
 	case "Tag.id":
 		if e.ComplexityRoot.Tag.ID == nil {
 			break
@@ -7867,6 +8169,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.TimeKeyedNote.Note(childComplexity), true
+	case "TimeKeyedNote.timeKeyed":
+		if e.ComplexityRoot.TimeKeyedNote.TimeKeyed == nil {
+			break
+		}
+
+		return e.ComplexityRoot.TimeKeyedNote.TimeKeyed(childComplexity), true
 
 	case "TimeKeyedNoteConnection.edges":
 		if e.ComplexityRoot.TimeKeyedNoteConnection.Edges == nil {
@@ -8329,6 +8637,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputCreateProfileInput,
 		ec.unmarshalInputCreateReservedWordColumnInput,
 		ec.unmarshalInputCreateSluggedRowInput,
+		ec.unmarshalInputCreateStepInput,
 		ec.unmarshalInputCreateTagInput,
 		ec.unmarshalInputCreateTimeKeyedInput,
 		ec.unmarshalInputCreateTimeKeyedNoteInput,
@@ -8380,6 +8689,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputReservedWordColumnSort,
 		ec.unmarshalInputSluggedRowFilter,
 		ec.unmarshalInputSluggedRowSort,
+		ec.unmarshalInputStepFilter,
+		ec.unmarshalInputStepSort,
 		ec.unmarshalInputStringComparator,
 		ec.unmarshalInputTagFilter,
 		ec.unmarshalInputTagSort,
@@ -8412,6 +8723,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputUpdateProfileInput,
 		ec.unmarshalInputUpdateReservedWordColumnInput,
 		ec.unmarshalInputUpdateSluggedRowInput,
+		ec.unmarshalInputUpdateStepInput,
 		ec.unmarshalInputUpdateTagInput,
 		ec.unmarshalInputUpdateTimeKeyedInput,
 		ec.unmarshalInputUpdateTimeKeyedNoteInput,
@@ -8497,7 +8809,7 @@ func newExecutionContext(
 	}
 }
 
-//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "badge_gen.graphqls" "bin_gen.graphqls" "bin_item_gen.graphqls" "binary_key_badge_gen.graphqls" "binary_key_event_gen.graphqls" "binary_key_gen.graphqls" "bool_keyed_gen.graphqls" "bool_keyed_note_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "digit_leading_column_gen.graphqls" "document_gen.graphqls" "key_class_child_gen.graphqls" "key_class_parent_gen.graphqls" "key_class_real_child_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "owner_badge_gen.graphqls" "owner_gen.graphqls" "owner_profile_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "reserved_word_column_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "time_keyed_gen.graphqls" "time_keyed_note_gen.graphqls" "user_category_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
+//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "badge_gen.graphqls" "bin_gen.graphqls" "bin_item_gen.graphqls" "binary_key_badge_gen.graphqls" "binary_key_event_gen.graphqls" "binary_key_gen.graphqls" "bool_keyed_gen.graphqls" "bool_keyed_note_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "digit_leading_column_gen.graphqls" "document_gen.graphqls" "key_class_child_gen.graphqls" "key_class_parent_gen.graphqls" "key_class_real_child_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "owner_badge_gen.graphqls" "owner_gen.graphqls" "owner_profile_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "reserved_word_column_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "step_gen.graphqls" "tag_gen.graphqls" "time_keyed_gen.graphqls" "time_keyed_note_gen.graphqls" "user_category_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
 var sourcesFS embed.FS
 
 func sourceData(filename string) string {
@@ -8540,6 +8852,7 @@ var sources = []*ast.Source{
 	{Name: "reserved_word_column_gen.graphqls", Input: sourceData("reserved_word_column_gen.graphqls"), BuiltIn: false},
 	{Name: "shared_gen.graphqls", Input: sourceData("shared_gen.graphqls"), BuiltIn: false},
 	{Name: "slugged_row_gen.graphqls", Input: sourceData("slugged_row_gen.graphqls"), BuiltIn: false},
+	{Name: "step_gen.graphqls", Input: sourceData("step_gen.graphqls"), BuiltIn: false},
 	{Name: "tag_gen.graphqls", Input: sourceData("tag_gen.graphqls"), BuiltIn: false},
 	{Name: "time_keyed_gen.graphqls", Input: sourceData("time_keyed_gen.graphqls"), BuiltIn: false},
 	{Name: "time_keyed_note_gen.graphqls", Input: sourceData("time_keyed_note_gen.graphqls"), BuiltIn: false},
@@ -8823,6 +9136,8 @@ func (ec *executionContext) childFields_BinItem(ctx context.Context, field graph
 		return ec.fieldContext_BinItem_slot(ctx, field)
 	case "name":
 		return ec.fieldContext_BinItem_name(ctx, field)
+	case "bin":
+		return ec.fieldContext_BinItem_bin(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type BinItem", field.Name)
 }
@@ -8975,6 +9290,8 @@ func (ec *executionContext) childFields_BinaryKeyEvent(ctx context.Context, fiel
 		return ec.fieldContext_BinaryKeyEvent_binaryKeyID(ctx, field)
 	case "label":
 		return ec.fieldContext_BinaryKeyEvent_label(ctx, field)
+	case "binaryKey":
+		return ec.fieldContext_BinaryKeyEvent_binaryKey(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type BinaryKeyEvent", field.Name)
 }
@@ -9091,6 +9408,8 @@ func (ec *executionContext) childFields_BoolKeyedNote(ctx context.Context, field
 		return ec.fieldContext_BoolKeyedNote_keyedK(ctx, field)
 	case "note":
 		return ec.fieldContext_BoolKeyedNote_note(ctx, field)
+	case "boolKeyed":
+		return ec.fieldContext_BoolKeyedNote_boolKeyed(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedNote", field.Name)
 }
@@ -9349,6 +9668,8 @@ func (ec *executionContext) childFields_KeyClassChild(ctx context.Context, field
 		return ec.fieldContext_KeyClassChild_id(ctx, field)
 	case "parentID":
 		return ec.fieldContext_KeyClassChild_parentID(ctx, field)
+	case "parent":
+		return ec.fieldContext_KeyClassChild_parent(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type KeyClassChild", field.Name)
 }
@@ -9447,6 +9768,8 @@ func (ec *executionContext) childFields_KeyClassRealChild(ctx context.Context, f
 		return ec.fieldContext_KeyClassRealChild_id(ctx, field)
 	case "parentID":
 		return ec.fieldContext_KeyClassRealChild_parentID(ctx, field)
+	case "parent":
+		return ec.fieldContext_KeyClassRealChild_parent(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type KeyClassRealChild", field.Name)
 }
@@ -9551,6 +9874,8 @@ func (ec *executionContext) childFields_Order(ctx context.Context, field graphql
 		return ec.fieldContext_Order_orderedAt(ctx, field)
 	case "orderItems":
 		return ec.fieldContext_Order_orderItems(ctx, field)
+	case "user":
+		return ec.fieldContext_Order_user(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Order", field.Name)
 }
@@ -9589,6 +9914,10 @@ func (ec *executionContext) childFields_OrderItem(ctx context.Context, field gra
 		return ec.fieldContext_OrderItem_quantity(ctx, field)
 	case "unitPrice":
 		return ec.fieldContext_OrderItem_unitPrice(ctx, field)
+	case "order":
+		return ec.fieldContext_OrderItem_order(ctx, field)
+	case "product":
+		return ec.fieldContext_OrderItem_product(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type OrderItem", field.Name)
 }
@@ -9755,8 +10084,8 @@ func (ec *executionContext) childFields_OwnerProfile(ctx context.Context, field 
 		return ec.fieldContext_OwnerProfile_ownerID(ctx, field)
 	case "bio":
 		return ec.fieldContext_OwnerProfile_bio(ctx, field)
-	case "owners":
-		return ec.fieldContext_OwnerProfile_owners(ctx, field)
+	case "owner":
+		return ec.fieldContext_OwnerProfile_owner(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type OwnerProfile", field.Name)
 }
@@ -9831,6 +10160,8 @@ func (ec *executionContext) childFields_Product(ctx context.Context, field graph
 		return ec.fieldContext_Product_sku(ctx, field)
 	case "createdAt":
 		return ec.fieldContext_Product_createdAt(ctx, field)
+	case "category":
+		return ec.fieldContext_Product_category(ctx, field)
 	case "orderItems":
 		return ec.fieldContext_Product_orderItems(ctx, field)
 	case "productTagLabels":
@@ -9941,6 +10272,8 @@ func (ec *executionContext) childFields_ProductTagLabel(ctx context.Context, fie
 		return ec.fieldContext_ProductTagLabel_label(ctx, field)
 	case "description":
 		return ec.fieldContext_ProductTagLabel_description(ctx, field)
+	case "product":
+		return ec.fieldContext_ProductTagLabel_product(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type ProductTagLabel", field.Name)
 }
@@ -9995,8 +10328,8 @@ func (ec *executionContext) childFields_Profile(ctx context.Context, field graph
 		return ec.fieldContext_Profile_githubHandle(ctx, field)
 	case "verified":
 		return ec.fieldContext_Profile_verified(ctx, field)
-	case "users":
-		return ec.fieldContext_Profile_users(ctx, field)
+	case "user":
+		return ec.fieldContext_Profile_user(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Profile", field.Name)
 }
@@ -10155,6 +10488,58 @@ func (ec *executionContext) childFields_SluggedRowListResult(ctx context.Context
 	return nil, fmt.Errorf("no field named %q was found under type SluggedRowListResult", field.Name)
 }
 
+func (ec *executionContext) childFields_Step(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "id":
+		return ec.fieldContext_Step_id(ctx, field)
+	case "name":
+		return ec.fieldContext_Step_name(ctx, field)
+	case "previousStepID":
+		return ec.fieldContext_Step_previousStepID(ctx, field)
+	case "previousStep":
+		return ec.fieldContext_Step_previousStep(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type Step", field.Name)
+}
+
+func (ec *executionContext) childFields_StepConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "edges":
+		return ec.fieldContext_StepConnection_edges(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_StepConnection_pageInfo(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_StepConnection_totalCount(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type StepConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_StepEdge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "node":
+		return ec.fieldContext_StepEdge_node(ctx, field)
+	case "cursor":
+		return ec.fieldContext_StepEdge_cursor(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type StepEdge", field.Name)
+}
+
+func (ec *executionContext) childFields_StepListResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_StepListResult_items(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_StepListResult_totalCount(ctx, field)
+	case "offset":
+		return ec.fieldContext_StepListResult_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_StepListResult_limit(ctx, field)
+	case "hasMore":
+		return ec.fieldContext_StepListResult_hasMore(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type StepListResult", field.Name)
+}
+
 func (ec *executionContext) childFields_Tag(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "id":
@@ -10263,6 +10648,8 @@ func (ec *executionContext) childFields_TimeKeyedNote(ctx context.Context, field
 		return ec.fieldContext_TimeKeyedNote_keyedAt(ctx, field)
 	case "note":
 		return ec.fieldContext_TimeKeyedNote_note(ctx, field)
+	case "timeKeyed":
+		return ec.fieldContext_TimeKeyedNote_timeKeyed(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type TimeKeyedNote", field.Name)
 }
@@ -11329,6 +11716,34 @@ func (ec *executionContext) field_Mutation_createSluggedRows_args(ctx context.Co
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_createStep_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateStepInput, error) {
+			return ec.unmarshalNCreateStepInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateStepInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createSteps_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
+		func(ctx context.Context, v any) ([]*model.CreateStepInput, error) {
+			return ec.unmarshalNCreateStepInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateStepInputᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inputs"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_createTag_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -11910,6 +12325,20 @@ func (ec *executionContext) field_Mutation_deleteReservedWordColumn_args(ctx con
 }
 
 func (ec *executionContext) field_Mutation_deleteSluggedRow_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_deleteStep_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
@@ -13121,6 +13550,50 @@ func (ec *executionContext) field_Mutation_updateSluggedRows_args(ctx context.Co
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_updateStep_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateStepInput, error) {
+			return ec.unmarshalNUpdateStepInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateStepInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateSteps_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (model.StepFilter, error) {
+			return ec.unmarshalNStepFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateStepInput, error) {
+			return ec.unmarshalNUpdateStepInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateStepInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_updateTag_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -13697,6 +14170,20 @@ func (ec *executionContext) field_Mutation_upsertSluggedRow_args(ctx context.Con
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.CreateSluggedRowInput, error) {
 			return ec.unmarshalNCreateSluggedRowInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateSluggedRowInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_upsertStep_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateStepInput, error) {
+			return ec.unmarshalNCreateStepInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateStepInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -16731,6 +17218,104 @@ func (ec *executionContext) field_Query_sluggedRows_args(ctx context.Context, ra
 	return args, nil
 }
 
+func (ec *executionContext) field_Query_stepList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.StepFilter, error) {
+			return ec.unmarshalOStepFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort",
+		func(ctx context.Context, v any) ([]*model.StepSort, error) {
+			return ec.unmarshalOStepSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepSortᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_step_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_steps_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.StepFilter, error) {
+			return ec.unmarshalOStepFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "before",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg4
+	return args, nil
+}
+
 func (ec *executionContext) field_Query_tagList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -19437,6 +20022,38 @@ func (ec *executionContext) fieldContext_BinItem_name(_ context.Context, field g
 	return graphql.NewScalarFieldContext("BinItem", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _BinItem_bin(ctx context.Context, field graphql.CollectedField, obj *models.BinItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItem_bin(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Bin, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+			return ec.marshalOBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBin(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_BinItem_bin(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinItem",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _BinItemConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinItem]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -20483,6 +21100,38 @@ func (ec *executionContext) fieldContext_BinaryKeyEvent_label(_ context.Context,
 	return graphql.NewScalarFieldContext("BinaryKeyEvent", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _BinaryKeyEvent_binaryKey(ctx context.Context, field graphql.CollectedField, obj *models.BinaryKeyEvent) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinaryKeyEvent_binaryKey(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BinaryKey, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinaryKey) graphql.Marshaler {
+			return ec.marshalOBinaryKey2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBinaryKey(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_BinaryKeyEvent_binaryKey(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinaryKeyEvent",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinaryKey(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _BinaryKeyEventConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinaryKeyEvent]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -21284,6 +21933,38 @@ func (ec *executionContext) _BoolKeyedNote_note(ctx context.Context, field graph
 }
 func (ec *executionContext) fieldContext_BoolKeyedNote_note(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("BoolKeyedNote", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNote_boolKeyed(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyedNote) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNote_boolKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BoolKeyed, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalOBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNote_boolKeyed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedNote",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _BoolKeyedNoteConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BoolKeyedNote]) (ret graphql.Marshaler) {
@@ -23218,6 +23899,38 @@ func (ec *executionContext) fieldContext_KeyClassChild_parentID(_ context.Contex
 	return graphql.NewScalarFieldContext("KeyClassChild", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _KeyClassChild_parent(ctx context.Context, field graphql.CollectedField, obj *models.KeyClassChild) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KeyClassChild_parent(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Parent, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.KeyClassParent) graphql.Marshaler {
+			return ec.marshalOKeyClassParent2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐKeyClassParent(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KeyClassChild_parent(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KeyClassChild",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KeyClassParent(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _KeyClassChildConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.KeyClassChild]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -23881,6 +24594,38 @@ func (ec *executionContext) _KeyClassRealChild_parentID(ctx context.Context, fie
 }
 func (ec *executionContext) fieldContext_KeyClassRealChild_parentID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("KeyClassRealChild", field, false, false, errors.New("field of type Float does not have child fields"))
+}
+
+func (ec *executionContext) _KeyClassRealChild_parent(ctx context.Context, field graphql.CollectedField, obj *models.KeyClassRealChild) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_KeyClassRealChild_parent(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Parent, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.KeyClassParent) graphql.Marshaler {
+			return ec.marshalOKeyClassParent2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐKeyClassParent(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_KeyClassRealChild_parent(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "KeyClassRealChild",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_KeyClassParent(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _KeyClassRealChildConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.KeyClassRealChild]) (ret graphql.Marshaler) {
@@ -31214,6 +31959,270 @@ func (ec *executionContext) fieldContext_Mutation_deleteSluggedRow(ctx context.C
 	return fc, nil
 }
 
+func (ec *executionContext) _Mutation_createStep(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createStep(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateStep(ctx, fc.Args["input"].(model.CreateStepInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Step) graphql.Marshaler {
+			return ec.marshalNStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createStep(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createStep_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createSteps(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createSteps(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateSteps(ctx, fc.Args["inputs"].([]*model.CreateStepInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Step) graphql.Marshaler {
+			return ec.marshalNStep2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStepᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createSteps(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createSteps_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateStep(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateStep(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateStep(ctx, fc.Args["id"].(int), fc.Args["input"].(model.UpdateStepInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Step) graphql.Marshaler {
+			return ec.marshalNStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateStep(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateStep_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateSteps(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateSteps(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateSteps(ctx, fc.Args["filter"].(model.StepFilter), fc.Args["input"].(model.UpdateStepInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Step) graphql.Marshaler {
+			return ec.marshalNStep2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStepᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateSteps(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateSteps_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertStep(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertStep(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertStep(ctx, fc.Args["input"].(model.CreateStepInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Step) graphql.Marshaler {
+			return ec.marshalNStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertStep(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertStep_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteStep(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteStep(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteStep(ctx, fc.Args["id"].(int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteStep(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteStep_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Mutation_createTag(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -32968,6 +33977,38 @@ func (ec *executionContext) fieldContext_Order_orderItems(_ context.Context, fie
 	return fc, nil
 }
 
+func (ec *executionContext) _Order_user(ctx context.Context, field graphql.CollectedField, obj *models.Order) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Order_user(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.User, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.User) graphql.Marshaler {
+			return ec.marshalOUser2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐUser(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Order_user(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Order",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_User(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _OrderConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Order]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -33223,6 +34264,70 @@ func (ec *executionContext) _OrderItem_unitPrice(ctx context.Context, field grap
 }
 func (ec *executionContext) fieldContext_OrderItem_unitPrice(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("OrderItem", field, false, false, errors.New("field of type Float does not have child fields"))
+}
+
+func (ec *executionContext) _OrderItem_order(ctx context.Context, field graphql.CollectedField, obj *models.OrderItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OrderItem_order(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Order, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Order) graphql.Marshaler {
+			return ec.marshalOOrder2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐOrder(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_OrderItem_order(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OrderItem",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Order(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OrderItem_product(ctx context.Context, field graphql.CollectedField, obj *models.OrderItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OrderItem_product(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Product, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Product) graphql.Marshaler {
+			return ec.marshalOProduct2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐProduct(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_OrderItem_product(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OrderItem",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Product(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _OrderItemConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.OrderItem]) (ret graphql.Marshaler) {
@@ -34372,16 +35477,16 @@ func (ec *executionContext) fieldContext_OwnerProfile_bio(_ context.Context, fie
 	return graphql.NewScalarFieldContext("OwnerProfile", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
-func (ec *executionContext) _OwnerProfile_owners(ctx context.Context, field graphql.CollectedField, obj *models.OwnerProfile) (ret graphql.Marshaler) {
+func (ec *executionContext) _OwnerProfile_owner(ctx context.Context, field graphql.CollectedField, obj *models.OwnerProfile) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
 		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return ec.fieldContext_OwnerProfile_owners(ctx, field)
+			return ec.fieldContext_OwnerProfile_owner(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			return obj.Owners, nil
+			return obj.Owner, nil
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *models.Owner) graphql.Marshaler {
@@ -34391,7 +35496,7 @@ func (ec *executionContext) _OwnerProfile_owners(ctx context.Context, field grap
 		false,
 	)
 }
-func (ec *executionContext) fieldContext_OwnerProfile_owners(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_OwnerProfile_owner(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "OwnerProfile",
 		Field:      field,
@@ -34944,6 +36049,38 @@ func (ec *executionContext) _Product_createdAt(ctx context.Context, field graphq
 }
 func (ec *executionContext) fieldContext_Product_createdAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Product", field, false, false, errors.New("field of type DateTime does not have child fields"))
+}
+
+func (ec *executionContext) _Product_category(ctx context.Context, field graphql.CollectedField, obj *models.Product) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Product_category(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Category, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Category) graphql.Marshaler {
+			return ec.marshalOCategory2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐCategory(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Product_category(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Product",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Category(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _Product_orderItems(ctx context.Context, field graphql.CollectedField, obj *models.Product) (ret graphql.Marshaler) {
@@ -35749,6 +36886,38 @@ func (ec *executionContext) fieldContext_ProductTagLabel_description(_ context.C
 	return graphql.NewScalarFieldContext("ProductTagLabel", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
+func (ec *executionContext) _ProductTagLabel_product(ctx context.Context, field graphql.CollectedField, obj *models.ProductTagLabel) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductTagLabel_product(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Product, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Product) graphql.Marshaler {
+			return ec.marshalOProduct2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐProduct(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_ProductTagLabel_product(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ProductTagLabel",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Product(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ProductTagLabelConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.ProductTagLabel]) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -36130,16 +37299,16 @@ func (ec *executionContext) fieldContext_Profile_verified(_ context.Context, fie
 	return graphql.NewScalarFieldContext("Profile", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
-func (ec *executionContext) _Profile_users(ctx context.Context, field graphql.CollectedField, obj *models.Profile) (ret graphql.Marshaler) {
+func (ec *executionContext) _Profile_user(ctx context.Context, field graphql.CollectedField, obj *models.Profile) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
 		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return ec.fieldContext_Profile_users(ctx, field)
+			return ec.fieldContext_Profile_user(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			return obj.Users, nil
+			return obj.User, nil
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *models.User) graphql.Marshaler {
@@ -36149,7 +37318,7 @@ func (ec *executionContext) _Profile_users(ctx context.Context, field graphql.Co
 		false,
 	)
 }
-func (ec *executionContext) fieldContext_Profile_users(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Profile_user(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Profile",
 		Field:      field,
@@ -40300,6 +41469,138 @@ func (ec *executionContext) fieldContext_Query_sluggedRowList(ctx context.Contex
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_step(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_step(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Step(ctx, fc.Args["id"].(int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Step) graphql.Marshaler {
+			return ec.marshalOStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_step(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_step_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_steps(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_steps(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Steps(ctx, fc.Args["filter"].(*model.StepFilter), fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["last"].(*int), fc.Args["before"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Connection[models.Step]) graphql.Marshaler {
+			return ec.marshalNStepConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_steps(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_StepConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_steps_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_stepList(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_stepList(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().StepList(ctx, fc.Args["filter"].(*model.StepFilter), fc.Args["sort"].([]*model.StepSort), fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.PaginateResult[models.Step]) graphql.Marshaler {
+			return ec.marshalNStepListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPaginateResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_stepList(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_StepListResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_stepList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_tag(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -42022,6 +43323,373 @@ func (ec *executionContext) fieldContext_SluggedRowListResult_hasMore(_ context.
 	return graphql.NewScalarFieldContext("SluggedRowListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
+func (ec *executionContext) _Step_id(ctx context.Context, field graphql.CollectedField, obj *models.Step) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Step_id(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Step_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Step", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _Step_name(ctx context.Context, field graphql.CollectedField, obj *models.Step) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Step_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Step_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Step", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Step_previousStepID(ctx context.Context, field graphql.CollectedField, obj *models.Step) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Step_previousStepID(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PreviousStepID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *int64) graphql.Marshaler {
+			return ec.marshalOInt2ᚖint64(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Step_previousStepID(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Step", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _Step_previousStep(ctx context.Context, field graphql.CollectedField, obj *models.Step) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Step_previousStep(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PreviousStep, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Step) graphql.Marshaler {
+			return ec.marshalOStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Step_previousStep(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Step",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _StepConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepConnection_edges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.Edge[models.Step]) graphql.Marshaler {
+			return ec.marshalNStepEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "StepConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_StepEdge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _StepConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v models.PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "StepConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _StepConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepConnection_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("StepConnection", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _StepEdge_node(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepEdge_node(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Step) graphql.Marshaler {
+			return ec.marshalNStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "StepEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _StepEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepEdge_cursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("StepEdge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _StepListResult_items(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepListResult_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Step) graphql.Marshaler {
+			return ec.marshalNStep2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStepᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepListResult_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "StepListResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Step(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _StepListResult_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepListResult_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepListResult_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("StepListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _StepListResult_offset(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepListResult_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepListResult_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("StepListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _StepListResult_limit(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepListResult_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepListResult_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("StepListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _StepListResult_hasMore(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Step]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_StepListResult_hasMore(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HasMore, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_StepListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("StepListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
 func (ec *executionContext) _Tag_id(ctx context.Context, field graphql.CollectedField, obj *models.Tag) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -42768,6 +44436,38 @@ func (ec *executionContext) _TimeKeyedNote_note(ctx context.Context, field graph
 }
 func (ec *executionContext) fieldContext_TimeKeyedNote_note(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("TimeKeyedNote", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _TimeKeyedNote_timeKeyed(ctx context.Context, field graphql.CollectedField, obj *models.TimeKeyedNote) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_TimeKeyedNote_timeKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TimeKeyed, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.TimeKeyed) graphql.Marshaler {
+			return ec.marshalOTimeKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐTimeKeyed(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_TimeKeyedNote_timeKeyed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TimeKeyedNote",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_TimeKeyed(ctx, field)
+		},
+	}
+	return fc, nil
 }
 
 func (ec *executionContext) _TimeKeyedNoteConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.TimeKeyedNote]) (ret graphql.Marshaler) {
@@ -48114,6 +49814,43 @@ func (ec *executionContext) unmarshalInputCreateSluggedRowInput(ctx context.Cont
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputCreateStepInput(ctx context.Context, obj any) (model.CreateStepInput, error) {
+	var it model.CreateStepInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"name", "previousStepID"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "previousStepID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("previousStepID"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PreviousStepID = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputCreateTagInput(ctx context.Context, obj any) (model.CreateTagInput, error) {
 	var it model.CreateTagInput
 	if obj == nil {
@@ -51142,6 +52879,101 @@ func (ec *executionContext) unmarshalInputSluggedRowSort(ctx context.Context, ob
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputStepFilter(ctx context.Context, obj any) (model.StepFilter, error) {
+	var it model.StepFilter
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"id", "name", "previousStepID", "and", "or"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalONumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "previousStepID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("previousStepID"))
+			data, err := ec.unmarshalONullableNumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐNullableNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PreviousStepID = data
+		case "and":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
+			data, err := ec.unmarshalOStepFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.And = data
+		case "or":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("or"))
+			data, err := ec.unmarshalOStepFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Or = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputStepSort(ctx context.Context, obj any) (model.StepSort, error) {
+	var it model.StepSort
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalNStepSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalNSortDirection2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputStringComparator(ctx context.Context, obj any) (model.StringComparator, error) {
 	var it model.StringComparator
 	if obj == nil {
@@ -52769,6 +54601,43 @@ func (ec *executionContext) unmarshalInputUpdateSluggedRowInput(ctx context.Cont
 				return it, err
 			}
 			it.Name = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpdateStepInput(ctx context.Context, obj any) (model.UpdateStepInput, error) {
+	var it model.UpdateStepInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"name", "previousStepID"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "previousStepID":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("previousStepID"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.PreviousStepID = graphql.OmittableOf(data)
 		}
 	}
 	return it, nil
@@ -54542,6 +56411,11 @@ func (ec *executionContext) _BinItem(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "bin":
+			out.Values[i] = ec._BinItem_bin(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -55138,6 +57012,11 @@ func (ec *executionContext) _BinaryKeyEvent(ctx context.Context, sel ast.Selecti
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "binaryKey":
+			out.Values[i] = ec._BinaryKeyEvent_binaryKey(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -55588,6 +57467,11 @@ func (ec *executionContext) _BoolKeyedNote(ctx context.Context, sel ast.Selectio
 		case "note":
 			out.Values[i] = ec._BoolKeyedNote_note(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "boolKeyed":
+			out.Values[i] = ec._BoolKeyedNote_boolKeyed(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:
@@ -56625,6 +58509,11 @@ func (ec *executionContext) _KeyClassChild(ctx context.Context, sel ast.Selectio
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
+		case "parent":
+			out.Values[i] = ec._KeyClassChild_parent(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -57011,6 +58900,11 @@ func (ec *executionContext) _KeyClassRealChild(ctx context.Context, sel ast.Sele
 			}
 		case "parentID":
 			out.Values[i] = ec._KeyClassRealChild_parentID(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "parent":
+			out.Values[i] = ec._KeyClassRealChild_parent(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
@@ -58469,6 +60363,48 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "createStep":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createStep(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createSteps":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createSteps(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateStep":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateStep(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateSteps":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateSteps(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertStep":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertStep(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteStep":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteStep(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "createTag":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_createTag(ctx, field)
@@ -58789,6 +60725,11 @@ func (ec *executionContext) _Order(ctx context.Context, sel ast.SelectionSet, ob
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "user":
+			out.Values[i] = ec._Order_user(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -58936,6 +60877,16 @@ func (ec *executionContext) _OrderItem(ctx context.Context, sel ast.SelectionSet
 		case "unitPrice":
 			out.Values[i] = ec._OrderItem_unitPrice(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "order":
+			out.Values[i] = ec._OrderItem_order(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "product":
+			out.Values[i] = ec._OrderItem_product(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:
@@ -59587,8 +61538,8 @@ func (ec *executionContext) _OwnerProfile(ctx context.Context, sel ast.Selection
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
-		case "owners":
-			out.Values[i] = ec._OwnerProfile_owners(ctx, field, obj)
+		case "owner":
+			out.Values[i] = ec._OwnerProfile_owner(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
@@ -59865,6 +61816,11 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 		case "createdAt":
 			out.Values[i] = ec._Product_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "category":
+			out.Values[i] = ec._Product_category(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		case "orderItems":
@@ -60286,6 +62242,11 @@ func (ec *executionContext) _ProductTagLabel(ctx context.Context, sel ast.Select
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
+		case "product":
+			out.Values[i] = ec._ProductTagLabel_product(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -60493,8 +62454,8 @@ func (ec *executionContext) _Profile(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "users":
-			out.Values[i] = ec._Profile_users(ctx, field, obj)
+		case "user":
+			out.Values[i] = ec._Profile_user(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
@@ -62624,6 +64585,72 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "step":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_step(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "steps":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_steps(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "stepList":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_stepList(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "tag":
 			field := field
 
@@ -63489,6 +65516,208 @@ func (ec *executionContext) _SluggedRowListResult(ctx context.Context, sel ast.S
 	return out
 }
 
+var stepImplementors = []string{"Step"}
+
+func (ec *executionContext) _Step(ctx context.Context, sel ast.SelectionSet, obj *models.Step) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, stepImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Step")
+		case "id":
+			out.Values[i] = ec._Step_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._Step_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "previousStepID":
+			out.Values[i] = ec._Step_previousStepID(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "previousStep":
+			out.Values[i] = ec._Step_previousStep(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var stepConnectionImplementors = []string{"StepConnection"}
+
+func (ec *executionContext) _StepConnection(ctx context.Context, sel ast.SelectionSet, obj *models.Connection[models.Step]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, stepConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("StepConnection")
+		case "edges":
+			out.Values[i] = ec._StepConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._StepConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._StepConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var stepEdgeImplementors = []string{"StepEdge"}
+
+func (ec *executionContext) _StepEdge(ctx context.Context, sel ast.SelectionSet, obj *models.Edge[models.Step]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, stepEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("StepEdge")
+		case "node":
+			out.Values[i] = ec._StepEdge_node(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cursor":
+			out.Values[i] = ec._StepEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var stepListResultImplementors = []string{"StepListResult"}
+
+func (ec *executionContext) _StepListResult(ctx context.Context, sel ast.SelectionSet, obj *models.PaginateResult[models.Step]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, stepListResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("StepListResult")
+		case "items":
+			out.Values[i] = ec._StepListResult_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._StepListResult_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._StepListResult_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._StepListResult_limit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasMore":
+			out.Values[i] = ec._StepListResult_hasMore(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var tagImplementors = []string{"Tag"}
 
 func (ec *executionContext) _Tag(ctx context.Context, sel ast.SelectionSet, obj *models.Tag) graphql.Marshaler {
@@ -63908,6 +66137,11 @@ func (ec *executionContext) _TimeKeyedNote(ctx context.Context, sel ast.Selectio
 		case "note":
 			out.Values[i] = ec._TimeKeyedNote_note(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "timeKeyed":
+			out.Values[i] = ec._TimeKeyedNote_timeKeyed(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
 				out.Invalids++
 			}
 		default:
@@ -66958,6 +69192,30 @@ func (ec *executionContext) unmarshalNCreateSluggedRowInput2ᚖgithubᚗcomᚋte
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNCreateStepInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateStepInput(ctx context.Context, v any) (model.CreateStepInput, error) {
+	res, err := ec.unmarshalInputCreateStepInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateStepInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateStepInputᚄ(ctx context.Context, v any) ([]*model.CreateStepInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.CreateStepInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateStepInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateStepInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateStepInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateStepInput(ctx context.Context, v any) (*model.CreateStepInput, error) {
+	res, err := ec.unmarshalInputCreateStepInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNCreateTagInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐCreateTagInput(ctx context.Context, v any) (model.CreateTagInput, error) {
 	res, err := ec.unmarshalInputCreateTagInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -68787,6 +71045,97 @@ func (ec *executionContext) marshalNSortDirection2githubᚗcomᚋteandresmithᚋ
 	return v
 }
 
+func (ec *executionContext) marshalNStep2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStepᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.Step) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx context.Context, sel ast.SelectionSet, v *models.Step) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._Step(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNStepConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.Step]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._StepConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNStepEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdge(ctx context.Context, sel ast.SelectionSet, v models.Edge[models.Step]) graphql.Marshaler {
+	return ec._StepEdge(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNStepEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []models.Edge[models.Step]) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNStepEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐEdge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNStepFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilter(ctx context.Context, v any) (model.StepFilter, error) {
+	res, err := ec.unmarshalInputStepFilter(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNStepFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilter(ctx context.Context, v any) (*model.StepFilter, error) {
+	res, err := ec.unmarshalInputStepFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNStepListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐPaginateResult(ctx context.Context, sel ast.SelectionSet, v *models.PaginateResult[models.Step]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._StepListResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNStepSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepSort(ctx context.Context, v any) (*model.StepSort, error) {
+	res, err := ec.unmarshalInputStepSort(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNStepSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepSortField(ctx context.Context, v any) (model.StepSortField, error) {
+	var res model.StepSortField
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNStepSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepSortField(ctx context.Context, sel ast.SelectionSet, v model.StepSortField) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) unmarshalNString2string(ctx context.Context, v any) (string, error) {
 	res, err := graphql.UnmarshalString(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -69226,6 +71575,11 @@ func (ec *executionContext) unmarshalNUpdateReservedWordColumnInput2githubᚗcom
 
 func (ec *executionContext) unmarshalNUpdateSluggedRowInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateSluggedRowInput(ctx context.Context, v any) (model.UpdateSluggedRowInput, error) {
 	res, err := ec.unmarshalInputUpdateSluggedRowInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNUpdateStepInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐUpdateStepInput(ctx context.Context, v any) (model.UpdateStepInput, error) {
+	res, err := ec.unmarshalInputUpdateStepInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
@@ -71624,6 +73978,55 @@ func (ec *executionContext) unmarshalOSluggedRowSort2ᚕᚖgithubᚗcomᚋteandr
 	for i := range vSlice {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
 		res[i], err = ec.unmarshalNSluggedRowSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐSluggedRowSort(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOStep2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚐStep(ctx context.Context, sel ast.SelectionSet, v *models.Step) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Step(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOStepFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilterᚄ(ctx context.Context, v any) ([]*model.StepFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.StepFilter, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNStepFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilter(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOStepFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepFilter(ctx context.Context, v any) (*model.StepFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputStepFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOStepSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepSortᚄ(ctx context.Context, v any) ([]*model.StepSort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.StepSort, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNStepSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋsqliteᚋmodelsᚋgraphᚋmodelᚐStepSort(ctx, vSlice[i])
 		if err != nil {
 			return nil, err
 		}

@@ -31,7 +31,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
-| users | o2o | User | public.user_badges.user_id |  |
+| user | o2o | User | public.user_badges.user_id |  |
 
 ## Query methods
 

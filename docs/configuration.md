@@ -404,26 +404,42 @@ sqlgen detects relationships from FOREIGN KEY constraints. You configure them pe
 keys: `exclude_relationships` drops detected edges, and `relationships` declares edges that
 detection can't find or names differently. PRD §5.3 and §13.4 are the full rules.
 
-**How detected edges are named.** Each FOREIGN KEY gives at most one edge, joining every column
-pair the constraint lists, so a composite key gives one edge, not one per column. The name comes
-from a table:
+**How detected edges are named.** Each FOREIGN KEY gives at most one edge in each direction,
+joining every column pair the constraint lists, so a composite key gives one edge each way, not one
+per column. On a table that isn't a junction, a foreign key gives a to-one edge on the table holding
+it and, unless the key is unique, a list edge on the table it references. So `tasks.cycle_id →
+cycles` gives both `Task.Cycle` and `Cycle.Tasks`. A unique key gives only the to-one edge; the
+has-one view from the referenced side is declared under `relationships`.
 
 | Edge | Named after | Example (`tasks.cycle_id → cycles`) |
 |------|-------------|-------------------------------------|
 | O2M | The table holding the foreign key, pluralized | `cycles` gets `tasks` (`Cycle.Tasks`) |
-| O2O | The referenced table | `tasks` gets `cycle` (`Task.Cycle`) |
+| O2O (to-one) | The key's naming member without `_id`, singular | `tasks` gets `cycle` (`Task.Cycle`) |
 | M2M | The table at the other end of the junction | `tasks` gets `labels` through `task_labels` |
 
-When two or more edges share a source and a target, each is renamed from its own key. `<stem>` is
-the key's naming member, a column such as `parent_task_id`, without its `_id` suffix. An O2M edge
-becomes `<stem>_<name>`, an O2O edge becomes `<stem>`, and an M2M edge takes its junction table's
-name. So a second foreign key between the same two tables renames the edges that were already
-there. Adding `tasks.parent_task_id → tasks` beside a `task_dependencies` junction turns
-`Task.Tasks` into `Task.ParentTaskTasks`.
+The naming member is usually the key's one column outside the primary key and the table's other
+foreign keys (PRD §5.3 rule 5 has every step), such as `author_id` in `posts.author_id → users`,
+which gives `Post.Author`. A to-one edge falls back to the referenced table's name (`Post.User`)
+when the key has no naming member, or when the stem names a column of the holding table.
+
+A detected edge whose Go field would equal a column's is omitted, with a warning naming the column
+and the edge (a `column_map` rename onto the edge's field is an error instead): `users(posts TEXT)`
+keeps the `Posts` column and drops the detected `posts` edge. Declare the edge under another name to
+keep it. A declared relationship whose field equals a column's is an error.
+
+When two or more edges of one cardinality (to-one, or list) share a source and a target, each is
+renamed from its own key. `<stem>` is the key's naming member, a column such as `parent_task_id`,
+without its `_id` suffix. An O2M edge becomes `<stem>_<name>`, an O2O edge becomes `<stem>`, and an
+M2M edge takes its junction table's name. So a second foreign key between the same two tables
+renames the list edges that were already there. Adding `tasks.parent_task_id → tasks` beside a
+`task_dependencies` junction turns `Task.Tasks` into `Task.ParentTaskTasks`.
 
 **`exclude_relationships`** lists the detected names to drop. It matches the snake_case detected
 name (`task_assignees`, `parent_task_tasks`), not the Go field name, and a renamed edge also matches
-the name it had before the rename.
+the name it had before the rename. A to-one edge also matches its referenced table, so
+`exclude_relationships: [users]` on `posts` drops `Post.Author`. On a self-referential table, or two
+tables that reference each other, one entry can match both the list edge and the to-one edge; declare
+the one you want to keep over its key.
 
 **`relationships`** declares an edge. `fk`, `junction_local_fk` and `junction_reference_fk` each take
 a column name or a list. A list maps by position onto the referenced table's primary key, in its

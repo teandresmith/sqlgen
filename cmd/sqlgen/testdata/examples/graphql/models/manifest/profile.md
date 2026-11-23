@@ -34,7 +34,7 @@
 
 | Name | Kind | Target | FK | Filter |
 | --- | --- | --- | --- | --- |
-| users | o2o | User | public.profiles.user_id |  |
+| user | o2o | User | public.profiles.user_id |  |
 
 ## Query methods
 

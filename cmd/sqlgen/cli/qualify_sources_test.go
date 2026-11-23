@@ -187,7 +187,7 @@ CREATE TABLE pets (
 				got = append(got, r.SourceTable+" -> "+r.TargetTable)
 			}
 			slices.Sort(got)
-			want := []string{"owners -> pets"}
+			want := []string{"owners -> pets", "pets -> owners"}
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Errorf("relationships (-want +got):\n%s", diff)
 			}

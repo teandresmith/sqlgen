@@ -27,6 +27,12 @@
 | --- | --- | --- | --- | --- |
 | `bin_items_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| bin | o2o | Bin | bin_items.(aisle, slot) |  |
+
 ## Query methods
 
 ### Get

@@ -27,6 +27,12 @@
 | `PRIMARY` | id | yes | btree |  |
 | `task_labels_task_id_fkey` | task_id |  | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| task | o2o | Task | task_labels.task_id |  |
+
 ## Query methods
 
 ### Get

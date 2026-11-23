@@ -119,7 +119,26 @@
       "comment": ""
     }
   ],
-  "relationships": [],
+  "relationships": [
+    {
+      "name": "milestone",
+      "kind": "o2o",
+      "target_entity": "Milestone",
+      "fk": {
+        "table": "checkpoints",
+        "schema": "public",
+        "columns": [
+          "milestone_code",
+          "milestone_id"
+        ],
+        "references": [
+          "code",
+          "id"
+        ],
+        "constraint": "checkpoints_milestone_code_milestone_id_fkey"
+      }
+    }
+  ],
   "methods": {
     "query": [
       {

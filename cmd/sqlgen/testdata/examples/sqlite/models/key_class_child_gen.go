@@ -19,6 +19,9 @@ import (
 type KeyClassChild struct {
 	ID       int64   `db:"id" json:"id"`
 	ParentID *string `db:"parent_id" json:"parent_id"`
+
+	// Parent - one-to-one relationship with the key_class_parents table.
+	Parent *KeyClassParent `db:"-" json:"parent"`
 }
 
 // KeyClassChildClient provides type-safe operations for the key_class_children table.
@@ -306,25 +309,58 @@ func (c *keyClassChildClient) GetMany(ctx context.Context, input *GetKeyClassChi
 			}
 		}
 
+		// Determine if O2O relationships need JOIN loading
+		o2oJoins := c.resolveO2OJoins(c.dialect, fieldOptions)
+
 		var keyClassChildren []*KeyClassChild
-		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
-			Columns:    columns,
-			Conditions: conds,
-			OrderBy:    input.Sorts,
-			Limit:      limitPtr,
-			Offset:     offsetPtr,
-			LockMode:   options.LockMode,
-		})
+		if len(o2oJoins) > 0 {
+			// O2O relationships present -- use BuildSelectJoin for LEFT JOIN loading
+			// Prefix filter conditions with parent alias to avoid ambiguous column references
+			result, resultArgs := sql.BuildSelectJoin(c.dialect, c.table, o2oJoins, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: sql.PrefixConditions("k", conds),
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				Alias:      "k",
+				LockMode:   options.LockMode,
+			})
 
-		rows, err := conn.Query(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
+			rows, err := conn.Query(ctx, result, resultArgs...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
 
-		keyClassChildren, err = scanKeyClassChildren(rows, columns)
-		if err != nil {
-			return nil, err
+			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
+			joinColumns, err := rows.Columns()
+			if err != nil {
+				return nil, fmt.Errorf("columns: %w", err)
+			}
+			keyClassChildren, err = scanKeyClassChildrenWithOneToOneJoins(rows, joinColumns)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+				Limit:      limitPtr,
+				Offset:     offsetPtr,
+				LockMode:   options.LockMode,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			keyClassChildren, err = scanKeyClassChildren(rows, columns)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		return keyClassChildren, nil
@@ -1964,8 +2000,9 @@ func (f *KeyClassChildFilter) ToConditions(dialect sql.Dialect, opts ...FilterOp
 
 // KeyClassChildFieldOptions controls column selection and relationship loading for key_class_children queries.
 type KeyClassChildFieldOptions struct {
-	ID       bool `json:"id"`
-	ParentID bool `json:"parent_id"`
+	ID       bool                        `json:"id"`
+	ParentID bool                        `json:"parent_id"`
+	Parent   *KeyClassParentFieldOptions `json:"parent"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -1998,6 +2035,9 @@ func (fo *KeyClassChildFieldOptions) HasSelectedColumns() bool {
 	if fo.ParentID {
 		return true
 	}
+	if fo.Parent != nil {
+		return true
+	}
 	return false
 }
 
@@ -2026,4 +2066,67 @@ type GetKeyClassChildrenInput struct {
 	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
 	// Not part of the public API.
 	requiredColumns []string
+}
+
+// resolveO2OJoins inspects FieldOptions and returns JOIN descriptors for each O2O relationship.
+// Returns nil if no O2O relationships are requested.
+func (c *keyClassChildClient) resolveO2OJoins(d sql.Dialect, fo *KeyClassChildFieldOptions) []sql.JoinClause {
+	if fo == nil {
+		return nil
+	}
+	var joins []sql.JoinClause
+	if fo.Parent != nil {
+		joins = append(joins, sql.JoinClause{
+			Table: sql.Table{Schema: "", Name: "key_class_parents"},
+			Alias: "p",
+			On:    fmt.Sprintf("p.%s = k.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("parent_id")),
+			// The NULL-detection below reads the target's PK off the scanned
+			// row, so the join carries it even when FieldOptions did not ask
+			// for it — an unselected PK reads as a LEFT JOIN miss.
+			Columns: unionColumns(fo.Parent.Columns(), "id"),
+		})
+	}
+	return joins
+}
+
+// scanKeyClassChildrenWithOneToOneJoins scans rows from a LEFT JOIN query into
+// KeyClassChild entities with O2O relationships populated.
+// Routes columns by alias prefix and detects LEFT JOIN misses via NULL PK detection.
+func scanKeyClassChildrenWithOneToOneJoins(rows database.Rows, columns []string) ([]*KeyClassChild, error) {
+	var result []*KeyClassChild
+	for rows.Next() {
+		k := &KeyClassChild{}
+		p := &KeyClassParent{}
+		pHasData := false
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "k.id":
+				targets[idx] = &k.ID
+			case "k.parent_id":
+				targets[idx] = &k.ParentID
+			case "p.id":
+				targets[idx] = database.NullScan(&p.ID)
+				pHasData = true
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan key_class_child with joins: %w", err)
+		}
+
+		// NULL detection — assign deepest chain first, then parents
+		if pHasData && p.ID != 0 {
+			k.Parent = p
+		} else {
+			k.Parent = nil
+		}
+
+		result = append(result, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate key_class_child rows: %w", err)
+	}
+	return result, nil
 }

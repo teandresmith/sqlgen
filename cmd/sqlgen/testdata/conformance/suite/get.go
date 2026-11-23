@@ -502,6 +502,36 @@ func getMany(t *testing.T, h *Harness) {
 			func(v *models.Van) int { return len(v.Tools) })
 	})
 
+	t.Run("a detected belongs-to loads the parent row in the same query", func(t *testing.T) {
+		h.Reset(t)
+		author := createAuthor(t, h, "ann")
+		owned := createPost(t, h, "owned", &author.ID)
+		orphan := createPost(t, h, "orphan", nil)
+		h.Querier.ResetCount()
+		posts, err := h.Client.Posts().GetMany(ctx, nil, func(o *models.CallOptions[models.PostFieldOptions]) {
+			o.FieldOptions = &models.PostFieldOptions{ID: true, Title: true, Author: &models.AuthorFieldOptions{ID: true, Name: true}}
+		})
+		if err != nil {
+			t.Fatalf("GetMany posts with Author error = %v, want nil", err)
+		}
+		if stmts := h.Querier.Statements(); len(stmts) != 1 {
+			t.Errorf("GetMany posts with Author sent %d statements %q, want 1", len(stmts), stmts)
+		}
+		got := map[int64]*models.Author{}
+		for _, p := range posts {
+			got[p.ID] = p.Author
+		}
+		if len(posts) != 2 {
+			t.Fatalf("GetMany posts = %d rows, want 2", len(posts))
+		}
+		if a := got[owned.ID]; a == nil || a.ID != author.ID || a.Name != "ann" {
+			t.Errorf("owned post's Author = %+v, want author %d named ann", a, author.ID)
+		}
+		if a, ok := got[orphan.ID]; !ok || a != nil {
+			t.Errorf("orphan post's Author = %+v (present %v), want nil", a, ok)
+		}
+	})
+
 	t.Run("returns exactly the rows the filter matches", func(t *testing.T) {
 		h.Reset(t)
 		createPricedProduct(t, h, "a", 100)

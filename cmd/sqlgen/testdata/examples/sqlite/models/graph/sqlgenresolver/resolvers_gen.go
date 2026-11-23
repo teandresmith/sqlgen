@@ -5676,6 +5676,189 @@ func (m *M) DeleteSluggedRow(ctx context.Context, id int) (bool, error) {
 	return true, nil
 }
 
+// Step resolves the single-by-PK query for steps.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) Step(ctx context.Context, id int) (*models.Step, error) {
+	fo := stepFieldOptionsFromContext(ctx)
+	res, err := q.Client.Steps().Get(ctx, int64(id), func(o *models.CallOptions[models.StepFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// Steps resolves the cursor-paginated Connection query for steps.
+func (q *Q) Steps(ctx context.Context, filter *models.StepFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Step], error) {
+	fo := stepFieldOptionsFromContext(ctx)
+	res, err := q.Client.Steps().Connection(ctx, models.ConnectionInput[models.StepFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.StepFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// StepList resolves the offset-paginated ListResult query for steps.
+func (q *Q) StepList(ctx context.Context, filter *models.StepFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.Step], error) {
+	fo := stepFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.StepFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.Steps().Paginate(ctx, in, func(o *models.CallOptions[models.StepFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateStep resolves the single-row create mutation for steps.
+func (m *M) CreateStep(ctx context.Context, input *models.CreateStepInput) (*models.Step, error) {
+	fo := stepFieldOptionsFromContext(ctx)
+	res, err := m.Client.Steps().Create(ctx, input, func(o *models.CallOptions[models.StepFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateSteps resolves the bulk create mutation for steps.
+func (m *M) CreateSteps(ctx context.Context, inputs []*models.CreateStepInput) ([]*models.Step, error) {
+	fo := stepFieldOptionsFromContext(ctx)
+	res, err := m.Client.Steps().CreateMany(ctx, inputs, func(o *models.CallOptions[models.StepFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateStepRequest is one updateStep /
+// updateSteps input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateStepRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateStepInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateStep resolves the single-row update mutation for steps.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateStep(ctx context.Context, id int, input UpdateStepRequest) (*models.Step, error) {
+	fo := stepFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.Steps().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.StepFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.Steps().Get(ctx, int64(id), func(o *models.CallOptions[models.StepFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateSteps resolves the bulk update-where mutation for steps.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateSteps(ctx context.Context, filter *models.StepFilter, input UpdateStepRequest) ([]*models.Step, error) {
+	fo := stepFieldOptionsFromContext(ctx)
+	res, err := m.Client.Steps().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.StepFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertStep resolves the single-row upsert mutation for steps.
+func (m *M) UpsertStep(ctx context.Context, input *models.CreateStepInput) (*models.Step, error) {
+	fo := stepFieldOptionsFromContext(ctx)
+	res, err := m.Client.Steps().Upsert(ctx, input, models.StepConflictPK, func(o *models.CallOptions[models.StepFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteStep resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteStep(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.Steps().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.StepFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.StepFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
 // Tag resolves the single-by-PK query for tags.
 // <table>(id) returns null when missing — no separate exists query is
 // needed. ErrNotFound is collapsed to (nil, nil) so the nullable

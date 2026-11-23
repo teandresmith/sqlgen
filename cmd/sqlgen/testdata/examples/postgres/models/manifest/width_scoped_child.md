@@ -26,6 +26,12 @@
 | --- | --- | --- | --- | --- |
 | `width_scoped_children_pkey` | id | yes | btree |  |
 
+## Relationships
+
+| Name | Kind | Target | FK | Filter |
+| --- | --- | --- | --- | --- |
+| small | o2o | WidthSmall | public.width_scoped_children.(scope, small_id) |  |
+
 ## Query methods
 
 ### Get

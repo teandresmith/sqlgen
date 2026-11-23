@@ -355,8 +355,8 @@ type RelationshipContext struct {
 	// so there was nothing to derive from before. Only get.go.tmpl's O2M
 	// loader consumes this today.
 	FKFieldName string
-	// FKOnTarget reports whether FKColumn is physically declared on the
-	// *target* table rather than on this one (PRD §13.1). It is what separates
+	// FKOnTarget reports whether the target table holds the edge's key: false
+	// for belongs-to, true for has-one (PRD §13.1). It is what separates
 	// the two O2O shapes `type: one_to_one` cannot tell apart: a belongs-to
 	// edge holds the FK here (false), a has-one edge holds it on the related
 	// table (true). O2M resolves true — the FK is on the many side — and M2M
@@ -369,14 +369,13 @@ type RelationshipContext struct {
 	// default and still put the FK on the target, which is exactly the shape of
 	// `assets.PrimaryDocument` in the graphql example.
 	//
-	// Derived once, when the relationship context is built, from the parsed
-	// schema — so the read path (the O2O LEFT JOIN's ON clause, which used to
-	// re-derive it by scanning the target's columns) and the write path consume
-	// one value rather than each deriving their own. The cross-table pass in
-	// wireRelationshipFKMetadata asks a related but distinct question — which
-	// *generated* table context carries the column, so it can read that
-	// column's resolved nullability and Go type — and is not a second
-	// derivation of this one.
+	// Derived once, when the relationship context is built (inferredFKOnTarget,
+	// declaredFKOnTarget), so the read path (the O2O LEFT JOIN's ON clause) and
+	// the write path consume one value rather than each deriving their own.
+	// The cross-table pass in wireRelationshipFKMetadata asks a related but
+	// distinct question — which *generated* table context carries the column,
+	// so it can read that column's resolved nullability and Go type — and is
+	// not a second derivation of this one.
 	FKOnTarget bool
 	// JunctionTable is the bare junction table name without schema prefix (M2M).
 	JunctionTable string

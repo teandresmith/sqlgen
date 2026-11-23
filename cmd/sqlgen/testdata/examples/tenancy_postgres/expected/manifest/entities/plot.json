@@ -108,7 +108,26 @@
       "comment": ""
     }
   ],
-  "relationships": [],
+  "relationships": [
+    {
+      "name": "zone",
+      "kind": "o2o",
+      "target_entity": "Zone",
+      "fk": {
+        "table": "plots",
+        "schema": "public",
+        "columns": [
+          "zone_region",
+          "zone_id"
+        ],
+        "references": [
+          "region",
+          "id"
+        ],
+        "constraint": "plots_zone_region_zone_id_fkey"
+      }
+    }
+  ],
   "methods": {
     "query": [
       {

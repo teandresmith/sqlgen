@@ -119,7 +119,7 @@
   ],
   "relationships": [
     {
-      "name": "tasks",
+      "name": "task",
       "kind": "o2o",
       "target_entity": "Task",
       "fk": {

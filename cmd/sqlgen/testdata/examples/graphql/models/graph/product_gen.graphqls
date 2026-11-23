@@ -20,6 +20,8 @@ type Product {
   updatedAt: Time
   "deleted_at"
   deletedAt: Time
+  "one-to-one relationship with the categories table."
+  category: Category
   "one-to-many relationship with the order_items table."
   orderItems: [OrderItem!]!
 }

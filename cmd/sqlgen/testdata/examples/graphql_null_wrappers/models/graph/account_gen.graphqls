@@ -36,6 +36,8 @@ type Account {
   accounts: [Account!]!
   "one-to-many relationship with the entries table."
   entries: [Entry!]!
+  "one-to-one relationship with the accounts table."
+  parent: Account
 }
 
 type AccountConnection {
