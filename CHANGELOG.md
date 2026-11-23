@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/teandresmith/sqlgen/compare/v0.1.2...v0.1.3) (2026-11-20)
+
+
+### Features
+
+* address the sqlgen-example v0.1.2 findings ([#7](https://github.com/teandresmith/sqlgen/issues/7)) ([f5dac70](https://github.com/teandresmith/sqlgen/commit/f5dac70c127d163393f54f14c38400cdae18bcfb))
+
 ## [0.1.2](https://github.com/teandresmith/sqlgen/compare/v0.1.1...v0.1.2) (2026-11-18)
 
 
