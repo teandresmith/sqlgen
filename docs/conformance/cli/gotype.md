@@ -7,7 +7,7 @@
 Rows of the `type-resolution` matrix are the rows of the three §7.2 tables, one per dialect (`postgres-…`, `mysql-…`, `sqlite-…`), with each table row's spellings together. Rows that cite gotype tests from other sections (§16.3 SUM widening, §29.2.4 tenancy) live in [`gen.md`](gen.md).
 
 ## §7.1 Type Resolution Chain
-<!-- prd: 7.1 sha256: dd57aae54c037508 -->
+<!-- prd: 7.1 sha256: 6b8d43ccfac1fee0 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -164,6 +164,9 @@ Rows of the `type-resolution` matrix are the rows of the three §7.2 tables, one
 | gotype.override-key.case-insensitive | Every lookup ignores case: SQL type names, enum, SET and domain names, schema qualifiers and `overrides.types` keys | `unit: cmd/sqlgen/gotype: TestCaseNormalization`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaEnums/enum is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaSets/set is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/qualified name is case-insensitive`; `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/owner schema matches case-insensitively`; `unit: cmd/sqlgen/gotype: TestOverrideKeysIgnoreCase` | all |  |
 | gotype.chain.unknown-type-string | A column whose SQL type no step resolves is `string` (`*string` / `sql.NullString` when nullable) | `unit: cmd/sqlgen/gotype: TestResolve_SchemaQualifiedNames/shared bare enum resolves only qualified`; `unit: cmd/sqlgen/gotype: TestDefaultUUIDBinding/other dialects declare no uuid type`; `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType` | all |  |
 | gotype.chain.unknown-type-warning | Generation warns for such a column, naming the column, its SQL type and the `overrides.types.<sql_type>` key that would type it, and the config still generates | `unit: cmd/sqlgen/gen: TestUnmappedSQLTypeWarnsOnTableColumn/unknown type warns and falls back to string`; `unit: cmd/sqlgen/gen: TestUnmappedSQLTypeWarnsOnViewColumn`; `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType/unknown type falls back and is reported` | all |  |
+| gotype.chain.composite-string | A PostgreSQL column of a composite type resolves to `string` (`*string` / `sql.NullString` when nullable, `[]string` for an array, and through a domain over it), since the column holds tuple text and the generated struct reads and writes JSON | `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType/composite falls back to string and names its struct`; `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType/nullable composite falls back to *string`; `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType/composite array element names its struct`; `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType/domain over a composite names its struct` | postgres |  |
+| gotype.chain.composite-warning | The warning for a composite-typed column names the generated struct, says it reads and writes JSON, points at a `jsonb` column mapped with `type_map`, and names the `overrides.types.<sql_type>` key | `unit: cmd/sqlgen/gen: TestUnmappedSQLTypeWarnsOnCompositeColumn` | postgres |  |
+| gotype.names.composite-bare-owner-first | A bare composite name in a column's own schema is that composite, never another schema's enum, SET or domain of the same name | `unit: cmd/sqlgen/gotype: TestCompositeSharesTheTypeNamespace`; `unit: cmd/sqlgen/gen: TestUnmappedSQLTypeWarnsOnCompositeColumn` | postgres |  |
 
 ## §7.2 Built-In Type Mappings
 <!-- prd: 7.2 sha256: 2c74af20b22d7bcb -->

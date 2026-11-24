@@ -1172,7 +1172,17 @@ func incrementSQLTypeWarnings(resolver *gotype.Resolver, qualifiedTable string, 
 // one leaves a geometry or citext column typed string with nothing pointing at
 // the config key that would choose its type. kind is "column" for a table and
 // "view column" for a view.
+//
+// A column of a PostgreSQL composite type gets its own wording: the generated
+// struct exists, but it reads and writes JSON (PRD §8.3) and the column holds
+// tuple text, so the warning points at the jsonb column that uses it.
 func unmappedSQLTypeWarning(kind, qualifiedEntity, column, sqlType string, gt gotype.GoType) string {
+	if gt.UnmappedComposite != "" {
+		return fmt.Sprintf(
+			"%s %s.%s has composite type %q, so it is generated as %s holding the tuple text; the generated %s reads and writes JSON (PRD §8.3), so to use it declare the column jsonb and map it with type_map, or add overrides.types.%s to choose its Go type",
+			kind, qualifiedEntity, column, sqlType, gt.Name, gt.UnmappedComposite, gt.UnmappedSQLType,
+		)
+	}
 	return fmt.Sprintf(
 		"%s %s.%s has SQL type %q, which no override, integration, enum, SET, domain or built-in mapping resolves, so it is generated as %s; add overrides.types.%s to choose its Go type",
 		kind, qualifiedEntity, column, sqlType, gt.Name, gt.UnmappedSQLType,
