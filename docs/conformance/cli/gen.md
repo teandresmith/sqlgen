@@ -13,7 +13,7 @@
 | naming.to-one.singular | A detected to-one edge's Go field and JSON tag are singular (`users` gives `User`, `user`) | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DetectedToOneFieldIsSingular` | all | relationships: belongs-to × struct-field |
 
 ## §8.1 Template Engine
-<!-- prd: 8.1 sha256: f3b5ed4e4bc1ec5b -->
+<!-- prd: 8.1 sha256: 048fa0a8c72bd63c -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -37,7 +37,7 @@
 | gen.template.go-generate | A `//go:generate sqlgen generate` directive makes `go generate ./...` run code generation, with no extra build-system integration | `unit: cmd/sqlgen: TestGoGenerate_DirectiveRunsCodeGeneration` | all |  |
 
 ## §8.1.7 Testing Strategy
-<!-- prd: 8.1.7 sha256: 1588da48dfefa4a8 -->
+<!-- prd: 8.1.7 sha256: 6fe17bf2d929e295 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-397
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** nit
 - **Origin:** phase 1, sql
 - **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`sql.Where(col).In(&sub)` with a `*Subquery` is bound as one parameter value")
@@ -38,20 +46,14 @@
 **Suggested fix.**
 - User ruling 2026-11-22: accept `*Subquery`.
 - Start from `.claude/prototypes/FIX-397.patch` (based on `ca9b4128`; 5 files, +53/-13): `listOrSubquery` uses a type switch that unwraps a non-nil `*Subquery`; a nil pointer stays a one-value list (binds NULL, like `In(nil)`); godoc on `In` and `listOrSubquery` updated; `TestInNinSubqueryPointer` in `sql/composition_test.go` (postgres in, postgres stdlib nin, mysql in, sqlite nin, postgres nil pointer in, sqlite nil pointer nin).
-- PRD wording at §8.1.7 (PRD:2353), the §11.5 example comment (:8559) and table rows (:8579-8580): "a single `sql.Subquery` (or non-nil `*sql.Subquery`)". Registry row `cond.builder.in-nin-subquery` in `docs/conformance/runtime/sql.md` states the pointer form and nil behavior; `make req-rehash SECTIONS=8.1,8.1.7,11.5`.
-- Corrected at vetting (2026-11-23): added the two nil-pointer cases (the original left the `sq != nil` guard untested), the fourth PRD occurrence at :8559, and the registry row and rehash `req-check` needs.
-- Prototype results, run at `ca9b4128` on 2026-11-23: probe → PG `SELECT * FROM "users" WHERE company_id IN ($1)` with args `[]interface {}{(*sql.Subquery)(0x…)}`, MySQL/SQLite `IN (?)` / `NOT IN (?)`; SQLite execution → "sql: converting argument $1 type: unsupported type sql.Subquery, a struct"; after the fix the same probe returns ids [2]. Gates: `go test -race ./sql/...`, vet, gofumpt, golangci-lint, `make req-check` ok. Fail-first: `case *Subquery` removed → the four non-nil subtests fail ("BuildSelect(postgres in) = SELECT * FROM \"users\" WHERE company_id IN ($1) want … IN (SELECT id FROM companies WHERE size > $1)"); `if sq != nil` guard removed → "panic: runtime error: invalid memory address or nil pointer dereference"; existing suite without the fix passes. No golden churn. `Eq(&sub)` is out of scope (a scalar Subquery is not a documented form).
+- PRD wording at §8.1.7 (PRD:2354), the §11.5 example comment (:8570) and table rows (:8590-8591): "a single `sql.Subquery` (or non-nil `*sql.Subquery`)". Registry row `cond.builder.in-nin-subquery` in `docs/conformance/runtime/sql.md` states the pointer form and nil behavior; `make req-rehash SECTIONS=8.1,8.1.7,11.5`.
+- Corrected at vetting (2026-11-23): added the two nil-pointer cases (the original left the `sq != nil` guard untested), the fourth PRD occurrence at :8570, and the registry row and rehash `req-check` needs.
+- Prototype results, run at `ca9b4128` on 2026-11-23: probe → PG `SELECT * FROM "users" WHERE company_id IN ($1)` with args `[]interface {}{(*sql.Subquery)(0x…)}`, MySQL/SQLite `IN (?)` / `NOT IN (?)`; SQLite execution → "sql: converting argument $1 type: unsupported type sql.Subquery, a struct"; after the fix the same probe returns ids [2]. Gates: `go test -race ./sql/...`, vet, gofumpt, golangci-lint, `make req-check` ok. Fail-first: `case *Subquery` removed → the four non-nil subtests fail ("BuildSelect(postgres in) = SELECT * FROM \"users\" WHERE company_id IN ($1) want … IN (SELECT id FROM companies WHERE size > $1)"); `if sq != nil` guard removed → "panic: runtime error: invalid memory address or nil pointer dereference"; existing suite without the fix passes. No golden churn. Verify (2026-11-24): independent reviewer confirmed all findings and fail-first; PRD line refs in Suggested fix corrected to the landed file. `Eq(&sub)` is out of scope (a scalar Subquery is not a documented form).
 
 **References.**
 - PRD §8.1.7, §11.5.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** `listOrSubquery` in `sql/condition.go` now type-switches on the lone argument: a `Subquery` or a non-nil `*Subquery` is unwrapped and rendered as the nested SELECT; a nil `*Subquery` stays a one-value list and binds NULL, as `In(nil)` does. Godoc on `In` and `listOrSubquery`, PRD §8.1.7 and §11.5 (example comment and the `In`/`Nin` table rows), and registry row `cond.builder.in-nin-subquery` state the pointer form; anchors rehashed. Regression test `TestInNinSubqueryPointer` in `sql/composition_test.go` covers all four dialect setups plus two nil-pointer cases. Prototype applied clean (`git apply --3way`); `make req-rehash SECTIONS=8.1,8.1.7,11.5` updated 0 anchors (the patch's hashes were current). Fail-first re-run on the final code: `case *Subquery` removed → `TestInNinSubqueryPointer` fails; `sq != nil` guard removed → nil pointer dereference panic. No golden churn.
 
 ### FIX-396
 

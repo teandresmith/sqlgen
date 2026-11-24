@@ -2351,7 +2351,7 @@ This catches template regressions without running the full generation pipeline.
 - `BuildSoftDelete`, `BuildHardDelete`: timestamp vs bool vs integer soft delete columns
 - Placeholder styles: `$1, $2` (PostgreSQL) vs `?` (MySQL/SQLite)
 - Identifier quoting: `"double"` (PostgreSQL/SQLite) vs `` `backtick` `` (MySQL)
-- `In`/`Nin` conditions: expanded `IN ($1, $2, ...)` / `IN (?, ?, ...)` on every dialect, including a single-`Subquery` argument rendered as a nested SELECT
+- `In`/`Nin` conditions: expanded `IN ($1, $2, ...)` / `IN (?, ?, ...)` on every dialect, including a single `Subquery` (or non-nil `*Subquery`) argument rendered as a nested SELECT
 - Composite PK: tuple `IN` on every dialect, and a prefixed tuple `IN` that qualifies each column (`(c."workspace_id", c."id") IN (…)`)
 - Correlated `Exists` with one and with several correlation pairs, rendered SQL and argument order
 - Edge cases: empty filter (returns all rows), nil FieldOptions (SELECT *), zero-length IN list
@@ -8567,7 +8567,7 @@ cond := sql.And(
     ),
 )
 
-// Subquery: In / Nin given a single sql.Subquery render a nested SELECT
+// Subquery: In / Nin given a single sql.Subquery (or non-nil *sql.Subquery) render a nested SELECT
 cond := sql.Where("company_id").In(sql.Subquery{
     SQL:  `SELECT "id" FROM "companies" WHERE "country" = $`,
     Args: []any{"US"},
@@ -8587,8 +8587,8 @@ cond := sql.Raw("price * quantity > $", 1000.00)
 | `Gte(v)` | `col >= $` |
 | `Lt(v)` | `col < $` |
 | `Lte(v)` | `col <= $` |
-| `In(v...)` | `col IN ($, $, ...)` on every dialect; `col IN (<subquery>)` for a single `sql.Subquery` argument |
-| `Nin(v...)` | `col NOT IN ($, $, ...)` on every dialect; `col NOT IN (<subquery>)` for a single `sql.Subquery` argument |
+| `In(v...)` | `col IN ($, $, ...)` on every dialect; `col IN (<subquery>)` for a single `sql.Subquery` (or non-nil `*sql.Subquery`) argument |
+| `Nin(v...)` | `col NOT IN ($, $, ...)` on every dialect; `col NOT IN (<subquery>)` for a single `sql.Subquery` (or non-nil `*sql.Subquery`) argument |
 | `Like(v)` | `col LIKE $` |
 | `NLike(v)` | `col NOT LIKE $` |
 | `Between(a, b)` | `col BETWEEN $ AND $` |

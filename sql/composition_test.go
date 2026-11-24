@@ -344,3 +344,37 @@ func TestSubquery_QuotesInsideLiterals(t *testing.T) {
 		})
 	}
 }
+
+// TestInNinSubqueryPointer pins that In / Nin given a lone *Subquery render
+// the nested SELECT, as a Subquery value does, instead of binding the pointer
+// as one parameter value. A nil *Subquery has no SELECT to render, so it stays
+// a one-value list, as In(nil) does, and binds NULL.
+func TestInNinSubqueryPointer(t *testing.T) {
+	sub := sql.Subquery{SQL: `SELECT id FROM companies WHERE size > $`, Args: []any{10}}
+	var nilSub *sql.Subquery
+	tests := []struct {
+		name     string
+		d        sql.Dialect
+		cond     sql.Condition
+		wantSQL  string
+		wantArgs []any
+	}{
+		{"postgres in", pg, sql.Where("company_id").In(&sub), `SELECT * FROM "users" WHERE company_id IN (SELECT id FROM companies WHERE size > $1)`, []any{10}},
+		{"postgres stdlib nin", pgStd, sql.Where("company_id").Nin(&sub), `SELECT * FROM "users" WHERE company_id NOT IN (SELECT id FROM companies WHERE size > $1)`, []any{10}},
+		{"mysql in", my, sql.Where("company_id").In(&sub), "SELECT * FROM `users` WHERE company_id IN (SELECT id FROM companies WHERE size > ?)", []any{10}},
+		{"sqlite nin", lite, sql.Where("company_id").Nin(&sub), `SELECT * FROM "users" WHERE company_id NOT IN (SELECT id FROM companies WHERE size > ?)`, []any{10}},
+		{"postgres nil pointer in", pg, sql.Where("company_id").In(nilSub), `SELECT * FROM "users" WHERE company_id IN ($1)`, []any{nilSub}},
+		{"sqlite nil pointer nin", lite, sql.Where("company_id").Nin(nilSub), `SELECT * FROM "users" WHERE company_id NOT IN (?)`, []any{nilSub}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSQL, gotArgs := sql.BuildSelect(tt.d, sql.Table{Name: "users"}, sql.SelectOptions{Conditions: []sql.Condition{tt.cond}})
+			if gotSQL != tt.wantSQL {
+				t.Errorf("BuildSelect(%s) =\n  %s\nwant\n  %s", tt.name, gotSQL, tt.wantSQL)
+			}
+			if diff := cmp.Diff(tt.wantArgs, gotArgs); diff != "" {
+				t.Errorf("BuildSelect(%s) args mismatch (-want +got):\n%s", tt.name, diff)
+			}
+		})
+	}
+}

@@ -135,7 +135,7 @@ func (b ConditionBuilder) Lte(v any) Condition {
 // builders expand them to one placeholder each, "col IN ($1, $2, ...)", on
 // every dialect.
 //
-// A single [Subquery] argument is the subquery form instead:
+// A single [Subquery] (or non-nil *[Subquery]) argument is the subquery form instead:
 // "col IN (SELECT ...)", with the subquery's "$" tokens numbered into the
 // enclosing statement's positional sequence.
 func (b ConditionBuilder) In(vals ...any) Condition {
@@ -148,12 +148,18 @@ func (b ConditionBuilder) Nin(vals ...any) Condition {
 	return Condition{Clause: b.column + " NOT IN $", Value: listOrSubquery(vals), Column: b.column}
 }
 
-// listOrSubquery unwraps a lone [Subquery] so the builder renders it as a
-// nested SELECT. Left wrapped in []any it would be bound as a parameter value.
+// listOrSubquery unwraps a lone [Subquery], or a non-nil *[Subquery], so the
+// builder renders it as a nested SELECT. Left wrapped in []any it would be
+// bound as a parameter value.
 func listOrSubquery(vals []any) any {
 	if len(vals) == 1 {
-		if sq, ok := vals[0].(Subquery); ok {
+		switch sq := vals[0].(type) {
+		case Subquery:
 			return sq
+		case *Subquery:
+			if sq != nil {
+				return *sq
+			}
 		}
 	}
 	return vals
