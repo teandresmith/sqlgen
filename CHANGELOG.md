@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/teandresmith/sqlgen/compare/v0.1.3...v0.1.4) (2026-11-24)
+
+
+### Bug Fixes
+
+* resolve the backlog-sweep fix queue ([#10](https://github.com/teandresmith/sqlgen/issues/10)) ([64c0a24](https://github.com/teandresmith/sqlgen/commit/64c0a24f1ccbdbcdcd95833226674266dc37d088))
+
 ## [0.1.3](https://github.com/teandresmith/sqlgen/compare/v0.1.2...v0.1.3) (2026-11-20)
 
 
