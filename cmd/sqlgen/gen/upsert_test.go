@@ -48,6 +48,7 @@ func executeUpsertTemplate(t *testing.T, ctx gen.TableContext, dialect sql.Diale
 func testUpsertContext_dbStrategyUUID_postgres() gen.TableContext {
 	return gen.TableContext{
 		StructName:        "Product",
+		SnakeName:         "product",
 		TableName:         "products",
 		TableNameConstant: "TableProducts",
 		Schema:            "public",
@@ -165,6 +166,7 @@ func testUpsertContext_callerStrategy_postgres() gen.TableContext {
 func testUpsertContext_compositePK() gen.TableContext {
 	return gen.TableContext{
 		StructName:            "OrderItem",
+		SnakeName:             "order_item",
 		TableName:             "order_items",
 		TableNameConstant:     "TableOrderItems",
 		Schema:                "public",

@@ -199,6 +199,49 @@ func upsertDedupeKey(row []any, positions []int) (string, bool) {
 	return key, true
 }
 
+// upsertUpdateGroups splits one UpsertMany sub-batch by the update columns each
+// row sets, so a conflict updates only what the row's input set — the rule the
+// single-row Upsert follows. A batch binds every input column in every row, and
+// an unset field binds DEFAULT, so one shared update list would reset every
+// column a row left unset on the conflicting row. Rows keep their order within
+// a group, and groups come in order of first appearance; a homogeneous batch is
+// one group, so one statement.
+func upsertUpdateGroups(columns, updateColumns []string, rows [][]any) ([][]string, [][][]any) {
+	positions := make([]int, len(updateColumns))
+	for i, col := range updateColumns {
+		positions[i] = slices.Index(columns, col)
+	}
+	var sets [][]string
+	var groups [][][]any
+	byMask := make(map[string]int)
+	mask := make([]byte, len(positions))
+	for _, row := range rows {
+		for i, pos := range positions {
+			_, isExpr := row[pos].(sql.DefaultExpr)
+			if row[pos] == sql.Default || isExpr {
+				mask[i] = '0'
+			} else {
+				mask[i] = '1'
+			}
+		}
+		g, ok := byMask[string(mask)]
+		if !ok {
+			g = len(groups)
+			byMask[string(mask)] = g
+			set := make([]string, 0, len(positions))
+			for i, col := range updateColumns {
+				if mask[i] == '1' {
+					set = append(set, col)
+				}
+			}
+			sets = append(sets, set)
+			groups = append(groups, nil)
+		}
+		groups[g] = append(groups[g], row)
+	}
+	return sets, groups
+}
+
 // FilterOption carries the per-call data a filter needs, beyond the dialect,
 // to compile its relationship members into correlated EXISTS subqueries.
 // Generated client methods supply the set; ToConditions threads it through

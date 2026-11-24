@@ -773,7 +773,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.per-table.mask-intersects-client | The GraphQL generator emits the intersection of the client's methods and the table's resolved `api.operations` mask | `unit: cmd/sqlgen/gen: TestAPIOperationsMask_CannotExceedClient`; `unit: cmd/sqlgen/gen: TestAPIOperationsMask_PerTable` | all | |
 
 ## §26.12 Known Limitations
-<!-- prd: 26.12 sha256: 4db5c3be7a0daf73 -->
+<!-- prd: 26.12 sha256: c94563c691d90993 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

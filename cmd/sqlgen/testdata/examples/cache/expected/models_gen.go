@@ -1964,13 +1964,34 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_article", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 
@@ -4151,13 +4172,34 @@ func (c *auditLogClient) UpsertMany(ctx context.Context, inputs []*CreateAuditLo
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_audit_log", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 
@@ -6106,13 +6148,34 @@ func (c *orderItemClient) UpsertMany(ctx context.Context, inputs []*CreateOrderI
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_order_item", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 		}
@@ -8210,13 +8273,34 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_product", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 
@@ -10453,13 +10537,34 @@ func (c *profileClient) UpsertMany(ctx context.Context, inputs []*CreateProfileI
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_profile", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 
@@ -12751,13 +12856,34 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_user", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 

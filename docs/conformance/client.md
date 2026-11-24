@@ -38,7 +38,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | stream.happy-path | `Stream` yields each row its `Filter` matches once, in `Sorts` order, as the full entity with its relationship fields nil | `conformance: Stream/yields only the matching rows, each once, in the requested sort order` | all | client-methods: Stream × happy-path |
 
 ## §9.2 Write Operations
-<!-- prd: 9.2 sha256: 823d1b19468bcc74 -->
+<!-- prd: 9.2 sha256: 03bfb973fd332412 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -138,7 +138,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert-with-related.nil-empty-input | `UpsertWithRelated(ctx, nil, target)` returns `ErrNilInput` before any statement or hook: no transaction begins, no mutation or query hook fires, and nothing is written. A nil verb block, and a block with no verb set (empty lists, nil pointers, `Clear` false), writes nothing on that edge: the only inner write is the parent's upsert | `conformance: UpsertWithRelated/nil input returns ErrNilInput before any statement or hook`; `conformance: UpsertWithRelated/a nil block and a block with no verb set write nothing on their edges` | all | client-methods: UpsertWithRelated × nil-empty-input |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: edabeea7582d1d6b -->
+<!-- prd: 9.5 sha256: 3fa4d6fe408f3183 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -162,7 +162,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | edge.conflict.declared-pk-backs-target | A declared `PRIMARY KEY` constraint always backs `{Table}ConflictPK`, also when the key is restated in `tables.<name>.primary_key.columns` | `unit: cmd/sqlgen/cli: TestGeneratePipeline_InlinePKRestatedInConfigKeepsConflictTarget`; `unit: cmd/sqlgen/gen: TestBuildConflictTargets_OverrideNeedsAnIndex/table-level PK restated in config keeps its target` | all |  |
 | edge.conflict.one-per-constraint | Each PRIMARY KEY and UNIQUE constraint yields one `{Table}Conflict{Name}` constant mapped to that constraint's column set; a single-column name is the column's PascalCase (`sku` → `SKU`) | `unit: cmd/sqlgen/gen: TestConflictTargetGeneration` | postgres |  |
 | edge.conflict.columns-lookup | A generated `{table}ConflictColumns` map ties each `{Table}ConflictTarget` constant to its column list, a composite target to all of its columns | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictColumnsMap` | postgres |  |
-| edge.upsert-many.no-keys-from-statement | `UpsertMany` builds each sub-batch as one multi-row INSERT carrying the conflict clause and never takes keys or rows from the statement: no `RETURNING`, no `LastInsertId`, no `firstID + i` derivation | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictClauseFields` | all |  |
+| edge.upsert-many.no-keys-from-statement | `UpsertMany` builds each sub-batch as one multi-row INSERT carrying the conflict clause per group of rows that set the same update columns and never takes keys or rows from the statement: no `RETURNING`, no `LastInsertId`, no `firstID + i` derivation | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictClauseFields` | all |  |
 | edge.upsert-many.update-set-excludes-sequence | `UpsertMany`'s update set excludes every non-PK auto-increment column, alongside the conflict-target and PK columns | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_excludesNonKeySequenceColumns` | all |  |
 | edge.upsert-many.dedupe-last-wins | `UpsertMany` dedupes its inputs by conflict target across the whole call, before splitting into sub-batches; a duplicate overwrites the earlier row's slot, so the last occurrence's values win in first-appearance order | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_dedupesLastWins`; `conformance: UpsertMany/duplicate inputs are deduped and the last occurrence wins`; `conformance: UpsertMany/dedupes across the whole call before splitting it into sub-batches` | all |  |
 | edge.upsert-many.covering-target-input-keys | On a caller-known key whose every declared conflict target covers the primary key, `UpsertMany` takes `AffectedPKs` from the inputs and emits no read-back and no runtime branch | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_pkFromInput/composite-pk-every-target-covers-key`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back` | all |  |
@@ -192,8 +192,9 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.covering-target-untouched | When the conflict target covers every column the caller supplied, `Upsert` has nothing to update and leaves the conflicting row untouched: a soft-deleted row stays soft-deleted, and that row is returned | `conformance: Upsert/a conflict on a target that covers every column it writes leaves the row as it is and returns it` | all | |
 | upsert.unwritten-target-plain-insert | A conflict target the INSERT does not write is no target. `Upsert` with `{Table}ConflictPK` on a database-generated key is a plain insert, and on every dialect, MySQL included, a collision on another UNIQUE column is a unique violation rather than an update of the row holding that value | `conformance: Upsert/a primary-key target on a database-generated key is a plain insert`; `conformance: Upsert/a primary-key target colliding on another unique column returns a unique ConstraintError, not an update`; `unit: sql: TestBuildInsert/postgres upsert target not supplied`; `unit: sql: TestBuildInsert/mysql upsert target not supplied`; `unit: sql: TestBuildInsert/sqlite upsert composite target partly supplied` | all | |
 | upsert-many.unsupplied-target-refused | On a table whose key is database-generated, `UpsertMany` with a conflict target that names a column the input does not supply returns an error before anything is written | `conformance: UpsertMany/a primary-key target on a database-generated key is refused before anything is written` | all | |
-| upsert-many.unset-takes-default | On conflict, `UpsertMany` sets every column of its update set from the row, and a field the row left unset takes its `DEFAULT` (`NULL` without one). A soft-deleted conflicting row is therefore restored unless the row sets the soft-delete column | `conformance: UpsertMany/a conflict sets a column the row leaves unset to its default`; `conformance: UpsertMany/a conflict restores a soft-deleted row unless the row sets the soft-delete column` | all | |
+| upsert-many.unset-left-alone | On conflict, `UpsertMany` updates only the columns each row sets, as the single-row `Upsert` does; a field the row left unset stays as the conflicting row has it. A soft-deleted conflicting row is therefore restored only when the row sets the soft-delete column to its not-deleted value | `conformance: UpsertMany/a conflict leaves a column the row leaves unset as the conflicting row has it`; `conformance: UpsertMany/a conflict restores a soft-deleted row only when the row sets the soft-delete column`; `example: postgres: TestUpsertMany_ConflictLeavesUnsetColumnsAlone`; `example: mysql: TestUpsertMany_ConflictLeavesUnsetColumnsAlone`; `example: sqlite: TestUpsertMany_ConflictLeavesUnsetColumnsAlone` | all | |
 | upsert-many.batch-partial | `UpsertMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and earlier sub-batches in the same call are not rolled back | `conformance: UpsertMany/a failed sub-batch keeps the sub-batches before it` | all | |
+| upsert-many.group-atomic | An `UpsertMany` sub-batch whose rows fall into two or more update-column groups writes them in one transaction, or a savepoint inside the caller's transaction, so a failing group rolls back the groups of its sub-batch written before it and the caller's transaction stays usable; a sub-batch of one group opens no transaction | `conformance: UpsertMany/a failed group rolls back the groups of its sub-batch written before it`; `conformance: UpsertMany/inside the caller's transaction a failed group rolls back to its savepoint`; `conformance: UpsertMany/a conflict leaves a column the row leaves unset as the conflicting row has it`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictClauseFields` | all | |
 
 ## §9.6 Per-Call Options
 <!-- prd: 9.6 sha256: fa52157e52fd716f -->
@@ -488,7 +489,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | increment.composite-pk | On a composite-PK table `Increment` takes the `{Table}PK` struct and matches all PK columns, so only that tuple changes, and it records that tuple as its affected key | `conformance: Increment/a composite key increments only its own tuple` | all | client-methods: Increment × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 1032bbc3f4facdb2 -->
+<!-- prd: 9.9 sha256: 4eccd84889710db6 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -898,7 +899,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 - `error-prefix.tenant-mismatch`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:70`, `cmd/sqlgen/gen/templates/table/update.go.tmpl:263`, `cmd/sqlgen/gen/templates/table/create.go.tmpl:204`
 
 ## §25.1 Query Count Guarantee
-<!-- prd: 25.1 sha256: fea1e8f98aa97518 -->
+<!-- prd: 25.1 sha256: 3c0adc55f0b90046 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -907,14 +908,14 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | query-count.nullable-referenced-pgx | A one-column O2M whose key references a nullable column takes one statement per chunk on pgx (`s = C`), and skips a parent holding NULL | `unit: cmd/sqlgen/cli: TestGenerate_EdgeJoinsReferencedColumns/fk to a nullable unique column`; `conformance: GetMany/a one-column key into a nullable unique column skips a NULL parent` | postgres, pgx |  |
 
 ## §25.3 Batch Operations
-<!-- prd: 25.3 sha256: bcf8401d4917bb04 -->
+<!-- prd: 25.3 sha256: 9b56380096d94a01 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hard-delete-many.batch-split | `HardDeleteMany` is bounded by `generation.batch_size`: each sub-batch is one write statement, and M keys take `ceil(M / batch_size)` statements | `conformance: HardDeleteMany/splits the keys into sub-batches of the table's batch size` | all | |
 | bulk-write.chunked-readback | The trailing read that returns a batch write's entities names the written keys in chunks of `generation.batch_size`, `ceil(M / batch_size)` reads, so a call whose writes clear every dialect ceiling also reads back every row it wrote | `conformance: CreateMany/reads back the written rows in chunks of the table's batch size`; `conformance: SoftDeleteMany/reads back the soft-deleted rows in chunks of the table's batch size`; `conformance: CreateMany/composite keys past SQLite's expression depth limit read back every written row`; `conformance: SoftDeleteMany/composite keys past SQLite's expression depth limit read back every written row`; `conformance: UpdateWhere/composite keys past SQLite's expression depth limit read back every updated row`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
 | bulk-write.readback-distinct | The trailing read names each written key once, so a key `UpdateMany`, `SoftDeleteMany` or `RestoreMany` is given twice comes back as one entity, including when the repeat opens a later sub-batch | `conformance: UpdateMany/a key listed twice across a sub-batch boundary is read back once`; `conformance: SoftDeleteMany/a key listed twice across a sub-batch boundary is read back once`; `conformance: RestoreMany/a key listed twice across a sub-batch boundary is read back once` | all | |
-| upsert-many.batch-split | `UpsertMany` is bounded by `generation.batch_size`. Each sub-batch of the deduped input is one write statement, so M distinct inputs take `ceil(M / batch_size)` writes | `conformance: UpsertMany/dedupes across the whole call before splitting it into sub-batches`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
+| upsert-many.batch-split | `UpsertMany` is bounded by `generation.batch_size`. Each sub-batch of the deduped input whose rows set the same columns is one write statement, so M such inputs take `ceil(M / batch_size)` writes; rows that set different update columns take one statement per group | `conformance: UpsertMany/dedupes across the whole call before splitting it into sub-batches`; `conformance: UpsertMany/a conflict leaves a column the row leaves unset as the conflicting row has it`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
 
 ## §25.4 No Implicit Caching
 <!-- prd: 25.4 sha256: cf98e0efc0caae76 -->

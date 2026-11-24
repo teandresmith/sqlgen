@@ -728,16 +728,12 @@ func TestNestedEligibility_JunctionWithoutAConflictTarget(t *testing.T) {
 // pure-junction rule in its strict form: an M2M junction may carry no column
 // beyond its two foreign keys, optional ones included.
 //
-// The optional case is the one that fails silently. The link step upserts on
-// the junction's key, and UpsertMany puts every other insert column in the
-// update half, so re-linking an existing pair resets the column to its default
-// and reports success. Measured on the mysql example: re-connecting a linked
-// category took `user_categories.slot` from 7 to NULL, and the call returned
-// nil.
+// The optional case is a column a link row never sets, so every link leaves it
+// at its default with no nested field to change it.
 //
-// Two optional columns are allowed. The soft-delete column is reset on a
-// re-link, and resetting it restores the link; `user_tags` covers that half,
-// and the soft-delete junction test already requires it to keep `create` and
+// Two optional columns are allowed. The soft-delete column takes its
+// not-deleted default on a new link; `user_tags` covers that half, and the
+// soft-delete junction test already requires it to keep `create` and
 // `connect`. The tenant column is never in the update half at all (PRD
 // §29.4.2), and a tenanted junction carries it as an optional create-input
 // field, which is what the third subtest reaches.
@@ -780,11 +776,11 @@ func TestNestedEligibility_JunctionPayloadColumnIsIneligible(t *testing.T) {
 			}
 			for _, name := range nestedEdgeNames(tc) {
 				if name == "Categories" {
-					t.Error("Categories survived with a payload column on its junction; the link step would reset `slot` on every re-link")
+					t.Error("Categories survived with a payload column on its junction; a nested write has no field to set `slot`")
 				}
 			}
 			// The soft-delete junction is the control: its only extra column
-			// is the one a re-link is allowed to reset.
+			// is the one a link needs no value for.
 			nestedEdge(t, tc, "SoftTags")
 		}
 	})

@@ -23,7 +23,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | builder.tuple-in-subquery | `TupleInSubquery` renders `(c1, c2) IN (SELECT …)`, numbers the subquery's arguments into the statement and qualifies each column on the O2O-join read path | `unit: sql: TestTupleInSubquery/postgres`; `unit: sql: TestTupleInSubquery/postgres qualified`; `unit: sql: TestTupleInSubquery/mysql`; `unit: sql: TestTupleInSubquery/sqlite` | all |  |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: edabeea7582d1d6b -->
+<!-- prd: 9.5 sha256: 3fa4d6fe408f3183 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

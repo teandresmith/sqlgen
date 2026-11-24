@@ -315,6 +315,8 @@ The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from `C
 
 `UpsertMany` also excludes every non-PK auto-increment column (serial, identity, MySQL `AUTO_INCREMENT`, a `nextval(…)` default, a SQLite rowid alias demoted by `primary_key.columns`). Every batch row binds `DEFAULT` (`NULL` on SQLite) for an unset one, so setting it would redraw it on each conflict, and PostgreSQL rejects the clause outright on a `GENERATED ALWAYS` identity (PRD §9.5).
 
+For the same reason `UpsertMany` groups each sub-batch's rows by the update columns they set and sends one statement per group, so a conflict leaves a column a row left unset alone, as `Upsert` does. A sub-batch of two or more groups runs them in one transaction, or a savepoint inside the caller's (PRD §9.5).
+
 ### Preserving the PK Through a No-Op Conflict
 
 `UpsertClauseOptions.ResolvePKColumn` names the single-column PK the caller has to read back from the statement, and is `""` when the caller already knows it (composite, app-, or caller-generated). It exists because a conflict that changes nothing still has to yield the conflicting row's PK, and each dialect loses that differently:

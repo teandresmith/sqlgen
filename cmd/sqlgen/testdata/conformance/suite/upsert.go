@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -657,16 +658,29 @@ func upsertMany(t *testing.T, h *Harness) {
 		assertRowCount(t, h, "counters", 2)
 	})
 
-	t.Run("a conflict sets a column the row leaves unset to its default", func(t *testing.T) {
+	t.Run("a conflict leaves a column the row leaves unset as the conflicting row has it", func(t *testing.T) {
 		h.Reset(t)
 		c := usCreateCounter(t, h, "c", 7)
-		got, err := h.Client.Counters().UpsertMany(ctx, []*models.CreateCounterInput{
+		d := usCreateCounter(t, h, "d", 7)
+		begins := &beginCounter{Querier: h.Base}
+		h.Querier.ResetCount()
+		got, err := models.New(begins).Counters().UpsertMany(ctx, []*models.CreateCounterInput{
 			{Name: "c", UpdatedAt: omittable.Set(models.Now())},
+			usCounterInput("d", 9),
 		}, models.CounterConflictName)
 		if err != nil {
 			t.Fatalf("UpsertMany([c, Hits unset]) error = %v, want nil", err)
 		}
-		want := map[string]usCounterRow{"c": {ID: c.ID, Hits: 0}}
+		// One sub-batch whose two rows set different update columns: its two
+		// INSERTs run in one transaction, which the counting querier does not
+		// record, then come the key read-back and the terminal re-fetch.
+		if diff := cmp.Diff([]string{"SELECT", "SELECT"}, usStatementVerbs(h)); diff != "" {
+			t.Errorf("UpsertMany([c, Hits unset]) statements outside a transaction (-want +got):\n%s", diff)
+		}
+		if n := begins.n.Load(); n != 1 {
+			t.Errorf("UpsertMany([c, Hits unset]) began %d transactions, want 1", n)
+		}
+		want := map[string]usCounterRow{"c": {ID: c.ID, Hits: 7}, "d": {ID: d.ID, Hits: 9}}
 		if diff := cmp.Diff(want, usCounterRows(t, h)); diff != "" {
 			t.Errorf("counters after UpsertMany([c, Hits unset]) (-want +got):\n%s", diff)
 		}
@@ -675,13 +689,13 @@ func upsertMany(t *testing.T, h *Harness) {
 		}
 	})
 
-	t.Run("a conflict restores a soft-deleted row unless the row sets the soft-delete column", func(t *testing.T) {
+	t.Run("a conflict restores a soft-deleted row only when the row sets the soft-delete column", func(t *testing.T) {
 		h.Reset(t)
 		usSeedDeletedCounter(t, h, "restored")
 		usSeedDeletedCounter(t, h, "kept")
 		got, err := h.Client.Counters().UpsertMany(ctx, []*models.CreateCounterInput{
-			usCounterInput("restored", 1),
-			{Name: "kept", Hits: omittable.Set(int64(2)), UpdatedAt: omittable.Set(models.Now()), DeletedAt: omittable.Set(models.DeletedAt(models.Now()))},
+			{Name: "restored", Hits: omittable.Set(int64(1)), UpdatedAt: omittable.Set(models.Now()), DeletedAt: omittable.Set(usZeroOf(models.DeletedAt(models.Now())))},
+			usCounterInput("kept", 2),
 		}, models.CounterConflictName)
 		if err != nil {
 			t.Fatalf("UpsertMany([restored, kept]) error = %v, want nil", err)
@@ -906,6 +920,45 @@ func upsertMany(t *testing.T, h *Harness) {
 		}
 	})
 
+	t.Run("a failed group rolls back the groups of its sub-batch written before it", func(t *testing.T) {
+		h.Reset(t)
+		usCreateCounter(t, h, "kept", 1)
+		// One sub-batch, two groups: fresh leaves hits unset, bad sets it and
+		// breaks the CHECK.
+		_, err := h.Client.Counters().UpsertMany(ctx, []*models.CreateCounterInput{
+			{Name: "fresh", UpdatedAt: omittable.Set(models.Now())},
+			usCounterInput("bad", -1),
+		}, models.CounterConflictName)
+		usAssertConstraint(t, err, models.ConstraintCheck)
+		if got := slices.Sorted(maps.Keys(usCounterRows(t, h))); !slices.Equal(got, []string{"kept"}) {
+			t.Errorf("counters after the failed UpsertMany = %q, want only [kept]", got)
+		}
+	})
+
+	t.Run("inside the caller's transaction a failed group rolls back to its savepoint", func(t *testing.T) {
+		h.Reset(t)
+		err := database.WithTransaction(ctx, h.Querier, "conformance", func(txCtx context.Context) error {
+			if _, err := h.Client.Counters().Create(txCtx, usCounterInput("before", 1)); err != nil {
+				return err
+			}
+			_, err := h.Client.Counters().UpsertMany(txCtx, []*models.CreateCounterInput{
+				{Name: "fresh", UpdatedAt: omittable.Set(models.Now())},
+				usCounterInput("bad", -1),
+			}, models.CounterConflictName)
+			usAssertConstraint(t, err, models.ConstraintCheck)
+			// The caller's transaction is still usable after the savepoint
+			// rolled back.
+			_, err = h.Client.Counters().Create(txCtx, usCounterInput("after", 1))
+			return err
+		})
+		if err != nil {
+			t.Fatalf("WithTransaction error = %v, want nil", err)
+		}
+		if got := slices.Sorted(maps.Keys(usCounterRows(t, h))); !slices.Equal(got, []string{"after", "before"}) {
+			t.Errorf("counters after the transaction = %q, want [after before]", got)
+		}
+	})
+
 	t.Run("returns only the selected columns", func(t *testing.T) {
 		h.Reset(t)
 		usCreateCounter(t, h, "a", 1)
@@ -1069,6 +1122,13 @@ func usSeedDeletedCounter(t *testing.T, h *Harness, name string) {
 	if _, err := h.Client.Counters().SoftDelete(ctx, cn.ID); err != nil {
 		t.Fatalf("SoftDelete counter %q: %v", name, err)
 	}
+}
+
+// usZeroOf returns the zero value of its argument's type: a soft-delete
+// column's not-deleted state, whatever Go type the dialect gives it.
+func usZeroOf[T any](T) T {
+	var zero T
+	return zero
 }
 
 // usCounterInput is a counter input that sets name, hits and updated_at.
