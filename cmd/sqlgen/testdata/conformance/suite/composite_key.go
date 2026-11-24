@@ -477,12 +477,8 @@ func getManyCompositeKey(t *testing.T, h *Harness) {
 		for i := range items {
 			items[i] = &models.CreateOrderItemInput{OrderID: int64(i + 1), ProductID: product.ID, Quantity: 1}
 		}
-		// In batches: CreateMany's read-back renders Filter.PKs as an OR of
-		// ANDs, which SQLite's expression depth limit caps near 1000 keys.
-		for batch := range slices.Chunk(items, 500) {
-			if _, err := h.Client.OrderItems().CreateMany(ctx, batch); err != nil {
-				t.Fatalf("CreateMany order items: %v", err)
-			}
+		if _, err := h.Client.OrderItems().CreateMany(ctx, items); err != nil {
+			t.Fatalf("CreateMany order items: %v", err)
 		}
 		// One parent on each side of the chunk boundary, and the last.
 		seeded := []int64{1, int64(chunk), int64(chunk + 1), int64(parents)}

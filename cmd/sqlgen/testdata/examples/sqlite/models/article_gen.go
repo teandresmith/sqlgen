@@ -539,16 +539,18 @@ func (c *articleClient) CreateMany(ctx context.Context, inputs []*CreateArticleI
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetArticlesInput{
-			Filter: &ArticleFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ArticleFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Article, error) {
+			return c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID:        &comparator.Number[int64]{In: allIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -834,16 +836,19 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetArticlesInput{
-			Filter: &ArticleFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ArticleFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Article, error) {
+			return c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -955,16 +960,18 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetArticlesInput{
-			Filter: &ArticleFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ArticleFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Article, error) {
+			return c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1112,16 +1119,19 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetArticlesInput{
-			Filter: &ArticleFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ArticleFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Article, error) {
+			return c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1195,16 +1205,18 @@ func (c *articleClient) SoftDeleteWhere(ctx context.Context, filter *ArticleFilt
 		}
 
 		// Fetch affected entities — set DeletedAt to override default "is not deleted" condition
-		return c.GetMany(ctx, &GetArticlesInput{
-			Filter: &ArticleFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ArticleFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Article, error) {
+			return c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1347,15 +1359,18 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetArticlesInput{
-			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ArticleFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Article, error) {
+			return c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1427,15 +1442,17 @@ func (c *articleClient) RestoreWhere(ctx context.Context, filter *ArticleFilter,
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetArticlesInput{
-			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ArticleFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Article, error) {
+			return c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1971,16 +1988,18 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetArticlesInput{
-			Filter: &ArticleFilter{
-				ID:        &comparator.Number[int64]{In: rowIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ArticleFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Article, error) {
+			return c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID:        &comparator.Number[int64]{In: rowIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

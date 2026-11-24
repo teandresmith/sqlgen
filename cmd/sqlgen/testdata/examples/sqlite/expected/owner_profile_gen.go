@@ -485,15 +485,17 @@ func (c *ownerProfileClient) CreateMany(ctx context.Context, inputs []*CreateOwn
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetOwnerProfilesInput{
-			Filter: &OwnerProfileFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[OwnerProfileFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*OwnerProfile, error) {
+			return c.GetMany(ctx, &GetOwnerProfilesInput{
+				Filter: &OwnerProfileFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[OwnerProfileFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -729,15 +731,18 @@ func (c *ownerProfileClient) UpdateMany(ctx context.Context, items []UpdateOwner
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetOwnerProfilesInput{
-			Filter: &OwnerProfileFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[OwnerProfileFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*OwnerProfile, error) {
+			return c.GetMany(ctx, &GetOwnerProfilesInput{
+				Filter: &OwnerProfileFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[OwnerProfileFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -831,15 +836,17 @@ func (c *ownerProfileClient) UpdateWhere(ctx context.Context, filter *OwnerProfi
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetOwnerProfilesInput{
-			Filter: &OwnerProfileFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[OwnerProfileFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*OwnerProfile, error) {
+			return c.GetMany(ctx, &GetOwnerProfilesInput{
+				Filter: &OwnerProfileFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[OwnerProfileFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1340,15 +1347,17 @@ func (c *ownerProfileClient) UpsertMany(ctx context.Context, inputs []*CreateOwn
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetOwnerProfilesInput{
-			Filter: &OwnerProfileFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[OwnerProfileFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*OwnerProfile, error) {
+			return c.GetMany(ctx, &GetOwnerProfilesInput{
+				Filter: &OwnerProfileFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[OwnerProfileFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

@@ -820,13 +820,16 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 		}
 {{- if .CompositePK }}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: allPKs{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
-			Limit:  new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk {{ .CompositePKStructName }}) {{ .KeySetType }} { return {{ .KeySetKey "pk" }} })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{PKs: readKeys[lo:hi]{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
+				Limit:  new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else }}
 
@@ -836,32 +839,38 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 		for i, id := range allIDs {
 			idStrings[i] = {{ fkToString $pkCol "id" }}
 		}
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+		readKeys := distinctKeys(idStrings, func(id string) string { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: &comparator.ID{In: readKeys[lo:hi]},
 {{- with softDeleteFilterAny . }}
-				{{ $.SoftDelete.FieldName }}: {{ . }},
+					{{ $.SoftDelete.FieldName }}: {{ . }},
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else }}
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "allIDs" false }},
+		readKeys := distinctKeys(allIDs, func(id {{ $pkCol.GoType }}) {{ .KeySetType }} { return {{ .KeySetKey "id" }} })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "readKeys[lo:hi]" false }},
 {{- with softDeleteFilterAny . }}
-				{{ $.SoftDelete.FieldName }}: {{ . }},
+					{{ $.SoftDelete.FieldName }}: {{ . }},
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- end }}
 {{- end }}
@@ -1053,13 +1062,15 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: pks{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
-			Limit:  new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{PKs: pks[lo:hi]{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
+				Limit:  new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else if .CompositePK }}
 
@@ -1098,13 +1109,15 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: pks{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
-			Limit:  new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{PKs: pks[lo:hi]{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
+				Limit:  new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else if supportsReturning }}
 
@@ -1164,18 +1177,20 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: &comparator.ID{In: ids},
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: &comparator.ID{In: ids[lo:hi]},
 {{- with softDeleteFilterAny . }}
-				{{ $.SoftDelete.FieldName }}: {{ . }},
+					{{ $.SoftDelete.FieldName }}: {{ . }},
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else }}
 		var ids []{{ $pkCol.GoType }}
@@ -1216,18 +1231,20 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids[lo:hi]" false }},
 {{- with softDeleteFilterAny . }}
-				{{ $.SoftDelete.FieldName }}: {{ . }},
+					{{ $.SoftDelete.FieldName }}: {{ . }},
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- end }}
 {{- else }}
@@ -1267,18 +1284,20 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids[lo:hi]" false }},
 {{- with softDeleteFilterAny . }}
-				{{ $.SoftDelete.FieldName }}: {{ . }},
+					{{ $.SoftDelete.FieldName }}: {{ . }},
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- end }}
 	})

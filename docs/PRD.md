@@ -5605,15 +5605,19 @@ func (c *productClient) CreateMany(ctx context.Context, inputs []*CreateProductI
             allIDs = append(allIDs, ids...)
         }
 
-        // Fetch all created entities via GetMany with SkipHooks
-        return c.GetMany(ctx, &GetProductsInput{
-            Filter: &ProductFilter{
-                ID: &comparator.ID{In: productIDStrings(allIDs)},
-            },
-            Limit: new(0), // no limit — return all created entities
-        }, func(o *CallOptions[ProductFieldOptions]) {
-            *o = options
-            o.SkipHooks = true
+        // Fetch all created entities via GetMany with SkipHooks, at most
+        // batch_size keys per statement
+        idStrings := productIDStrings(allIDs)
+        return refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*Product, error) {
+            return c.GetMany(ctx, &GetProductsInput{
+                Filter: &ProductFilter{
+                    ID: &comparator.ID{In: idStrings[lo:hi]},
+                },
+                Limit: new(0), // no limit — return all created entities
+            }, func(o *CallOptions[ProductFieldOptions]) {
+                *o = options
+                o.SkipHooks = true
+            })
         })
     })
     if err != nil {
@@ -12229,7 +12233,7 @@ The bound is stated **per verb**, not per table, because `connect` and `disconne
 
 **Why the write bound is not a flat `1`.** Two reasons, and the second is the binding one. `CreateMany` has always split its inputs at `batch_size` ([25.3](#253-batch-operations)), so a flat `1` would contradict shipped behavior on the `create` verb. And every dialect caps the number of bind parameters a single statement may carry — measured at **32,766 on SQLite**, **65,535 on PostgreSQL** and **65,535 on MySQL** — so a single-statement `IN` list is not achievable above the tightest of the three. The tightest belongs to the dialect people develop against least, which is what rules out documenting the cliff instead of batching past it: a consumer who develops on PostgreSQL and deploys on SQLite would find theirs in production at half the tested depth. No dialect's error for that condition names a table, column, edge or verb — PostgreSQL's is raised client-side by the driver before the statement is sent, so it is not even a constraint error — so the failure could not be attributed under [9.9.8](#998-error-attribution) either. Batching at `batch_size` clears all three ceilings by two orders of magnitude and keeps the contract dialect-independent.
 
-The same bound applies to `UpsertMany` called directly: `ceil(M / batch_size)` **write** statements for M inputs, after the dedupe ([9.2](#92-write-operations)). Where the written keys cannot be named from the inputs — a database-generated key, or a conflict target that does not cover the primary key ([9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)) — each sub-batch is followed by one key-resolution read ([9.7](#97-pk-resolution-and-entity-return-path)): the same class of statement as the trailing `Get` / `GetMany` every entity-returning mutation issues, and outside the write bound for the same reason. A junction table's key is caller-known and its only conflict target is its key, so the nested-mutation figures above are unaffected. `CreateMany` on MySQL is in the same position: each sub-batch of two or more rows is followed by one read of the session's `auto_increment_increment`, which its derived keys need ([9.8.5](#985-createmany)). Outside a caller's transaction that read runs on a pinned session, not in a transaction, so it adds no `BEGIN` or `COMMIT`.
+The same bound applies to `UpsertMany` called directly: `ceil(M / batch_size)` **write** statements for M inputs, after the dedupe ([9.2](#92-write-operations)). Where the written keys cannot be named from the inputs — a database-generated key, or a conflict target that does not cover the primary key ([9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)) — each sub-batch is followed by one key-resolution read ([9.7](#97-pk-resolution-and-entity-return-path)): the same class of statement as the trailing `Get` / `GetMany` every entity-returning mutation issues, and outside the write bound for the same reason. That trailing read names the written keys, so it is chunked at `batch_size` like the writes it follows: `ceil(M / batch_size)` reads, one when `M ≤ batch_size`. One read naming every key would carry the whole call's key list and cross a dialect ceiling the writes cleared, after the rows were committed (SQLite's expression depth of 1000 for a composite key's OR of ANDs, its 32,766 bind parameters, 65,535 on MySQL and PostgreSQL). Like the key-resolution read, it sits outside the write bound. A junction table's key is caller-known and its only conflict target is its key, so the nested-mutation figures above are unaffected. `CreateMany` on MySQL is in the same position: each sub-batch of two or more rows is followed by one read of the session's `auto_increment_increment`, which its derived keys need ([9.8.5](#985-createmany)). Outside a caller's transaction that read runs on a pinned session, not in a transaction, so it adds no `BEGIN` or `COMMIT`.
 
 ### 25.2 Scan Overhead
 
@@ -12247,7 +12251,7 @@ sqlgen is **reflection-free at runtime**. No `reflect` package calls appear in t
 
 ### 25.3 Batch Operations
 
-Batch operations (`CreateMany`, `UpdateMany`, etc.) are bounded by `generation.batch_size` (default: 200). Each sub-batch is one write statement (except `UpdateMany`, which sends one UPDATE per item — see section 19.4). The total write count for a batch of M items is `ceil(M / batch_size)`. On MySQL, each `CreateMany` sub-batch of two or more rows on a database-generated key is followed by one key-step read ([9.8.5](#985-createmany)), outside the write count as [25.1](#251-query-count-guarantee) states.
+Batch operations (`CreateMany`, `UpdateMany`, etc.) are bounded by `generation.batch_size` (default: 200). Each sub-batch is one write statement (except `UpdateMany`, which sends one UPDATE per item — see section 19.4). The total write count for a batch of M items is `ceil(M / batch_size)`. On MySQL, each `CreateMany` sub-batch of two or more rows on a database-generated key is followed by one key-step read ([9.8.5](#985-createmany)), outside the write count as [25.1](#251-query-count-guarantee) states. The trailing read that returns the written entities is chunked the same way, `ceil(M / batch_size)` reads, and is likewise outside the write count. It names each written key once: a key that `UpdateMany`, `SoftDeleteMany` or `RestoreMany` is given more than once is read back once, so the result carries one entity per distinct key wherever the repeat falls relative to a sub-batch boundary.
 
 ### 25.4 No Implicit Caching
 

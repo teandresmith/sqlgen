@@ -778,15 +778,17 @@ func (c *binaryKeyClient) CreateMany(ctx context.Context, inputs []*CreateBinary
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetBinaryKeysInput{
-			Filter: &BinaryKeyFilter{
-				ID: &comparator.Opaque[[]byte]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BinaryKeyFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*BinaryKey, error) {
+			return c.GetMany(ctx, &GetBinaryKeysInput{
+				Filter: &BinaryKeyFilter{
+					ID: &comparator.Opaque[[]byte]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BinaryKeyFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1022,15 +1024,18 @@ func (c *binaryKeyClient) UpdateMany(ctx context.Context, items []UpdateBinaryKe
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetBinaryKeysInput{
-			Filter: &BinaryKeyFilter{
-				ID: &comparator.Opaque[[]byte]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BinaryKeyFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id []byte) string { return fmt.Sprintf("%#v", id) })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*BinaryKey, error) {
+			return c.GetMany(ctx, &GetBinaryKeysInput{
+				Filter: &BinaryKeyFilter{
+					ID: &comparator.Opaque[[]byte]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BinaryKeyFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1124,15 +1129,17 @@ func (c *binaryKeyClient) UpdateWhere(ctx context.Context, filter *BinaryKeyFilt
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetBinaryKeysInput{
-			Filter: &BinaryKeyFilter{
-				ID: &comparator.Opaque[[]byte]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BinaryKeyFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*BinaryKey, error) {
+			return c.GetMany(ctx, &GetBinaryKeysInput{
+				Filter: &BinaryKeyFilter{
+					ID: &comparator.Opaque[[]byte]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BinaryKeyFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1612,15 +1619,17 @@ func (c *binaryKeyClient) UpsertMany(ctx context.Context, inputs []*CreateBinary
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetBinaryKeysInput{
-			Filter: &BinaryKeyFilter{
-				ID: &comparator.Opaque[[]byte]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BinaryKeyFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*BinaryKey, error) {
+			return c.GetMany(ctx, &GetBinaryKeysInput{
+				Filter: &BinaryKeyFilter{
+					ID: &comparator.Opaque[[]byte]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BinaryKeyFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

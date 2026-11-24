@@ -589,15 +589,17 @@ func (c *boolKeyedClient) CreateMany(ctx context.Context, inputs []*CreateBoolKe
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetBoolKeyedsInput{
-			Filter: &BoolKeyedFilter{
-				K: &comparator.Bool{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BoolKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*BoolKeyed, error) {
+			return c.GetMany(ctx, &GetBoolKeyedsInput{
+				Filter: &BoolKeyedFilter{
+					K: &comparator.Bool{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -827,15 +829,18 @@ func (c *boolKeyedClient) UpdateMany(ctx context.Context, items []UpdateBoolKeye
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetBoolKeyedsInput{
-			Filter: &BoolKeyedFilter{
-				K: &comparator.Bool{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BoolKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id bool) bool { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*BoolKeyed, error) {
+			return c.GetMany(ctx, &GetBoolKeyedsInput{
+				Filter: &BoolKeyedFilter{
+					K: &comparator.Bool{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -926,15 +931,17 @@ func (c *boolKeyedClient) UpdateWhere(ctx context.Context, filter *BoolKeyedFilt
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetBoolKeyedsInput{
-			Filter: &BoolKeyedFilter{
-				K: &comparator.Bool{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BoolKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*BoolKeyed, error) {
+			return c.GetMany(ctx, &GetBoolKeyedsInput{
+				Filter: &BoolKeyedFilter{
+					K: &comparator.Bool{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1404,15 +1411,17 @@ func (c *boolKeyedClient) UpsertMany(ctx context.Context, inputs []*CreateBoolKe
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetBoolKeyedsInput{
-			Filter: &BoolKeyedFilter{
-				K: &comparator.Bool{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BoolKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*BoolKeyed, error) {
+			return c.GetMany(ctx, &GetBoolKeyedsInput{
+				Filter: &BoolKeyedFilter{
+					K: &comparator.Bool{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

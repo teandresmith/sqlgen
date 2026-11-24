@@ -592,7 +592,8 @@ func upsertMany(t *testing.T, h *Harness) {
 		h.Reset(t)
 		createRevision(t, h, models.RevisionPK{DocumentID: 1, Number: 1})
 		h.Querier.ResetCount()
-		// With batch_size: 2, three inputs are two sub-batches; the one read is the terminal re-fetch.
+		// With batch_size: 2, three inputs are two sub-batches; the reads are the
+		// terminal re-fetch, chunked at the same batch size.
 		got, err := h.Client.Revisions().UpsertMany(ctx, []*models.CreateRevisionInput{
 			{DocumentID: 1, Number: 1, Body: "updated"},
 			{DocumentID: 1, Number: 2, Body: "b"},
@@ -601,7 +602,7 @@ func upsertMany(t *testing.T, h *Harness) {
 		if err != nil {
 			t.Fatalf("UpsertMany(3 revisions) error = %v, want nil", err)
 		}
-		if diff := cmp.Diff([]string{"INSERT", "INSERT", "SELECT"}, usStatementVerbs(h)); diff != "" {
+		if diff := cmp.Diff([]string{"INSERT", "INSERT", "SELECT", "SELECT"}, usStatementVerbs(h)); diff != "" {
 			t.Errorf("UpsertMany(3 revisions) statements (-want +got):\n%s", diff)
 		}
 		if len(got) != 3 {
@@ -618,12 +619,13 @@ func upsertMany(t *testing.T, h *Harness) {
 		}
 		h.Querier.ResetCount()
 		// counters keeps the default batch size of 200: two sub-batches, each
-		// followed by its key read-back, then the terminal re-fetch.
+		// followed by its key read-back, then the terminal re-fetch in two
+		// chunks of at most 200 keys.
 		got, err := h.Client.Counters().UpsertMany(ctx, inputs, models.CounterConflictName)
 		if err != nil {
 			t.Fatalf("UpsertMany(201 counters) error = %v, want nil", err)
 		}
-		if diff := cmp.Diff([]string{"INSERT", "SELECT", "INSERT", "SELECT", "SELECT"}, usStatementVerbs(h)); diff != "" {
+		if diff := cmp.Diff([]string{"INSERT", "SELECT", "INSERT", "SELECT", "SELECT", "SELECT"}, usStatementVerbs(h)); diff != "" {
 			t.Errorf("UpsertMany(201 counters) statements (-want +got):\n%s", diff)
 		}
 		if len(got) != 201 {

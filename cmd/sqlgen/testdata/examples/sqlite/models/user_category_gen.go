@@ -455,13 +455,15 @@ func (c *userCategoryClient) CreateMany(ctx context.Context, inputs []*CreateUse
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetUserCategoriesInput{
-			Filter: &UserCategoryFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[UserCategoryFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*UserCategory, error) {
+			return c.GetMany(ctx, &GetUserCategoriesInput{
+				Filter: &UserCategoryFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[UserCategoryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -648,13 +650,16 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetUserCategoriesInput{
-			Filter: &UserCategoryFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[UserCategoryFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk UserCategoryPK) UserCategoryPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*UserCategory, error) {
+			return c.GetMany(ctx, &GetUserCategoriesInput{
+				Filter: &UserCategoryFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[UserCategoryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -742,13 +747,15 @@ func (c *userCategoryClient) UpdateWhere(ctx context.Context, filter *UserCatego
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetUserCategoriesInput{
-			Filter: &UserCategoryFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[UserCategoryFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*UserCategory, error) {
+			return c.GetMany(ctx, &GetUserCategoriesInput{
+				Filter: &UserCategoryFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[UserCategoryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1141,13 +1148,15 @@ func (c *userCategoryClient) UpsertMany(ctx context.Context, inputs []*CreateUse
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetUserCategoriesInput{
-			Filter: &UserCategoryFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[UserCategoryFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*UserCategory, error) {
+			return c.GetMany(ctx, &GetUserCategoriesInput{
+				Filter: &UserCategoryFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[UserCategoryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

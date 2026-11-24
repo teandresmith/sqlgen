@@ -36,7 +36,9 @@ func TestBuildSharedTypesContext_allHelpersPresent(t *testing.T) {
 	ctx := gen.BuildSharedTypesContext("db", false, "", "", false, false, false)
 
 	wantHelpers := []string{
+		"distinctKeys",
 		"excludeColumns",
+		"refetchInChunks",
 		"resolveCallOptions",
 		"toAnySlice",
 		"unionColumns",

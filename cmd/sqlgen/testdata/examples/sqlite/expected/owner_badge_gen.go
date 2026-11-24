@@ -455,13 +455,15 @@ func (c *ownerBadgeClient) CreateMany(ctx context.Context, inputs []*CreateOwner
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetOwnerBadgesInput{
-			Filter: &OwnerBadgeFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*OwnerBadge, error) {
+			return c.GetMany(ctx, &GetOwnerBadgesInput{
+				Filter: &OwnerBadgeFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -648,13 +650,16 @@ func (c *ownerBadgeClient) UpdateMany(ctx context.Context, items []UpdateOwnerBa
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOwnerBadgesInput{
-			Filter: &OwnerBadgeFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk OwnerBadgePK) OwnerBadgePK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*OwnerBadge, error) {
+			return c.GetMany(ctx, &GetOwnerBadgesInput{
+				Filter: &OwnerBadgeFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -742,13 +747,15 @@ func (c *ownerBadgeClient) UpdateWhere(ctx context.Context, filter *OwnerBadgeFi
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOwnerBadgesInput{
-			Filter: &OwnerBadgeFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*OwnerBadge, error) {
+			return c.GetMany(ctx, &GetOwnerBadgesInput{
+				Filter: &OwnerBadgeFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1141,13 +1148,15 @@ func (c *ownerBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateOwner
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetOwnerBadgesInput{
-			Filter: &OwnerBadgeFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*OwnerBadge, error) {
+			return c.GetMany(ctx, &GetOwnerBadgesInput{
+				Filter: &OwnerBadgeFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

@@ -172,15 +172,17 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		written, err := c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.ID{In: idStrings},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.ID{In: idStrings[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

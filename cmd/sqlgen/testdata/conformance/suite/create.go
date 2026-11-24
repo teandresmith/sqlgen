@@ -698,6 +698,60 @@ func createMany(t *testing.T, h *Harness) {
 		assertRowCount(t, h, "order_items", 4)
 	})
 
+	t.Run("reads back the written rows in chunks of the table's batch size", func(t *testing.T) {
+		h.Reset(t)
+		// revisions has batch_size: 2, so three inputs are two INSERTs and two reads.
+		inputs := []*models.CreateRevisionInput{
+			{DocumentID: 1, Number: 1, Body: "a"},
+			{DocumentID: 1, Number: 2, Body: "b"},
+			{DocumentID: 1, Number: 3, Body: "c"},
+		}
+		h.Querier.ResetCount()
+		got, err := h.Client.Revisions().CreateMany(ctx, inputs)
+		if err != nil {
+			t.Fatalf("CreateMany(3 revisions) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]string{"INSERT", "INSERT", "SELECT", "SELECT"}, usStatementVerbs(h)); diff != "" {
+			t.Errorf("CreateMany(3 revisions) statements (-want +got):\n%s", diff)
+		}
+		if len(got) != 3 {
+			t.Errorf("CreateMany(3 revisions) returned %d rows, want 3", len(got))
+		}
+	})
+
+	t.Run("composite keys past SQLite's expression depth limit read back every written row", func(t *testing.T) {
+		h.Reset(t)
+		// The read-back names the written keys, and one statement naming them
+		// all renders an OR of 1000 ANDs, past SQLite's depth limit of 1000
+		// ("Expression tree is too large"), after every sub-batch is written.
+		const n = 1000
+		product := createProduct(t, h, "bulk")
+		items := make([]*models.CreateOrderItemInput, n)
+		updates := make([]models.UpdateOrderItemItem, n)
+		for i := range items {
+			items[i] = &models.CreateOrderItemInput{OrderID: int64(i + 1), ProductID: product.ID, Quantity: 1}
+			updates[i] = models.UpdateOrderItemItem{
+				PK:    models.OrderItemPK{OrderID: int64(i + 1), ProductID: product.ID},
+				Input: &models.UpdateOrderItemInput{Quantity: omittable.Set(int64(2))},
+			}
+		}
+		got, err := h.Client.OrderItems().CreateMany(ctx, items)
+		if err != nil {
+			t.Fatalf("CreateMany(%d order items) error = %v, want nil", n, err)
+		}
+		if len(got) != n {
+			t.Errorf("CreateMany(%d order items) returned %d rows, want %d", n, len(got), n)
+		}
+		updated, err := h.Client.OrderItems().UpdateMany(ctx, updates)
+		if err != nil {
+			t.Fatalf("UpdateMany(%d order items) error = %v, want nil", n, err)
+		}
+		if len(updated) != n {
+			t.Errorf("UpdateMany(%d order items) returned %d rows, want %d", n, len(updated), n)
+		}
+		assertRowCount(t, h, "order_items", n)
+	})
+
 	t.Run("composite keys read back the written tuples, soft-deleted ones included", func(t *testing.T) {
 		h.Reset(t)
 		// The existing tuples cross the written ones; one is soft-deleted, so a

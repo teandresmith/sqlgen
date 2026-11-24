@@ -609,13 +609,15 @@ func (c *binClient) CreateMany(ctx context.Context, inputs []*CreateBinInput, op
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetBinsInput{
-			Filter: &BinFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[BinFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*Bin, error) {
+			return c.GetMany(ctx, &GetBinsInput{
+				Filter: &BinFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[BinFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -808,13 +810,16 @@ func (c *binClient) UpdateMany(ctx context.Context, items []UpdateBinItem, opts 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetBinsInput{
-			Filter: &BinFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[BinFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk BinPK) BinPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Bin, error) {
+			return c.GetMany(ctx, &GetBinsInput{
+				Filter: &BinFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[BinFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -905,13 +910,15 @@ func (c *binClient) UpdateWhere(ctx context.Context, filter *BinFilter, input *U
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetBinsInput{
-			Filter: &BinFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[BinFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*Bin, error) {
+			return c.GetMany(ctx, &GetBinsInput{
+				Filter: &BinFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[BinFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1305,13 +1312,15 @@ func (c *binClient) UpsertMany(ctx context.Context, inputs []*CreateBinInput, ta
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetBinsInput{
-			Filter: &BinFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[BinFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*Bin, error) {
+			return c.GetMany(ctx, &GetBinsInput{
+				Filter: &BinFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[BinFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

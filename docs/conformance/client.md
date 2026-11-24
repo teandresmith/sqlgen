@@ -284,7 +284,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.idempotent-returns-row | A conflict that changes nothing still resolves the PK: an idempotent `Upsert` returns the conflicting row, not a not-found error. This covers the MySQL no-change OK packet and the `DO NOTHING` branch | `conformance: Upsert/a conflict that changes nothing returns the existing row`; `conformance: Upsert/a conflict on a target that covers every column it writes leaves the row as it is and returns it` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: d5f43a8d2092a9d7 -->
+<!-- prd: 9.8 sha256: 668c411c636dc687 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -322,7 +322,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create.has-selected-columns-method | Each `<T>FieldOptions` has a generated `HasSelectedColumns() bool` method | `unit: cmd/sqlgen/gen: TestFieldOptionsTemplate_hasSelectedColumnsMethod` | all |  |
 
 ## §9.8.5 CreateMany
-<!-- prd: 9.8.5 sha256: 1bf5b8ac7d14f470 -->
+<!-- prd: 9.8.5 sha256: ddb96efe3143f900 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -898,7 +898,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 - `error-prefix.tenant-mismatch`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:70`, `cmd/sqlgen/gen/templates/table/update.go.tmpl:263`, `cmd/sqlgen/gen/templates/table/create.go.tmpl:204`
 
 ## §25.1 Query Count Guarantee
-<!-- prd: 25.1 sha256: 30bc2a28df8813d0 -->
+<!-- prd: 25.1 sha256: fea1e8f98aa97518 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -907,11 +907,13 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | query-count.nullable-referenced-pgx | A one-column O2M whose key references a nullable column takes one statement per chunk on pgx (`s = C`), and skips a parent holding NULL | `unit: cmd/sqlgen/cli: TestGenerate_EdgeJoinsReferencedColumns/fk to a nullable unique column`; `conformance: GetMany/a one-column key into a nullable unique column skips a NULL parent` | postgres, pgx |  |
 
 ## §25.3 Batch Operations
-<!-- prd: 25.3 sha256: 17070ea1e3317227 -->
+<!-- prd: 25.3 sha256: bcf8401d4917bb04 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hard-delete-many.batch-split | `HardDeleteMany` is bounded by `generation.batch_size`: each sub-batch is one write statement, and M keys take `ceil(M / batch_size)` statements | `conformance: HardDeleteMany/splits the keys into sub-batches of the table's batch size` | all | |
+| bulk-write.chunked-readback | The trailing read that returns a batch write's entities names the written keys in chunks of `generation.batch_size`, `ceil(M / batch_size)` reads, so a call whose writes clear every dialect ceiling also reads back every row it wrote | `conformance: CreateMany/reads back the written rows in chunks of the table's batch size`; `conformance: SoftDeleteMany/reads back the soft-deleted rows in chunks of the table's batch size`; `conformance: CreateMany/composite keys past SQLite's expression depth limit read back every written row`; `conformance: SoftDeleteMany/composite keys past SQLite's expression depth limit read back every written row`; `conformance: UpdateWhere/composite keys past SQLite's expression depth limit read back every updated row`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
+| bulk-write.readback-distinct | The trailing read names each written key once, so a key `UpdateMany`, `SoftDeleteMany` or `RestoreMany` is given twice comes back as one entity, including when the repeat opens a later sub-batch | `conformance: UpdateMany/a key listed twice across a sub-batch boundary is read back once`; `conformance: SoftDeleteMany/a key listed twice across a sub-batch boundary is read back once`; `conformance: RestoreMany/a key listed twice across a sub-batch boundary is read back once` | all | |
 | upsert-many.batch-split | `UpsertMany` is bounded by `generation.batch_size`. Each sub-batch of the deduped input is one write statement, so M distinct inputs take `ceil(M / batch_size)` writes | `conformance: UpsertMany/dedupes across the whole call before splitting it into sub-batches`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
 
 ## §25.4 No Implicit Caching

@@ -590,15 +590,17 @@ func (c *timeKeyedClient) CreateMany(ctx context.Context, inputs []*CreateTimeKe
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetTimeKeyedsInput{
-			Filter: &TimeKeyedFilter{
-				At: &comparator.Time{In: dateTimeKeys(allIDs)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TimeKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*TimeKeyed, error) {
+			return c.GetMany(ctx, &GetTimeKeyedsInput{
+				Filter: &TimeKeyedFilter{
+					At: &comparator.Time{In: dateTimeKeys(allIDs[lo:hi])},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TimeKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -828,15 +830,18 @@ func (c *timeKeyedClient) UpdateMany(ctx context.Context, items []UpdateTimeKeye
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetTimeKeyedsInput{
-			Filter: &TimeKeyedFilter{
-				At: &comparator.Time{In: dateTimeKeys(allIDs)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TimeKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id types.DateTime) types.DateTime { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*TimeKeyed, error) {
+			return c.GetMany(ctx, &GetTimeKeyedsInput{
+				Filter: &TimeKeyedFilter{
+					At: &comparator.Time{In: dateTimeKeys(readKeys[lo:hi])},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TimeKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -927,15 +932,17 @@ func (c *timeKeyedClient) UpdateWhere(ctx context.Context, filter *TimeKeyedFilt
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetTimeKeyedsInput{
-			Filter: &TimeKeyedFilter{
-				At: &comparator.Time{In: dateTimeKeys(ids)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TimeKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*TimeKeyed, error) {
+			return c.GetMany(ctx, &GetTimeKeyedsInput{
+				Filter: &TimeKeyedFilter{
+					At: &comparator.Time{In: dateTimeKeys(ids[lo:hi])},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TimeKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1405,15 +1412,17 @@ func (c *timeKeyedClient) UpsertMany(ctx context.Context, inputs []*CreateTimeKe
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetTimeKeyedsInput{
-			Filter: &TimeKeyedFilter{
-				At: &comparator.Time{In: dateTimeKeys(rowIDs)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TimeKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*TimeKeyed, error) {
+			return c.GetMany(ctx, &GetTimeKeyedsInput{
+				Filter: &TimeKeyedFilter{
+					At: &comparator.Time{In: dateTimeKeys(rowIDs[lo:hi])},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TimeKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

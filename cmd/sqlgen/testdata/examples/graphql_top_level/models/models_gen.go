@@ -616,15 +616,17 @@ func (c *categoryClient) CreateMany(ctx context.Context, inputs []*CreateCategor
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetCategoriesInput{
-			Filter: &CategoryFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CategoryFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Category, error) {
+			return c.GetMany(ctx, &GetCategoriesInput{
+				Filter: &CategoryFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CategoryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -904,15 +906,18 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetCategoriesInput{
-			Filter: &CategoryFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CategoryFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Category, error) {
+			return c.GetMany(ctx, &GetCategoriesInput{
+				Filter: &CategoryFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CategoryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1009,15 +1014,17 @@ func (c *categoryClient) UpdateWhere(ctx context.Context, filter *CategoryFilter
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetCategoriesInput{
-			Filter: &CategoryFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CategoryFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Category, error) {
+			return c.GetMany(ctx, &GetCategoriesInput{
+				Filter: &CategoryFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CategoryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1528,15 +1535,17 @@ func (c *categoryClient) UpsertMany(ctx context.Context, inputs []*CreateCategor
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetCategoriesInput{
-			Filter: &CategoryFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CategoryFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Category, error) {
+			return c.GetMany(ctx, &GetCategoriesInput{
+				Filter: &CategoryFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CategoryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -2899,15 +2908,17 @@ func (c *productClient) CreateMany(ctx context.Context, inputs []*CreateProductI
 		for i, id := range allIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.ID{In: idStrings},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.ID{In: idStrings[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -3198,15 +3209,18 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 		for i, id := range allIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.ID{In: idStrings},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(idStrings, func(id string) string { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.ID{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -3306,15 +3320,17 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.ID{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.ID{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -3830,15 +3846,17 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		written, err := c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.ID{In: idStrings},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.ID{In: idStrings[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

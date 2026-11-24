@@ -23,32 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-389
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 25, cmd/sqlgen/gen/templates/table
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`CreateMany` on a composite-PK table fails on SQLite past roughly 1000 rows, after the writes")
-- **Vetted:** corrected at `ca9b4128` (2026-11-23)
-
-**Issue.** Bulk writes return an error after the rows are committed once the read-back exceeds a dialect ceiling, so a caller who retries duplicates or conflicts. Measured at `998f0654`: SQLite composite-PK `CreateMany`/`UpdateMany` n=999 → "Expression tree is too large (maximum depth 1000)" with 999 rows written; SQLite single-column `CreateMany`/`SoftDeleteMany` n=33000 → "too many SQL variables"; MySQL composite n=33000 / single n=66000 → "Error 1390 … too many placeholders"; PostgreSQL composite n=33000 → "extended protocol limited to 65535 parameters". HardDeleteMany is fine (already chunked).
-
-**Root cause.** Every bulk write re-fetches all written keys in one unbounded `GetMany`: composite keys render `Filter.PKs` as an OR of ANDs (`shared/_filter.tmpl:58`), single keys as one IN. Sites: `create.go.tmpl:444/460/474`, `update.go.tmpl` (8 of its 9 `GetMany` calls; the 9th, UpdateWhere's filter read at :983, names no keys), `delete.go.tmpl` (12 of its 15; the other 3 are single-row reads such as SoftDelete :185 and Restore :999), `upsert_many.go.tmpl:450/465/480`.
-
-**Suggested fix.**
-- Start from `.claude/prototypes/FIX-389.patch` (based on `ca9b4128`; 170 files, +33055/-26136, mostly generated churn and re-indentation).
-- New shared helper `refetchInChunks` (`gen/context_shared.go`); all 26 read-back sites call `GetMany` per chunk of `c.batchSize` keys. A call of ≤ batch_size keys stays one statement.
-- Remove the conformance seed's chunks-of-500 workaround (`composite_key.go`); add CreateMany "composite keys past SQLite's expression depth limit read back every written row" (1000 order_items through CreateMany + UpdateMany), SoftDeleteMany "composite keys past SQLite's expression depth limit read back every written row" (1000 revisions through SoftDeleteMany, RestoreMany, SoftDeleteWhere, RestoreWhere; seed helper `sdmSeedRevisions`) and UpdateWhere "composite keys past SQLite's expression depth limit read back every updated row"; update two UpsertMany statement-count pins (terminal SELECT becomes ceil(M/batch_size)).
-- User ruling 2026-11-22: accept ceil(M/batch_size) read-backs; amend §25.1 (UpsertMany paragraph) and §25.3 to say the trailing read is chunked at batch_size and sits outside the write bound; add requirement row `bulk-write.chunked-readback` to `docs/conformance/client.md` §25.3 and `make req-rehash SECTIONS=25.1,25.3`.
-- Corrected at vetting (2026-11-23): the original tests left the 12 `delete.go.tmpl` sites and the 5 UpdateWhere sites unguarded (reverting `delete.go.tmpl` alone stayed green), so the SoftDeleteMany and UpdateWhere tests were added; the original patch also omitted the ruled PRD amendment, without which `req-check` fails.
-- Prototype results, run at `ca9b4128` on 2026-11-23: probe at HEAD templates → SQLite composite CreateMany n=999 "create many order_items: get many order_items: query: SQL logic error: Expression tree is too large (maximum depth 1000) (1)" with 999 rows written (UpdateMany same); SQLite single n=33000/66000 "too many SQL variables (1)"; MySQL composite 33000 / single 66000 "Error 1390 (HY000): Prepared statement contains too many placeholders"; pgx composite 33000 "extended protocol limited to 65535 parameters" — all after full writes; after the fix every case err=<nil> with full row counts. Gates: `go test -short -race ./...` (cmd/sqlgen), update-golden/-e2e, test-conformance (8 modules), lint-conformance, test-examples (15), req-check all ok. Fail-first per site: `update.go.tmpl` reverted → "UpdateMany(1000 order items) error = … Expression tree is too large …" and "UpdateWhere(1000 revisions) error = update revisions where: get many revisions: …"; `delete.go.tmpl` reverted → "SoftDeleteMany(1000 revisions) error = soft delete many revisions: get many revisions: …" (RestoreMany, SoftDeleteWhere, RestoreWhere likewise); `upsert_many.go.tmpl` reverted → "UpsertMany(3 revisions) statements (-want +got): - \"SELECT\"" and the 201-counters pin; all reverted → CreateMany fatals as above; helper forced to one statement → all 6 new/changed subtests fail; existing suite without the fix passes. Golden churn: ~10 unit goldens, sqlite ~72, ~4 each in 14 other examples, all 8 conformance model sets; no files added.
-
-**References.**
-- PRD §19 ("all batch operations split their input into sub-batches … This prevents parameter count limits from being exceeded"), §25.1 (rules out "documenting the cliff instead of batching past it"), §25.3.
-- Residual, not in scope: SQLite composite still fails when batch_size ≥ 999; a user `GetMany` with ≥ 999 `Filter.PKs` on SQLite fails the same way (fix site `_filter.tmpl`, tuple IN on SQLite only).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-390
 
 - **Status:** Open
@@ -129,6 +103,34 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-389
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`CreateMany` on a composite-PK table fails on SQLite past roughly 1000 rows, after the writes")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
+
+**Issue.** Bulk writes return an error after the rows are committed once the read-back exceeds a dialect ceiling, so a caller who retries duplicates or conflicts. Measured at `998f0654`: SQLite composite-PK `CreateMany`/`UpdateMany` n=999 → "Expression tree is too large (maximum depth 1000)" with 999 rows written; SQLite single-column `CreateMany`/`SoftDeleteMany` n=33000 → "too many SQL variables"; MySQL composite n=33000 / single n=66000 → "Error 1390 … too many placeholders"; PostgreSQL composite n=33000 → "extended protocol limited to 65535 parameters". HardDeleteMany is fine (already chunked).
+
+**Root cause.** Every bulk write re-fetches all written keys in one unbounded `GetMany`: composite keys render `Filter.PKs` as an OR of ANDs (`shared/_filter.tmpl:58`), single keys as one IN. Sites: `create.go.tmpl:444/460/474`, `update.go.tmpl` (8 of its 9 `GetMany` calls; the 9th, UpdateWhere's filter read at :983, names no keys), `delete.go.tmpl` (12 of its 14; the other 2 are the single-row reads in SoftDelete :185 and Restore :999), `upsert_many.go.tmpl:450/465/480`.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/FIX-389.patch` (based on `ca9b4128`; 170 files, +33055/-26136, mostly generated churn and re-indentation).
+- New shared helper `refetchInChunks` (`gen/context_shared.go`); all 26 read-back sites call `GetMany` per chunk of `c.batchSize` keys. A call of ≤ batch_size keys stays one statement.
+- Remove the conformance seed's chunks-of-500 workaround (`composite_key.go`); add CreateMany "composite keys past SQLite's expression depth limit read back every written row" (1000 order_items through CreateMany + UpdateMany), SoftDeleteMany "composite keys past SQLite's expression depth limit read back every written row" (1000 revisions through SoftDeleteMany, RestoreMany, SoftDeleteWhere, RestoreWhere; seed helper `sdmSeedRevisions`) and UpdateWhere "composite keys past SQLite's expression depth limit read back every updated row"; update two UpsertMany statement-count pins (terminal SELECT becomes ceil(M/batch_size)).
+- User ruling 2026-11-22: accept ceil(M/batch_size) read-backs; amend §25.1 (UpsertMany paragraph) and §25.3 to say the trailing read is chunked at batch_size and sits outside the write bound; add requirement row `bulk-write.chunked-readback` to `docs/conformance/client.md` §25.3 and `make req-rehash SECTIONS=25.1,25.3`.
+- Corrected at vetting (2026-11-23): the original tests left the 12 `delete.go.tmpl` sites and the 5 UpdateWhere sites unguarded (reverting `delete.go.tmpl` alone stayed green), so the SoftDeleteMany and UpdateWhere tests were added; the original patch also omitted the ruled PRD amendment, without which `req-check` fails.
+- The user ruled on 2026-11-24: option B — dedupe the key slice before `refetchInChunks`, so `SoftDeleteMany`, `RestoreMany` and `UpdateMany` (and any other read-back site that can receive duplicate keys) return distinct rows regardless of chunk placement. Chunking alone made `SoftDeleteMany([1,2,1])` with batch_size 2 return 3 rows where HEAD returned 2 (measured on SQLite).
+- Prototype results, run at `ca9b4128` on 2026-11-23: probe at HEAD templates → SQLite composite CreateMany n=999 "create many order_items: get many order_items: query: SQL logic error: Expression tree is too large (maximum depth 1000) (1)" with 999 rows written (UpdateMany same); SQLite single n=33000/66000 "too many SQL variables (1)"; MySQL composite 33000 / single 66000 "Error 1390 (HY000): Prepared statement contains too many placeholders"; pgx composite 33000 "extended protocol limited to 65535 parameters" — all after full writes; after the fix every case err=<nil> with full row counts. Gates: `go test -short -race ./...` (cmd/sqlgen), update-golden/-e2e, test-conformance (8 modules), lint-conformance, test-examples (15), req-check all ok. Fail-first per site: `update.go.tmpl` reverted → "UpdateMany(1000 order items) error = … Expression tree is too large …" and "UpdateWhere(1000 revisions) error = update revisions where: get many revisions: …"; `delete.go.tmpl` reverted → "SoftDeleteMany(1000 revisions) error = soft delete many revisions: get many revisions: …" (RestoreMany, SoftDeleteWhere, RestoreWhere likewise); `upsert_many.go.tmpl` reverted → "UpsertMany(3 revisions) statements (-want +got): - \"SELECT\"" and the 201-counters pin; all reverted → CreateMany fatals as above; helper forced to one statement → all 6 new/changed subtests fail; existing suite without the fix passes. Golden churn: ~10 unit goldens, sqlite ~72, ~4 each in 14 other examples, all 8 conformance model sets; no files added.
+
+**References.**
+- PRD §19 ("all batch operations split their input into sub-batches … This prevents parameter count limits from being exceeded"), §25.1 (rules out "documenting the cliff instead of batching past it"), §25.3.
+- Residual, not in scope: SQLite composite still fails when batch_size ≥ 999; a user `GetMany` with ≥ 999 `Filter.PKs` on SQLite fails the same way (fix site `_filter.tmpl`, tuple IN on SQLite only).
+
+**Resolution notes.** Prototype applied clean with `git apply --3way` (source files only; templates unchanged since `ca9b4128`); generated files regenerated, PRD anchors re-derived with `make req-rehash`. New shared helper `refetchInChunks` (`gen/context_shared.go`) reads back n written keys at most `c.batchSize` per `GetMany`; all 26 read-back sites in `create.go.tmpl`, `update.go.tmpl`, `delete.go.tmpl` and `upsert_many.go.tmpl` call it, and a call of at most batch_size keys stays one statement. Conformance: removed the composite seed's chunks-of-500 workaround; added the CreateMany/UpdateMany, SoftDeleteMany (+RestoreMany, SoftDeleteWhere, RestoreWhere) and UpdateWhere 1000-composite-key read-back subtests; updated the two UpsertMany statement-count pins. PRD §25.1 and §25.3 amended per the 2026-11-22 ruling; requirement `bulk-write.chunked-readback` added to `docs/conformance/client.md` §25.3. Gates: `make check` and `make check-examples` ok; fail-first: `delete.go.tmpl` reverted → the four SoftDeleteMany-test steps fail on SQLite with "Expression tree is too large (maximum depth 1000)". Per the 2026-11-24 ruling, a second shared helper `distinctKeys` dedupes the caller-listed keys before the read-back in `UpdateMany`, `SoftDeleteMany` and `RestoreMany`. It keys by `KeySetType`/`KeySetKey`, so non-comparable keys work. The `*Where` and `CreateMany` read-backs already name distinct keys, and `UpsertMany` dedupes before writing. Regression tests: "a key listed twice across a sub-batch boundary is read back once" for all three, which failed first with 3 rows; PRD §25.3 states the rule and registry row `bulk-write.readback-distinct` covers it. Statement-count pins "reads back … in chunks of the table's batch size" were added for CreateMany and SoftDeleteMany. The SoftDeleteMany pin asserts the statements after the last UPDATE, because MySQL reads keys before each UPDATE. Inline: trimmed the helper's doc comment; corrected the Root cause's `delete.go.tmpl` count (14 `GetMany` calls, not 15); the §9.8.5 CreateMany code sample now shows the chunked read-back. Golden churn matches the vet (10 unit goldens, sqlite 72, 4 each in 14 other examples, all 8 conformance model sets).
+
 
 ### FIX-395
 

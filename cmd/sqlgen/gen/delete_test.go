@@ -276,7 +276,8 @@ func TestDeleteTemplate_softDeleteMany(t *testing.T) {
 		"for start := 0; start < len(ids); start += c.batchSize {",
 		`delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}`,
 		`fmt.Errorf("soft delete many products: %w", err)`,
-		"ID: &comparator.ID{In: idStrings}",
+		"readKeys := distinctKeys(idStrings, func(id string) string { return id })",
+		"ID: &comparator.ID{In: readKeys[lo:hi]}",
 		"DeletedAt: &comparator.NullableTime{Null: new(false)}",
 		"Limit: new(0)",
 	}
@@ -308,7 +309,7 @@ func TestDeleteTemplate_softDeleteWhere_postgres(t *testing.T) {
 		`ids = append(ids, id.String())`,
 		`fmt.Errorf("scan soft deleted product id: %w", err)`,
 		// Re-fetch
-		"ID: &comparator.ID{In: ids}",
+		"ID: &comparator.ID{In: ids[lo:hi]}",
 		"DeletedAt: &comparator.NullableTime{Null: new(false)}",
 	}
 	for _, want := range wantPatterns {

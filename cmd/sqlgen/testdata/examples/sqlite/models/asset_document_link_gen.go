@@ -455,13 +455,15 @@ func (c *assetDocumentLinkClient) CreateMany(ctx context.Context, inputs []*Crea
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetAssetDocumentLinksInput{
-			Filter: &AssetDocumentLinkFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*AssetDocumentLink, error) {
+			return c.GetMany(ctx, &GetAssetDocumentLinksInput{
+				Filter: &AssetDocumentLinkFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -648,13 +650,16 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAssetDocumentLinksInput{
-			Filter: &AssetDocumentLinkFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk AssetDocumentLinkPK) AssetDocumentLinkPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*AssetDocumentLink, error) {
+			return c.GetMany(ctx, &GetAssetDocumentLinksInput{
+				Filter: &AssetDocumentLinkFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -742,13 +747,15 @@ func (c *assetDocumentLinkClient) UpdateWhere(ctx context.Context, filter *Asset
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAssetDocumentLinksInput{
-			Filter: &AssetDocumentLinkFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*AssetDocumentLink, error) {
+			return c.GetMany(ctx, &GetAssetDocumentLinksInput{
+				Filter: &AssetDocumentLinkFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1141,13 +1148,15 @@ func (c *assetDocumentLinkClient) UpsertMany(ctx context.Context, inputs []*Crea
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetAssetDocumentLinksInput{
-			Filter: &AssetDocumentLinkFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*AssetDocumentLink, error) {
+			return c.GetMany(ctx, &GetAssetDocumentLinksInput{
+				Filter: &AssetDocumentLinkFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

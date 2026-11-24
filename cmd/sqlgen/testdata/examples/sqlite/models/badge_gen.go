@@ -857,15 +857,17 @@ func (c *badgeClient) CreateMany(ctx context.Context, inputs []*CreateBadgeInput
 		for i, id := range allIDs {
 			idStrings[i] = id
 		}
-		return c.GetMany(ctx, &GetBadgesInput{
-			Filter: &BadgeFilter{
-				Code: &comparator.ID{In: idStrings},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*Badge, error) {
+			return c.GetMany(ctx, &GetBadgesInput{
+				Filter: &BadgeFilter{
+					Code: &comparator.ID{In: idStrings[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1100,15 +1102,18 @@ func (c *badgeClient) UpdateMany(ctx context.Context, items []UpdateBadgeItem, o
 		for i, id := range allIDs {
 			idStrings[i] = id
 		}
-		return c.GetMany(ctx, &GetBadgesInput{
-			Filter: &BadgeFilter{
-				Code: &comparator.ID{In: idStrings},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(idStrings, func(id string) string { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Badge, error) {
+			return c.GetMany(ctx, &GetBadgesInput{
+				Filter: &BadgeFilter{
+					Code: &comparator.ID{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1199,15 +1204,17 @@ func (c *badgeClient) UpdateWhere(ctx context.Context, filter *BadgeFilter, inpu
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetBadgesInput{
-			Filter: &BadgeFilter{
-				Code: &comparator.ID{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Badge, error) {
+			return c.GetMany(ctx, &GetBadgesInput{
+				Filter: &BadgeFilter{
+					Code: &comparator.ID{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1682,15 +1689,17 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 		for i, id := range rowIDs {
 			idStrings[i] = id
 		}
-		written, err := c.GetMany(ctx, &GetBadgesInput{
-			Filter: &BadgeFilter{
-				Code: &comparator.ID{In: idStrings},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*Badge, error) {
+			return c.GetMany(ctx, &GetBadgesInput{
+				Filter: &BadgeFilter{
+					Code: &comparator.ID{In: idStrings[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

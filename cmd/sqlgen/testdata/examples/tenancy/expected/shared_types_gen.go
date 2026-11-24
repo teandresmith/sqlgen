@@ -41,6 +41,22 @@ func dateTimeKeys(keys []types.DateTime) []time.Time {
 	return times
 }
 
+// distinctKeys returns keys without repeats, in first-seen order, so a batch
+// call that lists a key twice reads its row back once.
+func distinctKeys[K any, S comparable](keys []K, setKey func(K) S) []K {
+	seen := make(map[S]struct{}, len(keys))
+	result := make([]K, 0, len(keys))
+	for _, k := range keys {
+		sk := setKey(k)
+		if _, dup := seen[sk]; dup {
+			continue
+		}
+		seen[sk] = struct{}{}
+		result = append(result, k)
+	}
+	return result
+}
+
 // excludeColumns returns columns with any entries in exclude removed.
 func excludeColumns(columns, exclude []string) []string {
 	excludeSet := make(map[string]bool, len(exclude))
@@ -73,6 +89,25 @@ func nestedChildOptions[FO, PFO any](o *CallOptions[FO], parent CallOptions[PFO]
 // nil when the failure is not id-scoped.
 func nestedError(edge, verb string, id any, err error) error {
 	return &NestedMutationError{Edge: edge, Verb: verb, ID: id, Err: err}
+}
+
+// refetchInChunks reads back the n rows a batch write named, at most size keys
+// per statement, so the read-back stays inside every dialect ceiling the writes
+// cleared (SQLite's expression depth of 1000 for a composite key's OR of ANDs,
+// its 32766 bind parameters, 65535 on MySQL and PostgreSQL).
+func refetchInChunks[E any](n, size int, fetch func(lo, hi int) ([]E, error)) ([]E, error) {
+	if size <= 0 || n <= size {
+		return fetch(0, n)
+	}
+	result := make([]E, 0, n)
+	for lo := 0; lo < n; lo += size {
+		rows, err := fetch(lo, min(lo+size, n))
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, rows...)
+	}
+	return result, nil
 }
 
 // resolveCallOptions applies option functions and returns the resolved struct. SkipHooks implies SkipCache and SkipEvents because cache and events are implemented as hooks.

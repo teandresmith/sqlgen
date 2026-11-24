@@ -22,6 +22,84 @@ import (
 func softDeleteMany(t *testing.T, h *Harness) {
 	ctx := context.Background()
 
+	t.Run("a key listed twice across a sub-batch boundary is read back once", func(t *testing.T) {
+		h.Reset(t)
+		// revisions has batch_size: 2, so the repeated key opens the second chunk.
+		sdmSeedRevisions(t, h, 2)
+		pks := []models.RevisionPK{{DocumentID: 1, Number: 1}, {DocumentID: 1, Number: 2}, {DocumentID: 1, Number: 1}}
+		got, err := h.Client.Revisions().SoftDeleteMany(ctx, pks)
+		if err != nil {
+			t.Fatalf("SoftDeleteMany(keys 1, 2, 1) error = %v, want nil", err)
+		}
+		numbers := make([]int64, len(got))
+		for i, r := range got {
+			numbers[i] = r.Number
+		}
+		slices.Sort(numbers)
+		if diff := cmp.Diff([]int64{1, 2}, numbers); diff != "" {
+			t.Errorf("SoftDeleteMany(keys 1, 2, 1) returned revisions (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("reads back the soft-deleted rows in chunks of the table's batch size", func(t *testing.T) {
+		h.Reset(t)
+		// revisions has batch_size: 2, so three keys are two UPDATEs followed by
+		// two reads. A dialect without RETURNING reads each sub-batch's keys
+		// before its UPDATE, so only the statements after the last UPDATE are
+		// the read-back.
+		pks := sdmSeedRevisions(t, h, 3)
+		h.Querier.ResetCount()
+		got, err := h.Client.Revisions().SoftDeleteMany(ctx, pks)
+		if err != nil {
+			t.Fatalf("SoftDeleteMany(3 revisions) error = %v, want nil", err)
+		}
+		verbs := usStatementVerbs(h)
+		last := -1
+		for i, v := range verbs {
+			if v == "UPDATE" {
+				last = i
+			}
+		}
+		if sdmCount(verbs, "UPDATE") != 2 {
+			t.Fatalf("SoftDeleteMany(3 revisions) statements = %v, want two UPDATEs", verbs)
+		}
+		if diff := cmp.Diff([]string{"SELECT", "SELECT"}, verbs[last+1:]); diff != "" {
+			t.Errorf("SoftDeleteMany(3 revisions) read-back statements (-want +got):\n%s", diff)
+		}
+		if len(got) != 3 {
+			t.Errorf("SoftDeleteMany(3 revisions) returned %d rows, want 3", len(got))
+		}
+	})
+
+	t.Run("composite keys past SQLite's expression depth limit read back every written row", func(t *testing.T) {
+		h.Reset(t)
+		// Each read-back names the written keys. One statement naming 1000
+		// composite keys renders an OR of 1000 ANDs, past SQLite's depth limit
+		// ("Expression tree is too large"), after every sub-batch is written.
+		const n = 1000
+		pks := sdmSeedRevisions(t, h, n)
+		all := &models.RevisionFilter{DocumentID: &comparator.Number[int64]{Eq: new(int64(1))}}
+		steps := []struct {
+			name string
+			call func() ([]*models.Revision, error)
+		}{
+			{"SoftDeleteMany", func() ([]*models.Revision, error) { return h.Client.Revisions().SoftDeleteMany(ctx, pks) }},
+			{"RestoreMany", func() ([]*models.Revision, error) { return h.Client.Revisions().RestoreMany(ctx, pks) }},
+			{"SoftDeleteWhere", func() ([]*models.Revision, error) { return h.Client.Revisions().SoftDeleteWhere(ctx, all) }},
+			{"RestoreWhere", func() ([]*models.Revision, error) { return h.Client.Revisions().RestoreWhere(ctx, all) }},
+		}
+		for _, step := range steps {
+			got, err := step.call()
+			if err != nil {
+				t.Errorf("%s(%d revisions) error = %v, want nil", step.name, n, err)
+				continue
+			}
+			if len(got) != n {
+				t.Errorf("%s(%d revisions) returned %d rows, want %d", step.name, n, len(got), n)
+			}
+		}
+	})
+
 	t.Run("soft-deletes only the listed keys and returns them", func(t *testing.T) {
 		h.Reset(t)
 		a, b, c := createDocument(t, h, "a"), createDocument(t, h, "b"), createDocument(t, h, "c")
@@ -372,6 +450,28 @@ func softDeleteMany(t *testing.T, h *Harness) {
 // restoreMany: RestoreMany clears the soft-delete marker on every listed row.
 func restoreMany(t *testing.T, h *Harness) {
 	ctx := context.Background()
+
+	t.Run("a key listed twice across a sub-batch boundary is read back once", func(t *testing.T) {
+		h.Reset(t)
+		// revisions has batch_size: 2, so the repeated key opens the second chunk.
+		sdmSeedRevisions(t, h, 2)
+		pks := []models.RevisionPK{{DocumentID: 1, Number: 1}, {DocumentID: 1, Number: 2}, {DocumentID: 1, Number: 1}}
+		if _, err := h.Client.Revisions().SoftDeleteMany(ctx, pks[:2]); err != nil {
+			t.Fatalf("SoftDeleteMany(keys 1, 2) error = %v", err)
+		}
+		got, err := h.Client.Revisions().RestoreMany(ctx, pks)
+		if err != nil {
+			t.Fatalf("RestoreMany(keys 1, 2, 1) error = %v, want nil", err)
+		}
+		numbers := make([]int64, len(got))
+		for i, r := range got {
+			numbers[i] = r.Number
+		}
+		slices.Sort(numbers)
+		if diff := cmp.Diff([]int64{1, 2}, numbers); diff != "" {
+			t.Errorf("RestoreMany(keys 1, 2, 1) returned revisions (-want +got):\n%s", diff)
+		}
+	})
 
 	t.Run("restores only the listed keys and returns them", func(t *testing.T) {
 		h.Reset(t)
@@ -828,4 +928,30 @@ func sdmLiveLabelCount(t *testing.T, h *Harness) int {
 		t.Fatalf("Labels().GetMany(nil) error = %v", err)
 	}
 	return len(labels)
+}
+
+// sdmSeedRevisions writes n revisions of document 1 and returns their keys.
+func sdmSeedRevisions(t *testing.T, h *Harness, n int) []models.RevisionPK {
+	t.Helper()
+	inputs := make([]*models.CreateRevisionInput, n)
+	pks := make([]models.RevisionPK, n)
+	for i := range inputs {
+		inputs[i] = &models.CreateRevisionInput{DocumentID: 1, Number: int64(i + 1), Body: "body"}
+		pks[i] = models.RevisionPK{DocumentID: 1, Number: int64(i + 1)}
+	}
+	if _, err := h.Client.Revisions().CreateMany(context.Background(), inputs); err != nil {
+		t.Fatalf("CreateMany(%d revisions): %v", n, err)
+	}
+	return pks
+}
+
+// sdmCount reports how many of verbs equal verb.
+func sdmCount(verbs []string, verb string) int {
+	n := 0
+	for _, v := range verbs {
+		if v == verb {
+			n++
+		}
+	}
+	return n
 }

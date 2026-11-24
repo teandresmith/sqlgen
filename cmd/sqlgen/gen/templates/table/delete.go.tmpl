@@ -419,31 +419,42 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 {{- if .CompositePK }}
-			Filter: &{{ .StructName }}Filter{
-				PKs: pks,
+
+		readKeys := distinctKeys(pks, func(pk {{ .CompositePKStructName }}) {{ .KeySetType }} { return {{ .KeySetKey "pk" }} })
+{{- else if pkIsStringType $pkCol }}
+
+		readKeys := distinctKeys(idStrings, func(id string) string { return id })
+{{- else }}
+
+		readKeys := distinctKeys(ids, func(id {{ $pkCol.GoType }}) {{ .KeySetType }} { return {{ .KeySetKey "id" }} })
+{{- end }}
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+{{- if .CompositePK }}
+				Filter: &{{ .StructName }}Filter{
+					PKs: readKeys[lo:hi],
 {{- else }}
 {{- if pkIsStringType $pkCol }}
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: &comparator.ID{In: readKeys[lo:hi]},
 {{- else }}
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "readKeys[lo:hi]" false }},
 {{- end }}
 {{- end }}
 {{- range .FilterFields }}
 {{- if .IsSoftDeleteColumn }}
-				{{ .FieldName }}: {{ softDeleteFilterOverride . }},
+					{{ .FieldName }}: {{ softDeleteFilterOverride . }},
 {{- end }}
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -568,20 +579,22 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				PKs: pks,
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					PKs: pks[lo:hi],
 {{- range .FilterFields }}
 {{- if .IsSoftDeleteColumn }}
-				{{ .FieldName }}: {{ softDeleteFilterOverride . }},
+					{{ .FieldName }}: {{ softDeleteFilterOverride . }},
 {{- end }}
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else if .CompositePK }}
 
@@ -620,20 +633,22 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				PKs: pks,
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					PKs: pks[lo:hi],
 {{- range .FilterFields }}
 {{- if .IsSoftDeleteColumn }}
-				{{ .FieldName }}: {{ softDeleteFilterOverride . }},
+					{{ .FieldName }}: {{ softDeleteFilterOverride . }},
 {{- end }}
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else if supportsReturning }}
 
@@ -693,20 +708,22 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 		}
 
 		// Fetch affected entities — set {{ .SoftDelete.FieldName }} to override default "is not deleted" condition
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: &comparator.ID{In: ids},
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: &comparator.ID{In: ids[lo:hi]},
 {{- range .FilterFields }}
 {{- if .IsSoftDeleteColumn }}
-				{{ .FieldName }}: {{ softDeleteFilterOverride . }},
+					{{ .FieldName }}: {{ softDeleteFilterOverride . }},
 {{- end }}
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else }}
 		var ids []{{ $pkCol.GoType }}
@@ -746,20 +763,22 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 		}
 
 		// Fetch affected entities — set {{ .SoftDelete.FieldName }} to override default "is not deleted" condition
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids[lo:hi]" false }},
 {{- range .FilterFields }}
 {{- if .IsSoftDeleteColumn }}
-				{{ .FieldName }}: {{ softDeleteFilterOverride . }},
+					{{ .FieldName }}: {{ softDeleteFilterOverride . }},
 {{- end }}
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- end }}
 {{- else }}
@@ -799,20 +818,22 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids[lo:hi]" false }},
 {{- range .FilterFields }}
 {{- if .IsSoftDeleteColumn }}
-				{{ .FieldName }}: {{ softDeleteFilterOverride . }},
+					{{ .FieldName }}: {{ softDeleteFilterOverride . }},
 {{- end }}
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- end }}
 	})
@@ -1222,26 +1243,37 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 {{- if .CompositePK }}
-			Filter: &{{ .StructName }}Filter{PKs: pks},
+
+		readKeys := distinctKeys(pks, func(pk {{ .CompositePKStructName }}) {{ .KeySetType }} { return {{ .KeySetKey "pk" }} })
+{{- else if pkIsStringType $pkCol }}
+
+		readKeys := distinctKeys(idStrings, func(id string) string { return id })
+{{- else }}
+
+		readKeys := distinctKeys(ids, func(id {{ $pkCol.GoType }}) {{ .KeySetType }} { return {{ .KeySetKey "id" }} })
+{{- end }}
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+{{- if .CompositePK }}
+				Filter: &{{ .StructName }}Filter{PKs: readKeys[lo:hi]},
 {{- else }}
 {{- if pkIsStringType $pkCol }}
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
-			},
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: &comparator.ID{In: readKeys[lo:hi]},
+				},
 {{- else }}
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
-			},
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "readKeys[lo:hi]" false }},
+				},
 {{- end }}
 {{- end }}
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1365,13 +1397,15 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else if .CompositePK }}
 
@@ -1409,13 +1443,15 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else if supportsReturning }}
 
@@ -1473,15 +1509,17 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: &comparator.ID{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: &comparator.ID{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else }}
 		var ids []{{ $pkCol.GoType }}
@@ -1520,15 +1558,17 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids[lo:hi]" false }},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- end }}
 {{- else }}
@@ -1567,15 +1607,17 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids[lo:hi]" false }},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- end }}
 	})

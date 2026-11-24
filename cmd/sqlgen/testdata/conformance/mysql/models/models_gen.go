@@ -553,15 +553,17 @@ func (c *authorProfileClient) CreateMany(ctx context.Context, inputs []*CreateAu
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetAuthorProfilesInput{
-			Filter: &AuthorProfileFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorProfileFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*AuthorProfile, error) {
+			return c.GetMany(ctx, &GetAuthorProfilesInput{
+				Filter: &AuthorProfileFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorProfileFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -860,15 +862,18 @@ func (c *authorProfileClient) UpdateMany(ctx context.Context, items []UpdateAuth
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetAuthorProfilesInput{
-			Filter: &AuthorProfileFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorProfileFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*AuthorProfile, error) {
+			return c.GetMany(ctx, &GetAuthorProfilesInput{
+				Filter: &AuthorProfileFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorProfileFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -952,15 +957,17 @@ func (c *authorProfileClient) UpdateWhere(ctx context.Context, filter *AuthorPro
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAuthorProfilesInput{
-			Filter: &AuthorProfileFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorProfileFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*AuthorProfile, error) {
+			return c.GetMany(ctx, &GetAuthorProfilesInput{
+				Filter: &AuthorProfileFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorProfileFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1427,15 +1434,17 @@ func (c *authorProfileClient) UpsertMany(ctx context.Context, inputs []*CreateAu
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetAuthorProfilesInput{
-			Filter: &AuthorProfileFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorProfileFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*AuthorProfile, error) {
+			return c.GetMany(ctx, &GetAuthorProfilesInput{
+				Filter: &AuthorProfileFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorProfileFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -2949,13 +2958,15 @@ func (c *authorTagClient) CreateMany(ctx context.Context, inputs []*CreateAuthor
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetAuthorTagsInput{
-			Filter: &AuthorTagFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[AuthorTagFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*AuthorTag, error) {
+			return c.GetMany(ctx, &GetAuthorTagsInput{
+				Filter: &AuthorTagFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[AuthorTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -3170,13 +3181,16 @@ func (c *authorTagClient) UpdateMany(ctx context.Context, items []UpdateAuthorTa
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAuthorTagsInput{
-			Filter: &AuthorTagFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[AuthorTagFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk AuthorTagPK) AuthorTagPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*AuthorTag, error) {
+			return c.GetMany(ctx, &GetAuthorTagsInput{
+				Filter: &AuthorTagFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[AuthorTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -3254,13 +3268,15 @@ func (c *authorTagClient) UpdateWhere(ctx context.Context, filter *AuthorTagFilt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAuthorTagsInput{
-			Filter: &AuthorTagFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[AuthorTagFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*AuthorTag, error) {
+			return c.GetMany(ctx, &GetAuthorTagsInput{
+				Filter: &AuthorTagFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[AuthorTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -3704,13 +3720,15 @@ func (c *authorTagClient) UpsertMany(ctx context.Context, inputs []*CreateAuthor
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetAuthorTagsInput{
-			Filter: &AuthorTagFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[AuthorTagFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*AuthorTag, error) {
+			return c.GetMany(ctx, &GetAuthorTagsInput{
+				Filter: &AuthorTagFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[AuthorTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -5419,16 +5437,18 @@ func (c *authorClient) CreateMany(ctx context.Context, inputs []*CreateAuthorInp
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetAuthorsInput{
-			Filter: &AuthorFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Author, error) {
+			return c.GetMany(ctx, &GetAuthorsInput{
+				Filter: &AuthorFilter{
+					ID:        &comparator.Number[int64]{In: allIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -5759,16 +5779,19 @@ func (c *authorClient) UpdateMany(ctx context.Context, items []UpdateAuthorItem,
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetAuthorsInput{
-			Filter: &AuthorFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Author, error) {
+			return c.GetMany(ctx, &GetAuthorsInput{
+				Filter: &AuthorFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -5861,16 +5884,18 @@ func (c *authorClient) UpdateWhere(ctx context.Context, filter *AuthorFilter, in
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAuthorsInput{
-			Filter: &AuthorFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Author, error) {
+			return c.GetMany(ctx, &GetAuthorsInput{
+				Filter: &AuthorFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -6046,16 +6071,19 @@ func (c *authorClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ...
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAuthorsInput{
-			Filter: &AuthorFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Author, error) {
+			return c.GetMany(ctx, &GetAuthorsInput{
+				Filter: &AuthorFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -6119,16 +6147,18 @@ func (c *authorClient) SoftDeleteWhere(ctx context.Context, filter *AuthorFilter
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAuthorsInput{
-			Filter: &AuthorFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Author, error) {
+			return c.GetMany(ctx, &GetAuthorsInput{
+				Filter: &AuthorFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -6275,15 +6305,18 @@ func (c *authorClient) RestoreMany(ctx context.Context, ids []int64, opts ...fun
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAuthorsInput{
-			Filter: &AuthorFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Author, error) {
+			return c.GetMany(ctx, &GetAuthorsInput{
+				Filter: &AuthorFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -6346,15 +6379,17 @@ func (c *authorClient) RestoreWhere(ctx context.Context, filter *AuthorFilter, o
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAuthorsInput{
-			Filter: &AuthorFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Author, error) {
+			return c.GetMany(ctx, &GetAuthorsInput{
+				Filter: &AuthorFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -6813,16 +6848,18 @@ func (c *authorClient) UpsertMany(ctx context.Context, inputs []*CreateAuthorInp
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetAuthorsInput{
-			Filter: &AuthorFilter{
-				ID:        &comparator.Number[int64]{In: rowIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[AuthorFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Author, error) {
+			return c.GetMany(ctx, &GetAuthorsInput{
+				Filter: &AuthorFilter{
+					ID:        &comparator.Number[int64]{In: rowIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[AuthorFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -9993,15 +10030,17 @@ func (c *bayClient) CreateMany(ctx context.Context, inputs []*CreateBayInput, op
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetBaysInput{
-			Filter: &BayFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BayFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Bay, error) {
+			return c.GetMany(ctx, &GetBaysInput{
+				Filter: &BayFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -10294,15 +10333,18 @@ func (c *bayClient) UpdateMany(ctx context.Context, items []UpdateBayItem, opts 
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetBaysInput{
-			Filter: &BayFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BayFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Bay, error) {
+			return c.GetMany(ctx, &GetBaysInput{
+				Filter: &BayFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -10383,15 +10425,17 @@ func (c *bayClient) UpdateWhere(ctx context.Context, filter *BayFilter, input *U
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetBaysInput{
-			Filter: &BayFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BayFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Bay, error) {
+			return c.GetMany(ctx, &GetBaysInput{
+				Filter: &BayFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -10848,15 +10892,17 @@ func (c *bayClient) UpsertMany(ctx context.Context, inputs []*CreateBayInput, ta
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetBaysInput{
-			Filter: &BayFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BayFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Bay, error) {
+			return c.GetMany(ctx, &GetBaysInput{
+				Filter: &BayFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -13213,16 +13259,18 @@ func (c *counterClient) CreateMany(ctx context.Context, inputs []*CreateCounterI
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetCountersInput{
-			Filter: &CounterFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CounterFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Counter, error) {
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID:        &comparator.Number[int64]{In: allIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -13585,16 +13633,19 @@ func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterIte
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetCountersInput{
-			Filter: &CounterFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CounterFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Counter, error) {
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -13698,16 +13749,18 @@ func (c *counterClient) UpdateWhere(ctx context.Context, filter *CounterFilter, 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCountersInput{
-			Filter: &CounterFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CounterFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Counter, error) {
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -13883,16 +13936,19 @@ func (c *counterClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCountersInput{
-			Filter: &CounterFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CounterFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Counter, error) {
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -13956,16 +14012,18 @@ func (c *counterClient) SoftDeleteWhere(ctx context.Context, filter *CounterFilt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCountersInput{
-			Filter: &CounterFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CounterFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Counter, error) {
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -14112,15 +14170,18 @@ func (c *counterClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCountersInput{
-			Filter: &CounterFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CounterFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Counter, error) {
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -14183,15 +14244,17 @@ func (c *counterClient) RestoreWhere(ctx context.Context, filter *CounterFilter,
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCountersInput{
-			Filter: &CounterFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CounterFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Counter, error) {
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -14670,16 +14733,18 @@ func (c *counterClient) UpsertMany(ctx context.Context, inputs []*CreateCounterI
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetCountersInput{
-			Filter: &CounterFilter{
-				ID:        &comparator.Number[int64]{In: rowIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CounterFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Counter, error) {
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID:        &comparator.Number[int64]{In: rowIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -16099,13 +16164,15 @@ func (c *crateItemClient) CreateMany(ctx context.Context, inputs []*CreateCrateI
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetCrateItemsInput{
-			Filter: &CrateItemFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[CrateItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*CrateItem, error) {
+			return c.GetMany(ctx, &GetCrateItemsInput{
+				Filter: &CrateItemFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[CrateItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -16320,13 +16387,16 @@ func (c *crateItemClient) UpdateMany(ctx context.Context, items []UpdateCrateIte
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCrateItemsInput{
-			Filter: &CrateItemFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[CrateItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk CrateItemPK) CrateItemPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*CrateItem, error) {
+			return c.GetMany(ctx, &GetCrateItemsInput{
+				Filter: &CrateItemFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[CrateItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -16404,13 +16474,15 @@ func (c *crateItemClient) UpdateWhere(ctx context.Context, filter *CrateItemFilt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCrateItemsInput{
-			Filter: &CrateItemFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[CrateItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*CrateItem, error) {
+			return c.GetMany(ctx, &GetCrateItemsInput{
+				Filter: &CrateItemFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[CrateItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -16857,13 +16929,15 @@ func (c *crateItemClient) UpsertMany(ctx context.Context, inputs []*CreateCrateI
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetCrateItemsInput{
-			Filter: &CrateItemFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[CrateItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*CrateItem, error) {
+			return c.GetMany(ctx, &GetCrateItemsInput{
+				Filter: &CrateItemFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[CrateItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -18026,15 +18100,17 @@ func (c *crateSealClient) CreateMany(ctx context.Context, inputs []*CreateCrateS
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetCrateSealsInput{
-			Filter: &CrateSealFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CrateSealFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*CrateSeal, error) {
+			return c.GetMany(ctx, &GetCrateSealsInput{
+				Filter: &CrateSealFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateSealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -18333,15 +18409,18 @@ func (c *crateSealClient) UpdateMany(ctx context.Context, items []UpdateCrateSea
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetCrateSealsInput{
-			Filter: &CrateSealFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CrateSealFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*CrateSeal, error) {
+			return c.GetMany(ctx, &GetCrateSealsInput{
+				Filter: &CrateSealFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateSealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -18425,15 +18504,17 @@ func (c *crateSealClient) UpdateWhere(ctx context.Context, filter *CrateSealFilt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCrateSealsInput{
-			Filter: &CrateSealFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CrateSealFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*CrateSeal, error) {
+			return c.GetMany(ctx, &GetCrateSealsInput{
+				Filter: &CrateSealFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateSealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -18891,15 +18972,17 @@ func (c *crateSealClient) UpsertMany(ctx context.Context, inputs []*CreateCrateS
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetCrateSealsInput{
-			Filter: &CrateSealFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CrateSealFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*CrateSeal, error) {
+			return c.GetMany(ctx, &GetCrateSealsInput{
+				Filter: &CrateSealFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateSealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -20662,15 +20745,17 @@ func (c *crateClient) CreateMany(ctx context.Context, inputs []*CreateCrateInput
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetCratesInput{
-			Filter: &CrateFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CrateFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Crate, error) {
+			return c.GetMany(ctx, &GetCratesInput{
+				Filter: &CrateFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -20969,15 +21054,18 @@ func (c *crateClient) UpdateMany(ctx context.Context, items []UpdateCrateItem, o
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetCratesInput{
-			Filter: &CrateFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CrateFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Crate, error) {
+			return c.GetMany(ctx, &GetCratesInput{
+				Filter: &CrateFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -21061,15 +21149,17 @@ func (c *crateClient) UpdateWhere(ctx context.Context, filter *CrateFilter, inpu
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCratesInput{
-			Filter: &CrateFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CrateFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Crate, error) {
+			return c.GetMany(ctx, &GetCratesInput{
+				Filter: &CrateFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -21534,15 +21624,17 @@ func (c *crateClient) UpsertMany(ctx context.Context, inputs []*CreateCrateInput
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetCratesInput{
-			Filter: &CrateFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[CrateFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Crate, error) {
+			return c.GetMany(ctx, &GetCratesInput{
+				Filter: &CrateFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -23624,15 +23716,17 @@ func (c *depotClient) CreateMany(ctx context.Context, inputs []*CreateDepotInput
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetDepotsInput{
-			Filter: &DepotFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DepotFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Depot, error) {
+			return c.GetMany(ctx, &GetDepotsInput{
+				Filter: &DepotFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -23931,15 +24025,18 @@ func (c *depotClient) UpdateMany(ctx context.Context, items []UpdateDepotItem, o
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetDepotsInput{
-			Filter: &DepotFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DepotFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Depot, error) {
+			return c.GetMany(ctx, &GetDepotsInput{
+				Filter: &DepotFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -24023,15 +24120,17 @@ func (c *depotClient) UpdateWhere(ctx context.Context, filter *DepotFilter, inpu
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetDepotsInput{
-			Filter: &DepotFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DepotFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Depot, error) {
+			return c.GetMany(ctx, &GetDepotsInput{
+				Filter: &DepotFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -24491,15 +24590,17 @@ func (c *depotClient) UpsertMany(ctx context.Context, inputs []*CreateDepotInput
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetDepotsInput{
-			Filter: &DepotFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DepotFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Depot, error) {
+			return c.GetMany(ctx, &GetDepotsInput{
+				Filter: &DepotFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -26467,16 +26568,18 @@ func (c *documentClient) CreateMany(ctx context.Context, inputs []*CreateDocumen
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetDocumentsInput{
-			Filter: &DocumentFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DocumentFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Document, error) {
+			return c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID:        &comparator.Number[int64]{In: allIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -26807,16 +26910,19 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetDocumentsInput{
-			Filter: &DocumentFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DocumentFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Document, error) {
+			return c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -26909,16 +27015,18 @@ func (c *documentClient) UpdateWhere(ctx context.Context, filter *DocumentFilter
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetDocumentsInput{
-			Filter: &DocumentFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DocumentFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Document, error) {
+			return c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -27094,16 +27202,19 @@ func (c *documentClient) SoftDeleteMany(ctx context.Context, ids []int64, opts .
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetDocumentsInput{
-			Filter: &DocumentFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DocumentFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Document, error) {
+			return c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -27167,16 +27278,18 @@ func (c *documentClient) SoftDeleteWhere(ctx context.Context, filter *DocumentFi
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetDocumentsInput{
-			Filter: &DocumentFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DocumentFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Document, error) {
+			return c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -27323,15 +27436,18 @@ func (c *documentClient) RestoreMany(ctx context.Context, ids []int64, opts ...f
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetDocumentsInput{
-			Filter: &DocumentFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DocumentFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Document, error) {
+			return c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -27394,15 +27510,17 @@ func (c *documentClient) RestoreWhere(ctx context.Context, filter *DocumentFilte
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetDocumentsInput{
-			Filter: &DocumentFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DocumentFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Document, error) {
+			return c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -27859,16 +27977,18 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetDocumentsInput{
-			Filter: &DocumentFilter{
-				ID:        &comparator.Number[int64]{In: rowIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[DocumentFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Document, error) {
+			return c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID:        &comparator.Number[int64]{In: rowIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -29292,16 +29412,18 @@ func (c *itemNoteClient) CreateMany(ctx context.Context, inputs []*CreateItemNot
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetItemNotesInput{
-			Filter: &ItemNoteFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemNoteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*ItemNote, error) {
+			return c.GetMany(ctx, &GetItemNotesInput{
+				Filter: &ItemNoteFilter{
+					ID:        &comparator.Number[int64]{In: allIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -29644,16 +29766,19 @@ func (c *itemNoteClient) UpdateMany(ctx context.Context, items []UpdateItemNoteI
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetItemNotesInput{
-			Filter: &ItemNoteFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemNoteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*ItemNote, error) {
+			return c.GetMany(ctx, &GetItemNotesInput{
+				Filter: &ItemNoteFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -29752,16 +29877,18 @@ func (c *itemNoteClient) UpdateWhere(ctx context.Context, filter *ItemNoteFilter
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetItemNotesInput{
-			Filter: &ItemNoteFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemNoteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*ItemNote, error) {
+			return c.GetMany(ctx, &GetItemNotesInput{
+				Filter: &ItemNoteFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -29937,16 +30064,19 @@ func (c *itemNoteClient) SoftDeleteMany(ctx context.Context, ids []int64, opts .
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetItemNotesInput{
-			Filter: &ItemNoteFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemNoteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*ItemNote, error) {
+			return c.GetMany(ctx, &GetItemNotesInput{
+				Filter: &ItemNoteFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -30010,16 +30140,18 @@ func (c *itemNoteClient) SoftDeleteWhere(ctx context.Context, filter *ItemNoteFi
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetItemNotesInput{
-			Filter: &ItemNoteFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemNoteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*ItemNote, error) {
+			return c.GetMany(ctx, &GetItemNotesInput{
+				Filter: &ItemNoteFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -30166,15 +30298,18 @@ func (c *itemNoteClient) RestoreMany(ctx context.Context, ids []int64, opts ...f
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetItemNotesInput{
-			Filter: &ItemNoteFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemNoteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*ItemNote, error) {
+			return c.GetMany(ctx, &GetItemNotesInput{
+				Filter: &ItemNoteFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -30237,15 +30372,17 @@ func (c *itemNoteClient) RestoreWhere(ctx context.Context, filter *ItemNoteFilte
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetItemNotesInput{
-			Filter: &ItemNoteFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemNoteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*ItemNote, error) {
+			return c.GetMany(ctx, &GetItemNotesInput{
+				Filter: &ItemNoteFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -30704,16 +30841,18 @@ func (c *itemNoteClient) UpsertMany(ctx context.Context, inputs []*CreateItemNot
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetItemNotesInput{
-			Filter: &ItemNoteFilter{
-				ID:        &comparator.Number[int64]{In: rowIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemNoteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*ItemNote, error) {
+			return c.GetMany(ctx, &GetItemNotesInput{
+				Filter: &ItemNoteFilter{
+					ID:        &comparator.Number[int64]{In: rowIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -32436,15 +32575,17 @@ func (c *itemReceiptClient) CreateMany(ctx context.Context, inputs []*CreateItem
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetItemReceiptsInput{
-			Filter: &ItemReceiptFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemReceiptFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*ItemReceipt, error) {
+			return c.GetMany(ctx, &GetItemReceiptsInput{
+				Filter: &ItemReceiptFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemReceiptFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -32749,15 +32890,18 @@ func (c *itemReceiptClient) UpdateMany(ctx context.Context, items []UpdateItemRe
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetItemReceiptsInput{
-			Filter: &ItemReceiptFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemReceiptFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*ItemReceipt, error) {
+			return c.GetMany(ctx, &GetItemReceiptsInput{
+				Filter: &ItemReceiptFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemReceiptFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -32844,15 +32988,17 @@ func (c *itemReceiptClient) UpdateWhere(ctx context.Context, filter *ItemReceipt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetItemReceiptsInput{
-			Filter: &ItemReceiptFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemReceiptFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*ItemReceipt, error) {
+			return c.GetMany(ctx, &GetItemReceiptsInput{
+				Filter: &ItemReceiptFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemReceiptFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -33311,15 +33457,17 @@ func (c *itemReceiptClient) UpsertMany(ctx context.Context, inputs []*CreateItem
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetItemReceiptsInput{
-			Filter: &ItemReceiptFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ItemReceiptFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*ItemReceipt, error) {
+			return c.GetMany(ctx, &GetItemReceiptsInput{
+				Filter: &ItemReceiptFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ItemReceiptFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -34944,13 +35092,15 @@ func (c *itemStationClient) CreateMany(ctx context.Context, inputs []*CreateItem
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetItemStationsInput{
-			Filter: &ItemStationFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[ItemStationFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*ItemStation, error) {
+			return c.GetMany(ctx, &GetItemStationsInput{
+				Filter: &ItemStationFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[ItemStationFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -35165,13 +35315,16 @@ func (c *itemStationClient) UpdateMany(ctx context.Context, items []UpdateItemSt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetItemStationsInput{
-			Filter: &ItemStationFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[ItemStationFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk ItemStationPK) ItemStationPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*ItemStation, error) {
+			return c.GetMany(ctx, &GetItemStationsInput{
+				Filter: &ItemStationFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[ItemStationFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -35249,13 +35402,15 @@ func (c *itemStationClient) UpdateWhere(ctx context.Context, filter *ItemStation
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetItemStationsInput{
-			Filter: &ItemStationFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[ItemStationFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*ItemStation, error) {
+			return c.GetMany(ctx, &GetItemStationsInput{
+				Filter: &ItemStationFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[ItemStationFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -35702,13 +35857,15 @@ func (c *itemStationClient) UpsertMany(ctx context.Context, inputs []*CreateItem
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetItemStationsInput{
-			Filter: &ItemStationFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[ItemStationFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*ItemStation, error) {
+			return c.GetMany(ctx, &GetItemStationsInput{
+				Filter: &ItemStationFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[ItemStationFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -36952,16 +37109,18 @@ func (c *labelClient) CreateMany(ctx context.Context, inputs []*CreateLabelInput
 		for i, id := range allIDs {
 			idStrings[i] = id
 		}
-		return c.GetMany(ctx, &GetLabelsInput{
-			Filter: &LabelFilter{
-				Name:      &comparator.ID{In: idStrings},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*Label, error) {
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name:      &comparator.ID{In: idStrings[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -37214,16 +37373,19 @@ func (c *labelClient) UpdateMany(ctx context.Context, items []UpdateLabelItem, o
 		for i, id := range allIDs {
 			idStrings[i] = id
 		}
-		return c.GetMany(ctx, &GetLabelsInput{
-			Filter: &LabelFilter{
-				Name:      &comparator.ID{In: idStrings},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(idStrings, func(id string) string { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Label, error) {
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name:      &comparator.ID{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -37313,16 +37475,18 @@ func (c *labelClient) UpdateWhere(ctx context.Context, filter *LabelFilter, inpu
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetLabelsInput{
-			Filter: &LabelFilter{
-				Name:      &comparator.ID{In: ids},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Label, error) {
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name:      &comparator.ID{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -37503,16 +37667,19 @@ func (c *labelClient) SoftDeleteMany(ctx context.Context, ids []string, opts ...
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetLabelsInput{
-			Filter: &LabelFilter{
-				Name:      &comparator.ID{In: idStrings},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(idStrings, func(id string) string { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Label, error) {
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name:      &comparator.ID{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -37576,16 +37743,18 @@ func (c *labelClient) SoftDeleteWhere(ctx context.Context, filter *LabelFilter, 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetLabelsInput{
-			Filter: &LabelFilter{
-				Name:      &comparator.ID{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Label, error) {
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name:      &comparator.ID{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -37737,15 +37906,18 @@ func (c *labelClient) RestoreMany(ctx context.Context, ids []string, opts ...fun
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetLabelsInput{
-			Filter: &LabelFilter{
-				Name: &comparator.ID{In: idStrings},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(idStrings, func(id string) string { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Label, error) {
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name: &comparator.ID{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -37808,15 +37980,17 @@ func (c *labelClient) RestoreWhere(ctx context.Context, filter *LabelFilter, opt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetLabelsInput{
-			Filter: &LabelFilter{
-				Name: &comparator.ID{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Label, error) {
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name: &comparator.ID{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -38240,16 +38414,18 @@ func (c *labelClient) UpsertMany(ctx context.Context, inputs []*CreateLabelInput
 		for i, id := range rowIDs {
 			idStrings[i] = id
 		}
-		written, err := c.GetMany(ctx, &GetLabelsInput{
-			Filter: &LabelFilter{
-				Name:      &comparator.ID{In: idStrings},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*Label, error) {
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name:      &comparator.ID{In: idStrings[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -39475,15 +39651,17 @@ func (c *lockerClient) CreateMany(ctx context.Context, inputs []*CreateLockerInp
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetLockersInput{
-			Filter: &LockerFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LockerFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Locker, error) {
+			return c.GetMany(ctx, &GetLockersInput{
+				Filter: &LockerFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LockerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -39788,15 +39966,18 @@ func (c *lockerClient) UpdateMany(ctx context.Context, items []UpdateLockerItem,
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetLockersInput{
-			Filter: &LockerFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LockerFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Locker, error) {
+			return c.GetMany(ctx, &GetLockersInput{
+				Filter: &LockerFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LockerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -39883,15 +40064,17 @@ func (c *lockerClient) UpdateWhere(ctx context.Context, filter *LockerFilter, in
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetLockersInput{
-			Filter: &LockerFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LockerFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Locker, error) {
+			return c.GetMany(ctx, &GetLockersInput{
+				Filter: &LockerFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LockerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -40366,15 +40549,17 @@ func (c *lockerClient) UpsertMany(ctx context.Context, inputs []*CreateLockerInp
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetLockersInput{
-			Filter: &LockerFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[LockerFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Locker, error) {
+			return c.GetMany(ctx, &GetLockersInput{
+				Filter: &LockerFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LockerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -42349,13 +42534,15 @@ func (c *orderItemClient) CreateMany(ctx context.Context, inputs []*CreateOrderI
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetOrderItemsInput{
-			Filter: &OrderItemFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OrderItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*OrderItem, error) {
+			return c.GetMany(ctx, &GetOrderItemsInput{
+				Filter: &OrderItemFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OrderItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -42576,13 +42763,16 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOrderItemsInput{
-			Filter: &OrderItemFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OrderItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk OrderItemPK) OrderItemPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*OrderItem, error) {
+			return c.GetMany(ctx, &GetOrderItemsInput{
+				Filter: &OrderItemFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OrderItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -42663,13 +42853,15 @@ func (c *orderItemClient) UpdateWhere(ctx context.Context, filter *OrderItemFilt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOrderItemsInput{
-			Filter: &OrderItemFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[OrderItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*OrderItem, error) {
+			return c.GetMany(ctx, &GetOrderItemsInput{
+				Filter: &OrderItemFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OrderItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -43114,13 +43306,15 @@ func (c *orderItemClient) UpsertMany(ctx context.Context, inputs []*CreateOrderI
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetOrderItemsInput{
-			Filter: &OrderItemFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OrderItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*OrderItem, error) {
+			return c.GetMany(ctx, &GetOrderItemsInput{
+				Filter: &OrderItemFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OrderItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -44908,15 +45102,17 @@ func (c *parcelClient) CreateMany(ctx context.Context, inputs []*CreateParcelInp
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetParcelsInput{
-			Filter: &ParcelFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ParcelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Parcel, error) {
+			return c.GetMany(ctx, &GetParcelsInput{
+				Filter: &ParcelFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ParcelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -45221,15 +45417,18 @@ func (c *parcelClient) UpdateMany(ctx context.Context, items []UpdateParcelItem,
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetParcelsInput{
-			Filter: &ParcelFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ParcelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Parcel, error) {
+			return c.GetMany(ctx, &GetParcelsInput{
+				Filter: &ParcelFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ParcelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -45316,15 +45515,17 @@ func (c *parcelClient) UpdateWhere(ctx context.Context, filter *ParcelFilter, in
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetParcelsInput{
-			Filter: &ParcelFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ParcelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Parcel, error) {
+			return c.GetMany(ctx, &GetParcelsInput{
+				Filter: &ParcelFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ParcelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -45799,15 +46000,17 @@ func (c *parcelClient) UpsertMany(ctx context.Context, inputs []*CreateParcelInp
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetParcelsInput{
-			Filter: &ParcelFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ParcelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Parcel, error) {
+			return c.GetMany(ctx, &GetParcelsInput{
+				Filter: &ParcelFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ParcelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -47451,15 +47654,17 @@ func (c *permitClient) CreateMany(ctx context.Context, inputs []*CreatePermitInp
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetPermitsInput{
-			Filter: &PermitFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PermitFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Permit, error) {
+			return c.GetMany(ctx, &GetPermitsInput{
+				Filter: &PermitFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -47752,15 +47957,18 @@ func (c *permitClient) UpdateMany(ctx context.Context, items []UpdatePermitItem,
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetPermitsInput{
-			Filter: &PermitFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PermitFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Permit, error) {
+			return c.GetMany(ctx, &GetPermitsInput{
+				Filter: &PermitFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -47841,15 +48049,17 @@ func (c *permitClient) UpdateWhere(ctx context.Context, filter *PermitFilter, in
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetPermitsInput{
-			Filter: &PermitFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PermitFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Permit, error) {
+			return c.GetMany(ctx, &GetPermitsInput{
+				Filter: &PermitFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -48306,15 +48516,17 @@ func (c *permitClient) UpsertMany(ctx context.Context, inputs []*CreatePermitInp
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetPermitsInput{
-			Filter: &PermitFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PermitFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Permit, error) {
+			return c.GetMany(ctx, &GetPermitsInput{
+				Filter: &PermitFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -50251,16 +50463,18 @@ func (c *postClient) CreateMany(ctx context.Context, inputs []*CreatePostInput, 
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetPostsInput{
-			Filter: &PostFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PostFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Post, error) {
+			return c.GetMany(ctx, &GetPostsInput{
+				Filter: &PostFilter{
+					ID:        &comparator.Number[int64]{In: allIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -50603,16 +50817,19 @@ func (c *postClient) UpdateMany(ctx context.Context, items []UpdatePostItem, opt
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetPostsInput{
-			Filter: &PostFilter{
-				ID:        &comparator.Number[int64]{In: allIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PostFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Post, error) {
+			return c.GetMany(ctx, &GetPostsInput{
+				Filter: &PostFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -50711,16 +50928,18 @@ func (c *postClient) UpdateWhere(ctx context.Context, filter *PostFilter, input 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetPostsInput{
-			Filter: &PostFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PostFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Post, error) {
+			return c.GetMany(ctx, &GetPostsInput{
+				Filter: &PostFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -50896,16 +51115,19 @@ func (c *postClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ...fu
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetPostsInput{
-			Filter: &PostFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PostFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Post, error) {
+			return c.GetMany(ctx, &GetPostsInput{
+				Filter: &PostFilter{
+					ID:        &comparator.Number[int64]{In: readKeys[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -50969,16 +51191,18 @@ func (c *postClient) SoftDeleteWhere(ctx context.Context, filter *PostFilter, op
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetPostsInput{
-			Filter: &PostFilter{
-				ID:        &comparator.Number[int64]{In: ids},
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PostFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Post, error) {
+			return c.GetMany(ctx, &GetPostsInput{
+				Filter: &PostFilter{
+					ID:        &comparator.Number[int64]{In: ids[lo:hi]},
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -51125,15 +51349,18 @@ func (c *postClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetPostsInput{
-			Filter: &PostFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PostFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(ids, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Post, error) {
+			return c.GetMany(ctx, &GetPostsInput{
+				Filter: &PostFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -51196,15 +51423,17 @@ func (c *postClient) RestoreWhere(ctx context.Context, filter *PostFilter, opts 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetPostsInput{
-			Filter: &PostFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PostFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Post, error) {
+			return c.GetMany(ctx, &GetPostsInput{
+				Filter: &PostFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -51681,16 +51910,18 @@ func (c *postClient) UpsertMany(ctx context.Context, inputs []*CreatePostInput, 
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetPostsInput{
-			Filter: &PostFilter{
-				ID:        &comparator.Number[int64]{In: rowIDs},
-				DeletedAt: &comparator.NullableTime{},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[PostFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Post, error) {
+			return c.GetMany(ctx, &GetPostsInput{
+				Filter: &PostFilter{
+					ID:        &comparator.Number[int64]{In: rowIDs[lo:hi]},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PostFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -53437,15 +53668,17 @@ func (c *productClient) CreateMany(ctx context.Context, inputs []*CreateProductI
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -53750,15 +53983,18 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -53845,15 +54081,17 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -54319,15 +54557,17 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetProductsInput{
-			Filter: &ProductFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ProductFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Product, error) {
+			return c.GetMany(ctx, &GetProductsInput{
+				Filter: &ProductFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ProductFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -55813,13 +56053,15 @@ func (c *revisionClient) CreateMany(ctx context.Context, inputs []*CreateRevisio
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: allPKs, DeletedAt: &comparator.NullableTime{}},
-			Limit:  new(0),
-		}, func(o *CallOptions[RevisionFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*Revision, error) {
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{PKs: allPKs[lo:hi], DeletedAt: &comparator.NullableTime{}},
+				Limit:  new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -56078,13 +56320,16 @@ func (c *revisionClient) UpdateMany(ctx context.Context, items []UpdateRevisionI
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: allPKs, DeletedAt: &comparator.NullableTime{}},
-			Limit:  new(0),
-		}, func(o *CallOptions[RevisionFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk RevisionPK) RevisionPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Revision, error) {
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{PKs: readKeys[lo:hi], DeletedAt: &comparator.NullableTime{}},
+				Limit:  new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -56177,13 +56422,15 @@ func (c *revisionClient) UpdateWhere(ctx context.Context, filter *RevisionFilter
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: pks, DeletedAt: &comparator.NullableTime{}},
-			Limit:  new(0),
-		}, func(o *CallOptions[RevisionFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*Revision, error) {
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{PKs: pks[lo:hi], DeletedAt: &comparator.NullableTime{}},
+				Limit:  new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -56368,16 +56615,19 @@ func (c *revisionClient) SoftDeleteMany(ctx context.Context, pks []RevisionPK, o
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{
-				PKs:       pks,
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[RevisionFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(pks, func(pk RevisionPK) RevisionPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Revision, error) {
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{
+					PKs:       readKeys[lo:hi],
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -56441,16 +56691,18 @@ func (c *revisionClient) SoftDeleteWhere(ctx context.Context, filter *RevisionFi
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{
-				PKs:       pks,
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[RevisionFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*Revision, error) {
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{
+					PKs:       pks[lo:hi],
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -56605,13 +56857,16 @@ func (c *revisionClient) RestoreMany(ctx context.Context, pks []RevisionPK, opts
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[RevisionFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(pks, func(pk RevisionPK) RevisionPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Revision, error) {
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -56674,13 +56929,15 @@ func (c *revisionClient) RestoreWhere(ctx context.Context, filter *RevisionFilte
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[RevisionFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*Revision, error) {
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -57126,13 +57383,15 @@ func (c *revisionClient) UpsertMany(ctx context.Context, inputs []*CreateRevisio
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: rowPKs, DeletedAt: &comparator.NullableTime{}},
-			Limit:  new(0),
-		}, func(o *CallOptions[RevisionFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*Revision, error) {
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{PKs: rowPKs[lo:hi], DeletedAt: &comparator.NullableTime{}},
+				Limit:  new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -58510,15 +58769,17 @@ func (c *routeClient) CreateMany(ctx context.Context, inputs []*CreateRouteInput
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetRoutesInput{
-			Filter: &RouteFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[RouteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Route, error) {
+			return c.GetMany(ctx, &GetRoutesInput{
+				Filter: &RouteFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -58817,15 +59078,18 @@ func (c *routeClient) UpdateMany(ctx context.Context, items []UpdateRouteItem, o
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetRoutesInput{
-			Filter: &RouteFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[RouteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Route, error) {
+			return c.GetMany(ctx, &GetRoutesInput{
+				Filter: &RouteFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -58909,15 +59173,17 @@ func (c *routeClient) UpdateWhere(ctx context.Context, filter *RouteFilter, inpu
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetRoutesInput{
-			Filter: &RouteFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[RouteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Route, error) {
+			return c.GetMany(ctx, &GetRoutesInput{
+				Filter: &RouteFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -59375,15 +59641,17 @@ func (c *routeClient) UpsertMany(ctx context.Context, inputs []*CreateRouteInput
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetRoutesInput{
-			Filter: &RouteFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[RouteFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Route, error) {
+			return c.GetMany(ctx, &GetRoutesInput{
+				Filter: &RouteFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -61525,15 +61793,17 @@ func (c *sealClient) CreateMany(ctx context.Context, inputs []*CreateSealInput, 
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetSealsInput{
-			Filter: &SealFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[SealFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Seal, error) {
+			return c.GetMany(ctx, &GetSealsInput{
+				Filter: &SealFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -61826,15 +62096,18 @@ func (c *sealClient) UpdateMany(ctx context.Context, items []UpdateSealItem, opt
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetSealsInput{
-			Filter: &SealFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[SealFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Seal, error) {
+			return c.GetMany(ctx, &GetSealsInput{
+				Filter: &SealFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -61915,15 +62188,17 @@ func (c *sealClient) UpdateWhere(ctx context.Context, filter *SealFilter, input 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetSealsInput{
-			Filter: &SealFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[SealFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Seal, error) {
+			return c.GetMany(ctx, &GetSealsInput{
+				Filter: &SealFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -62378,15 +62653,17 @@ func (c *sealClient) UpsertMany(ctx context.Context, inputs []*CreateSealInput, 
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetSealsInput{
-			Filter: &SealFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[SealFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Seal, error) {
+			return c.GetMany(ctx, &GetSealsInput{
+				Filter: &SealFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -64378,15 +64655,17 @@ func (c *shelfClient) CreateMany(ctx context.Context, inputs []*CreateShelfInput
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetShelvesInput{
-			Filter: &ShelfFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ShelfFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Shelf, error) {
+			return c.GetMany(ctx, &GetShelvesInput{
+				Filter: &ShelfFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ShelfFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -64691,15 +64970,18 @@ func (c *shelfClient) UpdateMany(ctx context.Context, items []UpdateShelfItem, o
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetShelvesInput{
-			Filter: &ShelfFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ShelfFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Shelf, error) {
+			return c.GetMany(ctx, &GetShelvesInput{
+				Filter: &ShelfFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ShelfFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -64786,15 +65068,17 @@ func (c *shelfClient) UpdateWhere(ctx context.Context, filter *ShelfFilter, inpu
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetShelvesInput{
-			Filter: &ShelfFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ShelfFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Shelf, error) {
+			return c.GetMany(ctx, &GetShelvesInput{
+				Filter: &ShelfFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ShelfFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -65273,15 +65557,17 @@ func (c *shelfClient) UpsertMany(ctx context.Context, inputs []*CreateShelfInput
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetShelvesInput{
-			Filter: &ShelfFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ShelfFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Shelf, error) {
+			return c.GetMany(ctx, &GetShelvesInput{
+				Filter: &ShelfFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ShelfFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -66809,15 +67095,17 @@ func (c *slotClient) CreateMany(ctx context.Context, inputs []*CreateSlotInput, 
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetSlotsInput{
-			Filter: &SlotFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[SlotFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Slot, error) {
+			return c.GetMany(ctx, &GetSlotsInput{
+				Filter: &SlotFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SlotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -67122,15 +67410,18 @@ func (c *slotClient) UpdateMany(ctx context.Context, items []UpdateSlotItem, opt
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetSlotsInput{
-			Filter: &SlotFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[SlotFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Slot, error) {
+			return c.GetMany(ctx, &GetSlotsInput{
+				Filter: &SlotFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SlotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -67217,15 +67508,17 @@ func (c *slotClient) UpdateWhere(ctx context.Context, filter *SlotFilter, input 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetSlotsInput{
-			Filter: &SlotFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[SlotFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Slot, error) {
+			return c.GetMany(ctx, &GetSlotsInput{
+				Filter: &SlotFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SlotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -67700,15 +67993,17 @@ func (c *slotClient) UpsertMany(ctx context.Context, inputs []*CreateSlotInput, 
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetSlotsInput{
-			Filter: &SlotFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[SlotFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Slot, error) {
+			return c.GetMany(ctx, &GetSlotsInput{
+				Filter: &SlotFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SlotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -69338,15 +69633,17 @@ func (c *stationClient) CreateMany(ctx context.Context, inputs []*CreateStationI
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetStationsInput{
-			Filter: &StationFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[StationFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Station, error) {
+			return c.GetMany(ctx, &GetStationsInput{
+				Filter: &StationFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[StationFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -69645,15 +69942,18 @@ func (c *stationClient) UpdateMany(ctx context.Context, items []UpdateStationIte
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetStationsInput{
-			Filter: &StationFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[StationFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Station, error) {
+			return c.GetMany(ctx, &GetStationsInput{
+				Filter: &StationFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[StationFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -69737,15 +70037,17 @@ func (c *stationClient) UpdateWhere(ctx context.Context, filter *StationFilter, 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetStationsInput{
-			Filter: &StationFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[StationFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Station, error) {
+			return c.GetMany(ctx, &GetStationsInput{
+				Filter: &StationFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[StationFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -70203,15 +70505,17 @@ func (c *stationClient) UpsertMany(ctx context.Context, inputs []*CreateStationI
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetStationsInput{
-			Filter: &StationFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[StationFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Station, error) {
+			return c.GetMany(ctx, &GetStationsInput{
+				Filter: &StationFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[StationFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -71830,15 +72134,17 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetTagsInput{
-			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TagFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Tag, error) {
+			return c.GetMany(ctx, &GetTagsInput{
+				Filter: &TagFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -72131,15 +72437,18 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetTagsInput{
-			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TagFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Tag, error) {
+			return c.GetMany(ctx, &GetTagsInput{
+				Filter: &TagFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -72220,15 +72529,17 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetTagsInput{
-			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TagFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Tag, error) {
+			return c.GetMany(ctx, &GetTagsInput{
+				Filter: &TagFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -72685,15 +72996,17 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetTagsInput{
-			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TagFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Tag, error) {
+			return c.GetMany(ctx, &GetTagsInput{
+				Filter: &TagFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -74741,15 +75054,17 @@ func (c *toolClient) CreateMany(ctx context.Context, inputs []*CreateToolInput, 
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetToolsInput{
-			Filter: &ToolFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ToolFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Tool, error) {
+			return c.GetMany(ctx, &GetToolsInput{
+				Filter: &ToolFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -75048,15 +75363,18 @@ func (c *toolClient) UpdateMany(ctx context.Context, items []UpdateToolItem, opt
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetToolsInput{
-			Filter: &ToolFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ToolFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Tool, error) {
+			return c.GetMany(ctx, &GetToolsInput{
+				Filter: &ToolFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -75140,15 +75458,17 @@ func (c *toolClient) UpdateWhere(ctx context.Context, filter *ToolFilter, input 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetToolsInput{
-			Filter: &ToolFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ToolFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Tool, error) {
+			return c.GetMany(ctx, &GetToolsInput{
+				Filter: &ToolFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -75606,15 +75926,17 @@ func (c *toolClient) UpsertMany(ctx context.Context, inputs []*CreateToolInput, 
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetToolsInput{
-			Filter: &ToolFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[ToolFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Tool, error) {
+			return c.GetMany(ctx, &GetToolsInput{
+				Filter: &ToolFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -77458,13 +77780,15 @@ func (c *vanPermitClient) CreateMany(ctx context.Context, inputs []*CreateVanPer
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetVanPermitsInput{
-			Filter: &VanPermitFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[VanPermitFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*VanPermit, error) {
+			return c.GetMany(ctx, &GetVanPermitsInput{
+				Filter: &VanPermitFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[VanPermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -77679,13 +78003,16 @@ func (c *vanPermitClient) UpdateMany(ctx context.Context, items []UpdateVanPermi
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetVanPermitsInput{
-			Filter: &VanPermitFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[VanPermitFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk VanPermitPK) VanPermitPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*VanPermit, error) {
+			return c.GetMany(ctx, &GetVanPermitsInput{
+				Filter: &VanPermitFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[VanPermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -77763,13 +78090,15 @@ func (c *vanPermitClient) UpdateWhere(ctx context.Context, filter *VanPermitFilt
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetVanPermitsInput{
-			Filter: &VanPermitFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[VanPermitFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*VanPermit, error) {
+			return c.GetMany(ctx, &GetVanPermitsInput{
+				Filter: &VanPermitFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[VanPermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -78213,13 +78542,15 @@ func (c *vanPermitClient) UpsertMany(ctx context.Context, inputs []*CreateVanPer
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetVanPermitsInput{
-			Filter: &VanPermitFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[VanPermitFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*VanPermit, error) {
+			return c.GetMany(ctx, &GetVanPermitsInput{
+				Filter: &VanPermitFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[VanPermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -79375,13 +79706,15 @@ func (c *vanToolClient) CreateMany(ctx context.Context, inputs []*CreateVanToolI
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetVanToolsInput{
-			Filter: &VanToolFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[VanToolFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*VanTool, error) {
+			return c.GetMany(ctx, &GetVanToolsInput{
+				Filter: &VanToolFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[VanToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -79596,13 +79929,16 @@ func (c *vanToolClient) UpdateMany(ctx context.Context, items []UpdateVanToolIte
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetVanToolsInput{
-			Filter: &VanToolFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[VanToolFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk VanToolPK) VanToolPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*VanTool, error) {
+			return c.GetMany(ctx, &GetVanToolsInput{
+				Filter: &VanToolFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[VanToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -79680,13 +80016,15 @@ func (c *vanToolClient) UpdateWhere(ctx context.Context, filter *VanToolFilter, 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetVanToolsInput{
-			Filter: &VanToolFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[VanToolFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*VanTool, error) {
+			return c.GetMany(ctx, &GetVanToolsInput{
+				Filter: &VanToolFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[VanToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -80133,13 +80471,15 @@ func (c *vanToolClient) UpsertMany(ctx context.Context, inputs []*CreateVanToolI
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetVanToolsInput{
-			Filter: &VanToolFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[VanToolFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*VanTool, error) {
+			return c.GetMany(ctx, &GetVanToolsInput{
+				Filter: &VanToolFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[VanToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -81825,15 +82165,17 @@ func (c *vanClient) CreateMany(ctx context.Context, inputs []*CreateVanInput, op
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetVansInput{
-			Filter: &VanFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[VanFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*Van, error) {
+			return c.GetMany(ctx, &GetVansInput{
+				Filter: &VanFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -82144,15 +82486,18 @@ func (c *vanClient) UpdateMany(ctx context.Context, items []UpdateVanItem, opts 
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetVansInput{
-			Filter: &VanFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[VanFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Van, error) {
+			return c.GetMany(ctx, &GetVansInput{
+				Filter: &VanFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -82242,15 +82587,17 @@ func (c *vanClient) UpdateWhere(ctx context.Context, filter *VanFilter, input *U
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetVansInput{
-			Filter: &VanFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[VanFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*Van, error) {
+			return c.GetMany(ctx, &GetVansInput{
+				Filter: &VanFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -82728,15 +83075,17 @@ func (c *vanClient) UpsertMany(ctx context.Context, inputs []*CreateVanInput, ta
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetVansInput{
-			Filter: &VanFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[VanFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*Van, error) {
+			return c.GetMany(ctx, &GetVansInput{
+				Filter: &VanFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

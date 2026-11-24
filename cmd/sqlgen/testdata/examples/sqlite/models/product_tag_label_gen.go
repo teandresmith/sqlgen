@@ -511,13 +511,15 @@ func (c *productTagLabelClient) CreateMany(ctx context.Context, inputs []*Create
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetProductTagLabelsInput{
-			Filter: &ProductTagLabelFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*ProductTagLabel, error) {
+			return c.GetMany(ctx, &GetProductTagLabelsInput{
+				Filter: &ProductTagLabelFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -710,13 +712,16 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetProductTagLabelsInput{
-			Filter: &ProductTagLabelFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk ProductTagLabelPK) ProductTagLabelPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*ProductTagLabel, error) {
+			return c.GetMany(ctx, &GetProductTagLabelsInput{
+				Filter: &ProductTagLabelFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -807,13 +812,15 @@ func (c *productTagLabelClient) UpdateWhere(ctx context.Context, filter *Product
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetProductTagLabelsInput{
-			Filter: &ProductTagLabelFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*ProductTagLabel, error) {
+			return c.GetMany(ctx, &GetProductTagLabelsInput{
+				Filter: &ProductTagLabelFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1217,13 +1224,15 @@ func (c *productTagLabelClient) UpsertMany(ctx context.Context, inputs []*Create
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetProductTagLabelsInput{
-			Filter: &ProductTagLabelFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*ProductTagLabel, error) {
+			return c.GetMany(ctx, &GetProductTagLabelsInput{
+				Filter: &ProductTagLabelFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[ProductTagLabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err

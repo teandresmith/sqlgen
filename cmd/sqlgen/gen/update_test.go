@@ -314,7 +314,8 @@ func TestUpdateTemplate_updateMany_pgx(t *testing.T) {
 		"allIDs = append(allIDs, item.ID)",
 		// Re-fetch
 		"idStrings[i] = id.String()",
-		`ID: &comparator.ID{In: idStrings}`,
+		"readKeys := distinctKeys(idStrings, func(id string) string { return id })",
+		`ID: &comparator.ID{In: readKeys[lo:hi]}`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {
@@ -431,7 +432,7 @@ func TestUpdateTemplate_updateWhere_postgres(t *testing.T) {
 		"rows.Scan(&id)",
 		`ids = append(ids, id.String())`,
 		// Re-fetch
-		`ID: &comparator.ID{In: ids}`,
+		`ID: &comparator.ID{In: ids[lo:hi]}`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {
@@ -520,7 +521,8 @@ func TestUpdateTemplate_compositePK_updateMany(t *testing.T) {
 		"Input *UpdateOrderItemInput",
 		"var allPKs []OrderItemPK",
 		"allPKs = append(allPKs, item.PK)",
-		`Filter: &OrderItemFilter{PKs: allPKs}`,
+		"readKeys := distinctKeys(allPKs, func(pk OrderItemPK) OrderItemPK { return pk })",
+		`Filter: &OrderItemFilter{PKs: readKeys[lo:hi]}`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {
@@ -538,7 +540,7 @@ func TestUpdateTemplate_compositePK_updateWhere(t *testing.T) {
 		// RETURNING for composite PK on PostgreSQL
 		`ReturningColumns: []string{"order_id", "product_id", }`,
 		"rows.Scan(&pk.OrderID, &pk.ProductID)",
-		`Filter: &OrderItemFilter{PKs: pks}`,
+		`Filter: &OrderItemFilter{PKs: pks[lo:hi]}`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {
