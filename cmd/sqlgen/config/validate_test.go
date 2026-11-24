@@ -419,7 +419,7 @@ func schemaTables() []config.SchemaTable {
 			Columns: []config.SchemaColumn{
 				{Name: "id", Type: "bigint", PrimaryKey: true},
 				{Name: "name", Type: "text"},
-				{Name: "email", Type: "text"},
+				{Name: "email", Type: "text", Unique: true},
 				{Name: "deleted_at", Type: "timestamp"},
 			},
 		},

@@ -28,6 +28,22 @@ type IncrementInput[C ~string] struct {
 	Amount int `json:"amount"`
 }
 
+// distinctKeys returns keys without repeats, in first-seen order, so a batch
+// call that lists a key twice reads its row back once.
+func distinctKeys[K any, S comparable](keys []K, setKey func(K) S) []K {
+	seen := make(map[S]struct{}, len(keys))
+	result := make([]K, 0, len(keys))
+	for _, k := range keys {
+		sk := setKey(k)
+		if _, dup := seen[sk]; dup {
+			continue
+		}
+		seen[sk] = struct{}{}
+		result = append(result, k)
+	}
+	return result
+}
+
 // excludeColumns returns columns with any entries in exclude removed.
 func excludeColumns(columns, exclude []string) []string {
 	excludeSet := make(map[string]bool, len(exclude))
@@ -58,6 +74,25 @@ func nestedChildOptions[FO, PFO any](o *CallOptions[FO], parent CallOptions[PFO]
 // nil when the failure is not id-scoped.
 func nestedError(edge, verb string, id any, err error) error {
 	return &NestedMutationError{Edge: edge, Verb: verb, ID: id, Err: err}
+}
+
+// refetchInChunks reads back the n rows a batch write named, at most size keys
+// per statement, so the read-back stays inside every dialect ceiling the writes
+// cleared (SQLite's expression depth of 1000 for a composite key's OR of ANDs,
+// its 32766 bind parameters, 65535 on MySQL and PostgreSQL).
+func refetchInChunks[E any](n, size int, fetch func(lo, hi int) ([]E, error)) ([]E, error) {
+	if size <= 0 || n <= size {
+		return fetch(0, n)
+	}
+	result := make([]E, 0, n)
+	for lo := 0; lo < n; lo += size {
+		rows, err := fetch(lo, min(lo+size, n))
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, rows...)
+	}
+	return result, nil
 }
 
 // resolveCallOptions applies option functions and returns the resolved struct. SkipHooks implies SkipCache and SkipEvents because cache and events are implemented as hooks.
@@ -169,6 +204,49 @@ func upsertDedupeKey(row []any, positions []int) (string, bool) {
 		key += fmt.Sprintf("%d:%s", len(s), s)
 	}
 	return key, true
+}
+
+// upsertUpdateGroups splits one UpsertMany sub-batch by the update columns each
+// row sets, so a conflict updates only what the row's input set — the rule the
+// single-row Upsert follows. A batch binds every input column in every row, and
+// an unset field binds DEFAULT, so one shared update list would reset every
+// column a row left unset on the conflicting row. Rows keep their order within
+// a group, and groups come in order of first appearance; a homogeneous batch is
+// one group, so one statement.
+func upsertUpdateGroups(columns, updateColumns []string, rows [][]any) ([][]string, [][][]any) {
+	positions := make([]int, len(updateColumns))
+	for i, col := range updateColumns {
+		positions[i] = slices.Index(columns, col)
+	}
+	var sets [][]string
+	var groups [][][]any
+	byMask := make(map[string]int)
+	mask := make([]byte, len(positions))
+	for _, row := range rows {
+		for i, pos := range positions {
+			_, isExpr := row[pos].(sql.DefaultExpr)
+			if row[pos] == sql.Default || isExpr {
+				mask[i] = '0'
+			} else {
+				mask[i] = '1'
+			}
+		}
+		g, ok := byMask[string(mask)]
+		if !ok {
+			g = len(groups)
+			byMask[string(mask)] = g
+			set := make([]string, 0, len(positions))
+			for i, col := range updateColumns {
+				if mask[i] == '1' {
+					set = append(set, col)
+				}
+			}
+			sets = append(sets, set)
+			groups = append(groups, nil)
+		}
+		groups[g] = append(groups[g], row)
+	}
+	return sets, groups
 }
 
 // FilterOption carries the per-call data a filter needs, beyond the dialect,

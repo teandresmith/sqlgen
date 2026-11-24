@@ -155,16 +155,19 @@ func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOrderItemsInput{
-			Filter: &OrderItemFilter{
-				PKs:       pks,
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[OrderItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(pks, func(pk OrderItemPK) OrderItemPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*OrderItem, error) {
+			return c.GetMany(ctx, &GetOrderItemsInput{
+				Filter: &OrderItemFilter{
+					PKs:       readKeys[lo:hi],
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[OrderItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -238,16 +241,18 @@ func (c *orderItemClient) SoftDeleteWhere(ctx context.Context, filter *OrderItem
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOrderItemsInput{
-			Filter: &OrderItemFilter{
-				PKs:       pks,
-				DeletedAt: &comparator.NullableTime{Null: new(false)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[OrderItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*OrderItem, error) {
+			return c.GetMany(ctx, &GetOrderItemsInput{
+				Filter: &OrderItemFilter{
+					PKs:       pks[lo:hi],
+					DeletedAt: &comparator.NullableTime{Null: new(false)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[OrderItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -398,13 +403,16 @@ func (c *orderItemClient) RestoreMany(ctx context.Context, pks []OrderItemPK, op
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOrderItemsInput{
-			Filter: &OrderItemFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[OrderItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(pks, func(pk OrderItemPK) OrderItemPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*OrderItem, error) {
+			return c.GetMany(ctx, &GetOrderItemsInput{
+				Filter: &OrderItemFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OrderItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -477,13 +485,15 @@ func (c *orderItemClient) RestoreWhere(ctx context.Context, filter *OrderItemFil
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOrderItemsInput{
-			Filter: &OrderItemFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[OrderItemFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*OrderItem, error) {
+			return c.GetMany(ctx, &GetOrderItemsInput{
+				Filter: &OrderItemFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OrderItemFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {

@@ -252,7 +252,7 @@ func sharedTypeDefinitions(tenancyEnabled bool, tenantGoType string) []SharedTyp
 // sharedHelperDefinitions returns the shared helper function definitions
 // matching PRD Section 9.8 exactly. hasExplicitTenant adds the §29.4.4
 // explicit-tenant precedence normalization to resolveCallOptions;
-// hasUpsertMany adds the two helpers the batched upsert dedupe needs (§9.5),
+// hasUpsertMany adds the three helpers the batched upsert needs (§9.5),
 // gated so a package that generates no UpsertMany keeps its previous output
 // and does not carry a helper nothing calls.
 func sharedHelperDefinitions(hasExplicitTenant, hasUpsertMany bool, nested nestedHelperShape) []SharedHelperDefinition {
@@ -322,6 +322,7 @@ func sharedHelperDefinitions(hasExplicitTenant, hasUpsertMany bool, nested neste
 		helpers = append(helpers, upsertDedupeHelpers()...)
 	}
 	helpers = append(helpers, nestedMutationHelpers(nested)...)
+	helpers = append(helpers, readBackHelpers()...)
 	// Emitted in name order, which the base list already happened to be in and
 	// which the gated groups have to join rather than trail: a helper appended
 	// at the end would move on the day a later group is added in front of it.
@@ -462,6 +463,57 @@ func upsertDedupeHelpers() []SharedHelperDefinition {
 	}
 	return key, true`,
 		},
+		upsertUpdateGroupsHelper(),
+	}
+}
+
+// upsertUpdateGroupsHelper is the third batched-upsert helper, split out of
+// upsertDedupeHelpers for length. Behavior coverage for its body lives in the
+// UpsertMany example tests (TestUpsertMany_ConflictLeavesUnsetColumnsAlone).
+func upsertUpdateGroupsHelper() SharedHelperDefinition {
+	return SharedHelperDefinition{
+		Name:      "upsertUpdateGroups",
+		Signature: "(columns, updateColumns []string, rows [][]any) ([][]string, [][][]any)",
+		Doc: `upsertUpdateGroups splits one UpsertMany sub-batch by the update columns each
+// row sets, so a conflict updates only what the row's input set — the rule the
+// single-row Upsert follows. A batch binds every input column in every row, and
+// an unset field binds DEFAULT, so one shared update list would reset every
+// column a row left unset on the conflicting row. Rows keep their order within
+// a group, and groups come in order of first appearance; a homogeneous batch is
+// one group, so one statement.`,
+		Body: `	positions := make([]int, len(updateColumns))
+	for i, col := range updateColumns {
+		positions[i] = slices.Index(columns, col)
+	}
+	var sets [][]string
+	var groups [][][]any
+	byMask := make(map[string]int)
+	mask := make([]byte, len(positions))
+	for _, row := range rows {
+		for i, pos := range positions {
+			_, isExpr := row[pos].(sql.DefaultExpr)
+			if row[pos] == sql.Default || isExpr {
+				mask[i] = '0'
+			} else {
+				mask[i] = '1'
+			}
+		}
+		g, ok := byMask[string(mask)]
+		if !ok {
+			g = len(groups)
+			byMask[string(mask)] = g
+			set := make([]string, 0, len(positions))
+			for i, col := range updateColumns {
+				if mask[i] == '1' {
+					set = append(set, col)
+				}
+			}
+			sets = append(sets, set)
+			groups = append(groups, nil)
+		}
+		groups[g] = append(groups[g], row)
+	}
+	return sets, groups`,
 	}
 }
 
@@ -497,4 +549,49 @@ func resolveCallOptionsBody(hasExplicitTenant bool) string {
 `
 	}
 	return body + `	return options`
+}
+
+// readBackHelpers returns the helpers a batch write's trailing read-back calls:
+// one entity per distinct listed key, at most batch_size keys per statement
+// (PRD 25.3).
+func readBackHelpers() []SharedHelperDefinition {
+	return []SharedHelperDefinition{
+		{
+			Name:      "distinctKeys",
+			Signature: "[K any, S comparable](keys []K, setKey func(K) S) []K",
+			Doc: `distinctKeys returns keys without repeats, in first-seen order, so a batch
+// call that lists a key twice reads its row back once.`,
+			Body: `	seen := make(map[S]struct{}, len(keys))
+	result := make([]K, 0, len(keys))
+	for _, k := range keys {
+		sk := setKey(k)
+		if _, dup := seen[sk]; dup {
+			continue
+		}
+		seen[sk] = struct{}{}
+		result = append(result, k)
+	}
+	return result`,
+		},
+		{
+			Name:      "refetchInChunks",
+			Signature: "[E any](n, size int, fetch func(lo, hi int) ([]E, error)) ([]E, error)",
+			Doc: `refetchInChunks reads back the n rows a batch write named, at most size keys
+// per statement, so the read-back stays inside every dialect ceiling the writes
+// cleared (SQLite's expression depth of 1000 for a composite key's OR of ANDs,
+// its 32766 bind parameters, 65535 on MySQL and PostgreSQL).`,
+			Body: `	if size <= 0 || n <= size {
+		return fetch(0, n)
+	}
+	result := make([]E, 0, n)
+	for lo := 0; lo < n; lo += size {
+		rows, err := fetch(lo, min(lo+size, n))
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, rows...)
+	}
+	return result, nil`,
+		},
+	}
 }

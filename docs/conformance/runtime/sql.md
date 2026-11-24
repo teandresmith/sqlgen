@@ -13,7 +13,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 [README.md](../README.md) for the format.
 
 ## §8.1.7 Testing Strategy
-<!-- prd: 8.1.7 sha256: 1588da48dfefa4a8 -->
+<!-- prd: 8.1.7 sha256: 6fe17bf2d929e295 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -23,7 +23,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | builder.tuple-in-subquery | `TupleInSubquery` renders `(c1, c2) IN (SELECT …)`, numbers the subquery's arguments into the statement and qualifies each column on the O2O-join read path | `unit: sql: TestTupleInSubquery/postgres`; `unit: sql: TestTupleInSubquery/postgres qualified`; `unit: sql: TestTupleInSubquery/mysql`; `unit: sql: TestTupleInSubquery/sqlite` | all |  |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: edabeea7582d1d6b -->
+<!-- prd: 9.5 sha256: 3fa4d6fe408f3183 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -245,7 +245,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | comparator.custom.pg-only | `JSONB` and `Slice[T]` have a `Custom` field whose conditions they return as written | `unit: comparator: TestJSONB_Parse/Custom passthrough`; `unit: comparator: TestSlice_Parse/Custom passthrough` | postgres |  |
 
 ## §11.5 Condition Composition
-<!-- prd: 11.5 sha256: 5fe9eac646544482 -->
+<!-- prd: 11.5 sha256: 1de317b93db97cca -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -289,7 +289,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | cond.builder.eq-neq | `Eq(v)` builds `col = $` and `Neq(v)` builds `col != $` | `unit: sql: TestConditionBuilder_Eq`; `unit: sql: TestConditionBuilder_Neq`; `unit: sql: TestConditionBuilder_AllMethods/Eq string`; `unit: sql: TestConditionBuilder_AllMethods/Neq int` | all |  |
 | cond.builder.ordered | `Gt`, `Gte`, `Lt` and `Lte` build `col > $`, `col >= $`, `col < $` and `col <= $` | `unit: sql: TestConditionBuilder_Comparison/Gt`; `unit: sql: TestConditionBuilder_Comparison/Gte`; `unit: sql: TestConditionBuilder_Comparison/Lt`; `unit: sql: TestConditionBuilder_Comparison/Lte`; `unit: sql: TestConditionBuilder_AllMethods/Gt float`; `unit: sql: TestConditionBuilder_AllMethods/Gte float`; `unit: sql: TestConditionBuilder_AllMethods/Lt int`; `unit: sql: TestConditionBuilder_AllMethods/Lte int` | all |  |
 | cond.builder.in-nin | `In(v...)` builds `col IN ($, $, ...)` and `Nin(v...)` builds `col NOT IN ($, $, ...)`, one placeholder per value on every dialect | `unit: sql: TestConditionBuilder_In`; `unit: sql: TestConditionBuilder_Nin`; `unit: sql: TestConditionBuilder_AllMethods/In strings`; `unit: sql: TestConditionBuilder_AllMethods/Nin ints`; `unit: sql: TestConditionBuilder_InNinExpandOnEveryDialect/postgres pgx`; `unit: sql: TestConditionBuilder_InNinExpandOnEveryDialect/postgres stdlib`; `unit: sql: TestConditionBuilder_InNinExpandOnEveryDialect/mysql`; `unit: sql: TestConditionBuilder_InNinExpandOnEveryDialect/sqlite` | all |  |
-| cond.builder.in-nin-subquery | Given a single `sql.Subquery`, `In` builds `col IN (<subquery>)` and `Nin` builds `col NOT IN (<subquery>)` | `unit: sql: TestWhereInSubquery/postgres in`; `unit: sql: TestWhereInSubquery/postgres not in`; `unit: sql: TestWhereInSubquery/mysql in`; `unit: sql: TestWhereInSubquery/mysql not in`; `unit: sql: TestWhereInSubquery/sqlite in`; `unit: sql: TestWhereInSubquery/sqlite not in` | all |  |
+| cond.builder.in-nin-subquery | Given a single `sql.Subquery`, or a non-nil `*sql.Subquery`, `In` builds `col IN (<subquery>)` and `Nin` builds `col NOT IN (<subquery>)`; a nil `*sql.Subquery` stays a one-value list | `unit: sql: TestWhereInSubquery/postgres in`; `unit: sql: TestWhereInSubquery/postgres not in`; `unit: sql: TestWhereInSubquery/mysql in`; `unit: sql: TestWhereInSubquery/mysql not in`; `unit: sql: TestWhereInSubquery/sqlite in`; `unit: sql: TestWhereInSubquery/sqlite not in`; `unit: sql: TestInNinSubqueryPointer/postgres in`; `unit: sql: TestInNinSubqueryPointer/postgres stdlib nin`; `unit: sql: TestInNinSubqueryPointer/mysql in`; `unit: sql: TestInNinSubqueryPointer/sqlite nin`; `unit: sql: TestInNinSubqueryPointer/postgres nil pointer in`; `unit: sql: TestInNinSubqueryPointer/sqlite nil pointer nin` | all |  |
 | cond.builder.never-array | The builder's `In` / `Nin` expand on PostgreSQL+pgx too; the array-parameter form is never the builder's | `unit: sql: TestConditionBuilder_InNinExpandOnEveryDialect/postgres pgx` | postgres, pgx |  |
 | cond.builder.like | `Like(v)` builds `col LIKE $` and `NLike(v)` builds `col NOT LIKE $` | `unit: sql: TestConditionBuilder_Like`; `unit: sql: TestConditionBuilder_NLike`; `unit: sql: TestConditionBuilder_AllMethods/Like`; `unit: sql: TestConditionBuilder_AllMethods/NLike` | all |  |
 | cond.builder.between | `Between(a, b)` builds `col BETWEEN $ AND $` | `unit: sql: TestConditionBuilder_Between`; `unit: sql: TestConditionBuilder_AllMethods/Between` | all |  |

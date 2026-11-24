@@ -22,8 +22,8 @@ import (
 //
 // The gqlgen-emitted input types (Create<T>Input, Update<T>Input,
 // <T>Filter, <T>Sort, scalar comparator inputs) live in the package
-// gqlgen writes to (driven by `model:`). The seed files plus the per-table
-// input/filter/sort/comparator translators reference these types, so the
+// gqlgen writes to (driven by `model:`). The per-table
+// input/filter/sort/comparator translators reference these types, so their
 // rendered import block must include the consumer's gqlgen-model package
 // under a sqlgen-chosen alias (`gqlmodel`) — collision-proof regardless of
 // what the consumer names their own runtime models package.
@@ -126,9 +126,9 @@ func LoadGqlgenModelInfo(gqlgenConfigPath, modulePath string) (GqlgenModelInfo, 
 }
 
 // resolverLayout captures the relevant `resolver:` block fields parsed out
-// of the consumer's gqlgen.yml. Defaults are filled in when keys are absent:
-// `layout: follow-schema` and `filename_template: "{name}.resolvers.go"`.
-// gqlgen v0.17.95 itself defaults an absent layout to single-file.
+// of the consumer's gqlgen.yml. Defaults are filled in when keys are absent,
+// matching gqlgen v0.17.95: `layout: single-file` and
+// `filename_template: "{name}.resolvers.go"`.
 type resolverLayout struct {
 	// Layout is gqlgen's `resolver.layout` value: "follow-schema" emits one
 	// resolver file per .graphqls schema source; "single-file" emits one
@@ -158,9 +158,9 @@ const (
 )
 
 // parseResolverLayout extracts the resolver block from the consumer's
-// gqlgen.yml. Empty/missing keys fall through to gqlgen's documented
-// defaults so the wrapper behaves the same as a freshly-scaffolded
-// gqlgen.yml that omits explicit resolver fields.
+// gqlgen.yml. Empty/missing keys fall through to gqlgen's defaults so the
+// wrapper seeds the layout gqlgen will generate; an absent layout is
+// single-file, as in gqlgen v0.17.95.
 //
 // `layout: single-file` without `filename` is an error. gqlgen has no
 // default for it: it skips resolver generation when `dir` is absent too,
@@ -185,8 +185,10 @@ func parseResolverLayout(consumerYAML []byte) (resolverLayout, error) {
 		FilenameTemplate: doc.Resolver.FilenameTemplate,
 		Filename:         doc.Resolver.Filename,
 	}
-	if out.Layout == "" {
-		out.Layout = layoutFollowSchema
+	// gqlgen reads an absent layout as single-file (codegen/config/resolver.go Check).
+	layoutDefaulted := out.Layout == ""
+	if layoutDefaulted {
+		out.Layout = layoutSingleFile
 	}
 	if out.Dir == "" {
 		out.Dir = defaultResolverDir
@@ -195,52 +197,40 @@ func parseResolverLayout(consumerYAML []byte) (resolverLayout, error) {
 		out.FilenameTemplate = defaultFilenameTpl
 	}
 	if out.Layout == layoutSingleFile && out.Filename == "" {
+		if layoutDefaulted {
+			return resolverLayout{}, fmt.Errorf("resolver.filename is required: gqlgen defaults an absent resolver.layout to %s; set resolver.layout: %s, or resolver.filename", layoutSingleFile, layoutFollowSchema)
+		}
 		return resolverLayout{}, fmt.Errorf("resolver.filename is required with resolver.layout: %s", layoutSingleFile)
 	}
 	return out, nil
 }
 
-// writeSeedFiles writes per-table delegation files into the resolver dir,
-// using the layout extracted from the consumer's gqlgen.yml. Each file is
-// written ONLY IF ABSENT: gqlgen owns the file after the first run and
-// preserves method bodies verbatim across regenerations.
+// writeSeedFiles runs PRD §26.5.6's seed step. It writes no resolver method:
+// gqlgen declares every managed resolver itself, as a panic stub under its own
+// parameter names, and the post-gqlgen rewriter (rewritePanicStubs) splices
+// the rendered seed body into each stub with the body's parameters renamed to
+// gqlgen's by position. A body written before gqlgen runs would have to
+// predict those names, and gqlgen re-signs a pre-written method with its own
+// spelling while keeping the body: a `type` key column is `typeArg` to gqlgen,
+// and a snake_case `asset_id` argument is `assetID`.
 //
-// Under follow-schema layout we emit one seed per table at
-// `<resolver_dir>/<table>_gen.resolvers.go`, matching the schema-side
-// `<table>_gen.graphqls` filename so gqlgen's resolvergen plugin pairs
-// them. We ALSO pre-write a slim `resolver.go` containing ONLY the
-// `type Resolver struct { Client; Q; M }` declaration (no `Query()` /
-// `Mutation()` interface methods, no `queryResolver` / `mutationResolver`
-// type defs). gqlgen detects the existing file and preserves it; the
-// `Query()` / `Mutation()` methods plus `queryResolver` / `mutationResolver`
-// type defs land in the schema-source resolver file (typically
-// `shared_gen.resolvers.go`, since the shared schema declares the root
-// `type Query` / `type Mutation`). Pre-populating the struct fields up
-// front is REQUIRED because gqlgen runs a package-typecheck pass before
-// returning — seeds that reference `r.Q.<Field>` / `r.M.<Field>` only
-// compile when the Resolver struct already declares those fields.
-// Emitting the methods or type defs here would collide with gqlgen's
-// per-schema emission ("method redeclared"); emitting only the struct
-// avoids that collision while still satisfying the typechecker.
+// Under follow-schema layout it pre-writes a slim `resolver.go` containing ONLY
+// the `type Resolver struct { Client; Q; M }` declaration, when that file is
+// absent, or AST-merges the missing fields into an existing one. gqlgen
+// detects the existing file and preserves it; the `Query()` / `Mutation()`
+// methods plus `queryResolver` / `mutationResolver` type defs land in the
+// schema-source resolver file (typically `shared_gen.resolvers.go`, since the
+// shared schema declares the root `type Query` / `type Mutation`). Emitting
+// the methods or type defs here would collide with gqlgen's per-schema
+// emission ("method redeclared").
 //
-// Under single-file layout we concatenate every table's body and write to
-// `<resolver.filename>`, resolved against the working directory the way
-// gqlgen resolves it (singleFileResolverPath). Under
-// single-file gqlgen targets the same destination and preserves bodies
-// verbatim, so the wrapper inlines the Resolver / Query / Mutation
-// scaffold alongside seeds (no separate file to collide with).
+// Under single-file layout it writes nothing: gqlgen owns
+// `<resolver.filename>` and rewrites its Resolver struct on every run, and the
+// post-gqlgen mergeSingleFileResolver step adds Client / Q / M back.
 func writeSeedFiles(opts GenOptions, layout resolverLayout) ([]string, error) {
-	if len(opts.Seeds) == 0 {
+	if len(opts.Seeds) == 0 || layout.Layout == layoutSingleFile {
 		return nil, nil
 	}
-	if layout.Layout == layoutSingleFile {
-		path := singleFileResolverPath(opts.WorkingDir, layout)
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-			return nil, fmt.Errorf("creating resolver dir %s: %w", filepath.Dir(path), err)
-		}
-		return writeSingleFileSeed(path, opts)
-	}
-
 	dir := resolveDirAgainstWD(opts.WorkingDir, layout.Dir)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("creating resolver dir %s: %w", dir, err)
@@ -249,15 +239,10 @@ func writeSeedFiles(opts GenOptions, layout resolverLayout) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	seedPaths, err := writeFollowSchemaSeeds(dir, layout.FilenameTemplate, opts)
-	if err != nil {
-		return nil, err
+	if scaffoldPath == "" {
+		return nil, nil
 	}
-	written := seedPaths
-	if scaffoldPath != "" {
-		written = append([]string{scaffoldPath}, seedPaths...)
-	}
-	return written, nil
+	return []string{scaffoldPath}, nil
 }
 
 // singleFileResolverPath returns the single-file layout's resolver file:
@@ -280,9 +265,8 @@ func singleFileResolverPath(wd string, layout resolverLayout) string {
 // emits those into the schema-source resolver file (typically
 // `shared_gen.resolvers.go`). Pre-emitting them here would collide with
 // gqlgen's per-schema emission ("method redeclared"); the slim scaffold
-// avoids the collision while still letting seeds typecheck against
-// `r.Q.<Field>` / `r.M.<Field>` during gqlgen's pre-return validation
-// pass.
+// avoids the collision while still letting the spliced delegations compile
+// against `r.Q.<Field>` / `r.M.<Field>`.
 //
 // Migration path. Consumers running `sqlgen graphql gen` against an
 // existing graph package (left over from an older sqlgen run that
@@ -576,73 +560,6 @@ func buildResolverScaffold(pkg string, imps SeedImports, hasMutations bool) stri
 	return b.String()
 }
 
-// writeFollowSchemaSeeds emits one seed file per table (one per schema
-// source, matching gqlgen's `{name}.resolvers.go` filename template).
-// Returns the paths newly written this run; pre-existing files are skipped
-// and excluded from the result.
-func writeFollowSchemaSeeds(dir, filenameTpl string, opts GenOptions) ([]string, error) {
-	written := make([]string, 0, len(opts.Seeds))
-	for _, seed := range opts.Seeds {
-		name := strings.ReplaceAll(filenameTpl, "{name}", seed.SnakeName+"_gen")
-		path := filepath.Join(dir, name)
-		if _, err := os.Stat(path); err == nil {
-			continue
-		} else if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("checking seed file %s: %w", path, err)
-		}
-		content := buildSeedFileContents(opts.SeedPackage, opts.SeedImports, seed.Body)
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			return nil, fmt.Errorf("writing seed file %s: %w", path, err)
-		}
-		written = append(written, path)
-	}
-	return written, nil
-}
-
-// writeSingleFileSeed concatenates every table's delegation body into one
-// file at path (singleFileResolverPath). Only writes when the destination is
-// absent — gqlgen owns the file after the first run.
-//
-// Under single-file layout `resolver.filename` is where gqlgen would have scaffolded Resolver / queryResolver /
-// mutationResolver type defs alongside per-field methods. Sqlgen's seed
-// file MUST include those type defs so the per-field methods reference a
-// defined receiver type — `scaffoldBodyOnly` produces exactly that, then
-// every table's delegation body is appended. (Under follow-schema layout
-// gqlgen emits the type defs and Query() / Mutation() methods into the
-// schema-source resolver file instead, and the wrapper's post-emit
-// `mergeResolverFields` step adds Q / M / Client fields to gqlgen's
-// scaffolded `resolver.go` — see writeSeedFiles for the layout split.)
-//
-// gqlgen v0.17.90's resolvergen plugin OWNS the single-file
-// destination and rewrites it on every subsequent regeneration — wiping
-// the seeded `Resolver struct { Client; Q; M }` back to the gqlgen-default
-// `Resolver struct{}` while preserving the per-table method bodies. The
-// post-gqlgen `mergeSingleFileResolver` step re-adds Client / Q / M to
-// the wiped struct so the preserved `r.Q.X(...)` / `r.M.X(...)` bodies
-// compile against the regenerated Resolver type.
-func writeSingleFileSeed(path string, opts GenOptions) ([]string, error) {
-	if _, err := os.Stat(path); err == nil {
-		return nil, nil
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("checking seed file %s: %w", path, err)
-	}
-	hasMutations := len(opts.SqlgenManagedFields.MutationFields) > 0
-	scaffoldBody := scaffoldBodyOnly(hasMutations, opts.SeedImports.ModelsAlias)
-
-	var combined strings.Builder
-	combined.WriteString(scaffoldBody)
-	combined.WriteString("\n")
-	for _, seed := range opts.Seeds {
-		combined.WriteString(seed.Body)
-		combined.WriteString("\n")
-	}
-	content := buildSeedFileContents(opts.SeedPackage, opts.SeedImports, combined.String())
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return nil, fmt.Errorf("writing seed file %s: %w", path, err)
-	}
-	return []string{path}, nil
-}
-
 // mergeSingleFileResolver runs AFTER the gqlgen subprocess under single-file
 // layout. gqlgen v0.17.90's resolvergen plugin owns the single-file
 // destination and rewrites the Resolver struct back to `Resolver struct{}`
@@ -684,80 +601,6 @@ func mergeSingleFileResolver(opts GenOptions, layout resolverLayout) (string, er
 	return path, nil
 }
 
-// scaffoldBodyOnly returns the Resolver / queryResolver / mutationResolver
-// type defs and Query() / Mutation() interface methods — without a package
-// declaration or import block. Used by single-file layout, where the seed
-// file IS the resolver.go gqlgen would otherwise scaffold and the type defs
-// share a file with the per-field method bodies.
-func scaffoldBodyOnly(hasMutations bool, modelsAlias string) string {
-	var b strings.Builder
-	b.WriteString("// Resolver is the gqlgen-scaffolded root resolver struct. The Client / Q / M\n")
-	b.WriteString("// fields are pre-populated by sqlgen.\n")
-	b.WriteString("type Resolver struct {\n")
-	if modelsAlias != "" {
-		b.WriteString("\tClient *")
-		b.WriteString(modelsAlias)
-		b.WriteString(".Client\n")
-	}
-	b.WriteString("\tQ      *sqlgenresolver.Q\n")
-	if hasMutations {
-		b.WriteString("\tM      *sqlgenresolver.M\n")
-	}
-	b.WriteString("}\n\n")
-	b.WriteString("func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }\n")
-	if hasMutations {
-		b.WriteString("func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }\n")
-	}
-	b.WriteString("\ntype queryResolver struct{ *Resolver }\n")
-	if hasMutations {
-		b.WriteString("\ntype mutationResolver struct{ *Resolver }\n")
-	}
-	return b.String()
-}
-
-// buildSeedFileContents wraps a rendered delegation body in a Go source
-// preamble — package declaration plus the seed-specific import block.
-//
-// When the gqlgen model import is known, the seed body references
-// gqlgen-emitted input types as `<GqlgenModelAlias>.Create<T>Input` etc.
-// The aliased import line is emitted alongside the consumer models import so
-// the rendered file resolves the type references correctly.
-func buildSeedFileContents(pkg string, imps SeedImports, body string) string {
-	var b strings.Builder
-	b.WriteString("package ")
-	b.WriteString(pkg)
-	b.WriteString("\n\nimport (\n")
-	b.WriteString("\t\"context\"\n")
-	if imps.ModelsImportPath != "" {
-		b.WriteString("\n\t")
-		if imps.ModelsAlias != "" {
-			b.WriteString(imps.ModelsAlias)
-			b.WriteString(" ")
-		}
-		b.WriteString("\"")
-		b.WriteString(imps.ModelsImportPath)
-		b.WriteString("\"\n")
-	}
-	if imps.GqlgenModelImportPath != "" && imps.GqlgenModelAlias != "" {
-		b.WriteString("\t")
-		b.WriteString(imps.GqlgenModelAlias)
-		b.WriteString(" \"")
-		b.WriteString(imps.GqlgenModelImportPath)
-		b.WriteString("\"\n")
-	}
-	if imps.SqlgenResolverImportPath != "" {
-		b.WriteString("\n\t\"")
-		b.WriteString(imps.SqlgenResolverImportPath)
-		b.WriteString("\"\n")
-	}
-	b.WriteString(")\n\n")
-	b.WriteString(body)
-	if !strings.HasSuffix(body, "\n") {
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
 // resolveDirAgainstWD joins a relative path against the working directory.
 // Absolute paths pass through unchanged. Empty wd falls back to ".".
 func resolveDirAgainstWD(wd, dir string) string {
@@ -771,50 +614,58 @@ func resolveDirAgainstWD(wd, dir string) string {
 }
 
 // rewritePanicStubs walks every gqlgen-owned file in the resolver dir and
-// AST-rewrites panic-stub method bodies on *queryResolver / *mutationResolver
-// when the method name matches a sqlgen-managed field. The replacement body
-// is a single `return r.Q.<Field>(...)` / `return r.M.<Field>(...)` statement
-// (this handles the case where an existing seed file gains a new sqlgen
-// operation, e.g. after a config flip).
+// rewrites the panic-stub method bodies on *queryResolver / *mutationResolver
+// whose method name is a sqlgen-managed field. It is how every managed
+// resolver gets its body: the seed step writes none (writeSeedFiles), so on a
+// first run every managed method is a stub, and a table that later gains an
+// operation gets a stub in a file gqlgen already owns.
 //
 // The rewriter is bounded by the SqlgenManagedFieldSet: only methods whose
 // names appear in the set get rewritten. Consumer-authored fields are never
 // touched. Non-panic bodies are skipped — the rewriter only transforms
-// `panic(...)` statements (gqlgen's documented stub shape).
-func rewritePanicStubs(opts GenOptions, layout resolverLayout) error {
+// `panic(...)` statements (gqlgen's documented stub shape), so a body the
+// consumer edited, or one spliced on an earlier run, is left alone.
+//
+// Returns the files it rewrote, so the caller can report them.
+func rewritePanicStubs(opts GenOptions, layout resolverLayout) ([]string, error) {
 	if len(opts.SqlgenManagedFields.QueryFields) == 0 && len(opts.SqlgenManagedFields.MutationFields) == 0 {
-		return nil
+		return nil, nil
 	}
 	files, err := gqlgenOwnedFiles(opts.WorkingDir, layout)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	seedBodies := seedMethodBodies(opts.Seeds)
+	seeds := seedMethods(opts.Seeds)
+	var rewritten []string
 	for _, path := range files {
-		if err := rewriteOneFile(path, opts.SqlgenManagedFields, seedBodies); err != nil {
-			return fmt.Errorf("rewriting %s: %w", path, err)
+		changed, err := rewriteOneFile(path, opts.SqlgenManagedFields, seeds)
+		if err != nil {
+			return nil, fmt.Errorf("rewriting %s: %w", path, err)
+		}
+		if changed {
+			rewritten = append(rewritten, path)
 		}
 	}
-	return nil
+	return rewritten, nil
 }
 
-// seedMethodBodies indexes this run's rendered seed delegations by
+// seedMethod is one rendered seed delegation: its body as source text,
+// including the braces, and its parameter names in declaration order.
+type seedMethod struct {
+	body   string
+	params []string
+}
+
+// seedMethods indexes this run's rendered seed delegations by
 // "<receiverType>.<MethodName>" so the panic-stub rewriter can splice in the
-// body sqlgen would have written, rather than synthesising one.
-//
-// This matters because seed files are write-once: once
-// `<table>_gen.resolvers.go` exists, gqlgen owns it, and a table that later
-// gains a new sqlgen-managed operation gets a gqlgen panic stub instead of
-// the seeded body. The seeded body is the only one that knows to route the
-// argument through `translate<T>Filter` / `translateCreate<T>Input` / etc.,
-// so reusing it keeps a newly-added operation identical to one that was
-// present when the file was first seeded.
+// body sqlgen rendered, rather than synthesising one. The seed body is the
+// only one that knows to route an argument through `translate<T>Filter` /
+// `translateCreate<T>Input` / etc.
 //
 // A seed body that fails to parse is skipped rather than fatal — the
-// rewriter falls back to the synthesised delegation, which is what it did
-// before this index existed.
-func seedMethodBodies(seeds []TableSeed) map[string]string {
-	out := make(map[string]string)
+// rewriter falls back to the synthesised delegation.
+func seedMethods(seeds []TableSeed) map[string]seedMethod {
+	out := make(map[string]seedMethod)
 	for _, seed := range seeds {
 		src := "package p\n" + seed.Body
 		fset := token.NewFileSet()
@@ -841,10 +692,96 @@ func seedMethodBodies(seeds []TableSeed) map[string]string {
 			if lo < 0 || hi > len(src) || lo >= hi {
 				continue
 			}
-			out[recv+"."+fn.Name.Name] = src[lo:hi]
+			out[recv+"."+fn.Name.Name] = seedMethod{body: src[lo:hi], params: paramNames(fn)}
 		}
 	}
 	return out
+}
+
+// renameSeedParams returns the seed body with its parameters renamed to the
+// names gqlgen gave the same parameters, matched by position. gqlgen names a
+// resolver parameter itself (`ToGoPrivate` over the GraphQL argument, with an
+// `Arg` suffix on a Go keyword), so sqlgen's spelling and gqlgen's differ for
+// a keyword key column (`typeVal` / `typeArg`), a snake_case argument
+// (`asset_id` / `assetID`), or an acronym after a digit (`line2ID` /
+// `line2id`). Parameter names take no part in interface satisfaction, so only
+// the body has to agree with the signature it lands under.
+//
+// Every identifier in the body spelled like a seed parameter is a reference
+// to it, except a selector's field (`r.Q.<Field>`): seed bodies declare no
+// local that shadows a parameter. A rename onto a name the body already uses
+// for something else would silently rebind it, so it is an error instead.
+func renameSeedParams(method string, seed seedMethod, target []string) (string, error) {
+	if len(seed.params) != len(target) {
+		return "", fmt.Errorf("seed for %s takes %d parameters, gqlgen's resolver takes %d", method, len(seed.params), len(target))
+	}
+	renames := make(map[string]string, len(target))
+	for i, from := range seed.params {
+		if to := target[i]; to != from {
+			renames[from] = to
+		}
+	}
+	if len(renames) == 0 {
+		return seed.body, nil
+	}
+
+	const prefix = "package p\nfunc _() "
+	src := prefix + seed.body
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "seed.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		return "", fmt.Errorf("parsing seed body for %s: %w", method, err)
+	}
+	fn, ok := file.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		return "", fmt.Errorf("parsing seed body for %s: no function body", method)
+	}
+	refs, others := paramRefs(fn.Body, seed.params)
+	for _, from := range seed.params {
+		if to, ok := renames[from]; ok && others[to] {
+			return "", fmt.Errorf("seed for %s: gqlgen names parameter %q %q, which the body already uses", method, from, to)
+		}
+	}
+
+	var b strings.Builder
+	last := len(prefix)
+	for _, id := range refs {
+		to, ok := renames[id.Name]
+		if !ok {
+			continue
+		}
+		off := fset.Position(id.Pos()).Offset
+		b.WriteString(src[last:off])
+		b.WriteString(to)
+		last = off + len(id.Name)
+	}
+	b.WriteString(src[last:])
+	return b.String(), nil
+}
+
+// paramRefs splits the identifiers of a seed body into references to one of
+// its parameters, in source order, and the set of every other name it uses.
+// A selector's field (`r.Q.<Field>`) is neither.
+func paramRefs(body *ast.BlockStmt, params []string) ([]*ast.Ident, map[string]bool) {
+	var refs []*ast.Ident
+	others := make(map[string]bool)
+	selectors := make(map[*ast.Ident]bool)
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			selectors[x.Sel] = true
+		case *ast.Ident:
+			switch {
+			case selectors[x]:
+			case slices.Contains(params, x.Name):
+				refs = append(refs, x)
+			default:
+				others[x.Name] = true
+			}
+		}
+		return true
+	})
+	return refs, others
 }
 
 // gqlgenOwnedFiles returns the list of resolver files gqlgen owns under the
@@ -876,15 +813,15 @@ func gqlgenOwnedFiles(wd string, layout resolverLayout) ([]string, error) {
 // rewriteOneFile parses a single Go file and rewrites every panic-stub
 // method on *queryResolver / *mutationResolver whose name is in the managed
 // set. Returns nil with no work when the file has no qualifying methods.
-func rewriteOneFile(path string, managed SqlgenManagedFieldSet, seedBodies map[string]string) error {
+func rewriteOneFile(path string, managed SqlgenManagedFieldSet, seeds map[string]seedMethod) (bool, error) {
 	src, err := os.ReadFile(path) //nolint:gosec // path comes from filepath.Glob under resolver dir
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", path, err)
+		return false, fmt.Errorf("reading %s: %w", path, err)
 	}
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, src, parser.ParseComments)
 	if err != nil {
-		return fmt.Errorf("parsing %s: %w", path, err)
+		return false, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	queryNames := stringSet(managed.QueryFields)
 	mutationNames := stringSet(managed.MutationFields)
@@ -900,9 +837,9 @@ func rewriteOneFile(path string, managed SqlgenManagedFieldSet, seedBodies map[s
 	var reps []replacement
 
 	for _, decl := range file.Decls {
-		fn, body, ok, err := seedOrSynthBody(decl, queryNames, mutationNames, seedBodies)
+		fn, body, ok, err := seedOrSynthBody(decl, queryNames, mutationNames, seeds)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if !ok {
 			continue
@@ -914,14 +851,14 @@ func rewriteOneFile(path string, managed SqlgenManagedFieldSet, seedBodies map[s
 		})
 	}
 	if len(reps) == 0 {
-		return nil
+		return false, nil
 	}
 
 	// Apply back-to-front so earlier offsets stay valid.
 	out := src
 	for _, r := range slices.Backward(reps) {
 		if r.lo < 0 || r.hi > len(out) || r.lo >= r.hi {
-			return fmt.Errorf("rewriting %s: body offsets out of range", path)
+			return false, fmt.Errorf("rewriting %s: body offsets out of range", path)
 		}
 		out = slices.Concat(out[:r.lo], []byte(r.body), out[r.hi:])
 	}
@@ -939,23 +876,23 @@ func rewriteOneFile(path string, managed SqlgenManagedFieldSet, seedBodies map[s
 		FormatOnly: false,
 	})
 	if err != nil {
-		return fmt.Errorf("formatting %s: %w", path, err)
+		return false, fmt.Errorf("formatting %s: %w", path, err)
 	}
 	// G703: `path` is a filepath.Glob match under the resolver dir and the
 	// content is that same file's own source with managed method bodies
 	// substituted — the write target is the file just read, so no external
 	// path or data reaches this call.
 	if err := os.WriteFile(path, formatted, 0o600); err != nil { //nolint:gosec // see above
-		return fmt.Errorf("writing %s: %w", path, err)
+		return false, fmt.Errorf("writing %s: %w", path, err)
 	}
-	return nil
+	return true, nil
 }
 
-// maybeRewriteFuncDecl checks one top-level declaration for the rewriter's
-// match conditions: function declaration, panic-stub body, receiver on
-// *queryResolver / *mutationResolver, name in the managed set. Returns true
-// when the body was rewritten in place.
-func seedOrSynthBody(decl ast.Decl, queryNames, mutationNames map[string]bool, seedBodies map[string]string) (*ast.FuncDecl, string, bool, error) {
+// seedOrSynthBody checks one top-level declaration for the rewriter's match
+// conditions — function declaration, panic-stub body, receiver on
+// *queryResolver / *mutationResolver, name in the managed set — and returns
+// the body to splice in when they hold.
+func seedOrSynthBody(decl ast.Decl, queryNames, mutationNames map[string]bool, seeds map[string]seedMethod) (*ast.FuncDecl, string, bool, error) {
 	fn, ok := decl.(*ast.FuncDecl)
 	if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return nil, "", false, nil
@@ -973,8 +910,14 @@ func seedOrSynthBody(decl ast.Decl, queryNames, mutationNames map[string]bool, s
 	// (PK-addressed get / delete). Anything taking a filter, sort, or
 	// create/update input must route through its translate<T> helper first,
 	// and only the seed body knows that.
-	if seeded, ok := seedBodies[recvType+"."+fn.Name.Name]; ok {
-		return fn, seeded, true, nil
+	// The body is spliced under gqlgen's signature, so its parameters take
+	// gqlgen's names.
+	if seed, ok := seeds[recvType+"."+fn.Name.Name]; ok {
+		body, err := renameSeedParams(recvType+"."+fn.Name.Name, seed, paramNames(fn))
+		if err != nil {
+			return nil, "", false, err
+		}
+		return fn, body, true, nil
 	}
 	body, err := buildDelegationText(recvType, fn)
 	if err != nil {
@@ -1054,27 +997,22 @@ func buildDelegationText(recvType string, fn *ast.FuncDecl) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown receiver %q", recvType)
 	}
-	args := make([]string, 0, paramCount(fn))
-	for _, p := range fn.Type.Params.List {
-		for _, name := range p.Names {
-			args = append(args, name.Name)
-		}
-	}
 	return "{\n\treturn r." + helperField + "." + fn.Name.Name +
-		"(" + strings.Join(args, ", ") + ")\n}", nil
+		"(" + strings.Join(paramNames(fn), ", ") + ")\n}", nil
 }
 
-// paramCount returns the total parameter count for a function (sums named
-// idents across each parameter group).
-func paramCount(fn *ast.FuncDecl) int {
+// paramNames returns a function's parameter names in declaration order.
+func paramNames(fn *ast.FuncDecl) []string {
 	if fn.Type == nil || fn.Type.Params == nil {
-		return 0
+		return nil
 	}
-	n := 0
+	var out []string
 	for _, p := range fn.Type.Params.List {
-		n += len(p.Names)
+		for _, name := range p.Names {
+			out = append(out, name.Name)
+		}
 	}
-	return n
+	return out
 }
 
 // stringSet builds a presence map from a slice for O(1) lookups.

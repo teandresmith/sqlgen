@@ -88,8 +88,8 @@ func TestNestedTimeKeyZones(t *testing.T) {
 			if err := connectO2M(id, &models.MomentOwnerMomentsUpdateNested{Connect: tc.keys(at)}); err != nil {
 				t.Fatalf("connect: %v", err)
 			}
-			// Past the cache, so the read sees what the adoption wrote.
-			got, err := c.Moments().Get(ctx, at, func(o *models.CallOptions[models.MomentFieldOptions]) { o.SkipCache = true })
+			// Through the cache: the nested write invalidated before it returned.
+			got, err := c.Moments().Get(ctx, at)
 			if err != nil {
 				t.Fatalf("Get moment: %v", err)
 			}

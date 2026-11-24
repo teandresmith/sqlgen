@@ -264,6 +264,9 @@ func (c *premiumProductClient) Count(ctx context.Context, filter *PremiumProduct
 	if err != nil {
 		return 0, fmt.Errorf("count premium_products: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -308,6 +311,9 @@ func (c *premiumProductClient) Paginate(ctx context.Context, input PaginateInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate premium_products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[PremiumProduct]), nil
 }
@@ -419,6 +425,9 @@ func (c *premiumProductClient) Connection(ctx context.Context, input ConnectionI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection premium_products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[PremiumProduct]), nil
 }

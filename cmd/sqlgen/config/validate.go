@@ -1801,6 +1801,7 @@ func ValidatePostParse(cfg *RootConfig, tables []SchemaTable, views []SchemaView
 	var errs []error
 
 	validateCursorKeys(cfg, tables, views, &errs, &warnings)
+	validateCursorKeysUniqueness(cfg, tables, &warnings)
 	validateSoftDeleteTypes(cfg, tables, &errs)
 	validateExcludeColumnsExhaustion(cfg, tables, &warnings)
 	validateAmbiguousBareNames(cfg, tables, &errs)
@@ -2017,6 +2018,28 @@ func resolvedPKColumns(tc TableConfig, table SchemaTable) []string {
 // discards in favour of the PK, and hard-error on a restricted sibling key no
 // cursor ever carries.
 func resolvedCursorKeys(cfg *RootConfig, tc TableConfig, table SchemaTable) (map[string]bool, string) {
+	decision, ok := generatedCursorKeys(cfg, tc, table)
+	if !ok {
+		return nil, ""
+	}
+	switch {
+	case len(tc.CursorKeys) > 0:
+		return stringSet(decision.Keys), fmt.Sprintf("from tables.%s.cursor_keys", qualifiedTableName(table))
+	case len(cfg.Generation.CursorKeys) > 0:
+		return stringSet(decision.Keys), "inherited from generation.cursor_keys"
+	default:
+		// generation.cursor_keys is unset, so the keys come from the built-in
+		// §4.13 default. Naming generation.cursor_keys here would point at a
+		// setting the user never wrote.
+		return stringSet(decision.Keys), "the built-in cursor_keys default"
+	}
+}
+
+// generatedCursorKeys resolves the table's §4.13 cursor keys against the
+// post-exclude_columns column set, as the generator does (see
+// resolvedCursorKeys). ok is false when no Connection is generated from the
+// result: the resolution failed or omitted Connection.
+func generatedCursorKeys(cfg *RootConfig, tc TableConfig, table SchemaTable) (CursorKeysDecision, bool) {
 	excluded := stringSet(ResolveTableExcludeColumns(tc, cfg.Generation))
 	var present []SchemaColumn
 	for _, col := range table.Columns {
@@ -2031,20 +2054,7 @@ func resolvedCursorKeys(cfg *RootConfig, tc TableConfig, table SchemaTable) (map
 		present,
 		resolvedPKColumns(tc, table),
 	)
-	if len(decision.Errs) > 0 || !decision.Emit {
-		return nil, ""
-	}
-	switch {
-	case len(tc.CursorKeys) > 0:
-		return stringSet(decision.Keys), fmt.Sprintf("from tables.%s.cursor_keys", qualifiedTableName(table))
-	case len(cfg.Generation.CursorKeys) > 0:
-		return stringSet(decision.Keys), "inherited from generation.cursor_keys"
-	default:
-		// generation.cursor_keys is unset, so the keys come from the built-in
-		// §4.13 default. Naming generation.cursor_keys here would point at a
-		// setting the user never wrote.
-		return stringSet(decision.Keys), "the built-in cursor_keys default"
-	}
+	return decision, len(decision.Errs) == 0 && decision.Emit
 }
 
 // resolvedPKSet returns resolvedPKColumns as a set.
@@ -2131,6 +2141,16 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 		if decision.Warning != "" {
 			*warnings = append(*warnings, Warning{Message: decision.Warning})
 		}
+		// gen resolves cursor keys against the post-exclude columns, so an
+		// excluded explicit key would drop Connection silently (PRD §4.13).
+		// A key missing from the table already reports "does not exist".
+		excluded := stringSet(ResolveTableExcludeColumns(tc, cfg.Generation))
+		present := columnsByName(table.Columns)
+		for _, k := range tc.CursorKeys {
+			if _, ok := present[k]; ok && excluded[k] {
+				*errs = append(*errs, fmt.Errorf("cursor_keys: column %q in table %s is excluded by exclude_columns; a cursor key must be a generated column", k, qualifiedTableName(table)))
+			}
+		}
 	}
 
 	for _, view := range views {
@@ -2146,6 +2166,56 @@ func validateCursorKeys(cfg *RootConfig, tables []SchemaTable, views []SchemaVie
 			*warnings = append(*warnings, Warning{Message: decision.Warning})
 		}
 	}
+}
+
+// validateCursorKeysUniqueness warns when a table's resolved cursor_keys
+// cover neither its primary key nor a UNIQUE constraint (PRD §4.13). Connection
+// orders and seeks by the cursor keys alone (§14.2), so rows that share a key
+// value at a page boundary are skipped: the next page starts strictly after the
+// last edge's key. sqlgen does not append a tiebreaker, because the keys are
+// the sort order; the user is the one who can make the list unique.
+//
+// It reads the keys the generator resolves (post-exclude_columns) and skips
+// tables generation drops: no resolved primary key (§9.4b) or matched by
+// exclude_tables. Views carry no PK or UNIQUE information, so they are not
+// checked.
+func validateCursorKeysUniqueness(cfg *RootConfig, tables []SchemaTable, warnings *[]Warning) {
+	for _, table := range tables {
+		if _, matched := MatchExcludeTablePattern(table.Name, table.Schema, cfg.ExcludeTables); matched {
+			continue
+		}
+		var tc TableConfig
+		if found := findTableConfig(cfg, table); found != nil {
+			tc = *found
+		}
+		pk := resolvedPKColumns(tc, table)
+		if len(pk) == 0 {
+			continue
+		}
+		decision, ok := generatedCursorKeys(cfg, tc, table)
+		if !ok || cursorKeysUnique(decision.Keys, table, pk) {
+			continue
+		}
+		*warnings = append(*warnings, Warning{Message: fmt.Sprintf(
+			"cursor_keys [%s] on table %s cover no primary key or UNIQUE constraint; Connection skips rows that share a cursor key value at a page boundary — add a unique column such as the primary key to the list",
+			strings.Join(decision.Keys, ", "), qualifiedTableName(table),
+		)})
+	}
+}
+
+// cursorKeysUnique reports whether keys contain every column of the primary
+// key or of a UNIQUE group, or a single UNIQUE column: any of these gives every
+// row a distinct cursor position. Order does not matter, and extra keys do not
+// break uniqueness.
+func cursorKeysUnique(keys []string, table SchemaTable, pk []string) bool {
+	set := stringSet(keys)
+	covers := func(cols []string) bool {
+		return len(cols) > 0 && !slices.ContainsFunc(cols, func(c string) bool { return !set[c] })
+	}
+	if covers(pk) || slices.ContainsFunc(table.UniqueGroups, covers) {
+		return true
+	}
+	return slices.ContainsFunc(table.Columns, func(c SchemaColumn) bool { return c.Unique && set[c.Name] })
 }
 
 // validateSoftDeleteTypes checks that soft delete columns have compatible SQL

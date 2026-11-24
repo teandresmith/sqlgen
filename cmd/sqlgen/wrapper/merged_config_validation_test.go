@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -25,26 +26,33 @@ func TestGen_RejectsMalformedMergedConfigBeforeGqlgen(t *testing.T) {
 		name     string
 		consumer string
 		merge    MergeInput
+		// wantErr is the error's prefix: it names the stage that rejected
+		// the config.
+		wantErr string
 	}{
 		{
 			name:     "unparseable yaml",
 			consumer: "schema:\n\t- bad\n",
 			merge:    MergeInput{SchemaGlob: "graph/*.graphqls"},
+			wantErr:  "parsing gqlgen.yml resolver block: ",
 		},
 		{
 			name:     "top level is a sequence",
 			consumer: "- graph/*.graphqls\n",
 			merge:    MergeInput{SchemaGlob: "graph/*.graphqls"},
+			wantErr:  "parsing gqlgen.yml resolver block: ",
 		},
 		{
 			name:     "schema is a mapping",
-			consumer: "schema:\n  glob: graph/*.graphqls\n",
+			consumer: "schema:\n  glob: graph/*.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n",
 			merge:    MergeInput{SchemaGlob: "graph/*.graphqls"},
+			wantErr:  "merging gqlgen config: ",
 		},
 		{
 			name:     "models is a sequence",
-			consumer: "schema:\n  - graph/*.graphqls\nmodels:\n  - UUID\n",
+			consumer: "schema:\n  - graph/*.graphqls\nmodels:\n  - UUID\nresolver:\n  layout: follow-schema\n  dir: graph\n",
 			merge:    MergeInput{Models: map[string][]string{"UUID": {"example.com/app/graph.UUID"}}},
+			wantErr:  "merging gqlgen config: ",
 		},
 	}
 
@@ -68,6 +76,9 @@ func TestGen_RejectsMalformedMergedConfigBeforeGqlgen(t *testing.T) {
 			})
 			if err == nil {
 				t.Fatalf("Gen(%q) = nil error, want a rejection of the merged config", tt.consumer)
+			}
+			if !strings.HasPrefix(err.Error(), tt.wantErr) {
+				t.Errorf("Gen(%q) error = %v, want prefix %q", tt.consumer, err, tt.wantErr)
 			}
 			if _, ok := errors.AsType[*SubprocessError](err); ok {
 				t.Errorf("Gen(%q) invoked gqlgen before rejecting the config: %v", tt.consumer, err)

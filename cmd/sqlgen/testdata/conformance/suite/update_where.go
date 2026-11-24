@@ -24,6 +24,23 @@ import (
 func updateWhere(t *testing.T, h *Harness) {
 	ctx := context.Background()
 
+	t.Run("composite keys past SQLite's expression depth limit read back every updated row", func(t *testing.T) {
+		h.Reset(t)
+		// The read-back names the updated keys; one statement naming 1000
+		// composite keys is past SQLite's expression depth limit.
+		const n = 1000
+		sdmSeedRevisions(t, h, n)
+		got, err := h.Client.Revisions().UpdateWhere(ctx,
+			&models.RevisionFilter{DocumentID: &comparator.Number[int64]{Eq: new(int64(1))}},
+			&models.UpdateRevisionInput{Body: omittable.Set("edited")})
+		if err != nil {
+			t.Fatalf("UpdateWhere(%d revisions) error = %v, want nil", n, err)
+		}
+		if len(got) != n {
+			t.Errorf("UpdateWhere(%d revisions) returned %d rows, want %d", n, len(got), n)
+		}
+	})
+
 	t.Run("returns every row the filter matches, soft-deleted ones included", func(t *testing.T) {
 		h.Reset(t)
 		live := createDocument(t, h, "live")

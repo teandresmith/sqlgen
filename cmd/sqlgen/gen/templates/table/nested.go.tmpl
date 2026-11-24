@@ -245,6 +245,19 @@ func (c *{{ $client }}) nestedResolvedTenantCtx(ctx context.Context, options Cal
 	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
 }
 {{- end }}
+{{- if or .Nested.EmitCreate .Nested.EmitUpdate .Nested.EmitUpsert }}
+
+// nestedTxOptions runs commit callbacks synchronously when this method opens
+// the root transaction, so a read issued after it returns sees the write, as
+// after a flat write. Inside a caller's transaction the method is a savepoint
+// and the root's mode applies.
+func (c *{{ $client }}) nestedTxOptions(ctx context.Context) database.TxOptions {
+	if !database.InTransaction(ctx) {
+		return database.TxOptions{CallbackMode: database.CallbackSync}
+	}
+	return database.TxOptions{CallbackMode: c.callbackMode}
+}
+{{- end }}
 {{- if .Nested.EmitCreate }}
 
 // CreateWithRelated creates a {{ .StructName | toCamelCase }} together with rows on its nested
@@ -308,7 +321,7 @@ func (c *{{ $client }}) CreateWithRelated(ctx context.Context, input *{{ .Nested
 {{- template "shared/written-row-reload" (writtenRowCtx . (printf "parent.%s" $pk) false) }}
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("create {{ $singular }} with related: %w", err)
 	}
@@ -378,7 +391,7 @@ func (c *{{ $client }}) UpdateWithRelated(ctx context.Context, id {{ (index .PKC
 {{- template "shared/written-row-reload" (writtenRowCtx . (printf "parent.%s" $pk) false) }}
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("update {{ $singular }} with related: %w", err)
 	}
@@ -441,7 +454,7 @@ func (c *{{ $client }}) UpsertWithRelated(ctx context.Context, input *{{ .Nested
 {{- template "shared/written-row-reload" (writtenRowCtx . (printf "parent.%s" $pk) false) }}
 		}
 		return nil
-	}, database.TxOptions{CallbackMode: c.callbackMode})
+	}, c.nestedTxOptions(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("upsert {{ $singular }} with related: %w", err)
 	}

@@ -609,13 +609,15 @@ func (c *binClient) CreateMany(ctx context.Context, inputs []*CreateBinInput, op
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetBinsInput{
-			Filter: &BinFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[BinFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*Bin, error) {
+			return c.GetMany(ctx, &GetBinsInput{
+				Filter: &BinFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[BinFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -808,13 +810,16 @@ func (c *binClient) UpdateMany(ctx context.Context, items []UpdateBinItem, opts 
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetBinsInput{
-			Filter: &BinFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[BinFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk BinPK) BinPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*Bin, error) {
+			return c.GetMany(ctx, &GetBinsInput{
+				Filter: &BinFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[BinFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -905,13 +910,15 @@ func (c *binClient) UpdateWhere(ctx context.Context, filter *BinFilter, input *U
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetBinsInput{
-			Filter: &BinFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[BinFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*Bin, error) {
+			return c.GetMany(ctx, &GetBinsInput{
+				Filter: &BinFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[BinFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1286,13 +1293,34 @@ func (c *binClient) UpsertMany(ctx context.Context, inputs []*CreateBinInput, ta
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_bin", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 		}
@@ -1305,13 +1333,15 @@ func (c *binClient) UpsertMany(ctx context.Context, inputs []*CreateBinInput, ta
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetBinsInput{
-			Filter: &BinFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[BinFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*Bin, error) {
+			return c.GetMany(ctx, &GetBinsInput{
+				Filter: &BinFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[BinFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -1357,6 +1387,9 @@ func (c *binClient) Exists(ctx context.Context, pk BinPK, opts ...func(*CallOpti
 	if err != nil {
 		return false, fmt.Errorf("exists bin: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1384,6 +1417,9 @@ func (c *binClient) ExistsWhere(ctx context.Context, filter *BinFilter, opts ...
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists bins where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1413,6 +1449,9 @@ func (c *binClient) Count(ctx context.Context, filter *BinFilter, opts ...func(*
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count bins: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1462,6 +1501,9 @@ func (c *binClient) Paginate(ctx context.Context, input PaginateInput[BinFilter]
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate bins: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[Bin]), nil
 }
@@ -1577,6 +1619,9 @@ func (c *binClient) Connection(ctx context.Context, input ConnectionInput[BinFil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection bins: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Bin]), nil
 }

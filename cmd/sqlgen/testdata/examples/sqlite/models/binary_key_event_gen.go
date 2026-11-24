@@ -476,15 +476,17 @@ func (c *binaryKeyEventClient) CreateMany(ctx context.Context, inputs []*CreateB
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetBinaryKeyEventsInput{
-			Filter: &BinaryKeyEventFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BinaryKeyEventFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*BinaryKeyEvent, error) {
+			return c.GetMany(ctx, &GetBinaryKeyEventsInput{
+				Filter: &BinaryKeyEventFilter{
+					ID: &comparator.Number[int64]{In: allIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BinaryKeyEventFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -720,15 +722,18 @@ func (c *binaryKeyEventClient) UpdateMany(ctx context.Context, items []UpdateBin
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetBinaryKeyEventsInput{
-			Filter: &BinaryKeyEventFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BinaryKeyEventFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id int64) int64 { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*BinaryKeyEvent, error) {
+			return c.GetMany(ctx, &GetBinaryKeyEventsInput{
+				Filter: &BinaryKeyEventFilter{
+					ID: &comparator.Number[int64]{In: readKeys[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BinaryKeyEventFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -822,15 +827,17 @@ func (c *binaryKeyEventClient) UpdateWhere(ctx context.Context, filter *BinaryKe
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetBinaryKeyEventsInput{
-			Filter: &BinaryKeyEventFilter{
-				ID: &comparator.Number[int64]{In: ids},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BinaryKeyEventFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*BinaryKeyEvent, error) {
+			return c.GetMany(ctx, &GetBinaryKeyEventsInput{
+				Filter: &BinaryKeyEventFilter{
+					ID: &comparator.Number[int64]{In: ids[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BinaryKeyEventFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1296,13 +1303,34 @@ func (c *binaryKeyEventClient) UpsertMany(ctx context.Context, inputs []*CreateB
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_binary_key_event", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 
@@ -1320,15 +1348,17 @@ func (c *binaryKeyEventClient) UpsertMany(ctx context.Context, inputs []*CreateB
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetBinaryKeyEventsInput{
-			Filter: &BinaryKeyEventFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[BinaryKeyEventFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*BinaryKeyEvent, error) {
+			return c.GetMany(ctx, &GetBinaryKeyEventsInput{
+				Filter: &BinaryKeyEventFilter{
+					ID: &comparator.Number[int64]{In: rowIDs[lo:hi]},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[BinaryKeyEventFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -1491,6 +1521,9 @@ func (c *binaryKeyEventClient) Exists(ctx context.Context, id int64, opts ...fun
 	if err != nil {
 		return false, fmt.Errorf("exists binary_key_event: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1518,6 +1551,9 @@ func (c *binaryKeyEventClient) ExistsWhere(ctx context.Context, filter *BinaryKe
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists binary_key_events where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1547,6 +1583,9 @@ func (c *binaryKeyEventClient) Count(ctx context.Context, filter *BinaryKeyEvent
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count binary_key_events: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1596,6 +1635,9 @@ func (c *binaryKeyEventClient) Paginate(ctx context.Context, input PaginateInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate binary_key_events: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[BinaryKeyEvent]), nil
 }
@@ -1711,6 +1753,9 @@ func (c *binaryKeyEventClient) Connection(ctx context.Context, input ConnectionI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection binary_key_events: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[BinaryKeyEvent]), nil
 }

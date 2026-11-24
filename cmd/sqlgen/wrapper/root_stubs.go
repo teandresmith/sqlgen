@@ -16,10 +16,9 @@ import (
 // gqlgen names every root resolver itself, with `templates.ToGo` over the
 // GraphQL field name, and ignores a `fieldName` entry on a root field
 // (`codegen/field.go` returns at `case obj.Root:` before reading it). Where
-// its spelling differs from the method sqlgen's seed declares (`onlyPK` is
-// `OnlyPk` to gqlgen and `OnlyPK` to sqlgen), gqlgen moves the seeded body into
-// its `!!! WARNING !!!` block and emits a stub under its own name, which the
-// rewriter does not recognise. The stub compiles and panics on the first
+// its spelling differs from the method sqlgen manages (`onlyPK` is `OnlyPk` to
+// gqlgen and `OnlyPK` to sqlgen), gqlgen emits a stub under its own name, which
+// the rewriter does not recognise. The stub compiles and panics on the first
 // request, so generation fails instead, naming the entity to rename.
 type UnboundRootFieldsError struct {
 	Fields []UnboundRootField
@@ -95,11 +94,12 @@ func ownerLabel(configKey string) string {
 // fieldName on Query / Mutation fields, so a managed field it spells
 // differently from sqlgen escapes the rewriter; the stub compiles and panics
 // on the first request, so generation fails here instead.
-func settleManagedStubs(opts GenOptions, layout resolverLayout) error {
-	if err := rewritePanicStubs(opts, layout); err != nil {
-		return fmt.Errorf("rewriting panic stubs: %w", err)
+func settleManagedStubs(opts GenOptions, layout resolverLayout) ([]string, error) {
+	rewritten, err := rewritePanicStubs(opts, layout)
+	if err != nil {
+		return nil, fmt.Errorf("rewriting panic stubs: %w", err)
 	}
-	return checkManagedRootStubs(opts, layout)
+	return rewritten, checkManagedRootStubs(opts, layout)
 }
 
 // checkManagedRootStubs runs after rewritePanicStubs and fails when a

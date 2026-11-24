@@ -32,49 +32,44 @@ type GenOptions struct {
 	// ExtraArgs are appended after "generate --config <temp>" when invoking
 	// the gqlgen binary. Reserved for forward compatibility.
 	ExtraArgs []string
-	// Seeds describes the per-table delegating bodies that sqlgen emits into
-	// gqlgen-shaped seed files. Each entry holds the
-	// table's base name (e.g. "products") and the rendered body text. The
-	// wrapper writes seeds before invoking the gqlgen subprocess, only when
-	// the destination file does not already exist — gqlgen's preserve-bodies
-	// behavior owns subsequent updates.
+	// Seeds describes the per-table delegating bodies sqlgen renders. Each
+	// entry holds the table's base name (e.g. "products") and the rendered
+	// body text. After gqlgen has run, the stub rewriter splices each method's
+	// body into the panic stub gqlgen declared for it, renaming the body's
+	// parameters to gqlgen's by position; gqlgen's preserve-bodies behavior
+	// keeps the spliced body on later runs.
 	Seeds []TableSeed
 	// SqlgenManagedFields is the concrete set of Query.* / Mutation.* field
 	// names sqlgen owns this run (PascalCase, matching gqlgen's emitted
 	// resolver-method names). The post-gqlgen panic-stub rewriter uses this
-	// to convert gqlgen's `panic("not implemented…")` stubs into delegations
-	// when an existing seed file gains a new sqlgen-managed operation.
+	// to convert gqlgen's `panic("not implemented…")` stubs into delegations.
 	SqlgenManagedFields SqlgenManagedFieldSet
-	// SeedPackage is the Go package name to emit at the top of each seed
-	// file (matches the consumer's resolver package — e.g. "graph"). Read
-	// from cfg.API.GraphQL.Package by the caller.
+	// SeedPackage is the Go package name of the resolver.go scaffold
+	// (matches the consumer's resolver package — e.g. "graph"). Read from
+	// cfg.API.GraphQL.Package by the caller.
 	SeedPackage string
-	// SeedImports is the list of additional import paths each seed needs
-	// beyond the in-package translators: the consumer's models import path
-	// and the sqlgenresolver helper sub-package.
+	// SeedImports is the import metadata the resolver.go scaffold needs: the
+	// consumer's models import path and the sqlgenresolver helper
+	// sub-package.
 	SeedImports SeedImports
 }
 
-// TableSeed is one rendered per-table delegation body destined for the
-// gqlgen-shaped seed file. The wrapper joins per-table bodies into either a
-// per-schema file (follow-schema layout) or a single combined file
-// (single-file layout) before writing.
+// TableSeed is one rendered per-table delegation body. The wrapper never
+// writes it to disk as is: the post-gqlgen stub rewriter splices each method's
+// body into the panic stub gqlgen declared for it (rewritePanicStubs).
 type TableSeed struct {
-	// SnakeName is the snake_case form of the table's struct name, used to
-	// derive the seed filename (`<snake>_gen.resolvers.go`) under
-	// follow-schema layout. Matches the per-table .graphqls filename stem
-	// emitted by the schema generator.
+	// SnakeName is the snake_case form of the table's struct name, the
+	// per-table .graphqls / resolver filename stem.
 	SnakeName string
 	// Body is the rendered delegation block: a sequence of receiver methods
 	// on *queryResolver / *mutationResolver that call into r.Q / r.M. No
-	// package declaration or import block — the wrapper wraps with the
-	// preamble derived from SeedPackage / SeedImports.
+	// package declaration or import block. Only each method's body and
+	// parameter names are used.
 	Body string
 }
 
-// SeedImports enumerates the import-path metadata seed files need. Empty
-// strings disable the corresponding import line — the wrapper's preamble
-// builder gates each import on its presence.
+// SeedImports enumerates the import-path metadata the resolver.go scaffold
+// needs. Empty strings disable the corresponding import line.
 type SeedImports struct {
 	// ModelsAlias is the package alias for the consumer's models package
 	// (typically "models"). Empty string skips the alias spelling.
@@ -86,18 +81,6 @@ type SeedImports struct {
 	// helper sub-package (`<resolver_dir>/sqlgenresolver`). Seeds reference
 	// it as the unqualified `sqlgenresolver` package.
 	SqlgenResolverImportPath string
-	// GqlgenModelImportPath is the Go import path for the consumer's
-	// gqlgen-emitted model package — the directory derived from
-	// gqlgen.yml's `model.filename` (defaults to "<module>/graph/model").
-	// Seed files reference gqlgen-emitted input types (`Create<T>Input`,
-	// `<T>Filter`, `StringComparator`, …) under the alias spelled in
-	// GqlgenModelAlias. Empty string skips the import line — the seed
-	// emitter gates emission on this field.
-	GqlgenModelImportPath string
-	// GqlgenModelAlias is the Go import alias used to qualify gqlgen-emitted
-	// input type references in seed bodies. Always GqlgenModelImportAlias
-	// (`"gqlmodel"`) when GqlgenModelImportPath is set, or empty otherwise.
-	GqlgenModelAlias string
 }
 
 // SqlgenManagedFieldSet enumerates the sqlgen-managed Query.* and Mutation.*
@@ -147,13 +130,13 @@ func (e *SubprocessError) Unwrap() error { return e.Err }
 // reported file paths to merge into the broader sqlgen generate report
 // (the chained `sqlgen generate` -> `sqlgen graphql gen` path).
 type GenResult struct {
-	// SeedFiles is the set of resolver seed files sqlgen wrote on this run
-	// (one per managed table under follow-schema layout, plus the optional
-	// `resolver.go` scaffold; or one combined file under single-file
-	// layout). Each entry is a path relative to the process working
-	// directory or absolute, matching whatever WorkingDir was set to.
-	// Files that already existed on disk are not included — sqlgen never
-	// overwrites them after the first run.
+	// SeedFiles is the set of resolver files sqlgen wrote on this run: the
+	// follow-schema `resolver.go` scaffold when it was written or merged, each
+	// gqlgen-owned resolver file the stub rewriter spliced a managed body
+	// into, and the single-file resolver when its struct was re-merged. Each
+	// entry is a path relative to the process working directory or absolute,
+	// matching whatever WorkingDir was set to. A file sqlgen left untouched is
+	// not included.
 	SeedFiles []string
 }
 
@@ -162,15 +145,14 @@ type GenResult struct {
 //  1. Read the consumer-owned gqlgen.yml.
 //  2. Merge sqlgen-owned entries into a temp config (consumer-wins on key
 //     collision; the on-disk file is never touched).
-//  3. Write per-schema seed delegation files when absent.
-//     Existing files are gqlgen-owned after the first run — sqlgen never
-//     overwrites them.
+//  3. Seed step: under follow-schema, write or merge the resolver.go
+//     Resolver struct. No resolver method is written — gqlgen declares
+//     each one itself, with its own parameter names.
 //  4. Invoke the gqlgen binary against the temp config via os/exec.
-//  5. Post-process gqlgen-owned files to rewrite panic stubs for
-//     sqlgen-managed fields into delegations (handles the case where an
-//     existing seed file gains a new sqlgen operation), then fail if a
-//     managed field is still a stub because gqlgen named its resolver
-//     differently from sqlgen.
+//  5. Post-process gqlgen-owned files to splice the rendered seed body into
+//     each panic stub for a sqlgen-managed field, its parameters renamed to
+//     gqlgen's by position, then fail if a managed field is still a stub
+//     because gqlgen named its resolver differently from sqlgen.
 //  6. Under single-file layout, AST-merge the seeded Client / Q /
 //     M fields back into the Resolver struct that gqlgen's resolvergen
 //     plugin wipes on every run.
@@ -239,9 +221,11 @@ func Gen(ctx context.Context, opts GenOptions) (*GenResult, error) {
 		return nil, &SubprocessError{Bin: opts.GqlgenBin, Err: err}
 	}
 
-	if err := settleManagedStubs(opts, layout); err != nil {
+	rewritten, err := settleManagedStubs(opts, layout)
+	if err != nil {
 		return nil, err
 	}
+	seeded = append(seeded, rewritten...)
 
 	// Under single-file layout gqlgen's resolvergen wipes the
 	// seeded Resolver struct's Client/Q/M fields on every run. Re-merge
@@ -252,9 +236,8 @@ func Gen(ctx context.Context, opts GenOptions) (*GenResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("merging single-file resolver: %w", err)
 	}
-	// Dedupe against the pre-subprocess seed write — writeSingleFileSeed
-	// reports the same path on a first run, and the post-gqlgen merge then
-	// rewrites that file in place. Reporting it twice would inflate the
+	// Dedupe against the stub rewrite, which reports the same file when it
+	// spliced a body into it. Reporting it twice would inflate the
 	// chained-generate file count.
 	if mergedPath != "" && !slices.Contains(seeded, mergedPath) {
 		seeded = append(seeded, mergedPath)

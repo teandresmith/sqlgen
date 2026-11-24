@@ -590,15 +590,17 @@ func (c *timeKeyedClient) CreateMany(ctx context.Context, inputs []*CreateTimeKe
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetTimeKeyedsInput{
-			Filter: &TimeKeyedFilter{
-				At: &comparator.Time{In: dateTimeKeys(allIDs)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TimeKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*TimeKeyed, error) {
+			return c.GetMany(ctx, &GetTimeKeyedsInput{
+				Filter: &TimeKeyedFilter{
+					At: &comparator.Time{In: dateTimeKeys(allIDs[lo:hi])},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TimeKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -828,15 +830,18 @@ func (c *timeKeyedClient) UpdateMany(ctx context.Context, items []UpdateTimeKeye
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-		return c.GetMany(ctx, &GetTimeKeyedsInput{
-			Filter: &TimeKeyedFilter{
-				At: &comparator.Time{In: dateTimeKeys(allIDs)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TimeKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allIDs, func(id types.DateTime) types.DateTime { return id })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*TimeKeyed, error) {
+			return c.GetMany(ctx, &GetTimeKeyedsInput{
+				Filter: &TimeKeyedFilter{
+					At: &comparator.Time{In: dateTimeKeys(readKeys[lo:hi])},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TimeKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -927,15 +932,17 @@ func (c *timeKeyedClient) UpdateWhere(ctx context.Context, filter *TimeKeyedFilt
 		}
 
 		// Fetch affected entities with FieldOptions
-		return c.GetMany(ctx, &GetTimeKeyedsInput{
-			Filter: &TimeKeyedFilter{
-				At: &comparator.Time{In: dateTimeKeys(ids)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TimeKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(ids), c.batchSize, func(lo, hi int) ([]*TimeKeyed, error) {
+			return c.GetMany(ctx, &GetTimeKeyedsInput{
+				Filter: &TimeKeyedFilter{
+					At: &comparator.Time{In: dateTimeKeys(ids[lo:hi])},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TimeKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1387,13 +1394,34 @@ func (c *timeKeyedClient) UpsertMany(ctx context.Context, inputs []*CreateTimeKe
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_time_keyed", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 		}
@@ -1405,15 +1433,17 @@ func (c *timeKeyedClient) UpsertMany(ctx context.Context, inputs []*CreateTimeKe
 			return nil, nil
 		}
 
-		written, err := c.GetMany(ctx, &GetTimeKeyedsInput{
-			Filter: &TimeKeyedFilter{
-				At: &comparator.Time{In: dateTimeKeys(rowIDs)},
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[TimeKeyedFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowIDs), c.batchSize, func(lo, hi int) ([]*TimeKeyed, error) {
+			return c.GetMany(ctx, &GetTimeKeyedsInput{
+				Filter: &TimeKeyedFilter{
+					At: &comparator.Time{In: dateTimeKeys(rowIDs[lo:hi])},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TimeKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -1457,6 +1487,9 @@ func (c *timeKeyedClient) Exists(ctx context.Context, id types.DateTime, opts ..
 	if err != nil {
 		return false, fmt.Errorf("exists time_keyed: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1484,6 +1517,9 @@ func (c *timeKeyedClient) ExistsWhere(ctx context.Context, filter *TimeKeyedFilt
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists time_keyed where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1513,6 +1549,9 @@ func (c *timeKeyedClient) Count(ctx context.Context, filter *TimeKeyedFilter, op
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count time_keyed: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1562,6 +1601,9 @@ func (c *timeKeyedClient) Paginate(ctx context.Context, input PaginateInput[Time
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate time_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[TimeKeyed]), nil
 }
@@ -1677,6 +1719,9 @@ func (c *timeKeyedClient) Connection(ctx context.Context, input ConnectionInput[
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection time_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[TimeKeyed]), nil
 }

@@ -347,6 +347,9 @@ func (c *articleStatClient) Count(ctx context.Context, filter *ArticleStatFilter
 	if err != nil {
 		return 0, fmt.Errorf("count article_stats: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -396,6 +399,9 @@ func (c *articleStatClient) Paginate(ctx context.Context, input PaginateInput[Ar
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate article_stats: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[ArticleStat]), nil
 }
@@ -513,6 +519,9 @@ func (c *articleStatClient) Connection(ctx context.Context, input ConnectionInpu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection article_stats: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[ArticleStat]), nil
 }
@@ -1030,6 +1039,9 @@ func (c *workspaceLineTotalClient) Count(ctx context.Context, filter *WorkspaceL
 	if err != nil {
 		return 0, fmt.Errorf("count workspace_line_totals: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -1079,6 +1091,9 @@ func (c *workspaceLineTotalClient) Paginate(ctx context.Context, input PaginateI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate workspace_line_totals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WorkspaceLineTotal]), nil
 }
@@ -1196,6 +1211,9 @@ func (c *workspaceLineTotalClient) Connection(ctx context.Context, input Connect
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection workspace_line_totals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[WorkspaceLineTotal]), nil
 }

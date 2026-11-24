@@ -64,6 +64,9 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 	if err != nil {
 		return nil, fmt.Errorf("paginate products: %w", err)
 	}
+	if result == nil {
+		return nil, nil
+	}
 	return result.(*PaginateResult[Product]), nil
 }
 
@@ -182,6 +185,9 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection products: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[Product]), nil
 }

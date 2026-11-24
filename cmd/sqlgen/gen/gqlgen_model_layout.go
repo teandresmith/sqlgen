@@ -9,7 +9,7 @@ import (
 )
 
 // GqlgenModelImportAlias is the sqlgen-controlled Go import alias used to
-// qualify gqlgen-emitted input type references in seed files and per-table
+// qualify gqlgen-emitted input type references in seed signatures and per-table
 // translators. The alias is sqlgen-controlled rather than derived
 // from gqlgen.yml's `model.package` so consumers cannot rename their runtime
 // models package into a value that collides with this spelling — config-load

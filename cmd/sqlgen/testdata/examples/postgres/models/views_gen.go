@@ -239,6 +239,9 @@ func (c *categoryStatClient) Count(ctx context.Context, filter *CategoryStatFilt
 	if err != nil {
 		return 0, fmt.Errorf("count category_stats: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -283,6 +286,9 @@ func (c *categoryStatClient) Paginate(ctx context.Context, input PaginateInput[C
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate category_stats: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[CategoryStat]), nil
 }
@@ -755,6 +761,9 @@ func (c *orderTotalClient) Count(ctx context.Context, filter *OrderTotalFilter, 
 	if err != nil {
 		return 0, fmt.Errorf("count order_totals: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -799,6 +808,9 @@ func (c *orderTotalClient) Paginate(ctx context.Context, input PaginateInput[Ord
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate order_totals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[OrderTotal]), nil
 }
@@ -910,6 +922,9 @@ func (c *orderTotalClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection order_totals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[OrderTotal]), nil
 }
@@ -1393,6 +1408,9 @@ func (c *productSummaryClient) Count(ctx context.Context, filter *ProductSummary
 	if err != nil {
 		return 0, fmt.Errorf("count product_summary: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -1437,6 +1455,9 @@ func (c *productSummaryClient) Paginate(ctx context.Context, input PaginateInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate product_summary: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[ProductSummary]), nil
 }
@@ -1548,6 +1569,9 @@ func (c *productSummaryClient) Connection(ctx context.Context, input ConnectionI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection product_summary: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[ProductSummary]), nil
 }

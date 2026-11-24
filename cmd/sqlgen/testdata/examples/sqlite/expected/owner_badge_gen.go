@@ -455,13 +455,15 @@ func (c *ownerBadgeClient) CreateMany(ctx context.Context, inputs []*CreateOwner
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetOwnerBadgesInput{
-			Filter: &OwnerBadgeFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*OwnerBadge, error) {
+			return c.GetMany(ctx, &GetOwnerBadgesInput{
+				Filter: &OwnerBadgeFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -648,13 +650,16 @@ func (c *ownerBadgeClient) UpdateMany(ctx context.Context, items []UpdateOwnerBa
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOwnerBadgesInput{
-			Filter: &OwnerBadgeFilter{PKs: allPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		readKeys := distinctKeys(allPKs, func(pk OwnerBadgePK) OwnerBadgePK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*OwnerBadge, error) {
+			return c.GetMany(ctx, &GetOwnerBadgesInput{
+				Filter: &OwnerBadgeFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -742,13 +747,15 @@ func (c *ownerBadgeClient) UpdateWhere(ctx context.Context, filter *OwnerBadgeFi
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetOwnerBadgesInput{
-			Filter: &OwnerBadgeFilter{PKs: pks},
-			Limit:  new(0),
-		}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*OwnerBadge, error) {
+			return c.GetMany(ctx, &GetOwnerBadgesInput{
+				Filter: &OwnerBadgeFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 	})
 	if err != nil {
@@ -1122,13 +1129,34 @@ func (c *ownerBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateOwner
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
 
-			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
-				Columns:             columns,
-				ValueRows:           batch,
-				UpsertConflictKeys:  conflictColumns,
-				UpsertUpdateColumns: updateColumns,
-			})
-			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_owner_badge", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
 				return nil, err
 			}
 		}
@@ -1141,13 +1169,15 @@ func (c *ownerBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateOwner
 		}
 
 		// Re-fetch via composite PK filter
-		written, err := c.GetMany(ctx, &GetOwnerBadgesInput{
-			Filter: &OwnerBadgeFilter{PKs: rowPKs},
-			Limit:  new(0),
-		}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*OwnerBadge, error) {
+			return c.GetMany(ctx, &GetOwnerBadgesInput{
+				Filter: &OwnerBadgeFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[OwnerBadgeFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 		if err != nil {
 			return nil, err
@@ -1193,6 +1223,9 @@ func (c *ownerBadgeClient) Exists(ctx context.Context, pk OwnerBadgePK, opts ...
 	if err != nil {
 		return false, fmt.Errorf("exists owner_badge: %w", err)
 	}
+	if result == nil {
+		return false, nil
+	}
 	return result.(bool), nil
 }
 
@@ -1220,6 +1253,9 @@ func (c *ownerBadgeClient) ExistsWhere(ctx context.Context, filter *OwnerBadgeFi
 	})
 	if err != nil {
 		return false, fmt.Errorf("exists owner_badges where: %w", err)
+	}
+	if result == nil {
+		return false, nil
 	}
 	return result.(bool), nil
 }
@@ -1249,6 +1285,9 @@ func (c *ownerBadgeClient) Count(ctx context.Context, filter *OwnerBadgeFilter, 
 	})
 	if err != nil {
 		return 0, fmt.Errorf("count owner_badges: %w", err)
+	}
+	if result == nil {
+		return 0, nil
 	}
 	return result.(int64), nil
 }
@@ -1298,6 +1337,9 @@ func (c *ownerBadgeClient) Paginate(ctx context.Context, input PaginateInput[Own
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate owner_badges: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[OwnerBadge]), nil
 }
@@ -1413,6 +1455,9 @@ func (c *ownerBadgeClient) Connection(ctx context.Context, input ConnectionInput
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection owner_badges: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[OwnerBadge]), nil
 }

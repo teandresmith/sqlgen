@@ -489,6 +489,29 @@ func update(t *testing.T, h *Harness) {
 func updateMany(t *testing.T, h *Harness) {
 	ctx := context.Background()
 
+	t.Run("a key listed twice across a sub-batch boundary is read back once", func(t *testing.T) {
+		h.Reset(t)
+		// revisions has batch_size: 2, so the repeated key opens the second chunk.
+		sdmSeedRevisions(t, h, 2)
+		pks := []models.RevisionPK{{DocumentID: 1, Number: 1}, {DocumentID: 1, Number: 2}, {DocumentID: 1, Number: 1}}
+		items := make([]models.UpdateRevisionItem, len(pks))
+		for i, pk := range pks {
+			items[i] = models.UpdateRevisionItem{PK: pk, Input: &models.UpdateRevisionInput{Body: omittable.Set("edited")}}
+		}
+		got, err := h.Client.Revisions().UpdateMany(ctx, items)
+		if err != nil {
+			t.Fatalf("UpdateMany(keys 1, 2, 1) error = %v, want nil", err)
+		}
+		numbers := make([]int64, len(got))
+		for i, r := range got {
+			numbers[i] = r.Number
+		}
+		slices.Sort(numbers)
+		if diff := cmp.Diff([]int64{1, 2}, numbers); diff != "" {
+			t.Errorf("UpdateMany(keys 1, 2, 1) returned revisions (-want +got):\n%s", diff)
+		}
+	})
+
 	t.Run("through a querier that cannot send a batch, a failed sub-batch rolls back its earlier items and keeps the sub-batches before it", func(t *testing.T) {
 		h.Reset(t)
 		ids := createDocuments(t, h, 4)

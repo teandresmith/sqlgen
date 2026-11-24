@@ -75,7 +75,7 @@ func TestGen_TempFileCleanupOnSuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "gqlgen.yml")
-	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n"), 0o600); err != nil {
 		t.Fatalf("seeding gqlgen.yml: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestGen_TempFileCleanupOnSubprocessFailure(t *testing.T) {
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "gqlgen.yml")
-	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n"), 0o600); err != nil {
 		t.Fatalf("seeding gqlgen.yml: %v", err)
 	}
 
@@ -177,6 +177,46 @@ func TestGen_SingleFileWithoutFilename(t *testing.T) {
 		Stderr:           &bytes.Buffer{},
 	})
 	want := "parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Gen error = %v, want %q", err, want)
+	}
+	if _, ok := errors.AsType[*SubprocessError](err); ok {
+		t.Errorf("Gen error = %v is a *SubprocessError; gqlgen never ran", err)
+	}
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatalf("reading working dir: %v", rerr)
+	}
+	for _, e := range entries {
+		if e.Name() != "gqlgen.yml" {
+			t.Errorf("Gen wrote %s before rejecting the config", e.Name())
+		}
+	}
+}
+
+// TestGen_AbsentLayoutWithoutFilename pins that a resolver block with no
+// layout and no filename, which gqlgen reads as single-file, fails before
+// anything is seeded or gqlgen runs.
+func TestGen_AbsentLayoutWithoutFilename(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gqlgen.yml")
+	yml := "schema:\n  - graph/*.graphqls\nresolver:\n  dir: graph\n  package: graph\n"
+	if err := os.WriteFile(cfgPath, []byte(yml), 0o600); err != nil {
+		t.Fatalf("seeding gqlgen.yml: %v", err)
+	}
+	t.Setenv("SQLGEN_WRAPPER_TEST_HELPER", "fail")
+
+	_, err := Gen(context.Background(), GenOptions{
+		GqlgenConfigPath: cfgPath,
+		GqlgenBin:        os.Args[0],
+		WorkingDir:       dir,
+		MergeInput:       MergeInput{SchemaGlob: "graph/*.graphqls"},
+		SeedPackage:      "graph",
+		Seeds:            []TableSeed{{SnakeName: "products", Body: "// body\n"}},
+		Stdout:           &bytes.Buffer{},
+		Stderr:           &bytes.Buffer{},
+	})
+	want := "parsing gqlgen.yml resolver block: resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename"
 	if err == nil || err.Error() != want {
 		t.Fatalf("Gen error = %v, want %q", err, want)
 	}
@@ -286,7 +326,7 @@ func main() {
 	}
 
 	cfgPath := filepath.Join(dir, "gqlgen.yml")
-	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n"), 0o600); err != nil {
 		t.Fatalf("seeding gqlgen.yml: %v", err)
 	}
 
@@ -505,60 +545,6 @@ func TestLoadGqlgenModelInfo(t *testing.T) {
 	})
 }
 
-// TestBuildSeedFileContents_GqlgenModelImport pins the seed file
-// preamble: when SeedImports carries a non-empty GqlgenModelImportPath +
-// GqlgenModelAlias, the rendered preamble must include the matching
-// aliased import line so seed bodies referencing
-// `<alias>.Create<T>Input` resolve. With the gqlgen-model fields empty the
-// import line is dropped, preserving the legacy preamble shape.
-func TestBuildSeedFileContents_GqlgenModelImport(t *testing.T) {
-	body := "func (r *queryResolver) Product(ctx context.Context, id string) (*models.Product, error) {\n\treturn r.Q.Product(ctx, id)\n}\n"
-
-	t.Run("emits aliased import when set", func(t *testing.T) {
-		out := buildSeedFileContents("graph", SeedImports{
-			ModelsAlias:              "models",
-			ModelsImportPath:         "example.com/foo/gen",
-			SqlgenResolverImportPath: "example.com/foo/gen/graph/sqlgenresolver",
-			GqlgenModelImportPath:    "example.com/foo/graph/model",
-			GqlgenModelAlias:         GqlgenModelImportAlias,
-		}, body)
-		if !strings.Contains(out, `gqlmodel "example.com/foo/graph/model"`) {
-			t.Errorf("expected aliased gqlmodel import in seed preamble:\n%s", out)
-		}
-		if !strings.Contains(out, `models "example.com/foo/gen"`) {
-			t.Errorf("expected models import preserved:\n%s", out)
-		}
-		if !strings.Contains(out, `"example.com/foo/gen/graph/sqlgenresolver"`) {
-			t.Errorf("expected sqlgenresolver import preserved:\n%s", out)
-		}
-	})
-
-	t.Run("omits import when alias empty", func(t *testing.T) {
-		out := buildSeedFileContents("graph", SeedImports{
-			ModelsAlias:              "models",
-			ModelsImportPath:         "example.com/foo/gen",
-			SqlgenResolverImportPath: "example.com/foo/gen/graph/sqlgenresolver",
-		}, body)
-		if strings.Contains(out, `gqlmodel`) {
-			t.Errorf("expected no gqlmodel import line when alias unset:\n%s", out)
-		}
-	})
-
-	t.Run("omits import when only path set", func(t *testing.T) {
-		// Defensive: both fields must be set together; either-or yields no
-		// import line so an alias without a path can't accidentally produce
-		// a syntactically-broken preamble.
-		out := buildSeedFileContents("graph", SeedImports{
-			ModelsAlias:           "models",
-			ModelsImportPath:      "example.com/foo/gen",
-			GqlgenModelImportPath: "example.com/foo/graph/model",
-		}, body)
-		if strings.Contains(out, `"example.com/foo/graph/model"`) {
-			t.Errorf("expected no gqlmodel import line when alias unset:\n%s", out)
-		}
-	})
-}
-
 // TestParseResolverLayout pins the consumer's gqlgen.yml resolver block
 // extraction. Defaults must fall through to gqlgen's documented
 // follow-schema / `{name}.resolvers.go` shape when keys are absent, and a
@@ -575,11 +561,28 @@ func TestParseResolverLayout(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			name:    "all defaults",
+			// No resolver block: gqlgen defaults the layout to single-file
+			// and, with no filename or dir, generates no resolvers at all
+			// (codegen/config/resolver.go Check, IsDefined).
+			name:    "no resolver block",
 			yaml:    "schema:\n  - graph/*.graphqls\n",
-			wantLay: "follow-schema",
-			wantDir: "graph",
-			wantTpl: "{name}.resolvers.go",
+			wantErr: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename",
+		},
+		{
+			// gqlgen reads an absent layout as single-file and rejects the
+			// config for the missing filename.
+			name:    "layout omitted with dir only",
+			yaml:    "resolver:\n  dir: graph\n  package: graph\n  filename_template: \"{name}.resolvers.go\"\n",
+			wantErr: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename",
+		},
+		{
+			// gqlgen writes every resolver to the one filename.
+			name:     "layout omitted with filename",
+			yaml:     "resolver:\n  dir: graph\n  filename: graph/resolver.go\n  package: graph\n",
+			wantLay:  "single-file",
+			wantDir:  "graph",
+			wantTpl:  "{name}.resolvers.go",
+			wantFile: "graph/resolver.go",
 		},
 		{
 			name:    "follow-schema explicit",
@@ -637,104 +640,84 @@ func TestParseResolverLayout(t *testing.T) {
 	}
 }
 
-// TestWriteSeedFiles_FollowSchemaOnlyWhenAbsent pins the seed writer's
-// "never overwrite" invariant: the wrapper writes a seed file the first
-// time but leaves any pre-existing file untouched on subsequent runs (gqlgen
-// owns the file after the first run).
-func TestWriteSeedFiles_FollowSchemaOnlyWhenAbsent(t *testing.T) {
-	dir := t.TempDir()
-	resolverDir := filepath.Join(dir, "graph")
-	if err := os.MkdirAll(resolverDir, 0o750); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	opts := GenOptions{
-		WorkingDir:  dir,
-		SeedPackage: "graph",
-		SeedImports: SeedImports{
-			ModelsAlias:              "models",
-			ModelsImportPath:         "example.com/foo/gen",
-			SqlgenResolverImportPath: "example.com/foo/gen/graph/sqlgenresolver",
+// TestWriteSeedFiles_WritesNoResolverMethods pins PRD §26.5.6's seed step:
+// it writes no resolver method under either layout. gqlgen declares every
+// managed resolver itself, under its own parameter names, and re-signs a
+// pre-written method with those names while keeping its body — so a body
+// written before gqlgen runs names parameters that do not exist (`type` is
+// `typeArg` to gqlgen, snake_case `asset_id` is `assetID`). The stub rewriter
+// splices the body in afterwards instead.
+func TestWriteSeedFiles_WritesNoResolverMethods(t *testing.T) {
+	seedBody := "func (r *queryResolver) Product(ctx context.Context, id string) (*models.Product, error) {\n\treturn r.Q.Product(ctx, id)\n}\n"
+	tests := []struct {
+		name   string
+		layout resolverLayout
+		want   []string // paths written, relative to the working directory
+	}{
+		{
+			name:   "follow-schema writes only the resolver.go struct",
+			layout: resolverLayout{Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl},
+			want:   []string{"graph/resolver.go"},
 		},
-		Seeds: []TableSeed{
-			{SnakeName: "products", Body: "func (r *queryResolver) Product(ctx context.Context, id string) (*models.Product, error) { return r.Q.Product(ctx, id) }\n"},
-		},
-	}
-	layout := resolverLayout{
-		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
-	}
-
-	if _, err := writeSeedFiles(opts, layout); err != nil {
-		t.Fatalf("writeSeedFiles first run: %v", err)
-	}
-
-	expected := filepath.Join(resolverDir, "products_gen.resolvers.go")
-	first, err := os.ReadFile(expected) //nolint:gosec // path is t.TempDir-derived
-	if err != nil {
-		t.Fatalf("reading seed file: %v", err)
-	}
-	if !strings.Contains(string(first), "r.Q.Product") {
-		t.Errorf("seed file missing delegation: %s", first)
-	}
-
-	// Simulate a consumer edit + gqlgen ownership: change the body.
-	consumerEdit := []byte("package graph\n\n// consumer-owned content\n")
-	if err := os.WriteFile(expected, consumerEdit, 0o600); err != nil {
-		t.Fatalf("seeding consumer edit: %v", err)
-	}
-
-	if _, err := writeSeedFiles(opts, layout); err != nil {
-		t.Fatalf("writeSeedFiles second run: %v", err)
-	}
-
-	got, err := os.ReadFile(expected) //nolint:gosec // path is t.TempDir-derived
-	if err != nil {
-		t.Fatalf("reading seed file: %v", err)
-	}
-	if !bytes.Equal(got, consumerEdit) {
-		t.Errorf("second run overwrote consumer-owned seed file:\nwant: %s\ngot:  %s", consumerEdit, got)
-	}
-}
-
-// TestWriteSeedFiles_SingleFile pins the single-file layout: every table's
-// body is concatenated into one file at <resolver.filename>.
-func TestWriteSeedFiles_SingleFile(t *testing.T) {
-	dir := t.TempDir()
-
-	opts := GenOptions{
-		WorkingDir:  dir,
-		SeedPackage: "graph",
-		SeedImports: SeedImports{
-			ModelsAlias:              "models",
-			ModelsImportPath:         "example.com/foo/gen",
-			SqlgenResolverImportPath: "example.com/foo/gen/graph/sqlgenresolver",
-		},
-		Seeds: []TableSeed{
-			{SnakeName: "products", Body: "// products body\n"},
-			{SnakeName: "users", Body: "// users body\n"},
+		{
+			name:   "single-file writes nothing",
+			layout: resolverLayout{Layout: layoutSingleFile, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: "graph/resolver.go"},
 		},
 	}
-	layout := resolverLayout{
-		Layout: layoutSingleFile, Dir: "graph", FilenameTemplate: defaultFilenameTpl, Filename: "graph/resolver.go",
-	}
-
-	if _, err := writeSeedFiles(opts, layout); err != nil {
-		t.Fatalf("writeSeedFiles: %v", err)
-	}
-	got, err := os.ReadFile(filepath.Join(dir, "graph", "resolver.go")) //nolint:gosec // path is t.TempDir-derived
-	if err != nil {
-		t.Fatalf("reading combined seed: %v", err)
-	}
-	if !strings.Contains(string(got), "// products body") || !strings.Contains(string(got), "// users body") {
-		t.Errorf("combined seed missing per-table bodies: %s", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			opts := GenOptions{
+				WorkingDir:  dir,
+				SeedPackage: "graph",
+				SeedImports: SeedImports{
+					ModelsAlias:              "models",
+					ModelsImportPath:         "example.com/foo/gen",
+					SqlgenResolverImportPath: "example.com/foo/gen/graph/sqlgenresolver",
+				},
+				Seeds:               []TableSeed{{SnakeName: "products", Body: seedBody}},
+				SqlgenManagedFields: SqlgenManagedFieldSet{QueryFields: []string{"Product"}},
+			}
+			written, err := writeSeedFiles(opts, tt.layout)
+			if err != nil {
+				t.Fatalf("writeSeedFiles: %v", err)
+			}
+			var got []string
+			for _, p := range written {
+				rel, err := filepath.Rel(dir, p)
+				if err != nil {
+					t.Fatalf("relative path of %s: %v", p, err)
+				}
+				got = append(got, filepath.ToSlash(rel))
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("writeSeedFiles paths (-want +got):\n%s", diff)
+			}
+			err = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return err
+				}
+				src, err := os.ReadFile(path) //nolint:gosec // path is t.TempDir-derived
+				if err != nil {
+					return err
+				}
+				if strings.Contains(string(src), "func (r *queryResolver)") || strings.Contains(string(src), "r.Q.Product(") {
+					t.Errorf("seed step wrote a resolver method into %s:\n%s", path, src)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("walking %s: %v", dir, err)
+			}
+		})
 	}
 }
 
 // TestSingleFileLayout_FilenameIgnoresDir pins resolver-file placement. Under
 // single-file gqlgen resolves resolver.filename against its working directory
 // and ignores resolver.dir, so every step that touches the resolver file must
-// find it at the same path gqlgen writes: the seed write, the post-gqlgen
-// struct merge, and the stub pass's file list. Joining dir and filename
+// find it at the same path gqlgen writes: the post-gqlgen struct merge and the
+// stub pass's file list. Joining dir and filename
 // broke the common `dir: graph` + `filename: graph/resolver.go` config.
 func TestSingleFileLayout_FilenameIgnoresDir(t *testing.T) {
 	tests := []struct {
@@ -781,18 +764,13 @@ func TestSingleFileLayout_FilenameIgnoresDir(t *testing.T) {
 				Layout: layoutSingleFile, Dir: tt.dir, FilenameTemplate: defaultFilenameTpl, Filename: tt.filename,
 			}
 
-			seeded, err := writeSeedFiles(opts, layout)
-			if err != nil {
-				t.Fatalf("writeSeedFiles: %v", err)
-			}
-			if diff := cmp.Diff([]string{want}, seeded); diff != "" {
-				t.Fatalf("writeSeedFiles paths (-want +got):\n%s", diff)
-			}
-
-			// gqlgen rewrites the file and wipes the seeded struct fields.
-			// The models import is declared so the merge's goimports pass
-			// does not scan the module cache for it.
+			// gqlgen writes the file with an empty Resolver struct. The models
+			// import is declared so the merge's goimports pass does not scan
+			// the module cache for it.
 			wiped := "package graph\n\nimport models \"example.com/foo/gen\"\n\nvar _ *models.Client\n\ntype Resolver struct{}\n"
+			if err := os.MkdirAll(filepath.Dir(want), 0o750); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
 			if err := os.WriteFile(want, []byte(wiped), 0o600); err != nil {
 				t.Fatalf("writing wiped resolver: %v", err)
 			}
@@ -823,8 +801,8 @@ func TestSingleFileLayout_FilenameIgnoresDir(t *testing.T) {
 // schema-source resolver file (typically `shared_gen.resolvers.go` for the
 // shared schema that declares the root Query / Mutation types); emitting
 // them here too would collide. Pre-populating the struct fields up front
-// is REQUIRED so the per-table seeds (which reference `r.Q.<Field>` /
-// `r.M.<Field>`) typecheck during gqlgen's pre-return validation pass.
+// lets the spliced delegations (which reference `r.Q.<Field>` /
+// `r.M.<Field>`) compile.
 func TestWriteSeedFiles_FollowSchema_WritesSlimResolverScaffold(t *testing.T) {
 	dir := t.TempDir()
 	resolverDir := filepath.Join(dir, "graph")
@@ -905,10 +883,10 @@ func TestWriteSeedFiles_FollowSchema_WritesSlimResolverScaffold(t *testing.T) {
 		t.Errorf("written paths missing resolver.go (got %v)", written)
 	}
 
-	// Per-table seed file is also emitted.
+	// No per-table resolver file: gqlgen declares the managed methods.
 	seedPath := filepath.Join(resolverDir, "products_gen.resolvers.go")
-	if _, err := os.Stat(seedPath); err != nil {
-		t.Errorf("expected seed %q to be written: %v", seedPath, err)
+	if _, err := os.Stat(seedPath); !os.IsNotExist(err) {
+		t.Errorf("seed step wrote %q (stat err %v); gqlgen owns the per-table resolver files", seedPath, err)
 	}
 }
 
@@ -1243,9 +1221,9 @@ type mutationResolver struct{ *Resolver }
 	}
 }
 
-// TestPostStubRewriter pins the panic-stub rewriter. When an
-// existing seed file gains a new sqlgen-managed operation, gqlgen emits a
-// panic stub for it; the rewriter converts that stub into a delegation.
+// TestPostStubRewriter pins the panic-stub rewriter. gqlgen emits a panic
+// stub for each sqlgen-managed operation; the rewriter converts that stub
+// into a delegation.
 // Non-managed names and non-panic bodies are left untouched.
 func TestPostStubRewriter(t *testing.T) {
 	dir := t.TempDir()
@@ -1303,7 +1281,7 @@ func (r *queryResolver) Products(ctx context.Context, filter *ProductFilter, sor
 		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
-	if err := rewritePanicStubs(opts, layout); err != nil {
+	if _, err := rewritePanicStubs(opts, layout); err != nil {
 		t.Fatalf("rewritePanicStubs: %v", err)
 	}
 
@@ -1425,14 +1403,12 @@ func TestWriteSeedFiles_ReturnsWrittenPaths_FollowSchema(t *testing.T) {
 		t.Fatalf("writeSeedFiles first run: %v", err)
 	}
 
-	// writeSeedFiles emits the slim resolver.go
-	// scaffold (struct + Client/Q/M fields, no methods/types) plus the
-	// per-table seeds. The headline file count picks up all three.
+	// writeSeedFiles emits only the slim resolver.go scaffold (struct +
+	// Client/Q/M fields, no methods/types); the per-table resolver files are
+	// gqlgen's, and the stub rewriter reports the ones it splices into.
 	wantScaffold := filepath.Join(resolverDir, "resolver.go")
-	wantProducts := filepath.Join(resolverDir, "products_gen.resolvers.go")
-	wantUsers := filepath.Join(resolverDir, "users_gen.resolvers.go")
 
-	wantSet := map[string]bool{wantScaffold: false, wantProducts: false, wantUsers: false}
+	wantSet := map[string]bool{wantScaffold: false}
 	for _, p := range first {
 		if _, ok := wantSet[p]; !ok {
 			t.Errorf("first run returned unexpected path %q (want subset of %v)", p, wantSet)
@@ -1446,7 +1422,7 @@ func TestWriteSeedFiles_ReturnsWrittenPaths_FollowSchema(t *testing.T) {
 		}
 	}
 
-	for _, p := range []string{wantScaffold, wantProducts, wantUsers} {
+	for _, p := range []string{wantScaffold} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("first run did not write %q on disk: %v", p, err)
 		}
@@ -1462,9 +1438,9 @@ func TestWriteSeedFiles_ReturnsWrittenPaths_FollowSchema(t *testing.T) {
 }
 
 // TestWriteSeedFiles_ReturnsWrittenPaths_SingleFile mirrors the
-// follow-schema test for the single-file layout. Under single-file the
-// wrapper writes one combined seed file at <resolver.filename> on
-// the first run and skips the write on subsequent runs.
+// follow-schema test for the single-file layout. Under single-file the seed
+// step writes nothing on any run: gqlgen writes <resolver.filename>, and the
+// post-gqlgen steps report it when they touch it.
 func TestWriteSeedFiles_ReturnsWrittenPaths_SingleFile(t *testing.T) {
 	dir := t.TempDir()
 	resolverDir := filepath.Join(dir, "graph")
@@ -1492,9 +1468,8 @@ func TestWriteSeedFiles_ReturnsWrittenPaths_SingleFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writeSeedFiles first run: %v", err)
 	}
-	wantPath := filepath.Join(resolverDir, "resolver.go")
-	if len(first) != 1 || first[0] != wantPath {
-		t.Errorf("first run = %v, want [%q]", first, wantPath)
+	if len(first) != 0 {
+		t.Errorf("first run = %v, want empty (gqlgen writes the single-file resolver)", first)
 	}
 
 	second, err := writeSeedFiles(opts, layout)
@@ -1849,9 +1824,7 @@ type Resolver struct{}
 
 // TestMergeSingleFileResolver_AbsentFile pins the missing-file branch:
 // when the destination doesn't exist (e.g. the gqlgen subprocess errored
-// out before producing it, though in practice writeSingleFileSeed already
-// created it before the subprocess), the merge returns ("", nil) without
-// erroring.
+// out before producing it), the merge returns ("", nil) without erroring.
 func TestMergeSingleFileResolver_AbsentFile(t *testing.T) {
 	dir := t.TempDir()
 	opts := GenOptions{
@@ -1941,9 +1914,7 @@ type Resolver struct {
 // TestPostStubRewriter_PrefersSeedBody pins the rewriter's use of the
 // rendered seed body when one exists for the stubbed method.
 //
-// Seed files are write-once: once `<table>_gen.resolvers.go` exists gqlgen
-// owns it, so a table that later gains a sqlgen-managed operation gets a
-// gqlgen panic stub rather than the seeded body. The synthesised delegation
+// Every managed method starts as a gqlgen panic stub. The synthesised delegation
 // passes parameters straight through, which is only correct for operations
 // whose arguments need no translation — a create input must be routed
 // through translateCreate<T>Input first or the model receives the wrong
@@ -2000,7 +1971,7 @@ func (r *mutationResolver) CreateUserCategory(ctx context.Context, input CreateU
 		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
-	if err := rewritePanicStubs(opts, layout); err != nil {
+	if _, err := rewritePanicStubs(opts, layout); err != nil {
 		t.Fatalf("rewritePanicStubs: %v", err)
 	}
 
@@ -2071,7 +2042,7 @@ func (r *queryResolver) Product(ctx context.Context, id string) (*models.Product
 		Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl,
 	}
 
-	if err := rewritePanicStubs(opts, layout); err != nil {
+	if _, err := rewritePanicStubs(opts, layout); err != nil {
 		t.Fatalf("rewritePanicStubs: %v", err)
 	}
 
@@ -2081,5 +2052,153 @@ func (r *queryResolver) Product(ctx context.Context, id string) (*models.Product
 	}
 	if got := string(out); !strings.Contains(got, "return r.Q.Product(ctx, id)") {
 		t.Errorf("unseeded stub did not fall back to the synthesised delegation:\n%s", got)
+	}
+}
+
+// TestGen_ReportsSplicedResolverFiles pins that Gen reports a resolver file
+// the stub rewriter spliced a managed body into. The seed step no longer
+// writes per-table resolver files, so on a first run those files exist only
+// because gqlgen wrote them; without this fold the chained `sqlgen generate`
+// report would count none of them. The helper exits 0 without touching the
+// resolver dir, standing in for a gqlgen run that left this stub.
+func TestGen_ReportsSplicedResolverFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper invocation pattern is POSIX-only")
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gqlgen.yml")
+	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/*.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n"), 0o600); err != nil {
+		t.Fatalf("seeding gqlgen.yml: %v", err)
+	}
+	resolverDir := filepath.Join(dir, "graph")
+	if err := os.MkdirAll(resolverDir, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	stubbed := filepath.Join(resolverDir, "asset_kind_gen.resolvers.go")
+	stub := "package graph\n\nimport (\n\t\"context\"\n\t\"fmt\"\n)\n\n" +
+		"func (r *queryResolver) AssetKind(ctx context.Context, typeArg string) (bool, error) {\n\tpanic(fmt.Errorf(\"not implemented: AssetKind - assetKind\"))\n}\n"
+	if err := os.WriteFile(stubbed, []byte(stub), 0o600); err != nil {
+		t.Fatalf("writing resolver file: %v", err)
+	}
+	isolateTempDir(t)
+	t.Setenv("SQLGEN_WRAPPER_TEST_HELPER", "succeed")
+
+	res, err := Gen(context.Background(), GenOptions{
+		GqlgenConfigPath:    cfgPath,
+		GqlgenBin:           os.Args[0],
+		MergeInput:          MergeInput{SchemaGlob: "graph/*.graphqls"},
+		WorkingDir:          dir,
+		SqlgenManagedFields: SqlgenManagedFieldSet{QueryFields: []string{"AssetKind"}},
+		Seeds: []TableSeed{{
+			SnakeName: "asset_kind",
+			Body:      "func (r *queryResolver) AssetKind(ctx context.Context, typeVal string) (bool, error) {\n\treturn r.Q.AssetKind(ctx, typeVal)\n}\n",
+		}},
+		SeedPackage: "graph",
+		Stdout:      &bytes.Buffer{},
+		Stderr:      &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatalf("Gen: %v", err)
+	}
+	want := []string{filepath.Join(resolverDir, "resolver.go"), stubbed}
+	if diff := cmp.Diff(want, res.SeedFiles); diff != "" {
+		t.Errorf("GenResult.SeedFiles (-want +got):\n%s", diff)
+	}
+	out, err := os.ReadFile(stubbed) //nolint:gosec // path is t.TempDir-derived
+	if err != nil {
+		t.Fatalf("reading resolver file: %v", err)
+	}
+	if !strings.Contains(string(out), "return r.Q.AssetKind(ctx, typeArg)") {
+		t.Errorf("stub was not spliced under gqlgen's parameter name:\n%s", out)
+	}
+}
+
+// TestPostStubRewriter_RenamesSeedParamsByPosition pins the splice half of PRD
+// §26.5.6's seed step. gqlgen names a resolver's parameters itself
+// (`ToGoPrivate` over the GraphQL argument, `Arg` after a Go keyword), so a
+// seed body spliced into gqlgen's stub has its parameters renamed to gqlgen's
+// by position. A selector field is never a parameter reference, and a rename
+// that would rebind a name the body already uses is refused.
+func TestPostStubRewriter_RenamesSeedParamsByPosition(t *testing.T) {
+	tests := []struct {
+		name    string
+		stub    string // gqlgen's signature, after `func (r *mutationResolver) `
+		seed    string // the seed method, whole
+		want    string // the spliced body statement
+		wantErr string
+	}{
+		{
+			name: "keyword key takes gqlgen's Arg spelling",
+			stub: "DeleteAssetKind(ctx context.Context, typeArg string) (bool, error)",
+			seed: "func (r *mutationResolver) DeleteAssetKind(ctx context.Context, typeVal string) (bool, error) {\n\treturn r.M.DeleteAssetKind(ctx, typeVal)\n}\n",
+			want: "return r.M.DeleteAssetKind(ctx, typeArg)",
+		},
+		{
+			name: "snake_case composite key takes gqlgen's camel spelling",
+			stub: "UpdateTaskLabel(ctx context.Context, workspaceID string, taskID string, input UpdateTaskLabelInput) (*models.TaskLabel, error)",
+			seed: "func (r *mutationResolver) UpdateTaskLabel(ctx context.Context, workspace_id string, task_id string, input UpdateTaskLabelInput) (*models.TaskLabel, error) {\n\treturn r.M.UpdateTaskLabel(ctx, workspace_id, task_id, translateUpdateTaskLabelRequest(input))\n}\n",
+			want: "return r.M.UpdateTaskLabel(ctx, workspaceID, taskID, translateUpdateTaskLabelRequest(input))",
+		},
+		{
+			name: "a selector spelled like a parameter is not renamed",
+			stub: "Restore(ctx context.Context, mArg string) (bool, error)",
+			seed: "func (r *mutationResolver) Restore(ctx context.Context, M string) (bool, error) {\n\treturn r.M.Restore(ctx, M)\n}\n",
+			want: "return r.M.Restore(ctx, mArg)",
+		},
+		{
+			name:    "a rename onto a name the body uses is refused",
+			stub:    "UpsertNote(ctx context.Context, input CreateNoteInput, target NoteConflict) (*models.Note, error)",
+			seed:    "func (r *mutationResolver) UpsertNote(ctx context.Context, input CreateNoteInput, conflictTarget NoteConflict) (*models.Note, error) {\n\ttarget, err := translateNoteConflict(conflictTarget)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\treturn r.M.UpsertNote(ctx, translateCreateNoteInput(input), target)\n}\n",
+			wantErr: `gqlgen names parameter "conflictTarget" "target", which the body already uses`,
+		},
+		{
+			name:    "a parameter count mismatch is refused",
+			stub:    "DeleteAssetKind(ctx context.Context, typeArg string, extra int) (bool, error)",
+			seed:    "func (r *mutationResolver) DeleteAssetKind(ctx context.Context, typeVal string) (bool, error) {\n\treturn r.M.DeleteAssetKind(ctx, typeVal)\n}\n",
+			wantErr: "seed for mutationResolver.DeleteAssetKind takes 2 parameters, gqlgen's resolver takes 3",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			resolverDir := filepath.Join(dir, "graph")
+			if err := os.MkdirAll(resolverDir, 0o750); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			method, _, _ := strings.Cut(tt.stub, "(")
+			original := "package graph\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\n\t\"example.com/models\"\n)\n\nvar _ *models.Client\n\n" +
+				"func (r *mutationResolver) " + tt.stub + " {\n\tpanic(fmt.Errorf(\"not implemented: " + method + "\"))\n}\n"
+			path := filepath.Join(resolverDir, "x_gen.resolvers.go")
+			if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+				t.Fatalf("seeding file: %v", err)
+			}
+			opts := GenOptions{
+				WorkingDir:          dir,
+				SqlgenManagedFields: SqlgenManagedFieldSet{MutationFields: []string{method}},
+				Seeds:               []TableSeed{{SnakeName: "x", Body: tt.seed}},
+			}
+			layout := resolverLayout{Layout: layoutFollowSchema, Dir: "graph", FilenameTemplate: defaultFilenameTpl}
+
+			rewritten, err := rewritePanicStubs(opts, layout)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("rewritePanicStubs error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("rewritePanicStubs: %v", err)
+			}
+			if diff := cmp.Diff([]string{path}, rewritten); diff != "" {
+				t.Errorf("rewritten files (-want +got):\n%s", diff)
+			}
+			out, err := os.ReadFile(path) //nolint:gosec // path is t.TempDir-derived
+			if err != nil {
+				t.Fatalf("reading rewritten file: %v", err)
+			}
+			if !strings.Contains(string(out), tt.want) {
+				t.Errorf("spliced body missing %q:\n%s", tt.want, out)
+			}
+		})
 	}
 }

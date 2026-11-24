@@ -77,3 +77,53 @@ func TestValidatePostParse_CursorKeys_ReadsResolvedPK(t *testing.T) {
 		})
 	}
 }
+
+// TestValidatePostParse_CursorKeys_ExcludedColumn pins that an explicit cursor
+// key naming a globally or table-level excluded column is an error (PRD §4.13).
+func TestValidatePostParse_CursorKeys_ExcludedColumn(t *testing.T) {
+	categories := config.SchemaTable{
+		Name:   "categories",
+		Schema: "public",
+		Columns: []config.SchemaColumn{
+			{Name: "id", Type: "bigint", PrimaryKey: true},
+			{Name: "name", Type: "text"},
+			{Name: "label", Type: "text"},
+		},
+	}
+	const want = `cursor_keys: column "name" in table public.categories is excluded by exclude_columns; a cursor key must be a generated column`
+
+	tests := []struct {
+		name          string
+		tableExclude  []string
+		globalExclude []string
+		keys          []string
+		wantErr       bool
+	}{
+		{name: "table-level exclude", tableExclude: []string{"name"}, wantErr: true},
+		{name: "global exclude", globalExclude: []string{"name"}, wantErr: true},
+		{name: "another column excluded", tableExclude: []string{"label"}, wantErr: false},
+		{name: "excluded key missing from the table", keys: []string{"missing"}, globalExclude: []string{"missing"}, wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Generation.ExcludeColumns = tt.globalExclude
+			keys := tt.keys
+			if keys == nil {
+				keys = []string{"name"}
+			}
+			cfg.Tables["public.categories"] = config.TableConfig{
+				CursorKeys:     keys,
+				ExcludeColumns: tt.tableExclude,
+			}
+			_, err := config.ValidatePostParse(cfg, []config.SchemaTable{categories}, nil)
+			got := err != nil && strings.Contains(err.Error(), "excluded by exclude_columns")
+			if got && tt.wantErr && !strings.Contains(err.Error(), want) {
+				t.Errorf("ValidatePostParse() error = %v, want %q", err, want)
+			}
+			if got != tt.wantErr {
+				t.Errorf("ValidatePostParse() error = %v, want the excluded-key error: %t", err, tt.wantErr)
+			}
+		})
+	}
+}

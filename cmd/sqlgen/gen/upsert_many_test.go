@@ -186,7 +186,13 @@ func TestUpsertManyTemplate_conflictClauseFields(t *testing.T) {
 			for _, want := range []string{
 				"sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{",
 				"UpsertConflictKeys:  conflictColumns,",
-				"UpsertUpdateColumns: updateColumns,",
+				// Grouped by the update columns each row sets, so a conflict
+				// leaves a column the row left unset alone, as Upsert does.
+				"updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)",
+				"UpsertUpdateColumns: updateSets[g],",
+				// A sub-batch of several groups is written atomically.
+				"if len(groups) > 1 {",
+				"database.WithTransaction(ctx, c.querier, \"upsert_many_",
 			} {
 				if !strings.Contains(output, want) {
 					t.Errorf("output missing %q\n\nfull output:\n%s", want, output)

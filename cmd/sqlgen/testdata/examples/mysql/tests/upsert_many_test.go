@@ -19,6 +19,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/omittable"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models"
@@ -312,5 +314,47 @@ func TestUpsertMany_NonCoveringTarget_IndefiniteConflictValueRefused(t *testing.
 	}
 	if rows != 0 {
 		t.Errorf("refused UpsertMany wrote %d rows, want 0", rows)
+	}
+}
+
+// On conflict UpsertMany updates only the columns each row sets, as the
+// single-row Upsert does (PRD §9.5 "Update columns in upsert"). A batch binds
+// every input column in every row, so one shared update list would reset a
+// column a row left unset to its DEFAULT (NULL without one). The batch mixes a
+// row that leaves description unset, one that sets it, and a fresh insert, so
+// the rows take different update lists in one call.
+func TestUpsertMany_ConflictLeavesUnsetColumnsAlone(t *testing.T) {
+	ctx := context.Background()
+	client := newClient()
+
+	keep, replaced := "keep", "replaced"
+	names := []string{"UpsertManyKeepA", "UpsertManyKeepB", "UpsertManyKeepC"}
+	for _, name := range names[:2] {
+		cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: name, Description: omittable.Set(&keep)})
+		if err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+		t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
+	}
+
+	got, err := client.Categories().UpsertMany(ctx, []*models.CreateCategoryInput{
+		{Name: names[0]},
+		{Name: names[1], Description: omittable.Set(&replaced)},
+		{Name: names[2]},
+	}, models.CategoryConflictName)
+	if err != nil {
+		t.Fatalf("UpsertMany: %v", err)
+	}
+	desc := make(map[string]string, len(got))
+	for _, cat := range got {
+		t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
+		desc[cat.Name] = "<NULL>"
+		if cat.Description != nil {
+			desc[cat.Name] = *cat.Description
+		}
+	}
+	want := map[string]string{names[0]: keep, names[1]: replaced, names[2]: "<NULL>"}
+	if diff := cmp.Diff(want, desc); diff != "" {
+		t.Errorf("descriptions after UpsertMany (-want +got):\n%s", diff)
 	}
 }

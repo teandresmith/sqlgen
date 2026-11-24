@@ -557,7 +557,7 @@ func TestCreateTemplate_createMany_multiRowInsert(t *testing.T) {
 		// Re-fetch
 		"idStrings := make([]string, len(allIDs))",
 		"idStrings[i] = id.String()",
-		`ID: &comparator.ID{In: idStrings}`,
+		`ID: &comparator.ID{In: idStrings[lo:hi]}`,
 		"Limit: new(0)",
 	}
 	for _, want := range wantPatterns {
@@ -651,7 +651,7 @@ func TestCreateTemplate_createMany_compositePK(t *testing.T) {
 		// Collect PKs from input
 		"allPKs = append(allPKs, OrderItemPK{OrderID: input.OrderID, ProductID: input.ProductID, })",
 		// Re-fetch with PKs filter
-		`Filter: &OrderItemFilter{PKs: allPKs}`,
+		`Filter: &OrderItemFilter{PKs: allPKs[lo:hi]}`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {

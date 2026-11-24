@@ -441,13 +441,15 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 {{- if .CompositePK }}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: allPKs{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
-			Limit:  new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{PKs: allPKs[lo:hi]{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
+				Limit:  new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else }}
 
@@ -457,32 +459,36 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 		for i, id := range allIDs {
 			idStrings[i] = {{ fkToString $pkCol "id" }}
 		}
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+		return refetchInChunks(len(idStrings), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings[lo:hi]},
 {{- with softDeleteFilterAny . }}
-				{{ $.SoftDelete.FieldName }}: {{ . }},
+					{{ $.SoftDelete.FieldName }}: {{ . }},
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- else }}
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{
-				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "allIDs" false }},
+		return refetchInChunks(len(allIDs), c.batchSize, func(lo, hi int) ([]*{{ .StructName }}, error) {
+			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "allIDs[lo:hi]" false }},
 {{- with softDeleteFilterAny . }}
-				{{ $.SoftDelete.FieldName }}: {{ . }},
+					{{ $.SoftDelete.FieldName }}: {{ . }},
 {{- end }}
-			},
-			Limit: new(0),
-		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
 		})
 {{- end }}
 {{- end }}

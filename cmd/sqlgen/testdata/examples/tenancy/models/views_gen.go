@@ -353,6 +353,9 @@ func (c *productStatClient) Count(ctx context.Context, filter *ProductStatFilter
 	if err != nil {
 		return 0, fmt.Errorf("count product_stats: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -402,6 +405,9 @@ func (c *productStatClient) Paginate(ctx context.Context, input PaginateInput[Pr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate product_stats: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[ProductStat]), nil
 }
@@ -519,6 +525,9 @@ func (c *productStatClient) Connection(ctx context.Context, input ConnectionInpu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connection product_stats: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*Connection[ProductStat]), nil
 }
@@ -933,6 +942,9 @@ func (c *workspaceSummaryClient) Count(ctx context.Context, filter *WorkspaceSum
 	if err != nil {
 		return 0, fmt.Errorf("count workspace_summaries: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }
 
@@ -977,6 +989,9 @@ func (c *workspaceSummaryClient) Paginate(ctx context.Context, input PaginateInp
 	})
 	if err != nil {
 		return nil, fmt.Errorf("paginate workspace_summaries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
 	}
 	return result.(*PaginateResult[WorkspaceSummary]), nil
 }

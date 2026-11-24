@@ -23,198 +23,21 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-389
+_No open fixes._
 
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 25, cmd/sqlgen/gen/templates/table
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`CreateMany` on a composite-PK table fails on SQLite past roughly 1000 rows, after the writes")
+<!-- fixes:open:end -->
 
-**Issue.** Bulk writes return an error after the rows are committed once the read-back exceeds a dialect ceiling, so a caller who retries duplicates or conflicts. Measured at `998f0654`: SQLite composite-PK `CreateMany`/`UpdateMany` n=999 → "Expression tree is too large (maximum depth 1000)" with 999 rows written; SQLite single-column `CreateMany`/`SoftDeleteMany` n=33000 → "too many SQL variables"; MySQL composite n=33000 / single n=66000 → "Error 1390 … too many placeholders"; PostgreSQL composite n=33000 → "extended protocol limited to 65535 parameters". HardDeleteMany is fine (already chunked).
+## Resolved
 
-**Root cause.** Every bulk write re-fetches all written keys in one unbounded `GetMany`: composite keys render `Filter.PKs` as an OR of ANDs (`shared/_filter.tmpl:58`), single keys as one IN. Sites: `create.go.tmpl:444/460/474`, `update.go.tmpl` (8), `delete.go.tmpl` (12: SoftDelete/Restore Many and Where), `upsert_many.go.tmpl:456/471/486`.
-
-**Suggested fix.**
-- Start from `.claude/prototypes/backlog/refetch-chunked-readback.patch` (based on `998f0654`; 166 files, +33k/-26k, mostly re-indentation).
-- New shared helper `refetchInChunks` (`gen/context_shared.go`); all 26 read-back sites call `GetMany` per chunk of `c.batchSize` keys. A call of ≤ batch_size keys stays one statement.
-- Remove the conformance seed's chunks-of-500 workaround (`composite_key.go`); add a conformance test of 1000 composite rows through CreateMany + UpdateMany; update two UpsertMany statement-count pins (terminal SELECT becomes ceil(M/batch_size)).
-- User ruling 2026-11-22: accept ceil(M/batch_size) read-backs; amend §25.1/§25.3 to say read-backs sit outside the write bound, as key reads already do.
-- Prototype results, run at `998f0654` on 2026-11-22: conformance CreateMany "composite keys past SQLite's expression depth limit read back every written row" and GetMany "a composite key load past one chunk…" fail with the old templates and pass after; after the fix SQLite composite 40000 / single 33000, MySQL composite 33000 / single 66000, PG composite 33000 all ok. `go test -short ./...` (cmd/sqlgen), update-golden/-e2e, conformance-fresh, test-conformance, test-examples (15), lint-conformance all ok.
-
-**References.**
-- PRD §19 ("all batch operations split their input into sub-batches … This prevents parameter count limits from being exceeded"), §25.1 (rules out "documenting the cliff instead of batching past it"), §25.3.
-- Residual, not in scope: SQLite composite still fails when batch_size ≥ 999; a user `GetMany` with ≥ 999 `Filter.PKs` on SQLite fails the same way (fix site `_filter.tmpl`, tuple IN on SQLite only).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-390
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, cmd/sqlgen/gen/templates/table/upsert_many.go.tmpl
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "On conflict, UpsertMany resets an unset nullable or DEFAULT column")
-
-**Issue.** On conflict, `UpsertMany` sets every column a row left unset to its DEFAULT (NULL without one), while single-row `Upsert` leaves it alone — silent data loss when batching partial rows. Measured at `998f0654` on PG17, MySQL 8.0.46 and SQLite: `categories` created with description "keep", then a Name-only input → `Upsert: "keep" -> "keep"`, `UpsertMany: "keep" -> "<NULL>"`.
-
-**Root cause.** `upsert_many.go.tmpl:164` builds one shared `updateColumns` for the whole sub-batch, and unset fields bind `sql.Default` (`:246-254`), so `col = EXCLUDED.col` writes the default. PRD §9.5 currently documents this (added by 5b24d6ba, registry `upsert-many.unset-takes-default`, conformance `suite/upsert.go:658/676`), but no ruling ever chose it.
-
-**Suggested fix.**
-- User ruling 2026-11-22: UpsertMany matches Upsert — a column a row leaves unset is left alone on conflict.
-- Start from `.claude/prototypes/backlog/upsertmany-unset-columns.patch` (based on `998f0654`; 154 files, +11.2k/-5.4k, mostly re-indentation).
-- New shared helper `upsertUpdateGroups` (`gen/context_shared.go`) splits each sub-batch by the set of update columns its rows set; one statement per group. VALUES rows unchanged, so inserts behave as before; homogeneous batches (every nested M2M link step) stay one statement.
-- Example test `TestUpsertMany_ConflictLeavesUnsetColumnsAlone` (pg/mysql/sqlite); flip and rename the two conformance subtests; rename and reword `upsert-many.unset-takes-default` in docs/conformance/client.md.
-- PRD: rewrite the §9.5 sentence; "one statement per sub-batch" wording in §9.2/§25.1/§25.3 becomes one per set-column group; a re-upsert no longer revives a soft-deleted row unless the row sets the soft-delete column, so reword E5 (§9.9.4) and the `gen/context_nested.go:1514` comment.
-- Prototype results, run at `998f0654` on 2026-11-22: the new test fails on all three without the template change (`"UpsertManyKeepA": "keep"` vs `"<NULL>"`) and passes with it; cmd/sqlgen `go test -short ./...`, update-golden/-e2e, test-conformance (8 modules), test-examples (15), req-check, lint all ok.
-
-**References.**
-- PRD §9.5, §9.2, §9.9.4 (E5), §25.1, §25.3. FIX-320 (kept the every-input-column rule; dropped only sequence columns).
-- Rejected alternative: `COALESCE(EXCLUDED.c, t.c)` — measured on SQLite, a DEFAULT column is still overwritten and an explicit NULL could never be written.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-391
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 25, cmd/sqlgen/config
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "An explicit `tables.<name>.cursor_keys` naming an `exclude_columns` column passes `validateCursorKeys`")
-
-**Issue.** An explicit `cursor_keys` entry naming an excluded column validates and generates with exit 0 and no warning, but `Connection` (and the GraphQL connection query) is silently missing. Measured at `998f0654`: sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}` → exit 0, `category_gen.go` has no `Connection`, the `categories(...)` connection query is gone, `go build` ok.
-
-**Root cause.** `cmd/sqlgen/config/validate.go` `validateCursorKeys` checks the raw column set; `gen/context_table.go:816` resolves against the post-exclude set and ignores `decision.Errs`.
-
-**Suggested fix.**
-- Start from `.claude/prototypes/backlog/cursor-keys-excluded-column.patch` (based on `998f0654`; 2 files, +57).
-- `validateCursorKeys` errors per explicit key found in `ResolveTableExcludeColumns` (global ∪ table): `cursor_keys: column "name" in table public.categories is excluded by exclude_columns; a cursor key must be a generated column`.
-- Test `TestValidatePostParse_CursorKeys_ExcludedColumn` (table-level, global, and a non-key exclude control).
-- Prototype results, run at `998f0654` on 2026-11-22: table-level and global cases fail before ("error = <nil>") and pass after; E2E → "Post-parse validation error: cursor_keys: column \"name\" in table categories is excluded by exclude_columns; …"; `go test -race ./config/` and vet ok; no golden churn.
-
-**References.**
-- PRD §4.13 (explicit configuration "must be honored or flagged"), §4.8 (explicit keys "must exist on this table").
-- FIX-392 (cursor-key uniqueness warning, same validator).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-392
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 25, cmd/sqlgen/config
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`cursor_keys` uniqueness is not validated")
-
-**Issue.** Non-unique `cursor_keys` silently skip rows across `Connection` pages. Measured at `998f0654` on SQLite: products with `cursor_keys: [category_id]`, 3+3 rows, `first: 2` → page0 [1,2], page1 [4,5], page2 [] — 4 of 6 rows seen, rows 3 and 6 skipped. No PK tiebreaker is appended (generated `cursorKeys: []string{"category_id"}`).
-
-**Root cause.** Nothing checks that the resolved cursor keys cover a PK or UNIQUE set; PRD §9.8 says only that keys "Should be columns that are unique and immutable".
-
-**Suggested fix.**
-- User ruling 2026-11-22: a validate **warning** (not an error, not an auto-appended tiebreaker) when the resolved keys cover no PK, UNIQUE group or UNIQUE column.
-- Start from the ungated sketch `.claude/prototypes/backlog/cursor-keys-uniqueness-warning.sketch.patch`. It must check the post-exclude key set, and it breaks two config tests whose fixtures lack PK/UNIQUE flags (`InheritedPartialMissing`, `ExcludeColumnsRemovesAll`) — give those fixtures the flags.
-- Add a §4.13 row for the warning and a registry row; fail-first test with a non-unique key set (warns) and a PK-covering control (silent). Sketch warns in 0 of 12 examples.
-
-**References.**
-- PRD §9.8, §4.13, §14.2 ("cursor_keys determines sort" — why the tiebreaker option was rejected).
-- FIX-391.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-393
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 27, cmd/sqlgen/gen/templates/table/nested.go.tmpl
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "In tenancy_mysql a cached `Moments().Get` right after a `MomentOwners().UpdateWithRelated` connect returns the stale `owner_id=nil`")
-
-**Issue.** A cached read right after a `*WithRelated` write returns stale data on every dialect, while a flat `Update` invalidates before it returns. Measured at `998f0654` with a logging cache backend: `SET moments:pk = {"owner_id":null}` → `UpdateWithRelated` returns → `GET moments:pk → {"owner_id":null}` (stale) → only then `INVMANY`. 50-iteration loops: sqlite 50/50 stale, postgres async 50/50 stale, postgres with `WithCallbackMode(CallbackSync)` 0/50. The backlog line's UTC/zone theory is wrong: it is timing only.
-
-**Root cause.** `database/transaction.go:747` `fireCallbacksAsync` runs commit callbacks in a goroutine (the §18.6 default). `*WithRelated` methods open the root transaction themselves (`nested.go.tmpl:311/381/444`, `TxOptions{CallbackMode: c.callbackMode}`), so a caller who never asked for a transaction loses the read-your-writes a flat write gives (`cache.go.tmpl:1055` invalidates inline).
-
-**Suggested fix.**
-- User ruling 2026-11-22: run commit callbacks synchronously when the method opens the root transaction; keep the client's mode inside a caller's transaction.
-- Start from `.claude/prototypes/backlog/nested-write-invalidates-before-return.patch` (based on `998f0654`; 22 files, +2793/-487).
-- `nested.go.tmpl` gains a per-table `nestedTxOptions(ctx)`: `CallbackSync` when `database.FromContext(ctx) == nil`, else the client's mode. The three `WithTransaction` sites use it. Drop the `SkipCache` workaround from tenancy_mysql and tenancy_postgres `TestNestedTimeKeyZones`.
-- Fail-first test: tenancy `TestCache_NestedWriteInvalidatesBeforeReturn` (20 iterations, default async client).
-- PRD: amend §9.9.9 and §18.6. Note the two costs there: the call waits for the backend round trip as a flat write does, and under sync a ctx cancelled between commit and the callbacks returns "skipping commit callbacks" for a committed write.
-- Prototype results, run at `998f0654` on 2026-11-22: the new test fails before ("iteration 0: cached owner_id = <nil>, want 1") and passes after; both TestNestedTimeKeyZones without SkipCache fail before and pass after; update-golden/-e2e, examples tenancy/tenancy_postgres/tenancy_mysql/mysql/graphql, all 8 conformance modules, `make check` ok. Golden churn: one new method per nested table in graphql, mysql, tenancy, tenancy_mysql, tenancy_postgres and the 8 conformance models.
-
-**References.**
-- PRD §9.9.9, §18.6, §27.
-- Adjacent, not in scope: `UpdateMany`'s internal `WithTransaction` passes no TxOptions.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-394
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 7, cmd/sqlgen/gen/templates
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`Paginate` and `Connection` end with an unchecked `result.(*PaginateResult[T])`")
-
-**Issue.** A hook that short-circuits with `(nil, nil)` panics in `Paginate`, `Connection`, `Count`, `Exists`, `ExistsWhere` and `RawExec`. Measured at `998f0654` in the sqlite example: `Products().Paginate` → "PANIC interface conversion: interface {} is nil, not *models.PaginateResult[…Product]"; Connection, Count ("not int64"), Exists ("not bool"), view Paginate, view Count and `RawExec` ("interface is nil, not database.Result") the same; `Get` returns `(nil, nil)`.
-
-**Root cause.** Nine hook-result assertions lack the `result == nil` guard the other 27 sites have: `templates/table/pagination.go.tmpl:53,170`, `templates/view/pagination.go.tmpl:56,177`, `templates/table/count.go.tmpl:66`, `templates/view/count.go.tmpl:44`, `templates/table/exists.go.tmpl:64,126`, `templates/client.go.tmpl:365`.
-
-**Suggested fix.**
-- User ruling 2026-11-22: a nil short-circuit result is the zero value — `return nil, nil` for Paginate, Connection and RawExec; `return 0, nil` for Count; `return false, nil` for Exists and ExistsWhere.
-- Start from `.claude/prototypes/backlog/gen-hook-nil-result-guard.patch` (based on `998f0654`; 188 files, +10575/-0, guard lines only; includes the new test).
-- E2E test `examples/sqlite/tests/hook_nil_result_test.go` `TestHookNilResultDoesNotPanic` (8 subtests, table and view).
-- PRD: amend the §9.8.10 Exists/Count examples (and RawExec's if touched) to guard nil like §9.8.11/§9.8.12.
-- Prototype results, run at `998f0654` on 2026-11-22: all 8 subtests panic before and pass after; `make check`, the sqlite and events examples, conformance sqlite and features_sqlite ok; Docker-backed examples not run.
-
-**References.**
-- PRD §9.8.10, §9.8.11, §9.8.12, §21.5 ("Return a result without calling `next()`").
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-395
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 16, cmd/sqlgen/gen (API resolvers) and cmd/sqlgen/wrapper
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "The resolver helpers' PK parameters (`funcPKGoArgs`, `resolvers.go.tmpl`) are spelled from the PK column's GraphQL name without `safeGoIdent`")
-
-**Issue.** Generated GraphQL resolvers fail to compile for (1) a PK column named after a Go keyword and (2) any multi-word PK under `field_casing: snake_case`. Measured at `998f0654` on graphql example copies: `asset_kinds(type PK)` and `price_bands(PK(range, func))` → "goimports failed for models/graph/sqlgenresolver/resolvers_gen.go:410:44: expected ')', found 'type'"; fixing only the helpers leaves gqlgen re-signing seeded methods as `rangeArg`/`funcArg` with sqlgen's body → "undefined: rangeVal". With only `field_casing: snake_case` flipped → "undefined: asset_id … workspace_id" in `*_gen.resolvers.go` (gqlgen spells `asset_id` as `assetID`). Digit-before-acronym names (`line2ID` → gqlgen `line2id`) also diverge.
-
-**Root cause.** `cmd/sqlgen/gen/funcmap.go` `funcPKGoArgs` / `funcPKPassArgs` / `convertOnePKArg` use `APIPKArg.GraphQLName` raw, and `templates/api/seeds.go.tmpl` writes managed method bodies before gqlgen runs, naming parameters itself, while gqlgen names them with `ToGoPrivate(name)`.
-
-**Suggested fix.**
-- User ruling 2026-11-22: stop pre-writing managed method bodies with predicted parameter names. Let gqlgen emit its panic stubs with its own names, and have `rewritePanicStubs` splice the seed body in with parameters renamed by position (the path that already exists for operations added later). Amend PRD §26.5.6 step 4 ("Seed step").
-- Land the `APIPKArg.GoName()` (`safeGoIdent`, `typeVal`) half of `.claude/prototypes/backlog/pk-arg-reserved-word.patch` (based on `998f0654`; 4 files, +141/-26) for the Q/M helpers either way; drop its `SeedGoName` gqlgen-mirroring half in favor of the splice.
-- Tests: `TestReservedWord_PKParameterSpelling` for the helpers; a wrapper test that a keyword PK and a snake_case multi-word PK generate, build and run a second time.
-- Prototype results, run at `998f0654` on 2026-11-22 (keyword half only): reverting the helper spelling fails ("typeVal string" vs "type string", "does not parse: expected ')', found 'type'"); after the fix the probe generates, builds, vets and rebuilds; update-golden and update-golden-e2e ok, no golden churn. The splice half is not prototyped.
-
-**References.**
-- PRD §8.5 Reserved Word Handling (escape with `Val` "where that form is emitted bare in generated code — as a local variable"), §26.5.6.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-### FIX-396
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 16, cmd/sqlgen/wrapper
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "gqlgen defaults an absent `resolver.layout` to `single-file`")
-
-**Issue.** A `gqlgen.yml` that omits `resolver.layout` is seeded for `follow-schema`, while gqlgen v0.17.95 defaults it to `single-file`, so every such config fails with a confusing error. Measured at `998f0654` on graphql_top_level copies: layout removed (dir only) → "config.resolver: filename must be specified with layout=single-file" with follow-schema seed files left behind; plus `filename: graph/resolver.go` → "method mutationResolver.DeleteCategory already declared"; no resolver block → "undefined: mutationResolver/queryResolver".
-
-**Root cause.** `cmd/sqlgen/wrapper/seeds.go` `parseResolverLayout` defaults an absent layout to follow-schema.
-
-**Suggested fix.**
-- Start from `.claude/prototypes/backlog/gqlgen-absent-layout-default.patch` (based on `998f0654`; 3 files, +42/-16).
-- Default an absent layout to single-file; with no filename either, fail before seeding: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename". Fix the `resolverLayout` doc; three new `TestParseResolverLayout` cases; three wrapper_test fixtures and `cli/unused_scalar_warning_commands_test.go` state `layout: follow-schema, dir: graph`.
-- Optional one-line §26.5.6 note on the default.
-- Prototype results, run at `998f0654` on 2026-11-22: new cases fail before (err=<nil>; "follow-schema" vs "single-file") and pass after; E2E: no resolver block → loud error and no seeds; dir + filename, no layout → "generated 25 files", builds, second run builds; `go test -race ./wrapper/`, `go test -short ./cli/` ok; no golden churn.
-
-**References.**
-- PRD §26.5.6 step 2. FIX-265 (logged this as backlog).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
+<!-- fixes:resolved:begin -->
 
 ### FIX-397
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** nit
 - **Origin:** phase 1, sql
 - **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`sql.Where(col).In(&sub)` with a `*Subquery` is bound as one parameter value")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
 
 **Issue.** `sql.Where(col).In(&sub)` / `Nin(&sub)` with a `*Subquery` render `col IN ($1)` / `IN (?)` with the pointer as the single arg, and the driver fails with a misleading error. Measured at `998f0654`: PG `company_id IN ($1)`, args `[]any{(*sql.Subquery)(0x…)}`; MySQL/SQLite `IN (?)` / `NOT IN (?)`; SQLite execution → "sql: converting argument $1 type: unsupported type sql.Subquery, a struct". Generated code always passes a value.
 
@@ -222,20 +45,228 @@
 
 **Suggested fix.**
 - User ruling 2026-11-22: accept `*Subquery`.
-- Start from `.claude/prototypes/backlog/sql-in-subquery-pointer.patch` (based on `998f0654`): `listOrSubquery` also unwraps a non-nil `*Subquery`; a nil pointer stays a one-value list; godoc on `In` updated; `TestInNinSubqueryPointer` in `sql/composition_test.go` (pg, pgStd, mysql, sqlite).
-- PRD §11.5 wording (PRD:2353, :8579-8580): "a single `sql.Subquery` (or `*sql.Subquery`)".
-- Prototype results, run at `998f0654` on 2026-11-22: the 4 subtests fail before and pass after; `go test ./sql/`, vet, golangci-lint, gofumpt clean; no golden churn. `Eq(&sub)` is out of scope (a scalar Subquery is not a documented form).
+- Start from `.claude/prototypes/FIX-397.patch` (based on `ca9b4128`; 5 files, +53/-13): `listOrSubquery` uses a type switch that unwraps a non-nil `*Subquery`; a nil pointer stays a one-value list (binds NULL, like `In(nil)`); godoc on `In` and `listOrSubquery` updated; `TestInNinSubqueryPointer` in `sql/composition_test.go` (postgres in, postgres stdlib nin, mysql in, sqlite nin, postgres nil pointer in, sqlite nil pointer nin).
+- PRD wording at §8.1.7 (PRD:2354), the §11.5 example comment (:8570) and table rows (:8590-8591): "a single `sql.Subquery` (or non-nil `*sql.Subquery`)". Registry row `cond.builder.in-nin-subquery` in `docs/conformance/runtime/sql.md` states the pointer form and nil behavior; `make req-rehash SECTIONS=8.1,8.1.7,11.5`.
+- Corrected at vetting (2026-11-23): added the two nil-pointer cases (the original left the `sq != nil` guard untested), the fourth PRD occurrence at :8570, and the registry row and rehash `req-check` needs.
+- Prototype results, run at `ca9b4128` on 2026-11-23: probe → PG `SELECT * FROM "users" WHERE company_id IN ($1)` with args `[]interface {}{(*sql.Subquery)(0x…)}`, MySQL/SQLite `IN (?)` / `NOT IN (?)`; SQLite execution → "sql: converting argument $1 type: unsupported type sql.Subquery, a struct"; after the fix the same probe returns ids [2]. Gates: `go test -race ./sql/...`, vet, gofumpt, golangci-lint, `make req-check` ok. Fail-first: `case *Subquery` removed → the four non-nil subtests fail ("BuildSelect(postgres in) = SELECT * FROM \"users\" WHERE company_id IN ($1) want … IN (SELECT id FROM companies WHERE size > $1)"); `if sq != nil` guard removed → "panic: runtime error: invalid memory address or nil pointer dereference"; existing suite without the fix passes. No golden churn. Verify (2026-11-24): independent reviewer confirmed all findings and fail-first; PRD line refs in Suggested fix corrected to the landed file. `Eq(&sub)` is out of scope (a scalar Subquery is not a documented form).
 
 **References.**
-- PRD §11.5.
+- PRD §8.1.7, §11.5.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
+**Resolution notes.** `listOrSubquery` in `sql/condition.go` now type-switches on the lone argument: a `Subquery` or a non-nil `*Subquery` is unwrapped and rendered as the nested SELECT; a nil `*Subquery` stays a one-value list and binds NULL, as `In(nil)` does. Godoc on `In` and `listOrSubquery`, PRD §8.1.7 and §11.5 (example comment and the `In`/`Nin` table rows), and registry row `cond.builder.in-nin-subquery` state the pointer form; anchors rehashed. Regression test `TestInNinSubqueryPointer` in `sql/composition_test.go` covers all four dialect setups plus two nil-pointer cases. Prototype applied clean (`git apply --3way`); `make req-rehash SECTIONS=8.1,8.1.7,11.5` updated 0 anchors (the patch's hashes were current). Fail-first re-run on the final code: `case *Subquery` removed → `TestInNinSubqueryPointer` fails; `sq != nil` guard removed → nil pointer dereference panic. No golden churn.
 
-<!-- fixes:open:end -->
+### FIX-396
 
-## Resolved
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 16, cmd/sqlgen/wrapper
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "gqlgen defaults an absent `resolver.layout` to `single-file`")
+- **Vetted:** ready at `ca9b4128` (2026-11-23)
 
-<!-- fixes:resolved:begin -->
+**Issue.** A `gqlgen.yml` that omits `resolver.layout` is seeded for `follow-schema`, while gqlgen v0.17.95 defaults it to `single-file`, so every such config fails with a confusing error. Measured at `998f0654` on graphql_top_level copies: layout removed (dir only) → "config.resolver: filename must be specified with layout=single-file" with follow-schema seed files left behind; plus `filename: graph/resolver.go` → "method mutationResolver.DeleteCategory already declared"; no resolver block → "undefined: mutationResolver/queryResolver".
+
+**Root cause.** `cmd/sqlgen/wrapper/seeds.go` `parseResolverLayout` defaults an absent layout to follow-schema.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/FIX-396.patch` (based on `ca9b4128`; 4 files, +43/-16).
+- Default an absent layout to single-file; with no filename either, fail before seeding: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename". Fix the `resolverLayout` doc; three new `TestParseResolverLayout` cases; three wrapper_test fixtures and `cli/unused_scalar_warning_commands_test.go` state `layout: follow-schema, dir: graph`.
+- Optional one-line §26.5.6 note on the default. The patch records the behavior as gap row `gap.api.wrapper-absent-layout-single-file` in `docs/conformance/cli/api.md` (§26.5.6, home `TestParseResolverLayout`), like `wrapper-single-file-needs-filename`; `sqlgen graphql init` already writes `layout: follow-schema`, so scaffolded configs are unaffected.
+- Prototype results, run at `ca9b4128` on 2026-11-23: graphql_top_level copies at HEAD → dir only: "failed to load schema: config.resolver: filename must be specified with layout=single-file … Error: gqlgen subprocess failed" with follow-schema seeds left in graph/; `filename: graph/resolver.go`: "method mutationResolver.UpdateProducts already declared at graph/product_gen.resolvers.go:44:28"; no resolver block: "undefined: queryResolver". Fixed binary → dir only and no block: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename" with no seeds written; dir + filename → "generated 25 files", builds, second run builds. Gates: `go test -race ./wrapper/`, `go test -short ./cli/ ./gen/`, vet, gofumpt, golangci-lint, `make req-check` ok. Fail-first: seeds.go reverted → "no_resolver_block: parseResolverLayout error = <nil>, want …", same for dir-only, "layout_omitted_with_filename: Layout: got \"follow-schema\", want \"single-file\""; the `layoutDefaulted` branch removed → both error cases fail; existing suite without the fix passes. No golden churn.
+
+**References.**
+- PRD §26.5.6 step 2. FIX-265 (logged this as backlog).
+
+**Resolution notes.** `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go`) now defaults an absent `resolver.layout` to `single-file`, gqlgen v0.17.95's own default, so the wrapper seeds the layout gqlgen will generate. With no `resolver.filename` either, it fails before seeding: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename". The `resolverLayout` and `parseResolverLayout` docs were updated. `TestParseResolverLayout` replaces "all defaults" with three cases (no resolver block, dir only, dir + filename). The three `wrapper_test.go` gqlgen.yml fixtures and `cli/unused_scalar_warning_commands_test.go` now state `layout: follow-schema, dir: graph`. Gap row `gap.api.wrapper-absent-layout-single-file` was added to `docs/conformance/cli/api.md` (§26.5.6, homes `TestParseResolverLayout` and `TestGen_AbsentLayoutWithoutFilename`). The optional PRD note was not added. The vetted prototype applied clean at `a5a65770`, and none of its hunks touched PRD anchor hashes. Fail-first: with seeds.go reverted, `no_resolver_block` and `layout_omitted_with_dir_only` fail with "error = <nil>" and `layout_omitted_with_filename` fails with "Layout: got \"follow-schema\", want \"single-file\"". Gates: `go test -race ./wrapper/`, `go test -short ./cli/ ./gen/`, `make check` and `make check-examples` are all ok. No golden churn, which matches the vet. Fixed inline after `/verify`: the `schema is a mapping` and `models is a sequence` cases of `TestGen_RejectsMalformedMergedConfigBeforeGqlgen` had no resolver block, so they began failing in `parseResolverLayout` and the test passed without reaching merged-config validation (`api.config.wrapper-validates-merged`). Both now state `layout: follow-schema, dir: graph`, and their errors are once again "merging gqlgen config: …". Added `TestGen_AbsentLayoutWithoutFilename`, which shows the failure comes before any seed or subprocess, as a second home for the gap row. Removed the history narration from the new comments. Each `TestGen_RejectsMalformedMergedConfigBeforeGqlgen` case now asserts the error prefix of the stage that rejects it, so a resolver-parse change cannot quietly hollow out the merged-config cases again.
+
+### FIX-390
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen/templates/table/upsert_many.go.tmpl
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "On conflict, UpsertMany resets an unset nullable or DEFAULT column")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
+
+**Issue.** On conflict, `UpsertMany` sets every column a row left unset to its DEFAULT (NULL without one), while single-row `Upsert` leaves it alone — silent data loss when batching partial rows. Measured at `998f0654` on PG17, MySQL 8.0.46 and SQLite: `categories` created with description "keep", then a Name-only input → `Upsert: "keep" -> "keep"`, `UpsertMany: "keep" -> "<NULL>"`.
+
+**Root cause.** `upsert_many.go.tmpl:164` builds one shared `updateColumns` for the whole sub-batch, and unset fields bind `sql.Default` (`:246-255`: SQLite `sql.NewDefaultExpr` at `:246-249`, `sql.Default` at `:251-254`; statement build at `:349-357`), so `col = EXCLUDED.col` writes the default. PRD §9.5 currently documents this (added by 5b24d6ba, registry `upsert-many.unset-takes-default`, conformance `suite/upsert.go:658/676`), but no ruling ever chose it.
+
+**Suggested fix.**
+- User ruling 2026-11-22: UpsertMany matches Upsert — a column a row leaves unset is left alone on conflict.
+- Start from `.claude/prototypes/FIX-390.patch` (based on `ca9b4128`; 162 files, +11241/-5408; 16 hand-written files +255/-64, the rest regenerated).
+- New shared helper `upsertUpdateGroups` (`gen/context_shared.go`) splits each sub-batch by the set of update columns its rows set (a column holding `sql.Default` or `sql.DefaultExpr` counts as unset); one `BuildMultiInsert` per group in first-appearance order; an empty set gives DO NOTHING. VALUES rows unchanged, so inserts behave as before; homogeneous batches (every nested M2M link step) stay one statement.
+- Example test `TestUpsertMany_ConflictLeavesUnsetColumnsAlone` (pg/mysql/sqlite); flip and rename the two conformance subtests; rename `upsert-many.unset-takes-default` to `upsert-many.unset-left-alone` and reword it; reword `edge.upsert-many.no-keys-from-statement` (client.md:165) and `upsert-many.batch-split` (client.md:897), which still say "one statement per sub-batch"; `make req-rehash` for 9.2, 9.5, 9.9, 25.1, 25.3, 26, 26.12.
+- PRD: rewrite the §9.5 sentence; "one statement per sub-batch" wording in §9.2/§25.1/§25.3 becomes one per set-column group; a re-upsert no longer revives a soft-deleted row unless the row sets the soft-delete column, so reword E5 (§9.9.4) and the `gen/context_nested.go:1514` comment.
+- Every statement of the old "re-link resets an optional junction column" rationale is now false and is reworded with the fix: the eligibility error at `gen/context_nested.go:1499`, the comments at `:1494-1496` and `:1514`, the `nested_test.go:731-743` doc and its `:783/:787` messages, the `examples/mysql/sqlgen.yml:42-44` comment, PRD E5 ("An optional one fails silently", "a link step that leaves them alone"; the rationale becomes "a nested write has no field to set one") and the PRD §26.12 out-of-scope line. Consequence, per the ruling: a nested `create`/`connect` re-linking a soft-deleted junction pair no longer clears `deleted_at` (the link row never sets it, so the upsert is DO NOTHING); the M2M loader still shows the link (E11). No example or conformance nested junction has a soft-delete column, so no runtime test covers either behavior.
+- Corrected at vetting (2026-11-23): the original patch lacked the PRD, `context_nested.go` and registry edits listed here, and its conformance helper `usZeroOf` was inserted between `usCounterInput`'s doc comment and that function; the patch fixes both and adds the stale-rationale rewording above (same root cause).
+- Prototype results, run at `ca9b4128` on 2026-11-23: the new example test at HEAD models fails on postgres, mysql and sqlite with `- "UpsertManyKeepA": "keep",` / `+ "UpsertManyKeepA": "<NULL>",`; a single-row Upsert probe gives `Upsert: "keep" -> "keep"`. Gates: `go test -race ./gen/...`, `go test -short ./...` (cmd/sqlgen), update-golden/-e2e, conformance generate + `diff --quiet` fresh, test-conformance (8 modules), test-examples (15), lint-conformance, lint on every example (re-run with `--timeout=20m` after a load timeout on introspect_sqlite), `golangci-lint ./gen/...`, req-check, refs-check all ok. Fail-first: template reverted → conformance sqlite/postgres/mysql fail "upsert.go:671: counters after UpsertMany([c, Hits unset]) (-want +got)" and "upsert.go:690: soft-deleted counters after UpsertMany (-want +got)"; the example postgres test fails as above (mysql/sqlite measured at HEAD models); existing suite without the fix passes. Golden churn: unit goldens ~2, each of 8 conformance model sets ~2, 14 examples ~4 each, sqlite ~72; no files added. `docs/conformance/REPORT.md` shows the renamed row as gone until `make conformance` reruns.
+- The user ruled on 2026-11-24: option B — a multi-group UpsertMany sub-batch (two or more set-column groups) is atomic: its groups run in a transaction outside a caller's transaction, or a savepoint inside one, following the §19.4 UpdateMany precedent; a single-group sub-batch stays one statement with no added transaction.
+
+**References.**
+- PRD §9.5, §9.2, §9.9.4 (E5), §25.1, §25.3. FIX-320 (kept the every-input-column rule; dropped only sequence columns).
+- Rejected alternative: `COALESCE(EXCLUDED.c, t.c)` — measured on SQLite, a DEFAULT column is still overwritten and an explicit NULL could never be written.
+
+**Resolution notes.** Prototype rebased onto `7ca82e90` (after FIX-389) and applied clean with `git apply --3way` (source and docs only); generated files regenerated, PRD anchors re-derived with `make req-rehash` (§9.9, §25.1, §25.3, §26 rows rehashed). New shared helper `upsertUpdateGroups` (`gen/context_shared.go`) splits each UpsertMany sub-batch by the update columns its rows set (a `sql.Default` or `sql.DefaultExpr` value counts as unset); `upsert_many.go.tmpl` runs one `BuildMultiInsert` per group, so a conflict leaves a column the row left unset as the conflicting row has it, as single-row `Upsert` does; an empty set gives DO NOTHING. The key read-back still runs once per sub-batch over the whole sub-batch after its groups, and FIX-389's chunked trailing read is unchanged, so the CreateMany, SoftDeleteMany and UpsertMany statement-count pins hold (their batches are homogeneous). Example test `TestUpsertMany_ConflictLeavesUnsetColumnsAlone` (postgres, mysql, sqlite); conformance subtests flipped and renamed; registry `upsert-many.unset-takes-default` → `upsert-many.unset-left-alone`, `edge.upsert-many.no-keys-from-statement` and `upsert-many.batch-split` reworded; PRD §9.2, §9.5, §9.9.4 (E5), §25.1, §25.3, §26.12 and the junction-rejection message/comments in `gen/context_nested.go`, `nested_test.go` and `examples/mysql/sqlgen.yml` reworded. Gates: `make check` and `make check-examples` ok. Fail-first on the final code: template reverted → sqlite conformance fails at upsert.go:673/676 ("counters after UpsertMany([c, Hits unset])") and :692/:699 (soft-deleted counters). Golden churn matches the vet (2 unit goldens, 4 files in each of 14 examples, sqlite 72, 2 per conformance model set). Inline at /verify: the two remaining stale re-link-reset comments in `context_nested.go` (`resolveNestedJunction` doc and the junction-column loop) reworded; a statement-count pin (`INSERT, INSERT, SELECT, SELECT`) added to the mixed-batch conformance subtest and listed on `upsert-many.batch-split`; `TestUpsertMany_ConflictLeavesUnsetColumnsAlone` (postgres, mysql, sqlite) listed on `upsert-many.unset-left-alone`; one sentence on the grouping added to `guidelines/SQL.md` → Update Columns in Upsert. `docs/conformance/REPORT.md` keeps the retired `upsert-many.unset-takes-default` row until `make conformance` reruns. Per the 2026-11-24 ruling (option B), the template writes a sub-batch of two or more groups through `database.WithTransaction` (a savepoint inside a caller's transaction); a single group stays one statement with no transaction. New conformance subtests "a failed group rolls back the groups of its sub-batch written before it" and "inside the caller's transaction a failed group rolls back to its savepoint" failed first on the pre-ruling models (sqlite: `["fresh" "kept"]`, `["after" "before" "fresh"]`); the mixed-batch pin now builds its client on `beginCounter` and expects one transaction with `SELECT, SELECT` outside it (the counting querier does not record in-transaction statements), and the homogeneous FIX-389 pins (`INSERT, INSERT, SELECT, SELECT`; `INSERT, SELECT, INSERT, SELECT, SELECT, SELECT`) hold unchanged, showing no transaction for one group. PRD §9.5 Batch Failure Semantics and §25.1 amended, registry row `upsert-many.group-atomic` added, §9.5/§25.1 anchors rehashed. Inline at the final /verify: the `Product` and `OrderItem` upsert unit fixtures now set `SnakeName`, so the two UpsertMany unit goldens name the transaction `upsert_many_product` / `upsert_many_order_item`; the §9.5 sentence says "more than one write statement" (MySQL `CreateMany`'s and `SoftDeleteMany`'s key reads are not writes and open no transaction).
+
+### FIX-389
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`CreateMany` on a composite-PK table fails on SQLite past roughly 1000 rows, after the writes")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
+
+**Issue.** Bulk writes return an error after the rows are committed once the read-back exceeds a dialect ceiling, so a caller who retries duplicates or conflicts. Measured at `998f0654`: SQLite composite-PK `CreateMany`/`UpdateMany` n=999 → "Expression tree is too large (maximum depth 1000)" with 999 rows written; SQLite single-column `CreateMany`/`SoftDeleteMany` n=33000 → "too many SQL variables"; MySQL composite n=33000 / single n=66000 → "Error 1390 … too many placeholders"; PostgreSQL composite n=33000 → "extended protocol limited to 65535 parameters". HardDeleteMany is fine (already chunked).
+
+**Root cause.** Every bulk write re-fetches all written keys in one unbounded `GetMany`: composite keys render `Filter.PKs` as an OR of ANDs (`shared/_filter.tmpl:58`), single keys as one IN. Sites: `create.go.tmpl:444/460/474`, `update.go.tmpl` (8 of its 9 `GetMany` calls; the 9th, UpdateWhere's filter read at :983, names no keys), `delete.go.tmpl` (12 of its 14; the other 2 are the single-row reads in SoftDelete :185 and Restore :999), `upsert_many.go.tmpl:450/465/480`.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/FIX-389.patch` (based on `ca9b4128`; 170 files, +33055/-26136, mostly generated churn and re-indentation).
+- New shared helper `refetchInChunks` (`gen/context_shared.go`); all 26 read-back sites call `GetMany` per chunk of `c.batchSize` keys. A call of ≤ batch_size keys stays one statement.
+- Remove the conformance seed's chunks-of-500 workaround (`composite_key.go`); add CreateMany "composite keys past SQLite's expression depth limit read back every written row" (1000 order_items through CreateMany + UpdateMany), SoftDeleteMany "composite keys past SQLite's expression depth limit read back every written row" (1000 revisions through SoftDeleteMany, RestoreMany, SoftDeleteWhere, RestoreWhere; seed helper `sdmSeedRevisions`) and UpdateWhere "composite keys past SQLite's expression depth limit read back every updated row"; update two UpsertMany statement-count pins (terminal SELECT becomes ceil(M/batch_size)).
+- User ruling 2026-11-22: accept ceil(M/batch_size) read-backs; amend §25.1 (UpsertMany paragraph) and §25.3 to say the trailing read is chunked at batch_size and sits outside the write bound; add requirement row `bulk-write.chunked-readback` to `docs/conformance/client.md` §25.3 and `make req-rehash SECTIONS=25.1,25.3`.
+- Corrected at vetting (2026-11-23): the original tests left the 12 `delete.go.tmpl` sites and the 5 UpdateWhere sites unguarded (reverting `delete.go.tmpl` alone stayed green), so the SoftDeleteMany and UpdateWhere tests were added; the original patch also omitted the ruled PRD amendment, without which `req-check` fails.
+- The user ruled on 2026-11-24: option B — dedupe the key slice before `refetchInChunks`, so `SoftDeleteMany`, `RestoreMany` and `UpdateMany` (and any other read-back site that can receive duplicate keys) return distinct rows regardless of chunk placement. Chunking alone made `SoftDeleteMany([1,2,1])` with batch_size 2 return 3 rows where HEAD returned 2 (measured on SQLite).
+- Prototype results, run at `ca9b4128` on 2026-11-23: probe at HEAD templates → SQLite composite CreateMany n=999 "create many order_items: get many order_items: query: SQL logic error: Expression tree is too large (maximum depth 1000) (1)" with 999 rows written (UpdateMany same); SQLite single n=33000/66000 "too many SQL variables (1)"; MySQL composite 33000 / single 66000 "Error 1390 (HY000): Prepared statement contains too many placeholders"; pgx composite 33000 "extended protocol limited to 65535 parameters" — all after full writes; after the fix every case err=<nil> with full row counts. Gates: `go test -short -race ./...` (cmd/sqlgen), update-golden/-e2e, test-conformance (8 modules), lint-conformance, test-examples (15), req-check all ok. Fail-first per site: `update.go.tmpl` reverted → "UpdateMany(1000 order items) error = … Expression tree is too large …" and "UpdateWhere(1000 revisions) error = update revisions where: get many revisions: …"; `delete.go.tmpl` reverted → "SoftDeleteMany(1000 revisions) error = soft delete many revisions: get many revisions: …" (RestoreMany, SoftDeleteWhere, RestoreWhere likewise); `upsert_many.go.tmpl` reverted → "UpsertMany(3 revisions) statements (-want +got): - \"SELECT\"" and the 201-counters pin; all reverted → CreateMany fatals as above; helper forced to one statement → all 6 new/changed subtests fail; existing suite without the fix passes. Golden churn: ~10 unit goldens, sqlite ~72, ~4 each in 14 other examples, all 8 conformance model sets; no files added.
+
+**References.**
+- PRD §19 ("all batch operations split their input into sub-batches … This prevents parameter count limits from being exceeded"), §25.1 (rules out "documenting the cliff instead of batching past it"), §25.3.
+- Residual, not in scope: SQLite composite still fails when batch_size ≥ 999; a user `GetMany` with ≥ 999 `Filter.PKs` on SQLite fails the same way (fix site `_filter.tmpl`, tuple IN on SQLite only).
+
+**Resolution notes.** Prototype applied clean with `git apply --3way` (source files only; templates unchanged since `ca9b4128`); generated files regenerated, PRD anchors re-derived with `make req-rehash`. New shared helper `refetchInChunks` (`gen/context_shared.go`) reads back n written keys at most `c.batchSize` per `GetMany`; all 26 read-back sites in `create.go.tmpl`, `update.go.tmpl`, `delete.go.tmpl` and `upsert_many.go.tmpl` call it, and a call of at most batch_size keys stays one statement. Conformance: removed the composite seed's chunks-of-500 workaround; added the CreateMany/UpdateMany, SoftDeleteMany (+RestoreMany, SoftDeleteWhere, RestoreWhere) and UpdateWhere 1000-composite-key read-back subtests; updated the two UpsertMany statement-count pins. PRD §25.1 and §25.3 amended per the 2026-11-22 ruling; requirement `bulk-write.chunked-readback` added to `docs/conformance/client.md` §25.3. Gates: `make check` and `make check-examples` ok; fail-first: `delete.go.tmpl` reverted → the four SoftDeleteMany-test steps fail on SQLite with "Expression tree is too large (maximum depth 1000)". Per the 2026-11-24 ruling, a second shared helper `distinctKeys` dedupes the caller-listed keys before the read-back in `UpdateMany`, `SoftDeleteMany` and `RestoreMany`. It keys by `KeySetType`/`KeySetKey`, so non-comparable keys work. The `*Where` and `CreateMany` read-backs already name distinct keys, and `UpsertMany` dedupes before writing. Regression tests: "a key listed twice across a sub-batch boundary is read back once" for all three, which failed first with 3 rows; PRD §25.3 states the rule and registry row `bulk-write.readback-distinct` covers it. Statement-count pins "reads back … in chunks of the table's batch size" were added for CreateMany and SoftDeleteMany. The SoftDeleteMany pin asserts the statements after the last UPDATE, because MySQL reads keys before each UPDATE. Inline: trimmed the helper's doc comment; corrected the Root cause's `delete.go.tmpl` count (14 `GetMany` calls, not 15); the §9.8.5 CreateMany code sample now shows the chunked read-back. Golden churn matches the vet (10 unit goldens, sqlite 72, 4 each in 14 other examples, all 8 conformance model sets).
+
+
+### FIX-395
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 16, cmd/sqlgen/gen (API resolvers) and cmd/sqlgen/wrapper
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "The resolver helpers' PK parameters (`funcPKGoArgs`, `resolvers.go.tmpl`) are spelled from the PK column's GraphQL name without `safeGoIdent`")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
+
+**Issue.** Generated GraphQL resolvers fail to compile for (1) a PK column named after a Go keyword and (2) any multi-word PK under `field_casing: snake_case`. Measured at `998f0654` on graphql example copies: `asset_kinds(type PK)` and `price_bands(PK(range, func))` → "goimports failed for models/graph/sqlgenresolver/resolvers_gen.go:410:44: expected ')', found 'type'"; fixing only the helpers leaves gqlgen re-signing seeded methods as `rangeArg`/`funcArg` with sqlgen's body → "undefined: rangeVal". With only `field_casing: snake_case` flipped → "undefined: asset_id … workspace_id" in `*_gen.resolvers.go` (gqlgen spells `asset_id` as `assetID`). Digit-before-acronym names (`line2ID` → gqlgen `line2id`) also diverge.
+
+**Root cause.** `cmd/sqlgen/gen/funcmap.go` `funcPKGoArgs` / `funcPKPassArgs` / `convertOnePKArg` use `APIPKArg.GraphQLName` raw, and `cmd/sqlgen/wrapper/seeds.go` `writeSeedFiles` (`writeFollowSchemaSeeds` / `writeSingleFileSeed`) writes managed method bodies, rendered by `templates/api/seeds.go.tmpl`, before gqlgen runs, naming parameters itself, while gqlgen names them with `ToGoPrivate(name)`.
+
+**Suggested fix.**
+- User ruling 2026-11-22: stop pre-writing managed method bodies with predicted parameter names. Let gqlgen emit its panic stubs with its own names, and have `rewritePanicStubs` splice the seed body in with parameters renamed by position (the path that already exists for operations added later). Amend PRD §26.5.6 step 4 ("Seed step").
+- Start from `.claude/prototypes/FIX-395.patch` (based on `ca9b4128`; 12 files, +580/-530). It prototypes the ruled splice in full; the old patch's `SeedGoName` gqlgen-mirroring half is dropped.
+- gen: `APIPKArg.GoName()` = `safeGoIdent(GraphQLName)`; `funcPKGoArgs`, `funcPKPassArgs` and `convertOnePKArg` use it, so the Q/M helpers take `typeVal` / `rangeVal` / `int64(funcVal)`.
+- wrapper seed step: `writeSeedFiles` writes no resolver method — under follow-schema only the `resolver.go` Resolver struct, under single-file nothing (gqlgen plus `mergeSingleFileResolver` already yield a compiling file). Delete `writeFollowSchemaSeeds`, `writeSingleFileSeed`, `scaffoldBodyOnly`, `buildSeedFileContents` and the unused `SeedImports.GqlgenModel*` fields and their cli wiring.
+- wrapper rewriter: `seedMethods` records each seed body with its parameter names; `renameSeedParams` renames the body's parameter references to gqlgen's by position, skipping selector fields (`r.M.X`), and errors when gqlgen's name is one the body already uses or the parameter counts differ (loud, not a silent rebind). `rewritePanicStubs` / `settleManagedStubs` return the spliced files and `Gen` adds them to `GenResult.SeedFiles`, so `sqlgen generate` keeps counting the per-table resolver files.
+- Tests: `TestReservedWord_PKParameterSpelling` (helpers and `pkConvert` only); `TestWriteSeedFiles_WritesNoResolverMethods`, `TestPostStubRewriter_RenamesSeedParamsByPosition` (keyword, snake_case, selector, collision and count-mismatch subtests), `TestGen_ReportsSplicedResolverFiles`.
+- PRD: §26.5.6 step 4 ("writes no resolver method", with the reason), step 6 (rename by position; refusal cases; only stubs are written), "Root resolver names" (no WARNING-block move), the artifacts intro and ownership row; §26.5.4 "Resolver shapes"; §8.5 Reserved Word Handling (helper `typeVal` vs gqlgen `typeArg`). Registry (api.md): `step4-only-if-absent` → `step4-no-resolver-method`, `api.artifacts.resolvers-seeded-once` → `resolvers-gqlgen-owned`, new step6-params-by-position, step6-rename-refused, step6-only-stubs; naming.md reserved-word.resolver-helper-parameter / gqlgen-resolver-parameter; `make req-rehash SECTIONS=26,26.5,26.5.4,26.5.6,8.5`. `docs/conformance/REPORT.md` lists the renamed ids until `make conformance` reruns.
+- Corrected at vetting (2026-11-23): beyond the ruling as written, single-file layout also pre-writes nothing, the rename refuses collisions and count mismatches loudly, and the spliced files are folded into the generate report.
+- Prototype results, run at `ca9b4128` on 2026-11-23: graphql example copies at HEAD → keyword PKs "goimports failed for models/graph/sqlgenresolver/resolvers_gen.go: …:410:44: expected ')', found 'type'"; `field_casing: snake_case` → "asset_document_link_gen.resolvers.go:40:42: undefined: asset_id" (gqlgen re-signed as `assetID` but kept the body); `line_rows(line2_id PK)` → "undefined: line2ID" (×3). Fixed binary: each probe generates, builds, vets, regenerates and rebuilds — `DeleteAssetKind(ctx, typeArg string)` / `r.M.DeleteAssetKind(ctx, typeArg)`, `r.M.DeleteAssetDocumentLink(ctx, assetID, documentID)`, single-file `PriceBand(ctx, rangeArg, funcArg)` and `LineRow(ctx, line2id)`, 0 panics left. A fresh regen of the unmodified graphql example matches the committed resolver bodies (only import aliases and a stale comment differ). Gates: `go test -race` wrapper, gen, cli (`-timeout=40m`), golangci-lint, gofumpt, req-check, update-golden/-e2e (no churn), graphql example `TestWrapper*` ok. Fail-first: each helper spelling reverted → `- "typeVal string", + "type string"` / "expected ')', found 'type'"; seed step re-writing methods → "seed step wrote a resolver method into …"; splice without rename → `spliced body missing "return r.M.DeleteAssetKind(ctx, typeArg)"`; selector exclusion, collision check, count check, path return and `Gen` fold each removed → its subtest fails; existing suite without the fix passes. No golden churn.
+
+**References.**
+- PRD §8.5 Reserved Word Handling (escape with `Val` "where that form is emitted bare in generated code — as a local variable"), §26.5.6.
+
+**Resolution notes.** Applied the vetted prototype (`.claude/prototypes/FIX-395.patch`, fresh against HEAD, applied clean). gen: `APIPKArg.GoName()` = `safeGoIdent(GraphQLName)` and `funcPKGoArgs` / `funcPKPassArgs` / `convertOnePKArg` use it, so the Q/M helpers take `typeVal` / `rangeVal`. wrapper: the seed step writes no resolver method (follow-schema writes only the `resolver.go` Resolver struct; single-file writes nothing); `rewritePanicStubs` splices each seed body into gqlgen's stub and `renameSeedParams` renames parameter references to gqlgen's names by position, skipping selector fields and refusing name collisions and count mismatches; the spliced files are folded into `GenResult.SeedFiles`. Deleted `writeFollowSchemaSeeds`, `writeSingleFileSeed`, `scaffoldBodyOnly`, `buildSeedFileContents` and the `SeedImports.GqlgenModel*` fields. PRD §26.5.6 steps 4 and 6, §26.5.4, §8.5 and registries api.md / naming.md / api-schema.md updated; `make req-rehash` re-derived 0 changed anchors. Tests: `TestReservedWord_PKParameterSpelling`, `TestWriteSeedFiles_WritesNoResolverMethods`, `TestPostStubRewriter_RenamesSeedParamsByPosition`, `TestGen_ReportsSplicedResolverFiles`. `make update-golden` / `update-golden-e2e`: no churn, matching the vet. Inline at /verify: stale comments naming the old write-once seed files corrected in `wrapper_test.go` (`TestMergeSingleFileResolver_AbsentFile`, `TestPostStubRewriter`, `TestPostStubRewriter_PrefersSeedBody`), `root_stubs_test.go`, `gen/orchestrate.go` and `gen/gqlgen_model_layout.go`; PRD §23.8's ownership parenthetical updated (anchor rehashed); `gap.api.wrapper-seed-gqlgen-model-import` reworded to the translator import, and its resolver.go import-order test moved to `gap.api.wrapper-follow-schema-resolver-scaffold`. `docs/conformance/REPORT.md` keeps the retired ids until `make conformance` reruns.
+
+### FIX-394
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 7, cmd/sqlgen/gen/templates
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`Paginate` and `Connection` end with an unchecked `result.(*PaginateResult[T])`")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
+
+**Issue.** A hook that short-circuits with `(nil, nil)` panics in `Paginate`, `Connection`, `Count`, `Exists`, `ExistsWhere` and `RawExec`. Measured at `998f0654` in the sqlite example: `Products().Paginate` → "PANIC interface conversion: interface {} is nil, not *models.PaginateResult[…Product]"; Connection, Count ("not int64"), Exists and ExistsWhere ("not bool"), view Paginate, view Connection, view Count and `RawExec` ("interface is nil, not database.Result") the same; `Get` returns `(nil, nil)`.
+
+**Root cause.** Nine hook-result assertions lack the `result == nil` guard; of the templates' 30 `result.(` sites the other 21 are safe (17 guarded, 4 comma-ok assertions in `cache.go.tmpl`): `templates/table/pagination.go.tmpl:53,170`, `templates/view/pagination.go.tmpl:56,177`, `templates/table/count.go.tmpl:66`, `templates/view/count.go.tmpl:44`, `templates/table/exists.go.tmpl:64,126`, `templates/client.go.tmpl:365`.
+
+**Suggested fix.**
+- User ruling 2026-11-22: a nil short-circuit result is the zero value — `return nil, nil` for Paginate, Connection and RawExec; `return 0, nil` for Count; `return false, nil` for Exists and ExistsWhere.
+- Start from `.claude/prototypes/FIX-394.patch` (based on `ca9b4128`; 192 files, +10671/-3, guard lines only apart from rehashed anchors; includes the new test).
+- E2E test `examples/sqlite/tests/hook_nil_result_test.go` `TestHookNilResultDoesNotPanic` (9 subtests, one per site: table Paginate, Connection, Count, Exists, ExistsWhere; view Paginate, Connection, Count; RawExec).
+- PRD: amend the §9.8.10 Exists (`return false, nil`) and Count (`return 0, nil`) examples to guard nil like §9.8.11/§9.8.12. RawExec appears only as a signature (PRD.md:10295, :10664), so it has no example body to amend. Registry rows `exists.nil-short-circuit`, `count.nil-short-circuit`, `paginate.nil-short-circuit`, `connection.nil-short-circuit` in `docs/conformance/client.md`; `make req-rehash SECTIONS="9.8 9.8.10"`.
+- Auto-accepted the recommended option on 2026-11-23 (`/fix` auto-accept rule): should the PRD's Raw/RawExec section state that a nil short-circuit returns `(nil, nil)`, so RawExec gets a registry row? → leave the PRD as it is (RawExec stays covered by the `TestHookNilResultDoesNotPanic/RawExec` subtest with no row), because its gates are green, it causes no golden churn, it adds no public surface, and it reverses no ruling or PRD statement (it follows the registry's "PRD-stated only" rule).
+- Corrected at vetting (2026-11-23): the original 8 subtests had no ExistsWhere case, so reverting `exists.go.tmpl:126` went undetected; added it. Added the registry rows and rehash `req-check` needs once §9.8.10 changes.
+- Prototype results, run at `ca9b4128` on 2026-11-23: sqlite example with only the new test → all 9 subtests fail, e.g. "table Paginate with a (nil, nil) hook panicked: interface conversion: interface {} is nil, not *models.PaginateResult[…models.Product]", RawExec "interface conversion: interface is nil, not database.Result". Gates: req-check, refs-check, update-golden, update-golden-e2e, conformance-fresh, `go test -race -timeout=30m ./...` (cmd/sqlgen), sqlite example test + lint, conformance sqlite and features_sqlite all ok; Docker-backed examples and PG/MySQL conformance not run (the guard has no dialect branch). Fail-first: each of the 9 generated guards removed alone fails its own subtest with the matching panic; existing suite without the fix passes. Golden churn: ~4 unit goldens, sqlite ~76, ~4-6 in each of the other 14 examples, ~3 in each of the 8 conformance model sets; no files added.
+
+**References.**
+- PRD §9.8.10, §9.8.11, §9.8.12, §21.5 ("Return a result without calling `next()`").
+
+**Resolution notes.** Resolved 2026-11-23 at `93222127` (uncommitted). The vetted prototype's template hunks applied clean (no change to its source files since `ca9b4128`). Its PRD and registry hunks also applied clean. Generated files were regenerated, not taken from the patch, and `make req-rehash SECTIONS="9.8 9.8.10"` confirmed the anchors (0 updated). The nine hook-result assertions in `table/pagination.go.tmpl` (Paginate, Connection), `view/pagination.go.tmpl` (Paginate, Connection), `table/count.go.tmpl`, `view/count.go.tmpl`, `table/exists.go.tmpl` (Exists, ExistsWhere) and `client.go.tmpl` (RawExec) now guard `result == nil` and return the zero value, as the 2026-11-22 ruling says. PRD §9.8.10 Exists/Count examples guard nil. Registry rows `exists.nil-short-circuit`, `count.nil-short-circuit`, `paginate.nil-short-circuit` and `connection.nil-short-circuit` added. Regression test sqlite `TestHookNilResultDoesNotPanic` (9 subtests). Fail-first on the final code: with the example's models reverted, all 9 subtests fail. Golden churn matches the vet: the same 192 files as the prototype (+10671/-3, the new test included); no files added. Inline from /verify: `docs/conformance/client.md` `client.close-cache-publisher` ref shifted to `client.go.tmpl:397-411` by the RawExec guard, and one-target notes added under the §9.8.10, §9.8.11 and §9.8.12 tables for the four new rows (proven on sqlite; the guard has no dialect branch). Gates: `make check` ok; `make check-examples` ok.
+
+### FIX-393
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 27, cmd/sqlgen/gen/templates/table/nested.go.tmpl
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "In tenancy_mysql a cached `Moments().Get` right after a `MomentOwners().UpdateWithRelated` connect returns the stale `owner_id=nil`")
+- **Vetted:** corrected at `ca9b4128` (2026-11-23)
+
+**Issue.** A cached read right after a `*WithRelated` write returns stale data on every dialect, while a flat `Update` invalidates before it returns. Measured at `998f0654` with a logging cache backend: `SET moments:pk = {"owner_id":null}` → `UpdateWithRelated` returns → `GET moments:pk → {"owner_id":null}` (stale) → only then `INVMANY`. 50-iteration loops: sqlite 50/50 stale, postgres async 50/50 stale, postgres with `WithCallbackMode(CallbackSync)` 0/50. The backlog line's UTC/zone theory is wrong: it is timing only.
+
+**Root cause.** `database/transaction.go:747` `fireCallbacksAsync` runs commit callbacks in a goroutine (the §18.6 default). `*WithRelated` methods open the root transaction themselves (`nested.go.tmpl:311/381/444`, `TxOptions{CallbackMode: c.callbackMode}`), so a caller who never asked for a transaction loses the read-your-writes a flat write gives (`cmd/sqlgen/gen/templates/cache.go.tmpl:1026-1031` invalidates inline via `entityOp(ctx)` / `viewOp(ctx)`).
+
+**Suggested fix.**
+- User ruling 2026-11-22: run commit callbacks synchronously when the method opens the root transaction; keep the client's mode inside a caller's transaction.
+- Start from `.claude/prototypes/FIX-393.patch` (based on `ca9b4128`; 26 files, +2846/-492).
+- `nested.go.tmpl` gains a per-table `nestedTxOptions(ctx)`: `CallbackSync` when `database.FromContext(ctx) == nil`, else the client's mode. The three `WithTransaction` sites (Create/Update/UpsertWithRelated) use it. Drop the `SkipCache` workaround from tenancy_mysql and tenancy_postgres `TestNestedTimeKeyZones`.
+- Fail-first test: tenancy `TestCache_NestedWriteInvalidatesBeforeReturn`, table-driven over CreateWithRelated, UpdateWithRelated and UpsertWithRelated (20 iterations each, default async client).
+- PRD: §9.9.9 first bullet (outside a transaction the method commits its own root in sync mode; inside a caller's transaction callbacks flush at the caller's root in the client's mode); §18.6 new paragraph "Nested `*WithRelated` methods outside a transaction always run sync", naming the two costs (the call waits for the cache/event round trip as a flat write does; a ctx cancelled between commit and callbacks returns "skipping commit callbacks" for a committed write — event `publish` callbacks always return nil and cache `afterCommit` swallows errors, so this is the only new error path). Registry row `with-related.callbacks-before-return` in `docs/conformance/client.md` §9.9.9; `make req-rehash` for §9.9 (client.md, cli/gen.md), §9.9.9 and §18.6 (runtime/database.md).
+- Corrected at vetting (2026-11-23): the original single test covered only UpdateWithRelated, so reverting the Create or Upsert site failed nothing; widened to three subtests. The original patch also lacked the PRD amendment and registry row, without which `req-check` fails.
+- Prototype results, run at `ca9b4128` on 2026-11-23: tenancy (sqlite) HEAD models + new test → "CreateWithRelated: iteration 0: cached owner_id = <nil>, want 1" (Update, Upsert likewise; async goroutine also logs "memory: backend is closed" after cleanup); tenancy_postgres/tenancy_mysql without SkipCache → all 4 `TestNestedTimeKeyZones` subtests fail ("o2m_connect_utc: owner_id = <nil>, want 1"). Gates: update-golden, update-golden-e2e, conformance-fresh, `go test -race ./gen/...` (with `-timeout=40m`; the default 10m timed out once under machine load), examples tenancy/tenancy_postgres/tenancy_mysql/mysql/graphql test + lint, test-conformance (8 modules), req-check, refs-check all ok. Fail-first: each site reverted alone fails its subtest ("iteration 0: cached owner_id = <nil>, want 1/21/41"); existing suite without the fix passes. Golden churn: 18 goldens, no files added — graphql, mysql, tenancy, tenancy_mysql, tenancy_postgres ~2 each; 8 conformance model sets ~1 each.
+
+**References.**
+- PRD §9.9.9, §18.6, §27.
+- Adjacent, not in scope: `UpdateMany`'s internal `WithTransaction` passes no TxOptions.
+
+**Resolution notes.** Resolved 2026-11-23 at `e9451774` (uncommitted). The vetted prototype applied clean (fresh: no change to its files since `ca9b4128`); source hunks applied, generated files regenerated. `nested.go.tmpl` emits a per-table `nestedTxOptions(ctx)` (`CallbackSync` when `!database.InTransaction(ctx)`, else the client's mode; the root's mode governs at a savepoint), used by the three `WithTransaction` sites of Create/Update/UpsertWithRelated. Dropped the `SkipCache` workaround from tenancy_mysql and tenancy_postgres `TestNestedTimeKeyZones`. Regression test tenancy `TestCache_NestedWriteInvalidatesBeforeReturn` (4 subtests, 20 iterations each, default async client); fail-first re-run on the final code: reverting each site alone fails its subtest ("iteration 0: cached owner_id = <nil>, want 1/21/61"; reverting the Update site also fails the committed-transaction subtest, "want 22"). Diverges from the prototype in one place, from the /verify review: the prototype tested `database.FromContext(ctx) == nil`, but `NewTransaction` opens a new root when ctx holds a closed transaction, so a ctx left over from a committed `Begin`/`Commit` still got async callbacks (reviewer probe: 20/20 stale). The check is now `!database.InTransaction(ctx)`, matching `cache.go.tmpl`'s and the lock-mode guard's checks, and subtest `UpdateWithRelated with a committed transaction in ctx` pins it (fail-first against the prototype's models: "iteration 0: cached owner_id = <nil>, want 41"). Same root cause, same fix site. Inline from /verify: shortened the template comment; PRD §9.9.9 and §18.6 now say callbacks inside a caller's transaction flush in "the root transaction's mode" instead of "the client's mode" (a `Begin` with `TxOptions` overrides the client default), and §9.9.9 says a closed transaction in ctx counts as none; the registry row says so too. PRD §9.9.9 first bullet and §18.6 sync paragraph; registry row `with-related.callbacks-before-return` (`docs/conformance/client.md` §9.9.9); §9.9, §9.9.9, §18.6 rehashed (`make req-rehash`). Golden churn matches vet: 18 files (graphql, mysql, tenancy, tenancy_mysql, tenancy_postgres expected+models; 8 conformance model sets), the same files as the prototype's generated hunks, differing only in the guard and comment above; no unit-golden churn. Gates: `make check` ok; `make check-examples` ok.
+
+### FIX-392
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/config
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "`cursor_keys` uniqueness is not validated")
+- **Vetted:** ready at `ca9b4128` (2026-11-23)
+
+**Issue.** Non-unique `cursor_keys` silently skip rows across `Connection` pages. Measured at `998f0654` on SQLite: products with `cursor_keys: [category_id]`, 3+3 rows, `first: 2` → page0 [1,2], page1 [4,5], page2 [] — 4 of 6 rows seen, rows 3 and 6 skipped. No PK tiebreaker is appended (generated `cursorKeys: []string{"category_id"}`).
+
+**Root cause.** Nothing checks that the resolved cursor keys cover a PK or UNIQUE set; PRD §14.2 → "Configurable" (PRD.md:9319) says only that keys "Should be columns that are unique and immutable".
+
+**Suggested fix.**
+- User ruling 2026-11-22: a validate **warning** (not an error, not an auto-appended tiebreaker) when the resolved keys cover no PK, UNIQUE group or UNIQUE column.
+- Start from `.claude/prototypes/FIX-392.patch` (based on `ca9b4128`; 6 files, +211/-17).
+- New `validateCursorKeysUniqueness` (`config/validate.go`), called from `ValidatePostParse` right after `validateCursorKeys`, on the post-exclude_columns key set (new `generatedCursorKeys` helper factored out of `resolvedCursorKeys`). It warns when the keys contain none of: every resolved-PK column, every column of a non-partial UniqueGroups entry, or one inline-UNIQUE column. It skips tables generation drops (no resolved PK per §9.4b, or matched by `exclude_tables`) and views (SchemaView carries no key information).
+- Only `TestValidatePostParse_CursorKeys_InheritedPartialMissing` breaks (not `ExcludeColumnsRemovesAll`, whose table has no PK); the fix gives `users.email` `Unique: true` in the shared `schemaTables()` fixture.
+- Test `TestValidatePostParse_CursorKeys_Uniqueness` (`config/cursor_keys_unique_test.go`, 10 subtests: explicit and inherited non-unique keys warn; PK-ending keys, default `[id]`, UNIQUE column, UNIQUE group, exclude_columns PK fallback, `primary_key.columns` override, no-PK table and `exclude_tables` stay silent).
+- New PRD §4.13 row "Resolved `cursor_keys` not covered by a unique key" (Warning); registry rows `config.cursor-keys-not-unique` (fires / .message / .severity) in `docs/conformance/cli/config.md`; `make req-rehash SECTIONS=4,4.13`. If FIX-391 lands first and also touches §4.13, re-run the rehash.
+- Prototype results, run at `ca9b4128` on 2026-11-23: sqlite example copy with `tables.products.cursor_keys: [category_id]` → no warning, generated `cursorKeys: []string{"category_id"}`; probe paging 2 categories × 3 products with `first: 2` → "page0 [1 2] / page1 [4 5] / page2 [] / seeded [1 2 3 4 5 6], seen 4 of 6". Patched `sqlgen validate` → "Warning: cursor_keys [category_id] on table products cover no primary key or UNIQUE constraint; Connection skips rows that share a cursor key value at a page boundary — add a unique column such as the primary key to the list", exit 0. Gates: `go test -race -count=1 ./config/... ./cli/...` ok, vet, golangci-lint, gofumpt clean, `make req-check` ok (6414 requirements). Fail-first: call removed → "ValidatePostParse() uniqueness warnings = [], want one containing \"cursor_keys [category_id] on table public.products\""; `len(pk) == 0` skip removed → no-PK subtest gets a false warning; raw columns instead of post-exclude → the exclude_columns fallback subtest gets a false warning; existing suite without the fix passes. 0 of 12 file-based examples warn; no golden churn. Applies alongside FIX-391 with no textual overlap (`git apply --check` measured).
+
+**References.**
+- PRD §9.8, §4.13, §14.2 → "Configurable" ("cursor_keys determines sort" — why the tiebreaker option was rejected).
+- FIX-391.
+
+**Resolution notes.** Resolved 2026-11-23 at `bc25e92a` (uncommitted). The vetted prototype applied clean on top of FIX-391 (its `validateCursorKeys` hunk and §4.13 gap row sit beside, not in, this change). New `validateCursorKeysUniqueness` (`cmd/sqlgen/config/validate.go`) runs after `validateCursorKeys` in `ValidatePostParse` and warns when the post-exclude_columns keys (new `generatedCursorKeys`, factored out of `resolvedCursorKeys`) contain no full resolved PK, no full non-partial UNIQUE group and no inline-UNIQUE column; tables without a resolved PK, `exclude_tables` matches and views are skipped. Shared fixture `schemaTables()` gives `users.email` `Unique: true` so `TestValidatePostParse_CursorKeys_InheritedPartialMissing` stays silent. Regression test `TestValidatePostParse_CursorKeys_Uniqueness` (11 subtests: the vetted 10 plus `primary_key.columns override not covered by the keys warns`, added from the /verify review so the resolved-PK path is pinned; fail-first: reading `table.PrimaryKey` instead of the resolved PK fails it); fail-first re-run on the final code: call removed → "uniqueness warnings = [], want one containing \"cursor_keys [category_id] on table public.products\"". PRD §4.13 row "Resolved `cursor_keys` not covered by a unique key" (Warning), registry rows `config.cursor-keys-not-unique` (+ .message, .severity) and two n/a matrix cells in `docs/conformance/cli/config.md`; `make req-rehash SECTIONS=4,4.13` reported 0 anchors to update (the prototype's hashes already match). Inline: trimmed the measurement history from the test's doc comment; Root cause line ref `PRD.md:9318` → `PRD.md:9319` (the new §4.13 row shifted it). Gates: `make check` ok; `make check-examples` ok, no golden churn (matches vet).
+
+### FIX-391
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 25, cmd/sqlgen/config
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "An explicit `tables.<name>.cursor_keys` naming an `exclude_columns` column passes `validateCursorKeys`")
+- **Vetted:** ready at `ca9b4128` (2026-11-23)
+
+**Issue.** An explicit `cursor_keys` entry naming an excluded column validates and generates with exit 0 and no warning, but `Connection` (and the GraphQL connection query) is silently missing. Measured at `998f0654`: sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}` → exit 0, `category_gen.go` has no `Connection`, the `categories(...)` connection query is gone, `go build` ok.
+
+**Root cause.** `cmd/sqlgen/config/validate.go` `validateCursorKeys` checks the raw column set; `gen/context_table.go:816` resolves against the post-exclude set and ignores `decision.Errs`.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/FIX-391.patch` (based on `ca9b4128`; 2 files, +57/-0).
+- `validateCursorKeys` errors per explicit key found in `ResolveTableExcludeColumns` (global ∪ table): `cursor_keys: column "name" in table public.categories is excluded by exclude_columns; a cursor key must be a generated column`.
+- Test `TestValidatePostParse_CursorKeys_ExcludedColumn` (table-level, global, and a non-key exclude control).
+- Prototype results, run at `ca9b4128` on 2026-11-23: every reference re-checked and still holds (`gen/context_table.go:816`, `config.go:2370`, PRD.md:1294 and :690). Reproduction: sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}` → exit 0, only the unrelated `category_stats` view warning, no `func (c *categoryClient) Connection` (baseline `category_gen.go:1917`), the `categories(...)` connection query (baseline graphqls:68) gone, `go build ./...` ok. Fixed binary → "Post-parse validation error: cursor_keys: column \"name\" in table categories is excluded by exclude_columns; a cursor key must be a generated column", exit 2. Gates: `go test -race -count=1 ./config/` ok; vet, gofumpt and golangci-lint clean; `go test -race -count=1 ./gen/... ./` (incl. `TestE2EGoldenFiles`) ok. Fail-first: check reverted → "table-level_exclude: ValidatePostParse() error = <nil>, want the excluded-key error: true" and the same for global_exclude (control passes); existing suite without the fix passes. No golden churn: postgres_stdlib is the only example with both keys, on different tables. Patch: `.claude/prototypes/FIX-391.patch`.
+- Auto-accepted the recommended option on 2026-11-23 (`/fix` auto-accept rule): should the excluded-key rule be a §4.13 requirement row or a PRD gap? → a PRD gap row (`gap.config.table-cursor-keys-excluded-column`), because §4.8/§4.13 do not say whether existence is checked after `exclude_columns`; gates green, no golden churn, no public surface, no PRD text or ruling reversed. A PRD amendment ("must exist on this table after `exclude_columns`") would turn it into a requirement row.
+
+**References.**
+- PRD §4.13 (explicit configuration "must be honored or flagged"), §4.8 (explicit keys "must exist on this table").
+- FIX-392 (cursor-key uniqueness warning, same validator).
+
+**Resolution notes.** `validateCursorKeys` (`cmd/sqlgen/config/validate.go`) now errors once per explicit `tables.<name>.cursor_keys` entry found in `ResolveTableExcludeColumns` (global ∪ table), so an excluded key fails validation instead of silently dropping `Connection` in gen. Prototype applied clean; the check now runs after `ResolveTableConnection` rather than before it (same errors, comment shortened). Regression test `TestValidatePostParse_CursorKeys_ExcludedColumn` (table-level, global, control); fail-first re-run: with the check disabled the table-level and global cases fail with `error = <nil>`. Registry: the test is claimed by PRD gap row `gap.config.table-cursor-keys-excluded-column` in `docs/conformance/cli/config.md` (`req-check` required a claim; the prototype ran `go test` only; see the auto-accept above). Inline from /verify: the excluded-key error fires only for a key the table has, so a globally excluded key a table lacks reports just "does not exist" (new case `excluded key missing from the table`, fail-first confirmed). Re-measured on a sqlite example copy with `tables.categories: {exclude_columns: [name], cursor_keys: [name]}`: `sqlgen validate` and `generate` report the error. No golden churn. Gates: `make check` ok, `make check-examples` ok.
 
 ### FIX-388
 

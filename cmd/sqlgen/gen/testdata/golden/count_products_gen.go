@@ -42,5 +42,8 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 	if err != nil {
 		return 0, fmt.Errorf("count products: %w", err)
 	}
+	if result == nil {
+		return 0, nil
+	}
 	return result.(int64), nil
 }

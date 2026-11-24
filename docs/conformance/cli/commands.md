@@ -250,7 +250,7 @@ The CLI surface (§23): commands, flags, config discovery, `init`, `completion`,
 | cmd.lint.output.warning-names-op | A warning's explanation ends by naming the operation the hook filters on, for every invalid-operation case (`… for OpUpsert` included) | `unit: cmd/sqlgen/cli: TestLint_OutputFormat/a single soft-delete warning names OpSoftDelete and is counted as 1 issues`; `unit: cmd/sqlgen/cli: TestLint_OutputFormat/a single increment warning names OpIncrement`; `unit: cmd/sqlgen/cli: TestLint_OutputFormat/a single upsert warning names OpUpsert` | all |  |
 
 ## §23.8 Stale File Cleanup
-<!-- prd: 23.8 sha256: 60b91b4bc4b805d6 -->
+<!-- prd: 23.8 sha256: 39d903c78fcd539d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

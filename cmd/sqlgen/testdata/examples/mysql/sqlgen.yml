@@ -40,8 +40,8 @@ tables:
     # made one ineligible fails generation instead of quietly dropping the
     # surface this example exists to test. `Categories` is deliberately absent.
     # Its junction carries `slot`, and §9.9.4 refuses a junction with any column
-    # beyond its two foreign keys, because the link step's upsert would reset
-    # that column on every re-link. Listing it here is exactly the hard error
+    # beyond its two foreign keys, because a nested write has no field to set
+    # that column. Listing it here is exactly the hard error
     # this block exists to produce. The M2M shape is carried by
     # `assets.Documents`, over the pure `asset_document_links` junction.
     nested_mutations:

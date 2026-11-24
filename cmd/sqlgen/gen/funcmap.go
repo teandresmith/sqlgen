@@ -290,9 +290,9 @@ func funcPKFromRow(modelsPkg, structName, row string, args []APIPKArg) string {
 // already match, or `<modelGoType>(arg)` otherwise.
 func convertOnePKArg(a APIPKArg) string {
 	if a.ModelGoType == a.GoType || a.ModelGoType == "" {
-		return a.GraphQLName
+		return a.GoName()
 	}
-	return a.ModelGoType + "(" + a.GraphQLName + ")"
+	return a.ModelGoType + "(" + a.GoName() + ")"
 }
 
 // funcPKSchemaArgs joins the PK args into a comma-separated GraphQL schema
@@ -315,7 +315,7 @@ func funcPKSchemaArgs(args []APIPKArg) string {
 func funcPKGoArgs(args []APIPKArg) string {
 	parts := make([]string, 0, len(args))
 	for _, a := range args {
-		parts = append(parts, a.GraphQLName+" "+a.GoType)
+		parts = append(parts, a.GoName()+" "+a.GoType)
 	}
 	return strings.Join(parts, ", ")
 }
@@ -326,7 +326,7 @@ func funcPKGoArgs(args []APIPKArg) string {
 func funcPKPassArgs(args []APIPKArg) string {
 	parts := make([]string, 0, len(args))
 	for _, a := range args {
-		parts = append(parts, a.GraphQLName)
+		parts = append(parts, a.GoName())
 	}
 	return strings.Join(parts, ", ")
 }

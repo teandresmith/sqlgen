@@ -13,7 +13,7 @@
 | naming.to-one.singular | A detected to-one edge's Go field and JSON tag are singular (`users` gives `User`, `user`) | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DetectedToOneFieldIsSingular` | all | relationships: belongs-to × struct-field |
 
 ## §8.1 Template Engine
-<!-- prd: 8.1 sha256: f3b5ed4e4bc1ec5b -->
+<!-- prd: 8.1 sha256: 048fa0a8c72bd63c -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -37,7 +37,7 @@
 | gen.template.go-generate | A `//go:generate sqlgen generate` directive makes `go generate ./...` run code generation, with no extra build-system integration | `unit: cmd/sqlgen: TestGoGenerate_DirectiveRunsCodeGeneration` | all |  |
 
 ## §8.1.7 Testing Strategy
-<!-- prd: 8.1.7 sha256: 1588da48dfefa4a8 -->
+<!-- prd: 8.1.7 sha256: 6fe17bf2d929e295 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -215,7 +215,7 @@
 | gen.no-pk.override-full-surface | A `primary_key.columns` override makes the table generate with the full PK-keyed surface, as with a native `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped`; `unit: cmd/sqlgen/gen: TestRelationshipTargets_InferredEdgeIntoSkippedTableDropped/primary key declared` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 2f1f0f0ef6fc1cf2 -->
+<!-- prd: 9.8 sha256: 668c411c636dc687 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -237,7 +237,7 @@
 | gen.input.json-tag-only | Input structs (`Create*Input`, `Update*Input`) are never scanned from a row: each field carries a `json` tag naming its column and no `db` tag | `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/create input`; `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/update input` | all |  |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 51be945ba60a4f6b -->
+<!-- prd: 9.9 sha256: 4eccd84889710db6 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -38,7 +38,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | stream.happy-path | `Stream` yields each row its `Filter` matches once, in `Sorts` order, as the full entity with its relationship fields nil | `conformance: Stream/yields only the matching rows, each once, in the requested sort order` | all | client-methods: Stream × happy-path |
 
 ## §9.2 Write Operations
-<!-- prd: 9.2 sha256: 823d1b19468bcc74 -->
+<!-- prd: 9.2 sha256: 03bfb973fd332412 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -138,7 +138,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert-with-related.nil-empty-input | `UpsertWithRelated(ctx, nil, target)` returns `ErrNilInput` before any statement or hook: no transaction begins, no mutation or query hook fires, and nothing is written. A nil verb block, and a block with no verb set (empty lists, nil pointers, `Clear` false), writes nothing on that edge: the only inner write is the parent's upsert | `conformance: UpsertWithRelated/nil input returns ErrNilInput before any statement or hook`; `conformance: UpsertWithRelated/a nil block and a block with no verb set write nothing on their edges` | all | client-methods: UpsertWithRelated × nil-empty-input |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: edabeea7582d1d6b -->
+<!-- prd: 9.5 sha256: 3fa4d6fe408f3183 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -162,7 +162,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | edge.conflict.declared-pk-backs-target | A declared `PRIMARY KEY` constraint always backs `{Table}ConflictPK`, also when the key is restated in `tables.<name>.primary_key.columns` | `unit: cmd/sqlgen/cli: TestGeneratePipeline_InlinePKRestatedInConfigKeepsConflictTarget`; `unit: cmd/sqlgen/gen: TestBuildConflictTargets_OverrideNeedsAnIndex/table-level PK restated in config keeps its target` | all |  |
 | edge.conflict.one-per-constraint | Each PRIMARY KEY and UNIQUE constraint yields one `{Table}Conflict{Name}` constant mapped to that constraint's column set; a single-column name is the column's PascalCase (`sku` → `SKU`) | `unit: cmd/sqlgen/gen: TestConflictTargetGeneration` | postgres |  |
 | edge.conflict.columns-lookup | A generated `{table}ConflictColumns` map ties each `{Table}ConflictTarget` constant to its column list, a composite target to all of its columns | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictColumnsMap` | postgres |  |
-| edge.upsert-many.no-keys-from-statement | `UpsertMany` builds each sub-batch as one multi-row INSERT carrying the conflict clause and never takes keys or rows from the statement: no `RETURNING`, no `LastInsertId`, no `firstID + i` derivation | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictClauseFields` | all |  |
+| edge.upsert-many.no-keys-from-statement | `UpsertMany` builds each sub-batch as one multi-row INSERT carrying the conflict clause per group of rows that set the same update columns and never takes keys or rows from the statement: no `RETURNING`, no `LastInsertId`, no `firstID + i` derivation | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictClauseFields` | all |  |
 | edge.upsert-many.update-set-excludes-sequence | `UpsertMany`'s update set excludes every non-PK auto-increment column, alongside the conflict-target and PK columns | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_excludesNonKeySequenceColumns` | all |  |
 | edge.upsert-many.dedupe-last-wins | `UpsertMany` dedupes its inputs by conflict target across the whole call, before splitting into sub-batches; a duplicate overwrites the earlier row's slot, so the last occurrence's values win in first-appearance order | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_dedupesLastWins`; `conformance: UpsertMany/duplicate inputs are deduped and the last occurrence wins`; `conformance: UpsertMany/dedupes across the whole call before splitting it into sub-batches` | all |  |
 | edge.upsert-many.covering-target-input-keys | On a caller-known key whose every declared conflict target covers the primary key, `UpsertMany` takes `AffectedPKs` from the inputs and emits no read-back and no runtime branch | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_pkFromInput/composite-pk-every-target-covers-key`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back` | all |  |
@@ -192,8 +192,9 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.covering-target-untouched | When the conflict target covers every column the caller supplied, `Upsert` has nothing to update and leaves the conflicting row untouched: a soft-deleted row stays soft-deleted, and that row is returned | `conformance: Upsert/a conflict on a target that covers every column it writes leaves the row as it is and returns it` | all | |
 | upsert.unwritten-target-plain-insert | A conflict target the INSERT does not write is no target. `Upsert` with `{Table}ConflictPK` on a database-generated key is a plain insert, and on every dialect, MySQL included, a collision on another UNIQUE column is a unique violation rather than an update of the row holding that value | `conformance: Upsert/a primary-key target on a database-generated key is a plain insert`; `conformance: Upsert/a primary-key target colliding on another unique column returns a unique ConstraintError, not an update`; `unit: sql: TestBuildInsert/postgres upsert target not supplied`; `unit: sql: TestBuildInsert/mysql upsert target not supplied`; `unit: sql: TestBuildInsert/sqlite upsert composite target partly supplied` | all | |
 | upsert-many.unsupplied-target-refused | On a table whose key is database-generated, `UpsertMany` with a conflict target that names a column the input does not supply returns an error before anything is written | `conformance: UpsertMany/a primary-key target on a database-generated key is refused before anything is written` | all | |
-| upsert-many.unset-takes-default | On conflict, `UpsertMany` sets every column of its update set from the row, and a field the row left unset takes its `DEFAULT` (`NULL` without one). A soft-deleted conflicting row is therefore restored unless the row sets the soft-delete column | `conformance: UpsertMany/a conflict sets a column the row leaves unset to its default`; `conformance: UpsertMany/a conflict restores a soft-deleted row unless the row sets the soft-delete column` | all | |
+| upsert-many.unset-left-alone | On conflict, `UpsertMany` updates only the columns each row sets, as the single-row `Upsert` does; a field the row left unset stays as the conflicting row has it. A soft-deleted conflicting row is therefore restored only when the row sets the soft-delete column to its not-deleted value | `conformance: UpsertMany/a conflict leaves a column the row leaves unset as the conflicting row has it`; `conformance: UpsertMany/a conflict restores a soft-deleted row only when the row sets the soft-delete column`; `example: postgres: TestUpsertMany_ConflictLeavesUnsetColumnsAlone`; `example: mysql: TestUpsertMany_ConflictLeavesUnsetColumnsAlone`; `example: sqlite: TestUpsertMany_ConflictLeavesUnsetColumnsAlone` | all | |
 | upsert-many.batch-partial | `UpsertMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and earlier sub-batches in the same call are not rolled back | `conformance: UpsertMany/a failed sub-batch keeps the sub-batches before it` | all | |
+| upsert-many.group-atomic | An `UpsertMany` sub-batch whose rows fall into two or more update-column groups writes them in one transaction, or a savepoint inside the caller's transaction, so a failing group rolls back the groups of its sub-batch written before it and the caller's transaction stays usable; a sub-batch of one group opens no transaction | `conformance: UpsertMany/a failed group rolls back the groups of its sub-batch written before it`; `conformance: UpsertMany/inside the caller's transaction a failed group rolls back to its savepoint`; `conformance: UpsertMany/a conflict leaves a column the row leaves unset as the conflicting row has it`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictClauseFields` | all | |
 
 ## §9.6 Per-Call Options
 <!-- prd: 9.6 sha256: fa52157e52fd716f -->
@@ -284,7 +285,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.idempotent-returns-row | A conflict that changes nothing still resolves the PK: an idempotent `Upsert` returns the conflicting row, not a not-found error. This covers the MySQL no-change OK packet and the `DO NOTHING` branch | `conformance: Upsert/a conflict that changes nothing returns the existing row`; `conformance: Upsert/a conflict on a target that covers every column it writes leaves the row as it is and returns it` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 2f1f0f0ef6fc1cf2 -->
+<!-- prd: 9.8 sha256: 668c411c636dc687 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -322,7 +323,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create.has-selected-columns-method | Each `<T>FieldOptions` has a generated `HasSelectedColumns() bool` method | `unit: cmd/sqlgen/gen: TestFieldOptionsTemplate_hasSelectedColumnsMethod` | all |  |
 
 ## §9.8.5 CreateMany
-<!-- prd: 9.8.5 sha256: 1bf5b8ac7d14f470 -->
+<!-- prd: 9.8.5 sha256: ddb96efe3143f900 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -385,7 +386,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.single-pk | On a single-PK table `Increment(ctx, id, IncrementInput[{Table}IncrementColumn], ...)` returns only `error` and issues one `BuildIncrement` UPDATE of `input.Column` by `input.Amount` where the PK equals `id` | `unit: cmd/sqlgen/gen: TestIncrementTemplate_positiveAmount`; `unit: cmd/sqlgen/gen: TestIncrementTemplate_goldenFile` | postgres |  |
 
 ## §9.8.10 Exists / Count
-<!-- prd: 9.8.10 sha256: 075ae70c40558471 -->
+<!-- prd: 9.8.10 sha256: e73a541aaaf10303 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -397,6 +398,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | exists-where.hooks | `ExistsWhere` runs one query hook chain, as `OpExists`, with the filter as `Input` and no `PK` | `conformance: ExistsWhere/fires one exists query hook carrying the filter and no key` | all | client-methods: ExistsWhere × hooks |
 | count.soft-delete | `Count` leaves soft-deleted rows out unless the filter sets the soft-delete comparator | `conformance: Count/soft-deleted rows are not counted unless the filter sets the deleted-at comparator` | all | client-methods: Count × soft-delete |
 | count.hooks | `Count` runs one query hook chain, as `OpCount`, with the filter as `Input` and no `PK` | `conformance: Count/fires one count query hook carrying the filter` | all | client-methods: Count × hooks |
+| exists.nil-short-circuit | A hook that short-circuits `Exists` or `ExistsWhere` with a nil result and no error makes the call return `false` and a nil error | `example: sqlite: TestHookNilResultDoesNotPanic/table Exists`; `example: sqlite: TestHookNilResultDoesNotPanic/table ExistsWhere` | all |  |
+| count.nil-short-circuit | A hook that short-circuits `Count` with a nil result and no error makes the call return `0` and a nil error, on a table and on a view | `example: sqlite: TestHookNilResultDoesNotPanic/table Count`; `example: sqlite: TestHookNilResultDoesNotPanic/view Count` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `exists.nil-short-circuit`: `cmd/sqlgen/gen/templates/table/exists.go.tmpl:64,129`
+- `count.nil-short-circuit`: `cmd/sqlgen/gen/templates/table/count.go.tmpl:66`, `cmd/sqlgen/gen/templates/view/count.go.tmpl:44`
 
 ## §9.8.11 Paginate
 <!-- prd: 9.8.11 sha256: a282e6fd3ecbd73e -->
@@ -406,6 +414,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | paginate.hook-chain | `Paginate` runs one query hook chain whose `QueryContext.Op` is `hook.OpPaginate`, with the caller's input as `Input`; its inner `Count` and `GetMany` fire no hook | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile`; `conformance: Paginate/fires one paginate query hook carrying the caller's input` | all | client-methods: Paginate × hooks |
 | paginate.soft-delete | `Paginate` leaves soft-deleted rows out of the page and the total, through `Count` and `GetMany`, unless the filter sets the soft-delete comparator | `conformance: Paginate/soft-deleted rows are left out of the page and the total unless the filter sets the deleted-at comparator` | all | client-methods: Paginate × soft-delete |
 | paginate.field-selection | A narrowed `FieldOptions` on `Paginate` fills only the selected columns of each item | `conformance: Paginate/a narrowed field selection fills only the selected columns` | all | client-methods: Paginate × field-selection |
+| paginate.nil-short-circuit | A hook that short-circuits `Paginate` with a nil result and no error makes the call return a nil result and a nil error, on a table and on a view | `example: sqlite: TestHookNilResultDoesNotPanic/table Paginate`; `example: sqlite: TestHookNilResultDoesNotPanic/view Paginate` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `paginate.nil-short-circuit`: `cmd/sqlgen/gen/templates/table/pagination.go.tmpl:53`, `cmd/sqlgen/gen/templates/view/pagination.go.tmpl:56`
 
 ## §9.8.12 Connection
 <!-- prd: 9.8.12 sha256: 10616028818c0f98 -->
@@ -416,6 +429,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | cursor.keyset-quoted | The keyset condition quotes every cursor key through the dialect (`QuoteIdentifier`), and the quoted token is the condition's column | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorKeyset` | all |  |
 | cursor.decode-typed-key-cases | `decode<T>Cursor` has a case only for each `cursor_keys` column, unmarshals each value into that column's Go type, and returns `ErrInvalidCursor` for a value that binds SQL NULL | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_decodeCursor`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_decodeCursorMultiKeys` | postgres |  |
 | connection.soft-delete | `Connection` leaves soft-deleted rows out of the edges and the total unless the filter sets the soft-delete comparator | `conformance: Connection/soft-deleted rows are left out of the edges and the total unless the filter sets the deleted-at comparator` | all | client-methods: Connection × soft-delete |
+| connection.nil-short-circuit | A hook that short-circuits `Connection` with a nil result and no error makes the call return a nil result and a nil error, on a table and on a view | `example: sqlite: TestHookNilResultDoesNotPanic/table Connection`; `example: sqlite: TestHookNilResultDoesNotPanic/view Connection` | all |  |
+
+Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
+
+- `connection.nil-short-circuit`: `cmd/sqlgen/gen/templates/table/pagination.go.tmpl:173`, `cmd/sqlgen/gen/templates/view/pagination.go.tmpl:180`
 
 ## §9.8.13 Composite Primary Key Patterns
 <!-- prd: 9.8.13 sha256: e186202c94a7834f -->
@@ -471,7 +489,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.composite-pk | On a composite-PK table `Increment` takes the `{Table}PK` struct and matches all PK columns, so only that tuple changes, and it records that tuple as its affected key | `conformance: Increment/a composite key increments only its own tuple` | all | client-methods: Increment × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 51be945ba60a4f6b -->
+<!-- prd: 9.9 sha256: 4eccd84889710db6 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -565,13 +583,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-with-related.error-mapping | A constraint violation from `UpdateWithRelated` is a structured `ConstraintError` that unwraps to `ErrConstraintViolation`, and nothing is written. On the parent, a name another author holds gives `ConstraintUnique`. Inside an edge the error is wrapped in a `*NestedMutationError` carrying that edge and verb, and `errors.Is` / `errors.As` still reach the `ConstraintError`: an M2M `create` of a taken tag name gives `ConstraintUnique` on `Tags`/`create`, and an O2M `create` breaking a CHECK gives `ConstraintCheck` on `Posts`/`create`, even when the bad row is in a later `CreateMany` chunk. Two kinds cannot occur. A foreign-key violation cannot, because every FK a nested verb writes names the parent, which the call has just written, or a target the visibility read has just returned, inside the same transaction, and the parent `Update` writes no FK. A NOT NULL violation cannot occur on this schema, because every NOT NULL column is a required input field. The nested sentinels follow §9.9.8: an O2M or has-one `connect` naming a row parented to another author is `ErrAlreadyRelated` naming it; a has-one `create` or `connect` on an occupied edge is `ErrAlreadyRelated` naming the held child; one target under `connect` and `disconnect` is `ErrNestedVerbConflict` on `disconnect` naming it; and a has-one block with `create` and `connect` is `ErrNestedVerbConflict` on `connect` | `conformance: UpdateWithRelated/a name taken by another author is a unique ConstraintError and the edges are not written`; `conformance: UpdateWithRelated/a nested tag create whose name is taken is a unique ConstraintError attributed to the Tags create`; `conformance: UpdateWithRelated/a nested post create with an empty title is a check ConstraintError attributed to the Posts create`; `conformance: UpdateWithRelated/connect naming a row parented to another author is ErrAlreadyRelated naming it`; `conformance: UpdateWithRelated/create or connect on a has-one already holding a child is ErrAlreadyRelated naming that child`; `conformance: UpdateWithRelated/one target under connect and disconnect is ErrNestedVerbConflict before any statement on that edge`; `conformance: UpdateWithRelated/a has-one block setting create and connect is ErrNestedVerbConflict attributed to connect before any statement on that edge` | all | client-methods: UpdateWithRelated × error-mapping |
 
 ## §9.9.9 Observability
-<!-- prd: 9.9.9 sha256: 818f7b4e8d711aa4 -->
+<!-- prd: 9.9.9 sha256: 0cc47e008e241724 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | create-with-related.hooks | `CreateWithRelated` has no hook op of its own: the mutation hook fires once per inner write, each under its own op and table, with the parent first (a `*CreateAuthorInput` carrying the caller's values) and then each edge in Go-field-name byte order (`Posts`, `Profile`, `Tags`), not config order (`Tags`, `Profile`, `Posts`), create before connect before link. The caller's `SkipHooks` reaches every inner call, so nothing fires. Inner reads fire query hooks as `create-with-related.inner-read-hooks` and `create-with-related.terminal-read-loader-hooks` state | `conformance: CreateWithRelated/fires one mutation hook per inner write, parent first, then each edge in field-name order`; `conformance: CreateWithRelated/fires a query hook for each visibility and occupancy read, none for the verify or terminal read`; `conformance: CreateWithRelated/the terminal read loads the selected relationships with the caller's query hooks`; `conformance: CreateWithRelated/SkipHooks on the caller fires no hook for any inner call` | all | client-methods: CreateWithRelated × hooks |
 | update-with-related.hooks | `UpdateWithRelated` has no hook op of its own. The mutation hook sees one call per inner write, each with its own `Op` and `Table`, in execution order: the parent `update` first (its `PK` the key), then per edge in Go-field-name order (`Posts`, `Profile`, `Tags`), `clear` before `create` before `connect` before `link` before `disconnect`. `SkipHooks` on the call reaches every inner call, so no mutation or query hook fires. The terminal parent read and the adoption's verify read fire no query hook. The connect visibility read fires one, and so do the relationships the terminal read loads, which take the caller's hooks (§9.6) | `conformance: UpdateWithRelated/fires one mutation hook per inner write, the parent first, then each edge in field-name order and each verb in execution order`; `conformance: UpdateWithRelated/SkipHooks on the call reaches every inner call, so no hook fires`; `conformance: UpdateWithRelated/the terminal parent read and the adoption's verify read fire no query hook` | all | client-methods: UpdateWithRelated × hooks |
 | upsert-with-related.hooks | `UpsertWithRelated` has no op of its own: the mutation hook sees one call per inner write in §9.9.6 order with its own `Op` and `Table`. That is the parent `upsert`, then per edge in Go-field-name order (`Posts`, `Profile`, `Tags`): `clear` before `create` before `connect` before `link` before `disconnect`. Visibility and occupancy reads fire query hooks. The adoption's verify read and the terminal parent read fire none. The terminal read's relationship loads fire the caller's (§9.6). `SkipHooks` on the call fires no hook on any inner call | `conformance: UpsertWithRelated/the mutation hook sees one call per inner write in execution order, and neither the verify read nor the terminal read fires a query hook`; `conformance: UpsertWithRelated/SkipHooks on the call fires no hook on any inner call` | all | client-methods: UpsertWithRelated × hooks |
+| with-related.callbacks-before-return | A `*WithRelated` call made outside a transaction opens the root transaction itself and runs its commit callbacks synchronously, whatever the client's callback mode: a cached `Get` issued right after it returns sees what its inner writes changed, on `CreateWithRelated`, `UpdateWithRelated` and `UpsertWithRelated` alike. A ctx whose transaction has already committed counts as carrying none | `example: tenancy: TestCache_NestedWriteInvalidatesBeforeReturn/CreateWithRelated`; `example: tenancy: TestCache_NestedWriteInvalidatesBeforeReturn/UpdateWithRelated`; `example: tenancy: TestCache_NestedWriteInvalidatesBeforeReturn/UpdateWithRelated_with_a_committed_transaction_in_ctx`; `example: tenancy: TestCache_NestedWriteInvalidatesBeforeReturn/UpsertWithRelated`; `example: tenancy_postgres: TestNestedTimeKeyZones`; `example: tenancy_mysql: TestNestedTimeKeyZones` | all |  |
 
 ## §13.2 Loading Strategy
 <!-- prd: 13.2 sha256: 602a6097cd87d963 -->
@@ -764,7 +783,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 Proven on one target: the code below has no dialect branch (`docs/design/CONFORMANCE_VARIANTS.md` §3.3).
 
-- `client.close-cache-publisher`: `cmd/sqlgen/gen/templates/client.go.tmpl:394-408`
+- `client.close-cache-publisher`: `cmd/sqlgen/gen/templates/client.go.tmpl:397-411`
 
 ## §20.5 Concurrency Safety
 <!-- prd: 20.5 sha256: 15a679cf7a1814fc -->
@@ -880,7 +899,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 - `error-prefix.tenant-mismatch`: `cmd/sqlgen/gen/templates/table/get.go.tmpl:70`, `cmd/sqlgen/gen/templates/table/update.go.tmpl:263`, `cmd/sqlgen/gen/templates/table/create.go.tmpl:204`
 
 ## §25.1 Query Count Guarantee
-<!-- prd: 25.1 sha256: 30bc2a28df8813d0 -->
+<!-- prd: 25.1 sha256: 3c0adc55f0b90046 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -889,12 +908,14 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | query-count.nullable-referenced-pgx | A one-column O2M whose key references a nullable column takes one statement per chunk on pgx (`s = C`), and skips a parent holding NULL | `unit: cmd/sqlgen/cli: TestGenerate_EdgeJoinsReferencedColumns/fk to a nullable unique column`; `conformance: GetMany/a one-column key into a nullable unique column skips a NULL parent` | postgres, pgx |  |
 
 ## §25.3 Batch Operations
-<!-- prd: 25.3 sha256: 17070ea1e3317227 -->
+<!-- prd: 25.3 sha256: 9b56380096d94a01 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hard-delete-many.batch-split | `HardDeleteMany` is bounded by `generation.batch_size`: each sub-batch is one write statement, and M keys take `ceil(M / batch_size)` statements | `conformance: HardDeleteMany/splits the keys into sub-batches of the table's batch size` | all | |
-| upsert-many.batch-split | `UpsertMany` is bounded by `generation.batch_size`. Each sub-batch of the deduped input is one write statement, so M distinct inputs take `ceil(M / batch_size)` writes | `conformance: UpsertMany/dedupes across the whole call before splitting it into sub-batches`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
+| bulk-write.chunked-readback | The trailing read that returns a batch write's entities names the written keys in chunks of `generation.batch_size`, `ceil(M / batch_size)` reads, so a call whose writes clear every dialect ceiling also reads back every row it wrote | `conformance: CreateMany/reads back the written rows in chunks of the table's batch size`; `conformance: SoftDeleteMany/reads back the soft-deleted rows in chunks of the table's batch size`; `conformance: CreateMany/composite keys past SQLite's expression depth limit read back every written row`; `conformance: SoftDeleteMany/composite keys past SQLite's expression depth limit read back every written row`; `conformance: UpdateWhere/composite keys past SQLite's expression depth limit read back every updated row`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
+| bulk-write.readback-distinct | The trailing read names each written key once, so a key `UpdateMany`, `SoftDeleteMany` or `RestoreMany` is given twice comes back as one entity, including when the repeat opens a later sub-batch | `conformance: UpdateMany/a key listed twice across a sub-batch boundary is read back once`; `conformance: SoftDeleteMany/a key listed twice across a sub-batch boundary is read back once`; `conformance: RestoreMany/a key listed twice across a sub-batch boundary is read back once` | all | |
+| upsert-many.batch-split | `UpsertMany` is bounded by `generation.batch_size`. Each sub-batch of the deduped input whose rows set the same columns is one write statement, so M such inputs take `ceil(M / batch_size)` writes; rows that set different update columns take one statement per group | `conformance: UpsertMany/dedupes across the whole call before splitting it into sub-batches`; `conformance: UpsertMany/a conflict leaves a column the row leaves unset as the conflicting row has it`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
 
 ## §25.4 No Implicit Caching
 <!-- prd: 25.4 sha256: cf98e0efc0caae76 -->
