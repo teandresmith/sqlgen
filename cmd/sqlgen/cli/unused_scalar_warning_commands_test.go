@@ -24,7 +24,7 @@ func tscUnusedScalarProject(t *testing.T) string {
 	files := map[string]string{
 		"go.mod":                "module example.com/shop\n\ngo 1.26\n",
 		"migrations/schema.sql": "CREATE TABLE contacts (id uuid PRIMARY KEY, name text NOT NULL);\n",
-		"gqlgen.yml":            "schema:\n  - models/graph/*.graphqls\n",
+		"gqlgen.yml":            "schema:\n  - models/graph/*.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n",
 		"sqlgen.yml":            tscUnusedScalarConfig(stub),
 	}
 	for rel, body := range files {

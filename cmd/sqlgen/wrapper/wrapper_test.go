@@ -75,7 +75,7 @@ func TestGen_TempFileCleanupOnSuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "gqlgen.yml")
-	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n"), 0o600); err != nil {
 		t.Fatalf("seeding gqlgen.yml: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestGen_TempFileCleanupOnSubprocessFailure(t *testing.T) {
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "gqlgen.yml")
-	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n"), 0o600); err != nil {
 		t.Fatalf("seeding gqlgen.yml: %v", err)
 	}
 
@@ -177,6 +177,46 @@ func TestGen_SingleFileWithoutFilename(t *testing.T) {
 		Stderr:           &bytes.Buffer{},
 	})
 	want := "parsing gqlgen.yml resolver block: resolver.filename is required with resolver.layout: single-file"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Gen error = %v, want %q", err, want)
+	}
+	if _, ok := errors.AsType[*SubprocessError](err); ok {
+		t.Errorf("Gen error = %v is a *SubprocessError; gqlgen never ran", err)
+	}
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatalf("reading working dir: %v", rerr)
+	}
+	for _, e := range entries {
+		if e.Name() != "gqlgen.yml" {
+			t.Errorf("Gen wrote %s before rejecting the config", e.Name())
+		}
+	}
+}
+
+// TestGen_AbsentLayoutWithoutFilename pins that a resolver block with no
+// layout and no filename, which gqlgen reads as single-file, fails before
+// anything is seeded or gqlgen runs.
+func TestGen_AbsentLayoutWithoutFilename(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gqlgen.yml")
+	yml := "schema:\n  - graph/*.graphqls\nresolver:\n  dir: graph\n  package: graph\n"
+	if err := os.WriteFile(cfgPath, []byte(yml), 0o600); err != nil {
+		t.Fatalf("seeding gqlgen.yml: %v", err)
+	}
+	t.Setenv("SQLGEN_WRAPPER_TEST_HELPER", "fail")
+
+	_, err := Gen(context.Background(), GenOptions{
+		GqlgenConfigPath: cfgPath,
+		GqlgenBin:        os.Args[0],
+		WorkingDir:       dir,
+		MergeInput:       MergeInput{SchemaGlob: "graph/*.graphqls"},
+		SeedPackage:      "graph",
+		Seeds:            []TableSeed{{SnakeName: "products", Body: "// body\n"}},
+		Stdout:           &bytes.Buffer{},
+		Stderr:           &bytes.Buffer{},
+	})
+	want := "parsing gqlgen.yml resolver block: resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename"
 	if err == nil || err.Error() != want {
 		t.Fatalf("Gen error = %v, want %q", err, want)
 	}
@@ -286,7 +326,7 @@ func main() {
 	}
 
 	cfgPath := filepath.Join(dir, "gqlgen.yml")
-	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("schema:\n  - graph/custom.graphqls\nresolver:\n  layout: follow-schema\n  dir: graph\n"), 0o600); err != nil {
 		t.Fatalf("seeding gqlgen.yml: %v", err)
 	}
 
@@ -521,11 +561,28 @@ func TestParseResolverLayout(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			name:    "all defaults",
+			// No resolver block: gqlgen defaults the layout to single-file
+			// and, with no filename or dir, generates no resolvers at all
+			// (codegen/config/resolver.go Check, IsDefined).
+			name:    "no resolver block",
 			yaml:    "schema:\n  - graph/*.graphqls\n",
-			wantLay: "follow-schema",
-			wantDir: "graph",
-			wantTpl: "{name}.resolvers.go",
+			wantErr: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename",
+		},
+		{
+			// gqlgen reads an absent layout as single-file and rejects the
+			// config for the missing filename.
+			name:    "layout omitted with dir only",
+			yaml:    "resolver:\n  dir: graph\n  package: graph\n  filename_template: \"{name}.resolvers.go\"\n",
+			wantErr: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename",
+		},
+		{
+			// gqlgen writes every resolver to the one filename.
+			name:     "layout omitted with filename",
+			yaml:     "resolver:\n  dir: graph\n  filename: graph/resolver.go\n  package: graph\n",
+			wantLay:  "single-file",
+			wantDir:  "graph",
+			wantTpl:  "{name}.resolvers.go",
+			wantFile: "graph/resolver.go",
 		},
 		{
 			name:    "follow-schema explicit",

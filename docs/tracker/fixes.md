@@ -23,29 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-396
-
-- **Status:** Open
-- **Severity:** nit
-- **Origin:** phase 16, cmd/sqlgen/wrapper
-- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "gqlgen defaults an absent `resolver.layout` to `single-file`")
-- **Vetted:** ready at `ca9b4128` (2026-11-23)
-
-**Issue.** A `gqlgen.yml` that omits `resolver.layout` is seeded for `follow-schema`, while gqlgen v0.17.95 defaults it to `single-file`, so every such config fails with a confusing error. Measured at `998f0654` on graphql_top_level copies: layout removed (dir only) → "config.resolver: filename must be specified with layout=single-file" with follow-schema seed files left behind; plus `filename: graph/resolver.go` → "method mutationResolver.DeleteCategory already declared"; no resolver block → "undefined: mutationResolver/queryResolver".
-
-**Root cause.** `cmd/sqlgen/wrapper/seeds.go` `parseResolverLayout` defaults an absent layout to follow-schema.
-
-**Suggested fix.**
-- Start from `.claude/prototypes/FIX-396.patch` (based on `ca9b4128`; 4 files, +43/-16).
-- Default an absent layout to single-file; with no filename either, fail before seeding: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename". Fix the `resolverLayout` doc; three new `TestParseResolverLayout` cases; three wrapper_test fixtures and `cli/unused_scalar_warning_commands_test.go` state `layout: follow-schema, dir: graph`.
-- Optional one-line §26.5.6 note on the default. The patch records the behavior as gap row `gap.api.wrapper-absent-layout-single-file` in `docs/conformance/cli/api.md` (§26.5.6, home `TestParseResolverLayout`), like `wrapper-single-file-needs-filename`; `sqlgen graphql init` already writes `layout: follow-schema`, so scaffolded configs are unaffected.
-- Prototype results, run at `ca9b4128` on 2026-11-23: graphql_top_level copies at HEAD → dir only: "failed to load schema: config.resolver: filename must be specified with layout=single-file … Error: gqlgen subprocess failed" with follow-schema seeds left in graph/; `filename: graph/resolver.go`: "method mutationResolver.UpdateProducts already declared at graph/product_gen.resolvers.go:44:28"; no resolver block: "undefined: queryResolver". Fixed binary → dir only and no block: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename" with no seeds written; dir + filename → "generated 25 files", builds, second run builds. Gates: `go test -race ./wrapper/`, `go test -short ./cli/ ./gen/`, vet, gofumpt, golangci-lint, `make req-check` ok. Fail-first: seeds.go reverted → "no_resolver_block: parseResolverLayout error = <nil>, want …", same for dir-only, "layout_omitted_with_filename: Layout: got \"follow-schema\", want \"single-file\""; the `layoutDefaulted` branch removed → both error cases fail; existing suite without the fix passes. No golden churn.
-
-**References.**
-- PRD §26.5.6 step 2. FIX-265 (logged this as backlog).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-397
 
 - **Status:** Open
@@ -75,6 +52,29 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-396
+
+- **Status:** Resolved
+- **Severity:** nit
+- **Origin:** phase 16, cmd/sqlgen/wrapper
+- **Surfaced by:** backlog sweep 2026-11-22 (backlog line "gqlgen defaults an absent `resolver.layout` to `single-file`")
+- **Vetted:** ready at `ca9b4128` (2026-11-23)
+
+**Issue.** A `gqlgen.yml` that omits `resolver.layout` is seeded for `follow-schema`, while gqlgen v0.17.95 defaults it to `single-file`, so every such config fails with a confusing error. Measured at `998f0654` on graphql_top_level copies: layout removed (dir only) → "config.resolver: filename must be specified with layout=single-file" with follow-schema seed files left behind; plus `filename: graph/resolver.go` → "method mutationResolver.DeleteCategory already declared"; no resolver block → "undefined: mutationResolver/queryResolver".
+
+**Root cause.** `cmd/sqlgen/wrapper/seeds.go` `parseResolverLayout` defaults an absent layout to follow-schema.
+
+**Suggested fix.**
+- Start from `.claude/prototypes/FIX-396.patch` (based on `ca9b4128`; 4 files, +43/-16).
+- Default an absent layout to single-file; with no filename either, fail before seeding: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename". Fix the `resolverLayout` doc; three new `TestParseResolverLayout` cases; three wrapper_test fixtures and `cli/unused_scalar_warning_commands_test.go` state `layout: follow-schema, dir: graph`.
+- Optional one-line §26.5.6 note on the default. The patch records the behavior as gap row `gap.api.wrapper-absent-layout-single-file` in `docs/conformance/cli/api.md` (§26.5.6, home `TestParseResolverLayout`), like `wrapper-single-file-needs-filename`; `sqlgen graphql init` already writes `layout: follow-schema`, so scaffolded configs are unaffected.
+- Prototype results, run at `ca9b4128` on 2026-11-23: graphql_top_level copies at HEAD → dir only: "failed to load schema: config.resolver: filename must be specified with layout=single-file … Error: gqlgen subprocess failed" with follow-schema seeds left in graph/; `filename: graph/resolver.go`: "method mutationResolver.UpdateProducts already declared at graph/product_gen.resolvers.go:44:28"; no resolver block: "undefined: queryResolver". Fixed binary → dir only and no block: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename" with no seeds written; dir + filename → "generated 25 files", builds, second run builds. Gates: `go test -race ./wrapper/`, `go test -short ./cli/ ./gen/`, vet, gofumpt, golangci-lint, `make req-check` ok. Fail-first: seeds.go reverted → "no_resolver_block: parseResolverLayout error = <nil>, want …", same for dir-only, "layout_omitted_with_filename: Layout: got \"follow-schema\", want \"single-file\""; the `layoutDefaulted` branch removed → both error cases fail; existing suite without the fix passes. No golden churn.
+
+**References.**
+- PRD §26.5.6 step 2. FIX-265 (logged this as backlog).
+
+**Resolution notes.** `parseResolverLayout` (`cmd/sqlgen/wrapper/seeds.go`) now defaults an absent `resolver.layout` to `single-file`, gqlgen v0.17.95's own default, so the wrapper seeds the layout gqlgen will generate. With no `resolver.filename` either, it fails before seeding: "resolver.filename is required: gqlgen defaults an absent resolver.layout to single-file; set resolver.layout: follow-schema, or resolver.filename". The `resolverLayout` and `parseResolverLayout` docs were updated. `TestParseResolverLayout` replaces "all defaults" with three cases (no resolver block, dir only, dir + filename). The three `wrapper_test.go` gqlgen.yml fixtures and `cli/unused_scalar_warning_commands_test.go` now state `layout: follow-schema, dir: graph`. Gap row `gap.api.wrapper-absent-layout-single-file` was added to `docs/conformance/cli/api.md` (§26.5.6, homes `TestParseResolverLayout` and `TestGen_AbsentLayoutWithoutFilename`). The optional PRD note was not added. The vetted prototype applied clean at `a5a65770`, and none of its hunks touched PRD anchor hashes. Fail-first: with seeds.go reverted, `no_resolver_block` and `layout_omitted_with_dir_only` fail with "error = <nil>" and `layout_omitted_with_filename` fails with "Layout: got \"follow-schema\", want \"single-file\"". Gates: `go test -race ./wrapper/`, `go test -short ./cli/ ./gen/`, `make check` and `make check-examples` are all ok. No golden churn, which matches the vet. Fixed inline after `/verify`: the `schema is a mapping` and `models is a sequence` cases of `TestGen_RejectsMalformedMergedConfigBeforeGqlgen` had no resolver block, so they began failing in `parseResolverLayout` and the test passed without reaching merged-config validation (`api.config.wrapper-validates-merged`). Both now state `layout: follow-schema, dir: graph`, and their errors are once again "merging gqlgen config: …". Added `TestGen_AbsentLayoutWithoutFilename`, which shows the failure comes before any seed or subprocess, as a second home for the gap row. Removed the history narration from the new comments. Each `TestGen_RejectsMalformedMergedConfigBeforeGqlgen` case now asserts the error prefix of the stage that rejects it, so a resolver-parse change cannot quietly hollow out the merged-config cases again.
 
 ### FIX-390
 

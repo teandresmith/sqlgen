@@ -126,9 +126,9 @@ func LoadGqlgenModelInfo(gqlgenConfigPath, modulePath string) (GqlgenModelInfo, 
 }
 
 // resolverLayout captures the relevant `resolver:` block fields parsed out
-// of the consumer's gqlgen.yml. Defaults are filled in when keys are absent:
-// `layout: follow-schema` and `filename_template: "{name}.resolvers.go"`.
-// gqlgen v0.17.95 itself defaults an absent layout to single-file.
+// of the consumer's gqlgen.yml. Defaults are filled in when keys are absent,
+// matching gqlgen v0.17.95: `layout: single-file` and
+// `filename_template: "{name}.resolvers.go"`.
 type resolverLayout struct {
 	// Layout is gqlgen's `resolver.layout` value: "follow-schema" emits one
 	// resolver file per .graphqls schema source; "single-file" emits one
@@ -158,9 +158,9 @@ const (
 )
 
 // parseResolverLayout extracts the resolver block from the consumer's
-// gqlgen.yml. Empty/missing keys fall through to gqlgen's documented
-// defaults so the wrapper behaves the same as a freshly-scaffolded
-// gqlgen.yml that omits explicit resolver fields.
+// gqlgen.yml. Empty/missing keys fall through to gqlgen's defaults so the
+// wrapper seeds the layout gqlgen will generate; an absent layout is
+// single-file, as in gqlgen v0.17.95.
 //
 // `layout: single-file` without `filename` is an error. gqlgen has no
 // default for it: it skips resolver generation when `dir` is absent too,
@@ -185,8 +185,10 @@ func parseResolverLayout(consumerYAML []byte) (resolverLayout, error) {
 		FilenameTemplate: doc.Resolver.FilenameTemplate,
 		Filename:         doc.Resolver.Filename,
 	}
-	if out.Layout == "" {
-		out.Layout = layoutFollowSchema
+	// gqlgen reads an absent layout as single-file (codegen/config/resolver.go Check).
+	layoutDefaulted := out.Layout == ""
+	if layoutDefaulted {
+		out.Layout = layoutSingleFile
 	}
 	if out.Dir == "" {
 		out.Dir = defaultResolverDir
@@ -195,6 +197,9 @@ func parseResolverLayout(consumerYAML []byte) (resolverLayout, error) {
 		out.FilenameTemplate = defaultFilenameTpl
 	}
 	if out.Layout == layoutSingleFile && out.Filename == "" {
+		if layoutDefaulted {
+			return resolverLayout{}, fmt.Errorf("resolver.filename is required: gqlgen defaults an absent resolver.layout to %s; set resolver.layout: %s, or resolver.filename", layoutSingleFile, layoutFollowSchema)
+		}
 		return resolverLayout{}, fmt.Errorf("resolver.filename is required with resolver.layout: %s", layoutSingleFile)
 	}
 	return out, nil
