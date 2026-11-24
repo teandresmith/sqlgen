@@ -3,6 +3,7 @@ package gen
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
@@ -18,8 +19,12 @@ import (
 //
 // Inference gives one column per side, so a side whose table has a composite
 // primary key and no override cannot be inferred: that key comes back "" and
-// the error names the relationship and the key to declare. Callers run
-// checkDeclaredTarget first, so the related table resolves.
+// the error names the relationship and the key to declare. Two keys that
+// resolve to the same column set are an error too: the loader, the
+// relationship filter and the nested writer would join and write both sides
+// through one column. Inference gives that for every self-referential entry
+// that leaves both keys unset, since both sides name the same table. Callers
+// run checkDeclaredTarget first, so the related table resolves.
 func declaredJunctionKeys(schema *parser.Schema, r config.TableRelationship, source string, targets *relationshipTargets) (local, reference string, err error) {
 	sSchema, sName := splitQualifiedName(source)
 	target, _ := targets.resolve(splitQualifiedName(r.Table))
@@ -27,7 +32,17 @@ func declaredJunctionKeys(schema *parser.Schema, r config.TableRelationship, sou
 
 	local, localErr := junctionKeyColumn(schema, r, source, "junction_local_fk", r.JunctionLocalFK, sSchema, sName)
 	reference, refErr := junctionKeyColumn(schema, r, source, "junction_reference_fk", r.JunctionReferenceFK, target.Schema, tName)
-	return local, reference, errors.Join(localErr, refErr)
+	if err := errors.Join(localErr, refErr); err != nil {
+		return local, reference, err
+	}
+	localCols := slices.Sorted(slices.Values(declaredJunctionKey(r.JunctionLocalFK, local)))
+	if slices.Equal(localCols, slices.Sorted(slices.Values(declaredJunctionKey(r.JunctionReferenceFK, reference)))) {
+		return local, reference, fmt.Errorf(
+			"tables.%s.relationships: %q resolves junction_local_fk and junction_reference_fk to the same %s columns (%s); an unset key infers {singular table}_id, so a self-referential entry declares at least one key, naming columns the other does not (PRD §4.8)",
+			source, r.Name, r.Junction, strings.Join(localCols, ", "),
+		)
+	}
+	return local, reference, nil
 }
 
 // junctionKeyColumn resolves one side of declaredJunctionKeys: the override's
@@ -62,9 +77,9 @@ func primaryKeyColumnNames(table *parser.Table) []string {
 	return pk
 }
 
-// checkDeclaredJunctionKeys rejects a declared m2m entry a junction key of
-// which can be neither read from the config nor inferred (declaredJunctionKeys).
-// Any other entry passes.
+// checkDeclaredJunctionKeys rejects a declared m2m entry whose junction keys
+// declaredJunctionKeys refuses: one that can be neither read nor inferred, or
+// two that name the same columns. Any other entry passes.
 func checkDeclaredJunctionKeys(schema *parser.Schema, r config.TableRelationship, source string, targets *relationshipTargets) error {
 	if parseRelationshipType(r.Type) != parser.ManyToMany {
 		return nil

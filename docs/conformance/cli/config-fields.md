@@ -9,7 +9,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 §4.13 validation rules and the package's unclaimed tests stay in [`config.md`](config.md).
 
 ## §4 Configuration System
-<!-- prd: 4 sha256: 74b444002256fa5d -->
+<!-- prd: 4 sha256: d2fe109ae5fd895b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -324,7 +324,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config-resolution: overrides.use-pointers × view-inherits | §4.9: ViewConfig has no `overrides` block | |
 
 ## §4.8 TableConfig (per-table)
-<!-- prd: 4.8 sha256: cadbbcc1c2f49336 -->
+<!-- prd: 4.8 sha256: 8207c885c657b2bc -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -374,6 +374,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config.tables.relationships.table.schema | `v1.json` requires a relationship's `table` | `unit: cmd/sqlgen/config: TestSchemaV1_rejectsKnownMistakes/relationship missing table` | all | |
 | config.tables.relationships.junction.inferred-keys | Without `junction_local_fk` / `junction_reference_fk`, an M2M entry's junction columns are inferred from the linked table names (`product_id`, `tag_id`) | `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeysInferred` | all |  |
 | config.tables.relationships.junction.composite-needs-override | A linked table with a composite primary key and no `junction_local_fk` / `junction_reference_fk` override for its side is a generation error naming the relationship and the key to declare | `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeyInferenceNeedsSingleColumnPK/this table composite, no override`; `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeyInferenceNeedsSingleColumnPK/related table composite, no override` | all |  |
+| config.tables.relationships.junction.self-referential-declares-a-key | A self-referential `m2m` entry, whose `table:` is this table, infers the same column for both sides, so it declares at least one of `junction_local_fk` and `junction_reference_fk`, and the two keys must name different columns | `unit: cmd/sqlgen/gen: TestBuildTableContexts_M2MJunctionKeysMustDiffer/both keys inferred`; `unit: cmd/sqlgen/gen: TestBuildTableContexts_M2MJunctionKeysMustDiffer/both keys declared and distinct`; `unit: cmd/sqlgen/gen: TestBuildTableContexts_M2MJunctionKeysMustDiffer/one key declared distinct from the other's inferred column` | all |  |
 | config.tables.relationships.junction.inferred-is-link-column | An inferred junction column is a link column the `exclude_columns` link-column rule checks | `unit: cmd/sqlgen/gen: TestGenerate_M2MInferredJunctionKeyIsALinkColumn` | all |  |
 | config.tables.relationships.junction.local-fk-override | `junction_local_fk` names the junction column for this table in place of the inferred one | `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeyOverrides` | all |  |
 | config.tables.relationships.junction.reference-fk-override | `junction_reference_fk` names the junction column for the related table in place of the inferred one | `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeyOverrides` | all |  |

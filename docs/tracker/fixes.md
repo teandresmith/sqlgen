@@ -149,33 +149,6 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-402
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 32, cmd/sqlgen/gen/junction_keys.go
-- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "A self-referential M2M relationship declared with only `junction` infers the same column (`product_id`) for both junction keys")
-- **Vetted:** corrected at `6e152b91` (2026-11-24)
-
-**Issue.** A declared `m2m` relationship whose `table:` is the declaring table itself, written with only `junction:` (no `junction_local_fk` / `junction_reference_fk`), infers `{singular}_id` for both junction keys: `product_id` twice on `products`. The column exists on the junction, so `checkDeclaredLinkColumns` passes and the edge generates. Measured at vetting: the edge generates with `local="product_id" ref="product_id"`, and its relationship filter joins `… ON tgt."id" = jn."product_id" … WHERE jn."product_id" = <correlation>`, so it only ever matches self-links: silent wrong output. The detected `Products` / `RelatedProducts` edges on the same junction get the correct distinct keys. FK detection handles the same shape correctly from the junction's two FKs (PRD §5.3 step 5, the `cycle` / `prev_cycle` example).
-
-**Root cause.** `declaredJunctionKeys` (`cmd/sqlgen/gen/junction_keys.go:23-31`) resolves each side on its own with `junctionKeyColumn` (`:36-47`), which returns `toSingular(tName) + "_id"` (`:46`). When source equals target, both calls get the same table name, and nothing compares the results. PRD §4.8's `junction_local_fk` row defines inference per linked table and never covers a self-referential pair. The inference came in with phase 32 (`5b24d6ba`).
-
-**Suggested fix.**
-- Recommended: in `declaredJunctionKeys`, after both sides resolve, return an error when the local and reference keys resolve to the same column set. This catches inferred self-reference and an explicit `junction_local_fk == junction_reference_fk`. Message: `tables.%s.relationships: %q links %s to itself through %s, so both junction keys infer %q; declare junction_local_fk and junction_reference_fk (PRD §4.8)`. `checkDeclaredJunctionKeys` (`:68-74`, called at `context_table.go:1947`) reports it in the per-entry pass.
-- Alternative: infer from the junction's two FKs into the table. Which FK is "local" is still ambiguous for a declared edge, so it needs a rule the PRD lacks. Not recommended without a ruling.
-- PRD: one sentence on the §4.8 `junction` row and a §4.13 error row.
-- Regression test in `cmd/sqlgen/gen/junction_inference_test.go`, beside `TestGenerate_M2MJunctionKeyInferenceNeedsSingleColumnPK`: `products` + `product_links(product_id, related_product_id)` with only `junction:` (error), both keys declared (generates, keys differ), and an explicit equal pair (error), on all three dialects.
-- Corrected at vetting (2026-11-24): the suggested message ("links %s to itself through %s, so both junction keys infer %q") is wrong for an explicit equal pair (nothing is inferred) and for an equal pair on a non-self edge, so the prototype words it to cover every case: `tables.%s.relationships: %q resolves junction_local_fk and junction_reference_fk to the same %s columns (%s); an unset key infers {singular table}_id, so a self-referential entry declares both, each naming its own columns (PRD §4.8)`. It also catches one key declared equal to the other side's inferred column (same root cause and site). The test uses `BuildTableContexts` across `allDialects`, since the postgres-only `tgfTryGenerate` beside the named test covers one dialect.
-- Start from `.claude/prototypes/FIX-402.patch` (based on `6e152b91`; 3 files, +109/-4): `declaredJunctionKeys` compares the two keys' column sets order-insensitively (`declaredJunctionKey(override, resolved)` + `slices.Sorted` / `slices.Equal`) once both resolve, and errors when they are equal; `checkDeclaredJunctionKeys` reports it in the per-entry pass. `TestBuildTableContexts_M2MJunctionKeysMustDiffer` in `junction_inference_test.go` (4 cases × all dialects: both inferred → error, both declared and distinct → builds, both declared and equal → error, one declared equal to the other's inferred → error). PRD: a sentence on the §4.8 `junction` row and a §4.13 row "A declared `m2m` entry whose two junction keys resolve to the same columns" (Error, resolution-level).
-- Prototype results, run at `6e152b91` on 2026-11-24: probe (`products(id uuid PK)`, `product_links(product_id, related_product_id)`, declared `Related: {type: m2m, table: products, junction: product_links}`) at HEAD → `err = <nil>`, `rel Related … local="product_id" ref="product_id"`, filter `WHERE jn."product_id" = <correlation>`; patched postgres → `tables.public.products.relationships: "Related" resolves junction_local_fk and junction_reference_fk to the same product_links columns (product_id); …`. Gates: `go test -race -count=1 ./gen/... ./config/...` ok; `-run 'TestE2EGoldenFiles|TestGolden' .` ok; golangci-lint 0 issues; gofumpt clean. Fail-first: `junction_keys.go` reverted → 9 subtests fail "BuildTableContexts() error = nil, want one containing [\"products.relationships\" \"\\\"Related\\\"\" \"same product_links columns (product_id)\" …]" (the distinct-keys case passes); existing suite without the fix passes. No golden churn.
-
-**References.**
-- PRD §4.8 (`junction`, `junction_local_fk`, `junction_reference_fk` rows), §13.4, §13.5, §5.3 step 5, §4.13.
-- Phase 32 (`5b24d6ba`), which introduced `declaredJunctionKeys`.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-403
 
 - **Status:** Open
@@ -274,6 +247,34 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-402
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen/junction_keys.go
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "A self-referential M2M relationship declared with only `junction` infers the same column (`product_id`) for both junction keys")
+- **Vetted:** corrected at `6e152b91` (2026-11-24)
+
+**Issue.** A declared `m2m` relationship whose `table:` is the declaring table itself, written with only `junction:` (no `junction_local_fk` / `junction_reference_fk`), infers `{singular}_id` for both junction keys: `product_id` twice on `products`. The column exists on the junction, so `checkDeclaredLinkColumns` passes and the edge generates. Measured at vetting: the edge generates with `local="product_id" ref="product_id"`, and its relationship filter joins `… ON tgt."id" = jn."product_id" … WHERE jn."product_id" = <correlation>`, so it only ever matches self-links: silent wrong output. The detected `Products` / `RelatedProducts` edges on the same junction get the correct distinct keys. FK detection handles the same shape correctly from the junction's two FKs (PRD §5.3 step 5, the `cycle` / `prev_cycle` example).
+
+**Root cause.** `declaredJunctionKeys` (`cmd/sqlgen/gen/junction_keys.go:23-31`) resolves each side on its own with `junctionKeyColumn` (`:36-47`), which returns `toSingular(tName) + "_id"` (`:46`). When source equals target, both calls get the same table name, and nothing compares the results. PRD §4.8's `junction_local_fk` row defines inference per linked table and never covers a self-referential pair. The inference came in with phase 32 (`5b24d6ba`).
+
+**Suggested fix.**
+- Recommended: in `declaredJunctionKeys`, after both sides resolve, return an error when the local and reference keys resolve to the same column set. This catches inferred self-reference and an explicit `junction_local_fk == junction_reference_fk`. Message: `tables.%s.relationships: %q links %s to itself through %s, so both junction keys infer %q; declare junction_local_fk and junction_reference_fk (PRD §4.8)`. `checkDeclaredJunctionKeys` (`:68-74`, called at `context_table.go:1947`) reports it in the per-entry pass.
+- Alternative: infer from the junction's two FKs into the table. Which FK is "local" is still ambiguous for a declared edge, so it needs a rule the PRD lacks. Not recommended without a ruling.
+- PRD: one sentence on the §4.8 `junction` row and a §4.13 error row.
+- Regression test in `cmd/sqlgen/gen/junction_inference_test.go`, beside `TestGenerate_M2MJunctionKeyInferenceNeedsSingleColumnPK`: `products` + `product_links(product_id, related_product_id)` with only `junction:` (error), both keys declared (generates, keys differ), and an explicit equal pair (error), on all three dialects.
+- Corrected at vetting (2026-11-24): the suggested message ("links %s to itself through %s, so both junction keys infer %q") is wrong for an explicit equal pair (nothing is inferred) and for an equal pair on a non-self edge, so the prototype words it to cover every case: `tables.%s.relationships: %q resolves junction_local_fk and junction_reference_fk to the same %s columns (%s); an unset key infers {singular table}_id, so a self-referential entry declares both, each naming its own columns (PRD §4.8)`. It also catches one key declared equal to the other side's inferred column (same root cause and site). The test uses `BuildTableContexts` across `allDialects`, since the postgres-only `tgfTryGenerate` beside the named test covers one dialect.
+- Start from `.claude/prototypes/FIX-402.patch` (based on `6e152b91`; 3 files, +109/-4): `declaredJunctionKeys` compares the two keys' column sets order-insensitively (`declaredJunctionKey(override, resolved)` + `slices.Sorted` / `slices.Equal`) once both resolve, and errors when they are equal; `checkDeclaredJunctionKeys` reports it in the per-entry pass. `TestBuildTableContexts_M2MJunctionKeysMustDiffer` in `junction_inference_test.go` (4 cases × all dialects: both inferred → error, both declared and distinct → builds, both declared and equal → error, one declared equal to the other's inferred → error). PRD: a sentence on the §4.8 `junction` row and a §4.13 row "A declared `m2m` entry whose two junction keys resolve to the same columns" (Error, resolution-level).
+- Auto-accepted the recommended option on 2026-11-24 (`/fix` auto-accept rule): does a self-referential entry declare both keys (the prototype's §4.8 sentence and error hint) or only enough that the two differ (what the code enforces) → soften the wording to "declares at least one key, and the two must name different columns" and pin the one-key-distinct case, because it is doc and message wording plus a test on green gates, causes no golden churn, adds no public surface, and reverses no ruling (the §4.8 sentence was new in this fix).
+- Prototype results, run at `6e152b91` on 2026-11-24: probe (`products(id uuid PK)`, `product_links(product_id, related_product_id)`, declared `Related: {type: m2m, table: products, junction: product_links}`) at HEAD → `err = <nil>`, `rel Related … local="product_id" ref="product_id"`, filter `WHERE jn."product_id" = <correlation>`; patched postgres → `tables.public.products.relationships: "Related" resolves junction_local_fk and junction_reference_fk to the same product_links columns (product_id); …`. Gates: `go test -race -count=1 ./gen/... ./config/...` ok; `-run 'TestE2EGoldenFiles|TestGolden' .` ok; golangci-lint 0 issues; gofumpt clean. Fail-first: `junction_keys.go` reverted → 9 subtests fail "BuildTableContexts() error = nil, want one containing [\"products.relationships\" \"\\\"Related\\\"\" \"same product_links columns (product_id)\" …]" (the distinct-keys case passes); existing suite without the fix passes. No golden churn.
+
+**References.**
+- PRD §4.8 (`junction`, `junction_local_fk`, `junction_reference_fk` rows), §13.4, §13.5, §5.3 step 5, §4.13.
+- Phase 32 (`5b24d6ba`), which introduced `declaredJunctionKeys`.
+
+**Resolution notes.** Prototype applied clean with `git apply --3way` at `eb38874c` (its only out-of-date file, `docs/PRD.md`, changed in an unrelated §-MySQL paragraph). `declaredJunctionKeys` (`cmd/sqlgen/gen/junction_keys.go`) now compares the two resolved junction keys' column sets order-insensitively and returns an error naming the relationship, the junction and the columns when they are equal, so a self-referential entry with only `junction:`, an explicit equal pair, and one key declared equal to the other's inferred column all fail generation instead of emitting a filter that only matches self-links. Tests: `TestBuildTableContexts_M2MJunctionKeysMustDiffer` (5 cases × all dialects, including one key declared distinct from the other's inferred column, which builds); added a "self-referential m2m whose junction keys both infer one column" case to `TestValidate_ReportsEachGenerationRuleWithTheOthers` so the rule's `together` matrix cell is pinned. PRD: a sentence on the §4.8 `junction` row and a §4.13 row. Conformance: `config.m2m-junction-keys-equal` (fires/message/severity/together, schema N/A) in `docs/conformance/cli/config.md`, `config.tables.relationships.junction.self-referential-declares-a-key` in `cli/config-fields.md`; §4, §4.8, §4.13 rehashed. Verification: the §4.8 sentence and error hint said a self-referential entry "declares both" keys while the code needs only that they differ; auto-accepted softening the wording (see Suggested fix). Corrected the `checkDeclaredJunctionKeys` doc comment, which did not mention the equal-keys rejection. No golden churn.
 
 ### FIX-397
 

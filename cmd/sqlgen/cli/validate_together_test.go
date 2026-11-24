@@ -84,6 +84,13 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 			want: []string{`two detected relationships are both named "organization_users"`},
 		},
 		{
+			name: "self-referential m2m whose junction keys both infer one column",
+			schema: "CREATE TABLE products (id bigint PRIMARY KEY);\n" +
+				"CREATE TABLE product_links (product_id bigint NOT NULL, related_product_id bigint NOT NULL, PRIMARY KEY (product_id, related_product_id));",
+			extra: "tables:\n  products:\n    relationships:\n      - name: Related\n        type: m2m\n        table: products\n        junction: product_links\n",
+			want:  []string{`"Related" resolves junction_local_fk and junction_reference_fk to the same product_links columns (product_id)`},
+		},
+		{
 			name: "relationship key list of the wrong length",
 			schema: "CREATE TABLE cycles (workspace_id bigint, id bigint, PRIMARY KEY (workspace_id, id));\n" +
 				"CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint NOT NULL);",
