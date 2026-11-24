@@ -2226,7 +2226,9 @@ func cursorKeysUnique(keys []string, table SchemaTable, pk []string) bool {
 // integer column is the mirror case: the strategy marks a live row with FALSE
 // / 0 and its filter compares to that value, which excludes NULL, so a
 // nullable column with no DEFAULT hides every row inserted without it (PRD
-// §17.2). A DEFAULT, or NOT NULL, gives such a row the live value.
+// §17.2). A DEFAULT gives such a row the live value. A NOT NULL column with
+// no DEFAULT passes: a create that leaves the flag unset omits it from the
+// INSERT and fails loudly with the NOT NULL violation (PRD §10.3).
 func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
 	sdCols := cfg.Generation.SoftDeleteColumns
 	if len(sdCols) == 0 {
@@ -2260,8 +2262,8 @@ func validateSoftDeleteTypes(cfg *RootConfig, tables []SchemaTable, errs *[]erro
 					live = "0"
 				}
 				*errs = append(*errs, fmt.Errorf(
-					"soft_delete_columns: column %q in table %s is nullable with no DEFAULT, but soft delete type %q marks a live row with %s, so a row created without it is hidden (make it NOT NULL, or give it DEFAULT %s)",
-					sd.Name, qualifiedTableName(table), sd.Type, live, live,
+					"soft_delete_columns: column %q in table %s is nullable with no DEFAULT, but soft delete type %q marks a live row with %s, so a row created without it is hidden (declare it NOT NULL DEFAULT %s, or give it DEFAULT %s)",
+					sd.Name, qualifiedTableName(table), sd.Type, live, live, live,
 				))
 			}
 			break // first match determines the soft delete column for this table

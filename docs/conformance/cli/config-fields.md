@@ -9,7 +9,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 §4.13 validation rules and the package's unclaimed tests stay in [`config.md`](config.md).
 
 ## §4 Configuration System
-<!-- prd: 4 sha256: d2fe109ae5fd895b -->
+<!-- prd: 4 sha256: d4f8b340c5d71ecb -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -169,7 +169,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config.output.client.always-generated | The unified client is always generated, even for a schema with no tables | `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInClientPackageDoc/single_file with zero tables`; `golden: postgres` | all |  |
 
 ## §4.6 GenerationConfig
-<!-- prd: 4.6 sha256: 7449bd9a87f6c510 -->
+<!-- prd: 4.6 sha256: a7437c7b9ee3844d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

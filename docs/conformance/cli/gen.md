@@ -294,7 +294,7 @@
 | nested.junction-key-union | M2M link and unlink write and delete the junction row by the union of both junction keys; `disconnect` needs a junction primary key equal to that union | `unit: cmd/sqlgen/gen: TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion/pk equals union`; `unit: cmd/sqlgen/gen: TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion/surrogate pk has no disconnect`; `unit: cmd/sqlgen/gen: TestNestedTemplate_CompositeKeyExecutor/m2m link writes the union of both keys`; `unit: cmd/sqlgen/gen: TestNestedTemplate_CompositeKeyExecutor/m2m disconnect deletes by the union`; `unit: cmd/sqlgen/gen: TestNestedTemplate_CompositeKeyExecutor/m2m clear filters on the whole local key`; `example: tenancy_postgres: TestUpdateWithRelated_TenantJunctionLinksAndUnlinksThroughEveryColumn`; `example: tenancy_postgres: TestUpdateWithRelated_SurrogateTenantJunctionLinksThroughItsUnique`; `conformance: UpdateWithRelated/a junction whose keys share a column links and unlinks through every column` | all | relationships: composite-m2m × nested-mutation |
 
 ## §10.3 Usage in Generated Code
-<!-- prd: 10.3 sha256: 6f07d1f38315a45e -->
+<!-- prd: 10.3 sha256: 1c84018b5ca591ed -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -589,7 +589,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | artifacts.tenant-scoping.materialized-view | A tenanted materialized view's reads are scoped; `Refresh` / `RefreshConcurrently` are never scoped | `unit: cmd/sqlgen/gen: TestViewTenancy_refreshEmitsNoPredicate` | postgres | generated-artifacts: tenant-scoping × materialized-view |
 
 ## §17.2 Column Types
-<!-- prd: 17.2 sha256: 52c23d20039ff64f -->
+<!-- prd: 17.2 sha256: 9e109fbba5ba983f -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

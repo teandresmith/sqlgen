@@ -73,7 +73,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | omittable.is-zero-unset | `IsZero` reports whether the value is unset, so a field tagged `omitzero` is omitted when unset and kept when set, even to a zero value | `unit: omittable: TestJSONMarshal/unset values are omitted with omitzero`; `unit: omittable: TestJSONMarshal/mixed set and unset`; `unit: omittable: TestJSONMarshal/set with zero values are included` | all |  |
 
 ## §10.3 Usage in Generated Code
-<!-- prd: 10.3 sha256: 6f07d1f38315a45e -->
+<!-- prd: 10.3 sha256: 1c84018b5ca591ed -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -887,8 +887,8 @@ func TestValidatePostParse_SoftDeleteTimestampNullability(t *testing.T) {
 // without it (PRD §4.6, §17.2).
 func TestValidatePostParse_SoftDeleteFlagNullability(t *testing.T) {
 	const (
-		boolErr = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE`
-		intErr  = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "integer" marks a live row with 0`
+		boolErr = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE, so a row created without it is hidden (declare it NOT NULL DEFAULT FALSE, or give it DEFAULT FALSE)`
+		intErr  = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "integer" marks a live row with 0, so a row created without it is hidden (declare it NOT NULL DEFAULT 0, or give it DEFAULT 0)`
 	)
 	tests := []struct {
 		name    string
@@ -925,6 +925,8 @@ func TestValidatePostParse_SoftDeleteFlagNullability(t *testing.T) {
 			columns: []config.SchemaColumn{{Name: "soft_col", Type: "integer", Nullable: true, HasDefault: true}},
 		},
 		{
+			// Valid: a create that omits the flag fails loudly with the
+			// NOT NULL violation instead of hiding the row (PRD §10.3).
 			name:    "NOT NULL bool, no DEFAULT",
 			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
 			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean"}},
