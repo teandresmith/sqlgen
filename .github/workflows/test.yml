@@ -1,8 +1,21 @@
 name: Test
 on:
+  # Skip docs-only changes, except the docs tests read: docs/PRD.md and
+  # docs/conformance/ (a later pattern overrides an earlier one).
   pull_request:
+    paths: &code
+      - '**'
+      - '!*.md'
+      - '!docs/**'
+      - '!guidelines/**'
+      - '!.claude/**'
+      - '!.gitignore'
+      - '!LICENSE'
+      - 'docs/PRD.md'
+      - 'docs/conformance/**'
   push:
     branches: [main]
+    paths: *code
 
 permissions:
   contents: read

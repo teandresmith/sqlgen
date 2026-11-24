@@ -2392,7 +2392,7 @@ Rulings 7–10 were raised by extending the design from the client suite to ever
 
 Rulings 11–14 came from the step 2 review:
 
-11. **CI runs `req-check`.** The `repo-checks` job in `.github/workflows/lint.yml` runs
+11. **CI runs `req-check`.** The `repo-checks` job in `.github/workflows/repo-checks.yml` runs
     `make req-check` alongside `refs-check` and `tracker-check`, so a PR that edits the PRD under
     a registered anchor fails CI, not just a local `make check`.
 12. **§9.4b belongs to `cli.md`.** Skipping a no-PK table is generation-time behavior, and the

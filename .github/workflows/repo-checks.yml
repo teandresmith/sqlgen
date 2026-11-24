@@ -1,0 +1,31 @@
+name: Repo checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  repo-checks:
+    name: repo checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: No internal references or build tags
+        run: make refs-check
+      - name: Tracker structure
+        run: make tracker-check
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: |
+            cmd/sqlgen/go.sum
+            go.work.sum
+      - name: PRD requirement registry
+        run: make req-check
