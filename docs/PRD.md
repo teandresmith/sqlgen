@@ -1861,6 +1861,8 @@ MySQL column types are written on both schema sources as MySQL 8.0.19+ stores th
 
 A column overridden to `types.DateTime` / `types.NullDateTime` binds as the `time.Time` the value wraps (SQL NULL for an invalid `types.NullDateTime` or a nil `*types.DateTime`), whether it is a written value or a cursor keyset value; its filter operands are `time.Time` already. The driver then writes it as wall time in its DSN `loc` and reads a `DATETIME` back in that `loc`, exactly as it does for a `time.Time` column. The RFC 3339 text `types.DateTime.Value()` writes does not work on MySQL: MySQL rejects the `Z` of a UTC time (`Error 1292`), and moves any other offset to the session time zone, so a `DATETIME` written that way reads back shifted whenever `loc` and the session time zone differ. An `overrides.types` key for a fractional-second column keeps its precision: a `datetime(6)` key matches a `DATETIME(6)` column and wins over a bare `datetime` key, which still reaches the column when no `datetime(6)` entry exists, by the modifier-stripped lookup of [7.1](#71-type-resolution-chain).
 
+A `TIMESTAMP` column also stores the right instant only when the DSN `loc` matches the session `time_zone`. The driver writes a Go time as wall time in `loc`, and MySQL converts a `TIMESTAMP` from the session time zone to UTC, so with `loc=UTC` and a session at `-05:00` the stored instant is five hours off, although a read through the same connection settings converts it back and the round trip looks correct. Set `loc` and `time_zone` to the same zone (for example `loc=UTC&time_zone=%27%2B00%3A00%27`).
+
 </details>
 
 <details>

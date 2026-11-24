@@ -23,7 +23,205 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-398
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 12, cmd/sqlgen/config
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "A cached view's `invalidate_on` naming a table with no primary key passes `validate` and `generate`")
+
+**Issue.** A cached view whose `invalidate_on` names a table with no primary key passes `sqlgen validate` and `sqlgen generate`. The view's cache then never invalidates from that source. PRD §27.11 says a source that is not generated is a hard error. Evidence from the FIX-360 vet: schema `cycles(name TEXT NOT NULL)` plus cached view `cycle_names` with `invalidate_on: [cycles]` gives `validate` → "config and schema are valid" and `generate` → "generated 9 files (0 tables, 1 views)". The codegen drops the entry without a word: `buildViewInvalidateMap` (`cmd/sqlgen/gen/context_cache.go:374-378`) finds no `tableNameValues` entry for a table that generated nothing, so no pattern is wired.
+
+**Root cause.** `validateViewInvalidateOn` (`cmd/sqlgen/config/validate.go:2530-2560`) rejects only three cases: an unresolved name (`:2546-2549`), an `exclude_tables` match (`:2551-2553`) and `exclude_columns` exhaustion (`:2555-2557`). It never checks the §9.4b skip, a table with no PK after override resolution. That rule lives only in `validateMissingPrimaryKey` (`:2429-2466`), which emits a warning, not an error.
+
+**Suggested fix.**
+- In `validateViewInvalidateOn`, after the exclusion checks, add a hard error when the source has no effective PK, using the same predicate as `validateMissingPrimaryKey`: no `PrimaryKey` column and no `tables.<name>.primary_key.columns` override. Suggested message: `views.%s.invalidate_on: table %q has no primary key and is skipped from generation (PRD §9.4b); view cache would silently never invalidate from this source — declare tables.<name>.primary_key.columns`. If it reads more cleanly, factor out a "table generates" helper (not excluded, not exhausted, has a PK or an override) and use it in both functions.
+- A source with a `primary_key.columns` override must still pass.
+- Regression test: cases in `TestValidatePostParse_ViewInvalidateOn` (`cmd/sqlgen/config/validate_test.go:1828`): (a) a no-PK source errors, (b) the same table with a `primary_key.columns` override passes. Run one case unqualified (MySQL/SQLite, `Schema: ""`) and one PG `public.`-qualified, since the lookup map holds both spellings.
+- Optional end-to-end guard: a `cli` test that `sqlgen validate` on the `cycles` / `cycle_names` schema exits non-zero.
+
+**References.**
+- PRD §27.11 (post-parse validation), §4.9 `invalidate_on` row, §9.4b, §4.13 "Table has no primary key" row.
+- FIX-360 (the vet that measured this).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-399
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 5, cmd/sqlgen/gotype
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "A column whose type is a PostgreSQL composite type resolves to `string`")
+
+**Issue.** A PostgreSQL column whose type is a composite type is generated as `string` / `*string`, even though sqlgen generates a Go struct for that type. It also gets the generic unmapped-type warning, which tells the user to add `overrides.types.<name>` and never mentions the composite struct. At HEAD, introspect_postgres `public.accounts.address postal_address` is `Address *string` (`cmd/sqlgen/testdata/examples/introspect_postgres/expected/models_gen.go:2406`), while `types_gen.go:11` declares `type PostalAddress struct`. Files and database input behave the same. The postgres examples never hit this: `profiles.address` is declared `JSONB` and mapped with `tables.profiles.type_map.address: Address` (`postgres/sqlgen.yml:167-169`).
+
+**Root cause.** `registerSchemaTypes` (`cmd/sqlgen/gen/orchestrate.go:2668-2678`) registers enums, SETs and domains with the resolver, but not `schema.CompositeTypes`, and the resolver has no composite step. `resolveByTypeSource` (`cmd/sqlgen/gotype/gotype.go:840-905`) runs overrides, integrations, `resolveSchemaType` (enum/SET/domain, :869), then `builtinResolve`, which falls back to string and sets `UnmappedSQLType` (:993-995); the warning text is at `cmd/sqlgen/gen/context_table.go:1175-1180`. Mapping the column to the struct is not a one-line fix: PRD §8.3 gives the composite struct JSON `Value()`/`Scan()` and says "Columns using composite types should be typed as `jsonb`". A native composite column sends and returns tuple text such as `("1 Main St",Springfield)`, which JSON `Scan` cannot read. `TestDomainAndCompositeColumns` (`introspect_postgres/tests/schema_test.go:73-95`) relies on the string form.
+
+**Suggested fix.**
+- **Needs ruling:** PRD §7.1 lists no composite step and §8.3 assumes a jsonb column. Options:
+  - (a, recommended) Keep `string` for a native composite column, but have the resolver know composites (e.g. `RegisterComposite`) so the generic warning is replaced by a specific one: "column public.accounts.address has composite type postal_address; the generated PostalAddress uses JSON encoding (PRD §8.3), so the column is generated as string (its tuple text); declare it jsonb with `type_map: {address: PostalAddress}` to use the struct". Add a sentence to §7.1 / §8.3.
+  - (b) Resolve to the struct and generate tuple-format `Value`/`Scan`. Contradicts §8.3 ("avoids fragile tuple parsing"); needs a PRD change.
+  - (c) Make a native composite column a generate-time error. Breaks introspect_postgres as written.
+- Regression test (PostgreSQL only; MySQL and SQLite have no composite types): a `gen` unit or golden case with a composite-typed column asserting the chosen Go type and the exact warning text; regenerate the introspect_postgres goldens.
+
+**References.**
+- PRD §7.1 (resolution chain), §8.3 (composite JSON `Value`/`Scan`), §5.2 feature table, §4 `type_map` composite example.
+- The unmapped-type warning fix (gotype ruling fixes) that surfaced this.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-400
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, parser/postgres
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog lines "`DROP TYPE … CASCADE` ignores `CASCADE`" and "`DROP TYPE … CASCADE` / `DROP DOMAIN … CASCADE` are parser errors")
+
+**Issue.** `DROP TYPE … CASCADE` and `DROP DOMAIN … CASCADE` fail when anything still uses the type, where PostgreSQL drops the dependents. `CREATE TYPE e AS ENUM ('a'); CREATE TABLE t (c e); DROP TYPE e CASCADE` gives "drop type: cannot drop type public.e: column public.t.c uses it". PG17.11 drops every dependent: table columns (array columns too, even a table's last column), domains over the type (transitively, with their columns), composite-type attributes, the constraints and indexes on the dropped columns, and views ("drop cascades to 9 other objects …"). DROP TABLE (`postgres.go:1151`) and DROP SEQUENCE (`sequences.go:259`) already honor `CASCADE`.
+
+**Root cause.** `parseDrop` (`parser/postgres/postgres.go:1075-1080`) never passes `stmt.Behavior` to `dropTypes` (`:1313-1342`), which always calls `parser.CheckTypeDropRefs` (`parser/schema.go:617-659`). That refuses on the first table column, view column, domain base type or composite attribute that uses a dropped type.
+
+**Suggested fix.**
+- Pass `stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE` into `dropTypes`. Under CASCADE, skip `CheckTypeDropRefs` and drop the dependents:
+  - the closure of domains whose base type is a dropped type or an array of one;
+  - each table column whose type is in that set or an array of one, through the `alterDropColumn` path (`:1633`), which also removes its constraints and expression indexes, plus `dropOwnedSequences`;
+  - foreign keys on other tables that reference a dropped column, as `dropReferencingKeys` (`:1166`) drops them;
+  - composite attributes of those types;
+  - then `shadowTypeReferences` as today.
+- Keep the seeded-view refusal under CASCADE: `CheckViewDependents` (`parser/view_dependency.go:62-77`) and PRD §6.1 say the database's view stands under `source: both`. Files mode does not model views, so nothing changes there.
+- A table's last column: `alterDropColumn` already lets `DROP COLUMN <last>` leave `Columns` empty and PG keeps the table, so CASCADE should do the same. Vet should probe whether `sqlgen generate` handles a zero-column table; if not, that is a separate generator question, not a reason for the parser to refuse.
+- PRD §5.6 "Drop validation": add that `DROP TYPE` / `DROP DOMAIN … CASCADE` drops the dependent columns, domains and composite attributes, as PostgreSQL does, except a seeded database view. Add a `docs/conformance/parser/dialects.md` row.
+- Tests: CASCADE cases in `TestDropTypeReferences` (`parser/postgres/postgres_test.go:1453`): a column, an array column, a domain chain with its columns, a composite attribute, a CHECK/UNIQUE/index on the dropped column, an FK from another table to it, a table's last column, and the seeded-view refusal. A `parser/introspect` parity case running the PG17 script.
+
+**References.**
+- PRD §5.6 (Drop validation, `DROP TYPE` bullet), §5.2, §6.1 (seeded views under `both`).
+- FIX-312 (set-shaped `CheckTypeDropRefs`; its resolution sent CASCADE to the backlog), FIX-339 vet.
+- Pattern: `dropTables` / `dropReferencingKeys` (`postgres.go:1137-1190`), `dropSequence(…, cascade)`.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-401
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 30, parser/postgres
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog lines "pg_dump from postgres:17 (17.6+) starts with a `\restrict <key>` psql meta-command" and "pg_dump's `COMMENT ON COLUMN` on a foreign table fails")
+
+**Issue.** Unedited `pg_dump -s` output from postgres:17 does not parse, for two reasons. (1) Since 17.6, pg_dump writes a `\restrict <key>` psql meta-command first and `\unrestrict <key>` last, and pg_query rejects both with `syntax error at or near "\"`. (2) A dump with a foreign table fails at the `COMMENT ON COLUMN` pg_dump writes for it: `Parse("CREATE FOREIGN TABLE ft (a int) SERVER s; COMMENT ON COLUMN ft.a IS 'x';")` → "comment on column of unknown table ft". The rest of pg_dump output already parses (FIX-345, FIX-346), but `TestPostgresIntrospect_PgDumpOutput` (`parser/introspect/postgres_integration_test.go:1286-1290`) strips the `\restrict` lines by hand first.
+
+**Root cause.**
+- `Parse` (`parser/postgres/postgres.go:83-89`) hands the raw file to `pg_query.Parse`; nothing strips psql meta-commands.
+- `processStmt` (`:103-145`) has no case for `Node_CreateForeignTableStmt`, so the foreign table never enters `p.skipped`, and `commentOnColumn` (`:1393-1412`) finds neither a table nor a skipped relation. `DROP FOREIGN TABLE` is likewise a no-op (`parseDrop` default case).
+
+**Suggested fix.**
+- **Needs ruling:** is pg_dump output a supported input? The PRD mentions pg_dump only as the writer of forms the parser accepts (§5.2), never as a file type. Options:
+  - (a) Before `pg_query.Parse`, strip lines that start with `\` (psql meta-commands), at line start only, never inside a string literal or a dollar-quoted body. PRD §5.2 then states that pg_dump output is read.
+  - (b) Reject the file with a clear error naming pg_dump ("psql meta-command `\restrict` at line N: remove pg_dump's `\restrict` / `\unrestrict` lines").
+- Under either ruling, dispatch `CreateForeignTableStmt` and record the relation in `p.skipped` as not indexable (like a view), so `COMMENT ON COLUMN` skips it, `CREATE INDEX` on it still errors (as PG refuses), and the name is taken. `DROP FOREIGN TABLE` deletes the entry. The introspector reads only `BASE TABLE` (`parser/introspect/postgres.go:210`), so both sources agree.
+- Tests: a parser unit test for `\restrict` / `\unrestrict` under the chosen option, plus a `\` inside a string and a `$$` body that must stay untouched; foreign-table cases (COMMENT ON COLUMN, CREATE INDEX on it errors, DROP FOREIGN TABLE then CREATE TABLE of the same name). Under (a), put the raw `\restrict` lines back into `TestPostgresIntrospect_PgDumpOutput`.
+
+**References.**
+- PRD §5.2 (PostgreSQL bullets), §5.6.
+- FIX-345 (pg_dump ALTER forms), FIX-346 (COMMENT ON COLUMN of a view or composite type), FIX-305.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-402
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen/junction_keys.go
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "A self-referential M2M relationship declared with only `junction` infers the same column (`product_id`) for both junction keys")
+
+**Issue.** A declared `m2m` relationship whose `table:` is the declaring table itself, written with only `junction:` (no `junction_local_fk` / `junction_reference_fk`), infers `{singular}_id` for both junction keys: `product_id` twice on `products`. The column exists on the junction, so `checkDeclaredLinkColumns` passes and the edge generates. From reading the code (not executed), the loader, the relationship filter and the nested link step then join and write both sides through one column: silent wrong output. FK detection handles the same shape correctly from the junction's two FKs (PRD §5.3 step 5, the `cycle` / `prev_cycle` example).
+
+**Root cause.** `declaredJunctionKeys` (`cmd/sqlgen/gen/junction_keys.go:23-31`) resolves each side on its own with `junctionKeyColumn` (`:36-47`), which returns `toSingular(tName) + "_id"` (`:46`). When source equals target, both calls get the same table name, and nothing compares the results. PRD §4.8's `junction_local_fk` row defines inference per linked table and never covers a self-referential pair. The inference came in with phase 32 (`5b24d6ba`).
+
+**Suggested fix.**
+- Recommended: in `declaredJunctionKeys`, after both sides resolve, return an error when the local and reference keys resolve to the same column set. This catches inferred self-reference and an explicit `junction_local_fk == junction_reference_fk`. Message: `tables.%s.relationships: %q links %s to itself through %s, so both junction keys infer %q; declare junction_local_fk and junction_reference_fk (PRD §4.8)`. `checkDeclaredJunctionKeys` (`:68-74`, called at `context_table.go:1947`) reports it in the per-entry pass.
+- Alternative: infer from the junction's two FKs into the table. Which FK is "local" is still ambiguous for a declared edge, so it needs a rule the PRD lacks. Not recommended without a ruling.
+- PRD: one sentence on the §4.8 `junction` row and a §4.13 error row.
+- Regression test in `cmd/sqlgen/gen/junction_inference_test.go`, beside `TestGenerate_M2MJunctionKeyInferenceNeedsSingleColumnPK`: `products` + `product_links(product_id, related_product_id)` with only `junction:` (error), both keys declared (generates, keys differ), and an explicit equal pair (error), on all three dialects.
+
+**References.**
+- PRD §4.8 (`junction`, `junction_local_fk`, `junction_reference_fk` rows), §13.4, §13.5, §5.3 step 5, §4.13.
+- Phase 32 (`5b24d6ba`), which introduced `declaredJunctionKeys`.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-403
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "A NOT NULL bool / integer soft-delete column with no DEFAULT makes every `Create` that omits the flag fail")
+
+**Issue.** A `bool` or `integer` soft-delete column that is NOT NULL with no DEFAULT passes validation, and then every `Create` that leaves the flag unset fails at the database (loud; passing the flag works). Evidence from the FIX-344 vet: `zz_i(zz_del2 SMALLINT NOT NULL)` with `type: integer` → PG17 "not_null constraint violation (column zz_del2)", MySQL 8.0 "Error 1364 (HY000): Field 'zz_del2' doesn't have a default value", SQLite "NOT NULL constraint failed: zz_i.zz_del2 (1299)". The validator's own hint for the nullable case points users at this shape: "make it NOT NULL, or give it DEFAULT …" (`cmd/sqlgen/config/validate.go:2263`).
+
+**Root cause.** `createInputOmittable` (`cmd/sqlgen/gen/context_table.go:3033-3035`) makes the soft-delete column omittable whatever its nullability or default. An unset omittable field leaves the column out of the INSERT (PRD §10.3), so a NOT NULL column with no DEFAULT gets no value. `validateSoftDeleteTypes` (`validate.go:2230-2269`) rejects only nullable-without-DEFAULT. The PRD contradicts itself: the §10.3 table row says a soft-delete column "Caller may omit (default NULL/false/0)", while the same section says a NOT NULL soft-delete column without a default "fails with the NOT NULL violation the single-row `Create` reports"; §4.6, §5.4 and §4.13 call NOT NULL with no DEFAULT valid.
+
+**Suggested fix.**
+- **Needs ruling.** Options:
+  - (A) When the flag is unset and the column is NOT NULL with no DEFAULT, Create, CreateMany, Upsert, UpsertMany and the nested create steps bind the not-deleted value (`FALSE` / `0`, §17.2). Matches §10.3's "default false/0"; costs a branch in five or more templates, and Upsert-on-conflict must still leave the column alone (§9.5).
+  - (B) Classify the column as Required (bare type) in `buildCreateInputFields` when it is NOT NULL with no DEFAULT, like any other column of that shape. The error moves to compile time.
+  - (C) Make it a validation error (or warning) in `validateSoftDeleteTypes`: declare `DEFAULT FALSE` / `DEFAULT 0`; fix the `:2263` hint to match.
+  - (D) Keep the behavior as §10.3 documents it; only reword the `:2263` hint and the §10.3 row so they stop promising a default.
+- Whichever is chosen, make §4.6, §4.13, §10.3 and §17 agree, with their registry rows.
+- Regression tests: a gen unit test on `CreateInputFields` / generated Create for a NOT NULL, no-DEFAULT `bool` and `integer` column (A or B), or a `TestValidatePostParse` case (C); an integration case running Create with the flag omitted on PostgreSQL, MySQL and SQLite, and CreateMany on SQLite (the `sql.DefaultExpr` NULL path).
+
+**References.**
+- PRD §4.6 (soft-delete types), §5.4, §4.13 soft-delete rows, §10.3, §17.2, §9.8.4, §9.5.
+- FIX-344 (added the nullable-without-DEFAULT rule; measured during its vet).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-404
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 4, parser/postgres
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "`ADD CONSTRAINT ui_a_key UNIQUE USING INDEX ui_a_idx` gives files `ui_a_idx UNIQUE [a]` plus an empty `ui_a_key UNIQUE []`")
+
+**Issue.** The usual zero-downtime pattern, `CREATE UNIQUE INDEX CONCURRENTLY ui_a_idx ON t (a); ALTER TABLE t ADD CONSTRAINT ui_a_key UNIQUE USING INDEX ui_a_idx;`, gives two constraints under `files`: `ui_a_idx UNIQUE [a]` and an empty `ui_a_key UNIQUE []`. The database (PG17 introspection) has one, `ui_a_key UNIQUE [a]`: PostgreSQL renames the index to the constraint name and makes it the constraint's index (with no constraint name, the constraint takes the index's name). From reading the code, `ADD PRIMARY KEY USING INDEX` has the same shape: an empty-column primary key with no column flags, the unique index kept, and none of the NOT NULL PG sets on the key columns.
+
+**Root cause.** `parseConstraintNode` (`parser/postgres/postgres.go:1814-1849`) reads only `c.Keys` for `CONSTR_PRIMARY` and `CONSTR_UNIQUE` and ignores `c.Indexname`, so `alterAddConstraint` (`:1655-1664`) appends a key with no columns. `parseCreateIndex` (`:610-659`) had already stored the unique index as a `Unique` constraint named `ui_a_idx`, and nothing consumes it. No code in `parser/postgres` reads `Indexname`.
+
+**Suggested fix.**
+- In `alterAddConstraint`, when the node has `Indexname`: find that index on the table and error if it is missing, not unique, partial or an expression index (PG refuses those). Take its columns and method, rename it to `Conname` (or keep the index name when `Conname` is empty), retype it as `Unique` or `PrimaryKey`, and drop the standalone index entry. For PRIMARY KEY, set NOT NULL on the columns. Then run `CanonicalizeConstraints` so column flags and FK fallbacks are rederived.
+- The renamed index frees its old name: a later `DROP INDEX ui_a_idx` must fail or no-op as PG does, and `ALTER INDEX ui_a_key RENAME` must rename the constraint (PRD §5.2).
+- Add a PRD §5.2 ALTER TABLE line for `ADD … UNIQUE | PRIMARY KEY USING INDEX` and a conformance row.
+- Tests: `TestAlterTableAddDropConstraint` cases for named and unnamed UNIQUE USING INDEX, PRIMARY KEY USING INDEX (NOT NULL and column flags), a missing index and a partial index (errors). A `parser/introspect` parity case on PG17 comparing the constraint sets.
+
+**References.**
+- PRD §5.2 (ALTER TABLE bullet; "Parsing … and introspecting … give the same constraint set, with the same names").
+- FIX-305 (where the probe surfaced it); `key_index_rename_test.go` (renaming an index renames its constraint).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-405
+
+- **Status:** Open
+- **Severity:** nit
+- **Origin:** phase 4, parser/multifile.go; phase 9, cmd/sqlgen/cli
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog lines "A schema parse error names the file twice", "`source: both` parse errors repeat the file prefix", "PG parse errors under Merge name the file twice", "print joined pre-parse and post-parse config errors with one prefix", "carries the `Error: gqlgen wrapper:` label on its first line only")
+
+**Issue.** CLI error output repeats or drops prefixes in two separate ways. (1) A schema parse error names the file twice: "Schema error: parsing schema files: parsing …/schema.sql: parsing …/schema.sql: syntax error…", and under `source: both` "merge both mode: parsing …/001_migration.sql: parsing …/001_migration.sql: …". (2) A multi-line error carries its label on the first line only: two `cursor_keys` errors print as "Post-parse validation error: cursor_keys: …\ncursor_keys: …", and a yaml.v3 `*TypeError` in the wrapper prints "Error: gqlgen wrapper: … yaml: unmarshal errors:\n  line 4: …\n  line 5: …; sqlgen-side artifacts emitted at ./output", with the suffix after the last yaml line.
+
+**Root cause.** Two fix sites.
+- Double file name: `parser.ParseFiles` (`parser/multifile.go:78-80`) wraps with `parsing %s:` over the same wrap every dialect's `Parse` already added (`parser/postgres/postgres.go:86,91`, `parser/mysql/mysql.go:299,302`, `parser/sqlite/sqlite.go:46,53`). Both callers go through `ParseFiles`: `cmd/sqlgen/cli/pipeline.go:222` and `parser/introspect/merge.go:51`.
+- One prefix per joined error: `cmd/sqlgen/cli/generate.go:42,62` and `pipeline.go:38,55` print `%v` of an `errors.Join` (`config/validate.go:65,1820`) under a single prefix, while `printParseError` (`pipeline.go:164-172`) and `validate` (`validate.go:37-93`) already split lines with `splitJoinedErrors` (`pipeline.go:506`). `graphql.go:222` prints the label and suffix around a multi-line `err`; the yaml error is wrapped at `wrapper/seeds.go:180` and `wrapper/gen.go:177`.
+
+**Suggested fix.**
+- Parser: drop the wrap in `ParseFiles` (:79) and return the dialect's error unchanged; keep the `reading %s` wrap. Update `parser/introspect/merge_rules_integration_test.go:146`, which pins the doubled form. Add a `parser` test running a bad file through `ParseFiles` on each dialect and asserting the path appears exactly once.
+- CLI config errors: print each `splitJoinedErrors` line with its own prefix at `generate.go:42,62` and `pipeline.go:38,55`, as `printParseError` does. CLI test with two `cursor_keys` errors and the pgx+mysql plus `embed_in_client` pre-parse pair.
+- Wrapper: print `Error: <label>: <line>` per line and `sqlgen-side artifacts emitted at <dir>` once on its own last line, or flatten the yaml error at `seeds.go:180`. Either changes the one-line format quoted in PRD §26.5.6, so update that sentence. Test with a `resolver: {layout: [a], dir: [b]}` fixture.
+- The parser and CLI halves can land and verify separately if that is easier.
+
+**References.**
+- PRD §23.9 (exit codes / error classes), §26.5.6 failure mode, §6.1 (`source: both`).
+- FIX-251, FIX-304, FIX-326, FIX-354 (where each line was measured).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
 
 <!-- fixes:open:end -->
 

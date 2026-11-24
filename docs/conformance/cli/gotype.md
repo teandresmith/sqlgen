@@ -166,7 +166,7 @@ Rows of the `type-resolution` matrix are the rows of the three §7.2 tables, one
 | gotype.chain.unknown-type-warning | Generation warns for such a column, naming the column, its SQL type and the `overrides.types.<sql_type>` key that would type it, and the config still generates | `unit: cmd/sqlgen/gen: TestUnmappedSQLTypeWarnsOnTableColumn/unknown type warns and falls back to string`; `unit: cmd/sqlgen/gen: TestUnmappedSQLTypeWarnsOnViewColumn`; `unit: cmd/sqlgen/gotype: TestResolveReportsUnmappedSQLType/unknown type falls back and is reported` | all |  |
 
 ## §7.2 Built-In Type Mappings
-<!-- prd: 7.2 sha256: 85f7553cd3c222eb -->
+<!-- prd: 7.2 sha256: 2c74af20b22d7bcb -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
