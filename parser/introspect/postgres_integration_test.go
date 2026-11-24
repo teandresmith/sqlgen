@@ -3,6 +3,7 @@ package introspect_test
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1284,11 +1285,49 @@ ALTER TYPE pgi_attr.ordered ADD ATTRIBUTE b numeric, ADD ATTRIBUTE z int, ALTER 
 	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
 }
 
+// TestPostgresIntrospect_ForeignTables pins that both sources skip a foreign
+// table, a foreign partition included: neither models it or lists it as a
+// partition.
+func TestPostgresIntrospect_ForeignTables(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `
+CREATE FOREIGN DATA WRAPPER pgi_ft_w;
+CREATE SERVER pgi_ft_s FOREIGN DATA WRAPPER pgi_ft_w;
+CREATE SCHEMA pgi_ft;
+CREATE TABLE pgi_ft.t (id int PRIMARY KEY);
+CREATE FOREIGN TABLE pgi_ft.ft (a int NOT NULL) SERVER pgi_ft_s;
+COMMENT ON COLUMN pgi_ft.ft.a IS 'x';
+CREATE TABLE pgi_ft.p (k int NOT NULL) PARTITION BY RANGE (k);
+CREATE FOREIGN TABLE pgi_ft.fp PARTITION OF pgi_ft.p FOR VALUES FROM (0) TO (10) SERVER pgi_ft_s`
+	parsed, introspected := pgParityCase(t,
+		"DROP SCHEMA IF EXISTS pgi_ft CASCADE; DROP SERVER IF EXISTS pgi_ft_s CASCADE; DROP FOREIGN DATA WRAPPER IF EXISTS pgi_ft_w CASCADE",
+		ddl, "pgi_ft")
+
+	for _, s := range []struct {
+		source string
+		schema *parser.Schema
+	}{{"files", parsed}, {"database", introspected}} {
+		var names []string
+		for _, tbl := range s.schema.Tables {
+			names = append(names, tbl.Name)
+		}
+		slices.Sort(names)
+		if diff := cmp.Diff([]string{"p", "t"}, names); diff != "" {
+			t.Errorf("%s tables mismatch (-want +got):\n%s", s.source, diff)
+		}
+		if len(s.schema.Partitions) != 0 {
+			t.Errorf("%s partitions = %+v, want none", s.source, s.schema.Partitions)
+		}
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
+}
+
 // TestPostgresIntrospect_PgDumpOutput parses the statements PostgreSQL 17's
 // pg_dump -s writes for a partitioned table with a serial column, its indexes,
 // a sequence, a view and a materialized view, owner statements included (the
-// owner is the role the test connects as). pg_dump's comments, SET lines and
-// \restrict lines are left out.
+// owner is the role the test connects as). pg_dump's comments and SET lines
+// are left out. The parser reads it wrapped in the \restrict and \unrestrict
+// lines pg_dump 17.6+ writes; the database is sent it without them.
 func TestPostgresIntrospect_PgDumpOutput(t *testing.T) {
 	requireDatabases(t)
 	ddl := `
@@ -1350,7 +1389,10 @@ CREATE INDEX events_1_k_idx ON pgi_dump.events_1 USING btree (k);
 ALTER INDEX pgi_dump.events_expr_idx ATTACH PARTITION pgi_dump.events_1_expr_idx;
 ALTER INDEX pgi_dump.events_k_idx ATTACH PARTITION pgi_dump.events_1_k_idx;
 ALTER INDEX pgi_dump.events_pkey ATTACH PARTITION pgi_dump.events_1_pkey`
-	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_dump CASCADE", ddl, "pgi_dump")
+	applyParityFixture(t, "pgx", pgConnStr, "DROP SCHEMA IF EXISTS pgi_dump CASCADE", ddl)
+	const key = "emU4lCDX1VuMswxwAIguQGn7uadov5AkOQQaqIgTczD36cajIqRpGg8htvVQb6D"
+	parsed := parsePG(t, "\\restrict "+key+"\n\n"+ddl+";\n\n\\unrestrict "+key+"\n")
+	introspected := introspectPG(t, "", "pgi_dump")
 
 	autoIncrement := func(c parser.Column) string { return strconv.FormatBool(c.AutoIncrement) + " " + c.Default }
 	if diff := cmp.Diff(map[string]string{"id": "true ", "k": "false ", "note": "false "},

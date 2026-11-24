@@ -21,9 +21,9 @@ type Parser struct {
 	defaultSchema string
 	tableIndex    map[string]int // qualified "schema.name" → index in schema.Tables
 	// skipped holds the qualified names of the relations the parser skips:
-	// views, materialized views and partitions. Each still takes its name.
-	// The value reports whether PostgreSQL can index the relation: false
-	// for a view, true for the rest.
+	// views, materialized views, partitions and foreign tables. Each still
+	// takes its name. The value reports whether PostgreSQL can index the
+	// relation: false for a view or a foreign table, true for the rest.
 	skipped map[string]bool
 	// sequences holds the sequences the DDL creates, in creation order.
 	sequences []*pgSequence
@@ -80,8 +80,13 @@ func (p *Parser) Seed(base *parser.Schema) {
 // statements before it left, so a table moved or renamed mid-file no longer
 // answers to its old name, and the old name is free for a later CREATE.
 // It can be called multiple times with different files; results accumulate.
+// The `\restrict` and `\unrestrict` lines pg_dump writes are left out.
 func (p *Parser) Parse(filename string, sql []byte) error {
-	result, err := pg_query.Parse(string(sql))
+	src, err := stripRestrictLines(string(sql))
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", filename, err)
+	}
+	result, err := pg_query.Parse(src)
 	if err != nil {
 		return fmt.Errorf("parsing %s: %w", filename, err)
 	}
@@ -93,6 +98,51 @@ func (p *Parser) Parse(filename string, sql []byte) error {
 	}
 
 	return nil
+}
+
+// stripRestrictLines blanks the `\restrict <key>` and `\unrestrict <key>`
+// psql meta-commands pg_dump writes first and last since PostgreSQL 17.6.
+// They change nothing in the schema, and pg_query cannot parse them. A line
+// counts when its first token is the backslash, so one inside a string
+// literal or a dollar-quoted body is left alone. Any other psql meta-command
+// at the start of a line is an error that names it, since dropping one such
+// as `\connect` or `\i` would change what the file means. The line is
+// blanked with spaces, so pg_query's error positions still point into sql.
+func stripRestrictLines(sql string) (string, error) {
+	if !strings.Contains(sql, `\`) {
+		return sql, nil
+	}
+	scan, err := pg_query.Scan(sql)
+	if err != nil {
+		return sql, nil //nolint:nilerr // pg_query.Parse reports the same input's error with its position
+	}
+	out := []byte(sql)
+	for _, tok := range scan.Tokens {
+		start := int(tok.Start)
+		if tok.Token != pg_query.Token_ASCII_92 {
+			continue
+		}
+		lineStart := strings.LastIndexByte(sql[:start], '\n') + 1
+		if strings.TrimSpace(sql[lineStart:start]) != "" {
+			continue // mid-line: pg_query reports it as a syntax error
+		}
+		end := len(sql)
+		if i := strings.IndexByte(sql[start:], '\n'); i >= 0 {
+			end = start + i
+		}
+		var cmd string
+		if fields := strings.Fields(sql[start+1 : end]); len(fields) > 0 {
+			cmd = fields[0]
+		}
+		if cmd != "restrict" && cmd != "unrestrict" {
+			return "", fmt.Errorf("psql meta-command \\%s at line %d: the file parser reads SQL statements, not psql commands; remove the line",
+				cmd, strings.Count(sql[:start], "\n")+1)
+		}
+		for i := start; i < end; i++ {
+			out[i] = ' '
+		}
+	}
+	return string(out), nil
 }
 
 // Schema returns the accumulated schema model.
@@ -144,10 +194,11 @@ func (p *Parser) processAlterStmt(node *pg_query.Node) error {
 	}
 }
 
-// skipRelation records the relation a view or materialized view creates. The
-// parser does not model it, but it takes its name, and only a view cannot be
-// indexed. A table CREATE TABLE AS or SELECT … INTO creates is an error, since
-// its columns come from a query.
+// skipRelation records the relation a view, materialized view or foreign
+// table creates. The parser does not model it, but it takes its name, and a
+// view or foreign table cannot be indexed. The introspector reads only base
+// tables, so it skips a foreign table too. A table CREATE TABLE AS or SELECT …
+// INTO creates is an error, since its columns come from a query.
 func (p *Parser) skipRelation(node *pg_query.Node) error {
 	switch n := node.Node.(type) {
 	case *pg_query.Node_ViewStmt:
@@ -171,6 +222,8 @@ func (p *Parser) skipRelation(node *pg_query.Node) error {
 		p.schema.Warnings = append(p.schema.Warnings,
 			fmt.Sprintf("CREATE MATERIALIZED VIEW %s skipped in DDL file — use introspection or define the view in input.views",
 				n.CreateTableAsStmt.Into.Rel.Relname))
+	case *pg_query.Node_CreateForeignTableStmt:
+		return p.skipForeignTable(n.CreateForeignTableStmt.GetBaseStmt())
 	case *pg_query.Node_SelectStmt:
 		// In a UNION, INTERSECT or EXCEPT the INTO sits on the leftmost SELECT.
 		sel := n.SelectStmt
@@ -181,6 +234,24 @@ func (p *Parser) skipRelation(node *pg_query.Node) error {
 			return fmt.Errorf("create table %s: SELECT … INTO %s", p.relationKey(into.Rel), parser.UnreadColumns)
 		}
 	}
+	return nil
+}
+
+// skipForeignTable records the relation CREATE FOREIGN TABLE creates. A name
+// a relation already has is refused, as PostgreSQL refuses it, unless the
+// statement says IF NOT EXISTS.
+func (p *Parser) skipForeignTable(stmt *pg_query.CreateStmt) error {
+	key := p.relationKey(stmt.GetRelation())
+	_, isTable := p.tableIndex[key]
+	if _, isSkipped := p.skipped[key]; isTable || isSkipped {
+		if stmt.GetIfNotExists() {
+			return nil
+		}
+		return fmt.Errorf("relation %s already exists", key)
+	}
+	p.skipped[key] = false
+	p.schema.Warnings = append(p.schema.Warnings,
+		fmt.Sprintf("CREATE FOREIGN TABLE %s skipped in DDL file — foreign tables are not modelled", stmt.GetRelation().GetRelname()))
 	return nil
 }
 
@@ -837,7 +908,7 @@ func (p *Parser) indexElemColumn(table *parser.Table, e *pg_query.IndexElem) str
 
 func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 	switch stmt.RenameType { //nolint:exhaustive // only renames of what the model or the namespace holds are relevant
-	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
+	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
 		if stmt.Relation != nil {
 			return p.moveSkippedRelation(stmt.Relation, cmp.Or(stmt.Relation.Schemaname, p.defaultSchema), stmt.Newname)
 		}
@@ -1016,13 +1087,14 @@ func (p *Parser) renameIndex(rv *pg_query.RangeVar, newName string) {
 
 // parseAlterObjectSchema applies ALTER TABLE … SET SCHEMA, which pg_query
 // parses as an AlterObjectSchemaStmt, not an AlterTableStmt. A moved table is
-// rekeyed and a moved view, materialized view or partition keeps its name
-// reserved; moving any other object is ignored.
+// rekeyed and a moved view, materialized view, partition or foreign table
+// keeps its name reserved; moving any other object is ignored.
 func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) error {
 	if stmt.Relation == nil {
 		return nil
 	}
-	if stmt.ObjectType == pg_query.ObjectType_OBJECT_VIEW || stmt.ObjectType == pg_query.ObjectType_OBJECT_MATVIEW {
+	switch stmt.ObjectType { //nolint:exhaustive // a table is moved below; every other object is ignored
+	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
 		return p.moveSkippedRelation(stmt.Relation, stmt.Newschema, stmt.Relation.Relname)
 	}
 	if stmt.ObjectType != pg_query.ObjectType_OBJECT_TABLE {
@@ -1081,8 +1153,9 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 	for _, obj := range stmt.Objects {
 		names := extractDropObjectNames(obj)
 		switch stmt.RemoveType {
-		case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
-			// A view is not modeled; only the relation name it takes is.
+		case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
+			// A view or foreign table is not modeled; only the relation name
+			// it takes is.
 			schema, name := p.splitQualifiedName(names)
 			delete(p.skipped, schema+"."+name)
 		case pg_query.ObjectType_OBJECT_INDEX:
@@ -1213,8 +1286,8 @@ func (p *Parser) skippedTable(names []string) bool {
 }
 
 // skippedRelation reports whether rv names a relation the parser skips: a
-// plain view, a materialized view or a partition. A rename or move of one
-// rekeys it; every other ALTER action on it is skipped.
+// plain view, a materialized view, a partition or a foreign table. A rename
+// or move of one rekeys it; every other ALTER action on it is skipped.
 func (p *Parser) skippedRelation(rv *pg_query.RangeVar) bool {
 	_, skipped := p.skipped[p.relationKey(rv)]
 	return skipped
@@ -1427,8 +1500,9 @@ func (p *Parser) parseAlterTable(stmt *pg_query.AlterTableStmt) error {
 	case pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_INDEX, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
 		// No subcommand here changes the model (OWNED BY and RENAME TO are
 		// statements of their own), and the parser tracks no partition's index
-		// and no foreign table, so an unknown name is not an error. pg_dump
-		// writes ALTER SEQUENCE … OWNER TO and ALTER INDEX … ATTACH PARTITION.
+		// and no foreign table's columns, so an unknown name is not an error.
+		// pg_dump writes ALTER SEQUENCE … OWNER TO and ALTER INDEX … ATTACH
+		// PARTITION.
 		return nil
 	}
 	table, err := p.lookupTable(stmt.Relation)
