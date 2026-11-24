@@ -41,10 +41,12 @@ GitHub Actions runs three workflows on every pull request and every push to `mai
 ```
 Pull request / push to main
     │
-    ├── Lint              ← golangci-lint × 8 modules, plus refs-check, tracker-check and req-check
+    ├── Repo checks       ← refs-check, tracker-check and req-check (runs on every change)
+    │
+    ├── Lint              ← golangci-lint × 8 modules (skips docs-only changes)
     │
     ├── Test (Unit)       ← go test -short -race × 8 modules (no containers)
-    │       │
+    │       │                (skips docs-only changes, except docs/PRD.md and docs/conformance/)
     │       ▼
     ├── Test (Integration) ← go test -race × 8 modules (testcontainers), once every unit job passes
     │
@@ -62,8 +64,9 @@ The YAML lives in `.github/workflows/`; read it there rather than copying it her
 
 | File | Jobs | Notes |
 |------|------|-------|
-| `lint.yml` | `golangci-lint` per module; `repo-checks` | golangci-lint also runs the gofumpt and goimports formatters. `repo-checks` runs `make refs-check`, `make tracker-check` and `make req-check` (the PRD requirement registry, `docs/conformance/`). |
-| `test.yml` | `unit`, then `integration`, per module | `integration` has `needs: unit`. |
+| `repo-checks.yml` | `repo-checks` | Runs `make refs-check`, `make tracker-check` and `make req-check` (the PRD requirement registry, `docs/conformance/`). No path filter: these checks validate docs. |
+| `lint.yml` | `golangci-lint` per module | golangci-lint also runs the gofumpt and goimports formatters. `paths-ignore` for docs-only changes. |
+| `test.yml` | `unit`, then `integration`, per module | `integration` has `needs: unit`. A `paths` filter skips docs-only changes but keeps `docs/PRD.md` and `docs/conformance/`, which tests read. |
 | `examples.yml` | `discover`, then `lint` and `test` per example | `GOWORK: off`, and `paths-ignore` for docs-only changes. |
 | `release-please.yml` | `release-please`, `tag-modules`, then `release` | Calls `release.yml` when a release is created. See [Section 11](#11-automated-release-management). |
 | `release.yml` | `build` per target, then `publish` | Native cgo builds on five runners. Runs when `release-please.yml` calls it, or by hand. |
@@ -77,6 +80,7 @@ Every workflow sets `permissions: contents: read` at the top and widens it per j
 - Action majors: `actions/checkout@v7`, `actions/setup-go@v7`, `golangci/golangci-lint-action@v9`, `googleapis/release-please-action@v5`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`. Check each one's latest release when touching a workflow.
 - Example jobs set `GOWORK: off`. Each example's `go.mod` has `replace github.com/teandresmith/sqlgen => ../../../..`, and the repo-root `go.work` would override it.
 - The examples matrix is wide (12 examples × 2 = 24 runners), and most of them start testcontainers, so docs-only changes skip it.
+- "Docs-only" means root-level `*.md`, `docs/`, `guidelines/`, `.claude/`, `.gitignore` and `LICENSE`. The Markdown pattern is root-level only: the manifest goldens under `cmd/sqlgen/testdata` are `.md` files that tests check. No check is required by the `main` ruleset, so a skipped workflow does not block a merge; if one becomes required, a skipped run would leave it pending.
 - The golangci-lint version is read from `.tool-versions` (see [Section 5](#5-linting)) by a step that runs at the repo root, not from a literal in either YAML. The action's own `version-file:` input cannot be used here: it resolves the path relative to `working-directory`, and every lint leg sets that to a module or example directory.
 - Unit tests use `-short` to skip integration tests (no containers needed). Modules without testcontainer-backed tests (`event/natsbus`, `cache/memory`, `cache/msgpack`, `metrics/otel`) run in both jobs — redundant but cheap; the alternative is per-module branching that's harder to keep in sync. `event/natsbus`'s JetStream tests skip under `-short`, so only the integration job runs them.
 - Integration tests run without `-short` — testcontainers spins up PostgreSQL, MySQL, and Redis (`cache/redis`). SQLite uses in-memory databases. NATS (`event/natsbus`) uses an in-process server, no container.

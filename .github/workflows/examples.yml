@@ -1,13 +1,14 @@
 name: Examples
 on:
   pull_request:
+    # Skip docs-only changes. Root-level Markdown only: the manifest goldens
+    # under cmd/sqlgen/testdata are .md files the example runs check.
     paths-ignore: &docs-only
-      - '**.md'
+      - '*.md'
       - 'docs/**'
       - 'guidelines/**'
       - '.claude/**'
       - '.gitignore'
-      - 'CHANGELOG.md'
       - 'LICENSE'
   push:
     branches: [main]

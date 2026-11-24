@@ -1,8 +1,18 @@
 name: Lint
 on:
+  # Skip docs-only changes. The repo checks validate docs, so they live in
+  # repo-checks.yml, which runs on every change.
   pull_request:
+    paths-ignore: &docs-only
+      - '*.md'
+      - 'docs/**'
+      - 'guidelines/**'
+      - '.claude/**'
+      - '.gitignore'
+      - 'LICENSE'
   push:
     branches: [main]
+    paths-ignore: *docs-only
 
 permissions:
   contents: read
@@ -45,21 +55,3 @@ jobs:
           version: ${{ steps.tools.outputs.version }}
           args: --timeout=5m
           working-directory: ${{ matrix.module }}
-
-  repo-checks:
-    name: repo checks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: No internal references or build tags
-        run: make refs-check
-      - name: Tracker structure
-        run: make tracker-check
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: .tool-versions
-          cache-dependency-path: |
-            cmd/sqlgen/go.sum
-            go.work.sum
-      - name: PRD requirement registry
-        run: make req-check
