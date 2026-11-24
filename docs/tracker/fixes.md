@@ -23,33 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-398
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 12, cmd/sqlgen/config
-- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "A cached view's `invalidate_on` naming a table with no primary key passes `validate` and `generate`")
-- **Vetted:** corrected at `6e152b91` (2026-11-24)
-
-**Issue.** A cached view whose `invalidate_on` names a table with no primary key passes `sqlgen validate` and `sqlgen generate`. The view's cache then never invalidates from that source. PRD §27.11 says a source that is not generated is a hard error. Evidence from the FIX-360 vet: schema `cycles(name TEXT NOT NULL)` plus cached view `cycle_names` with `invalidate_on: [cycles]` gives `validate` → "config and schema are valid" and `generate` → "generated 9 files (0 tables, 1 views)". The codegen drops the entry without a word: `buildViewInvalidateMap` (`cmd/sqlgen/gen/context_cache.go:374-378`) finds no `tableNameValues` entry for a table that generated nothing, so no pattern is wired.
-
-**Root cause.** `validateViewInvalidateOn` (`cmd/sqlgen/config/validate.go:2530-2560`) rejects only three cases: an unresolved name (`:2546-2549`), an `exclude_tables` match (`:2551-2553`) and `exclude_columns` exhaustion (`:2555-2557`). It never checks the §9.4b skip, a table with no PK after override resolution. That rule lives only in `validateMissingPrimaryKey` (`:2429-2466`), which emits a warning, not an error.
-
-**Suggested fix.**
-- In `validateViewInvalidateOn`, after the exclusion checks, add a hard error when the source has no effective PK, using the same predicate as `validateMissingPrimaryKey`: no `PrimaryKey` column and no `tables.<name>.primary_key.columns` override. Suggested message: `views.%s.invalidate_on: table %q has no primary key and is skipped from generation (PRD §9.4b); view cache would silently never invalidate from this source — declare tables.<name>.primary_key.columns`. If it reads more cleanly, factor out a "table generates" helper (not excluded, not exhausted, has a PK or an override) and use it in both functions.
-- A source with a `primary_key.columns` override must still pass.
-- Regression test: cases in `TestValidatePostParse_ViewInvalidateOn` (`cmd/sqlgen/config/validate_test.go:1828`): (a) a no-PK source errors, (b) the same table with a `primary_key.columns` override passes. Run one case unqualified (MySQL/SQLite, `Schema: ""`) and one PG `public.`-qualified, since the lookup map holds both spellings.
-- Optional end-to-end guard: a `cli` test that `sqlgen validate` on the `cycles` / `cycle_names` schema exits non-zero.
-- Corrected at vetting (2026-11-24): the existing invalidation fixtures declared no primary key (`products` / `reviews` in `TestValidatePostParse_ViewInvalidateOn`, `products` / `audit.events` in `TestValidatePostParse_ViewInvalidateOnExcludeTablesPatterns`, `validate_rules_test.go:318-319`), so their passing cases fail under the new rule, e.g. the exclude_tables "pattern matching nothing named" case errors with `table "products" has no primary key …`; the patch marks their `id` columns `PrimaryKey: true`. The exhaustion branch now `continue`s so one source never gets two errors.
-- Start from `.claude/prototypes/FIX-398.patch` (based on `6e152b91`; 4 files, +161/-18): a `hasEffectivePrimaryKey(cfg, table)` helper (a detected PK column or a non-empty `tables.<name>.primary_key.columns` override, found by `findTableConfig` qualified then bare), used by `validateMissingPrimaryKey` (no behavior change) and by the new fourth hard error in `validateViewInvalidateOn`; four new `TestValidatePostParse_ViewInvalidateOn` cases (no-PK errors and override passes, PG `public.audit_log` and unqualified sqlite `cycles`); CLI guard `TestValidate_CachedViewInvalidateOnNoPKSource` in `cli/view_cache_invalidate_on_test.go`.
-- Prototype results, run at `6e152b91` on 2026-11-24: scratch sqlite project (`cycles(name TEXT NOT NULL)`, view `cycle_names`, `invalidate_on: [cycles]`) at HEAD → `sqlgen validate` "config and schema are valid" exit 0, `sqlgen generate` "generated 9 files (0 tables, 1 views)" exit 0, with an empty `patternsForSourceTable` (`switch table { }`) in `cache_gen.go`; patched → both exit 2 with "views.cycle_names.invalidate_on: table \"cycles\" has no primary key and is skipped from generation (PRD §9.4b); view cache would silently never invalidate from this source — declare tables.cycles.primary_key.columns". Gates: `go test -race ./...` (cmd/sqlgen) ok, `golangci-lint run ./config/... ./cli/...` 0 issues, gofumpt clean. Fail-first: new branch disabled → `ValidatePostParse() error = nil, want error containing "table \"public.audit_log\" has no primary key and is skipped from generation (PRD §9.4b)"` (and for `"cycles"`), and the CLI guard fails "validate with a no-PK invalidate_on source = nil, want an error"; existing suite without the fix passes. No golden churn.
-
-**References.**
-- PRD §27.11 (post-parse validation), §4.9 `invalidate_on` row, §9.4b, §4.13 "Table has no primary key" row.
-- FIX-360 (the vet that measured this).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-399
 
 - **Status:** Open
@@ -247,6 +220,35 @@
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-398
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 12, cmd/sqlgen/config
+- **Surfaced by:** backlog sweep 2026-11-24 (backlog line "A cached view's `invalidate_on` naming a table with no primary key passes `validate` and `generate`")
+- **Vetted:** corrected at `6e152b91` (2026-11-24)
+
+**Issue.** A cached view whose `invalidate_on` names a table with no primary key passes `sqlgen validate` and `sqlgen generate`. The view's cache then never invalidates from that source. PRD §27.11 says a source that is not generated is a hard error. Evidence from the FIX-360 vet: schema `cycles(name TEXT NOT NULL)` plus cached view `cycle_names` with `invalidate_on: [cycles]` gives `validate` → "config and schema are valid" and `generate` → "generated 9 files (0 tables, 1 views)". The codegen drops the entry without a word: `buildViewInvalidateMap` (`cmd/sqlgen/gen/context_cache.go:374-378`) finds no `tableNameValues` entry for a table that generated nothing, so no pattern is wired.
+
+**Root cause.** `validateViewInvalidateOn` (`cmd/sqlgen/config/validate.go:2530-2560`) rejects only three cases: an unresolved name (`:2546-2549`), an `exclude_tables` match (`:2551-2553`) and `exclude_columns` exhaustion (`:2555-2557`). It never checks the §9.4b skip, a table with no PK after override resolution. That rule lives only in `validateMissingPrimaryKey` (`:2429-2466`), which emits a warning, not an error.
+
+**Suggested fix.**
+- In `validateViewInvalidateOn`, after the exclusion checks, add a hard error when the source has no effective PK, using the same predicate as `validateMissingPrimaryKey`: no `PrimaryKey` column and no `tables.<name>.primary_key.columns` override. Suggested message: `views.%s.invalidate_on: table %q has no primary key and is skipped from generation (PRD §9.4b); view cache would silently never invalidate from this source — declare tables.<name>.primary_key.columns`. If it reads more cleanly, factor out a "table generates" helper (not excluded, not exhausted, has a PK or an override) and use it in both functions.
+- A source with a `primary_key.columns` override must still pass.
+- Regression test: cases in `TestValidatePostParse_ViewInvalidateOn` (`cmd/sqlgen/config/validate_test.go:1828`): (a) a no-PK source errors, (b) the same table with a `primary_key.columns` override passes. Run one case unqualified (MySQL/SQLite, `Schema: ""`) and one PG `public.`-qualified, since the lookup map holds both spellings.
+- Optional end-to-end guard: a `cli` test that `sqlgen validate` on the `cycles` / `cycle_names` schema exits non-zero.
+- Corrected at vetting (2026-11-24): the existing invalidation fixtures declared no primary key (`products` / `reviews` in `TestValidatePostParse_ViewInvalidateOn`, `products` / `audit.events` in `TestValidatePostParse_ViewInvalidateOnExcludeTablesPatterns`, `validate_rules_test.go:318-319`), so their passing cases fail under the new rule, e.g. the exclude_tables "pattern matching nothing named" case errors with `table "products" has no primary key …`; the patch marks their `id` columns `PrimaryKey: true`. The exhaustion branch now `continue`s so one source never gets two errors.
+- Start from `.claude/prototypes/FIX-398.patch` (based on `6e152b91`; 4 files, +161/-18): a `hasEffectivePrimaryKey(cfg, table)` helper (a detected PK column or a non-empty `tables.<name>.primary_key.columns` override, found by `findTableConfig` qualified then bare), used by `validateMissingPrimaryKey` (no behavior change) and by the new fourth hard error in `validateViewInvalidateOn`; four new `TestValidatePostParse_ViewInvalidateOn` cases (no-PK errors and override passes, PG `public.audit_log` and unqualified sqlite `cycles`); CLI guard `TestValidate_CachedViewInvalidateOnNoPKSource` in `cli/view_cache_invalidate_on_test.go`.
+- Prototype results, run at `6e152b91` on 2026-11-24: scratch sqlite project (`cycles(name TEXT NOT NULL)`, view `cycle_names`, `invalidate_on: [cycles]`) at HEAD → `sqlgen validate` "config and schema are valid" exit 0, `sqlgen generate` "generated 9 files (0 tables, 1 views)" exit 0, with an empty `patternsForSourceTable` (`switch table { }`) in `cache_gen.go`; patched → both exit 2 with "views.cycle_names.invalidate_on: table \"cycles\" has no primary key and is skipped from generation (PRD §9.4b); view cache would silently never invalidate from this source — declare tables.cycles.primary_key.columns". Gates: `go test -race ./...` (cmd/sqlgen) ok, `golangci-lint run ./config/... ./cli/...` 0 issues, gofumpt clean. Fail-first: new branch disabled → `ValidatePostParse() error = nil, want error containing "table \"public.audit_log\" has no primary key and is skipped from generation (PRD §9.4b)"` (and for `"cycles"`), and the CLI guard fails "validate with a no-PK invalidate_on source = nil, want an error"; existing suite without the fix passes. No golden churn.
+
+- Auto-accepted the recommended option on 2026-11-24 (`/fix` auto-accept rule): should the §4.13 no-PK warning still print alongside the new `invalidate_on` hard error? → keep both, because the prototype's gates are green, keeping it causes no golden churn, it adds or removes no public surface, and it reverses no ruling or PRD behavior (§4.13 makes the warning unconditional, and the declared-relationship rule already pairs an error with it).
+
+**References.**
+- PRD §27.11 (post-parse validation), §4.9 `invalidate_on` row, §9.4b, §4.13 "Table has no primary key" row.
+- FIX-360 (the vet that measured this).
+
+**Resolution notes.** Resolved 2026-11-24 from the vetted prototype (applied clean; fresh against HEAD `23fafe91`). `hasEffectivePrimaryKey(cfg, table)` in `cmd/sqlgen/config/validate.go` (a detected PK column, or a non-empty `tables.<name>.primary_key.columns` override found by `findTableConfig`) now backs both `validateMissingPrimaryKey` (unchanged behavior) and a fourth hard error in `validateViewInvalidateOn`; the exhaustion branch `continue`s so one source gets one error. Existing invalidation fixtures in `validate_test.go` / `validate_rules_test.go` mark their `id` columns `PrimaryKey: true`. Tests: four new `TestValidatePostParse_ViewInvalidateOn` cases (PG `public.audit_log` and unqualified sqlite `cycles`, each erroring and passing with an override) and CLI guard `TestValidate_CachedViewInvalidateOnNoPKSource`; fail-first re-run on the final code (new branch disabled → all three no-PK assertions fail). Added conformance row `config.views.invalidate-on.no-primary-key` in `docs/conformance/cli/config-fields.md` (req-check required the CLI test be claimed). Gates: `make check` ok, `make check-examples` ok. No golden churn, matching the vet. Verify doc corrections applied inline: PRD §27.11 validation sentence now names the §9.4b no-PK skip next to the exclusion causes (`make req-rehash SECTIONS=27` and `27.11`), and the resolved-entry spacing was fixed.
 
 ### FIX-402
 

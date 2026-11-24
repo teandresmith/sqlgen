@@ -1831,7 +1831,7 @@ func TestValidatePostParse_ViewInvalidateOn(t *testing.T) {
 			Name:   "products",
 			Schema: "public",
 			Columns: []config.SchemaColumn{
-				{Name: "id", Type: "uuid"},
+				{Name: "id", Type: "uuid", PrimaryKey: true},
 				{Name: "name", Type: "text"},
 			},
 		},
@@ -1839,15 +1839,37 @@ func TestValidatePostParse_ViewInvalidateOn(t *testing.T) {
 			Name:   "reviews",
 			Schema: "public",
 			Columns: []config.SchemaColumn{
-				{Name: "id", Type: "uuid"},
+				{Name: "id", Type: "uuid", PrimaryKey: true},
 				{Name: "body", Type: "text"},
 			},
 		},
+		{
+			Name:   "audit_log",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "event", Type: "text"},
+			},
+		},
+	}
+	// MySQL and SQLite tables carry no schema, so the lookup map holds only
+	// the bare spelling.
+	unqualifiedTables := []config.SchemaTable{
+		{
+			Name: "cycles",
+			Columns: []config.SchemaColumn{
+				{Name: "name", Type: "text"},
+			},
+		},
+	}
+	sqlite := func(c *config.RootConfig) {
+		c.Input.Dialect = "sqlite"
+		c.Output.Driver = "stdlib"
 	}
 
 	tests := []struct {
 		name       string
 		view       config.ViewConfig
+		tables     []config.SchemaTable // nil uses schemaTables
 		mutate     func(c *config.RootConfig)
 		wantErr    bool
 		wantSubstr string
@@ -1896,6 +1918,58 @@ func TestValidatePostParse_ViewInvalidateOn(t *testing.T) {
 			wantSubstr: "excluded from generation",
 		},
 		{
+			name: "no-PK source (PG, qualified) is hard error",
+			view: config.ViewConfig{
+				StructName:   "ProductSummary",
+				Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+				InvalidateOn: []string{"public.audit_log"},
+			},
+			wantErr:    true,
+			wantSubstr: `table "public.audit_log" has no primary key and is skipped from generation (PRD §9.4b)`,
+		},
+		{
+			name: "no-PK source with primary_key.columns override (PG) passes",
+			view: config.ViewConfig{
+				StructName:   "ProductSummary",
+				Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+				InvalidateOn: []string{"public.audit_log"},
+			},
+			mutate: func(c *config.RootConfig) {
+				c.Tables["audit_log"] = config.TableConfig{
+					PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"event"}},
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "no-PK source (unqualified) is hard error",
+			view: config.ViewConfig{
+				StructName:   "CycleNames",
+				Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+				InvalidateOn: []string{"cycles"},
+			},
+			tables:     unqualifiedTables,
+			mutate:     sqlite,
+			wantErr:    true,
+			wantSubstr: `table "cycles" has no primary key and is skipped from generation (PRD §9.4b)`,
+		},
+		{
+			name: "no-PK source with primary_key.columns override (unqualified) passes",
+			view: config.ViewConfig{
+				StructName:   "CycleNames",
+				Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+				InvalidateOn: []string{"cycles"},
+			},
+			tables: unqualifiedTables,
+			mutate: func(c *config.RootConfig) {
+				sqlite(c)
+				c.Tables["cycles"] = config.TableConfig{
+					PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"name"}},
+				}
+			},
+			wantErr: false,
+		},
+		{
 			name: "cache disabled skips invalidate_on validation",
 			view: config.ViewConfig{
 				StructName:   "ProductSummary",
@@ -1914,7 +1988,11 @@ func TestValidatePostParse_ViewInvalidateOn(t *testing.T) {
 				tt.mutate(cfg)
 			}
 
-			_, err := config.ValidatePostParse(cfg, schemaTables, nil)
+			tables := tt.tables
+			if tables == nil {
+				tables = schemaTables
+			}
+			_, err := config.ValidatePostParse(cfg, tables, nil)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("ValidatePostParse() error = nil, want error containing %q", tt.wantSubstr)

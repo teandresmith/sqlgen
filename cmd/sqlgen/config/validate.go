@@ -2428,18 +2428,7 @@ func uniqueCovers(table SchemaTable, override []string) bool {
 // table via the top-level `exclude_tables` filter.
 func validateMissingPrimaryKey(cfg *RootConfig, tables []SchemaTable, warnings *[]Warning) {
 	for _, table := range tables {
-		tc := findTableConfig(cfg, table)
-		if tc != nil && tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
-			continue
-		}
-		hasAutoPK := false
-		for _, c := range table.Columns {
-			if c.PrimaryKey {
-				hasAutoPK = true
-				break
-			}
-		}
-		if hasAutoPK {
+		if hasEffectivePrimaryKey(cfg, table) {
 			continue
 		}
 		if allColumnsExcluded(cfg, table) {
@@ -2463,6 +2452,18 @@ func validateMissingPrimaryKey(cfg *RootConfig, tables []SchemaTable, warnings *
 			),
 		})
 	}
+}
+
+// hasEffectivePrimaryKey reports whether a table has a primary key after
+// override resolution: a detected PRIMARY KEY column or a
+// tables.<name>.primary_key.columns override. A table with neither is skipped
+// from generation (PRD §9.4b).
+func hasEffectivePrimaryKey(cfg *RootConfig, table SchemaTable) bool {
+	tc := findTableConfig(cfg, table)
+	if tc != nil && tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
+		return true
+	}
+	return slices.ContainsFunc(table.Columns, func(c SchemaColumn) bool { return c.PrimaryKey })
 }
 
 // validateExcludedPrimaryKey rejects exclude_columns removing a member of a
@@ -2523,7 +2524,8 @@ func validateExcludeColumnsExhaustion(cfg *RootConfig, tables []SchemaTable, war
 
 // validateViewInvalidateOn verifies each cached view's invalidate_on entries
 // name a parsed, generation-included table. An unresolved name, a name an
-// exclude_tables pattern drops, or a name whose columns are fully excluded is a
+// exclude_tables pattern drops, a name whose columns are fully excluded, or a
+// table with no primary key after override resolution (PRD §9.4b) is a
 // hard error (PRD §27.11 / CACHE.md §3.4) —
 // no mutation hook would fire for it, so the view cache would silently never
 // invalidate from that source.
@@ -2554,6 +2556,10 @@ func validateViewInvalidateOn(cfg *RootConfig, tables []SchemaTable, errs *[]err
 			}
 			if allColumnsExcluded(cfg, tbl) {
 				*errs = append(*errs, fmt.Errorf("views.%s.invalidate_on: table %q is excluded from generation (all columns filtered out); view cache would silently never invalidate from this source", viewName, src))
+				continue
+			}
+			if !hasEffectivePrimaryKey(cfg, tbl) {
+				*errs = append(*errs, fmt.Errorf("views.%s.invalidate_on: table %q has no primary key and is skipped from generation (PRD §9.4b); view cache would silently never invalidate from this source — declare tables.%s.primary_key.columns", viewName, src, qualifiedTableName(tbl)))
 			}
 		}
 	}

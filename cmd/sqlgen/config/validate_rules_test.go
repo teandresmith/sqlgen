@@ -315,8 +315,8 @@ func TestLoadConfig_EmptyCursorKeysReachValidation(t *testing.T) {
 // view whose cache is off is not checked.
 func TestValidatePostParse_ViewInvalidateOnExcludeTablesPatterns(t *testing.T) {
 	tables := []config.SchemaTable{
-		{Name: "products", Schema: "public", Columns: []config.SchemaColumn{{Name: "id", Type: "uuid"}}},
-		{Name: "events", Schema: "audit", Columns: []config.SchemaColumn{{Name: "id", Type: "uuid"}}},
+		{Name: "products", Schema: "public", Columns: []config.SchemaColumn{{Name: "id", Type: "uuid", PrimaryKey: true}}},
+		{Name: "events", Schema: "audit", Columns: []config.SchemaColumn{{Name: "id", Type: "uuid", PrimaryKey: true}}},
 	}
 	tests := []struct {
 		name     string
