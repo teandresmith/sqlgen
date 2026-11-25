@@ -23,7 +23,78 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-406
+
+- **Status:** Open
+- **Severity:** blocking
+- **Origin:** phase 13, cmd/sqlgen/gen/templates/table
+- **Surfaced by:** user report, from a probe for the `docs/design/TENANT_SCOPED_REFERENCES.md` redesign (2026-11-25)
+
+**Issue.** **`Upsert` / `UpsertMany` on a tenanted table can overwrite
+another tenant's row when the conflict target matches it.** This was measured on
+PostgreSQL at `120c65a1` with a sibling copy of `tenancy_postgres`
+(`.claude/prototypes/TENANT_SCOPED_REFERENCES.probe.patch` plus
+`code TEXT UNIQUE` on `tasks`). Each call ran resolved to tenant A, against a
+row that belongs to tenant B:
+- `Upsert{ID: B.task, Title: "pwned-upsert", ProjectID: A.project}` on
+  `TaskConflictPK` returned `upsert task: get task: sqlgen: resource not found`.
+  B's row then read `title=pwned-upsert`, `workspace_id` still B, and
+  `project_id` pointed at A's project.
+- `UpsertMany` with the same input returned
+  `1 deduped inputs read back as 0 rows`, and B's title was overwritten.
+- `UpsertMany` with one new A row plus B's id also committed both writes.
+- An upsert on `TaskConflictCode` with B's `code` overwrote B's row the same way.
+
+Every error comes from the tenant-filtered read-back after the statement. By
+then the write has committed. A caller can therefore modify any tenant's row
+whose primary key or unique value it knows, with no `SkipTenancy`. This breaks
+§29's "structurally incapable of crossing tenant boundaries" guarantee.
+
+**Root cause.** The generated upsert excludes the tenant column from the
+update set (`cmd/sqlgen/gen/templates/table/upsert.go.tmpl:154-158`,
+`upsert_many.go.tmpl:164`), but nothing restricts *which* existing row the
+conflict branch updates. `sql.UpsertClauseOptions`
+(`sql/dialect.go:99`) has no field for a conflict-branch predicate, so the
+rendered SQL is unconditional:
+- PostgreSQL: `ON CONFLICT ("id") DO UPDATE SET "project_id" = excluded."project_id", "title" = excluded."title" RETURNING "id", "workspace_id"`
+- MySQL: `ON DUPLICATE KEY UPDATE ... "title" = VALUES("title")`
+
+The comment on `insertUpsertAndResolveID` ("On the conflict-update path the
+existing row keeps its tenant") describes this behavior as intended. The tenant
+check at `:61-116` covers only the input's tenant field.
+
+**Suggested fix.**
+- Add a conflict-branch guard to `sql.UpsertClauseOptions`, rendered per dialect:
+  - PostgreSQL / SQLite: `DO UPDATE SET … WHERE "<table>"."<tenant>" = $t`. A
+    conflicting row in another tenant is left untouched, and the statement
+    returns no row for it.
+  - MySQL: `ON DUPLICATE KEY UPDATE` has no `WHERE`. Guard each assignment as
+    `col = IF(<tenant> = ?, VALUES(col), col)`, keeping the `LAST_INSERT_ID(id)`
+    read-back. Alternatively, pre-read the conflicting rows' tenant in the same
+    statement batch. The vet should measure both.
+- Treat a guarded-away conflict as `ErrNotFound` for that input, the same
+  answer the read-back gives today, but with nothing written. For `UpsertMany`,
+  decide whether one foreign-tenant conflict fails the whole batch before
+  anything is written (recommended, and consistent with fail-closed) or skips
+  only that row. This is a ruling question for `/fix-vet`.
+- Apply the guard only when tenancy is applied (`apply == true`). Under
+  `SkipTenancy` the cross-tenant upsert stays reachable, per §29.4.2.
+- Regression tests on all three dialects in the tenancy examples (`tenancy`
+  for SQLite, `tenancy_postgres`, `tenancy_mysql`):
+  - `Upsert` and `UpsertMany` on a PK conflict and on a UNIQUE conflict with
+    another tenant's row leave that row unchanged and return `ErrNotFound`;
+  - `UpsertMany` writes no part of a batch that hits such a conflict;
+  - the same call under `SkipTenancy` still updates the row.
+
+**References.**
+- PRD §29.4.2 (Upsert excludes the tenant column from the conflict update set;
+  "No silent cross-tenant writes"), §29.1, §29.4.4 (`SkipTenancy`).
+- PRD §9.7 (the upsert read-back), whose tenant filter currently hides the
+  write from the caller rather than preventing it.
+- `docs/design/TENANT_SCOPED_REFERENCES.md`: derived-tenancy tables need the
+  same conflict-branch guard, so the `sql` option added here is reused there.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
 
 <!-- fixes:open:end -->
 
