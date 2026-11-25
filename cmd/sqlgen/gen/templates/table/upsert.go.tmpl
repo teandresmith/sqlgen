@@ -60,6 +60,12 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 		args := []any{ {{- range .CreateInputFields }}{{ if .Required }}input.{{ .FieldName }}, {{ end }}{{ end -}} }
 {{- if and .Tenancy .Tenancy.Tenanted }}
 
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
+
 {{- if .Tenancy.InPrimaryKey }}
 		// Tenant-in-PK verify-match. input.{{ .Tenancy.FieldName }}
 		// is a required field (already appended to columns/args above).
@@ -83,6 +89,7 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 				if input.{{ .Tenancy.FieldName }} != resolvedTenant {
 					return nil, tenancy.ErrMismatch
 				}
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
@@ -112,6 +119,7 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 				}
 				columns = append(columns, {{ printf "%q" .Tenancy.Column }})
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.{{ .Tenancy.FieldName }}.Get(); ok {
@@ -156,11 +164,33 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := {{ $structCamel }}ConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, {{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end }}{{ if and .Tenancy .Tenancy.Tenanted }}, {{ printf "%q" .Tenancy.Column }}{{ end }}))
+{{- if and .Tenancy .Tenancy.Tenanted }}
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = {{ printf "%q" .Tenancy.Column }}
+		}
+{{- if or .Tenancy.InPrimaryKey (not (supportsReturning)) }}
+
+		// A target without the tenant column can match another tenant's row,
+		// which the guard leaves untouched. On MySQL the statement may instead
+		// fire on another unique index, so the call is refused before it runs.
+		checkForeign := guardTenant != nil && !slices.Contains(conflictColumns, {{ printf "%q" .Tenancy.Column }})
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+{{- end }}
+{{- end }}
 {{- if $needsInsertResolve }}
 
 {{- if $captureTenant }}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 {{- else }}
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
@@ -168,6 +198,12 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 		if err != nil {
 			return nil, err
 		}
+{{- if $captureTenant }}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
+		}
+{{- end }}
 		m.AffectedPKs = []any{id}
 {{- if $captureTenant }}
 		m.AffectedTenants = []any{capturedTenant}
@@ -190,6 +226,7 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 			Values:              args,
 			UpsertConflictKeys:  conflictColumns,
 			UpsertUpdateColumns: updateColumns,
+			UpsertGuardColumn:   guardColumn,
 			ReturningColumns:    []string{ {{- printf "%q" .Tenancy.Column -}} },
 		})
 		var capturedTenant any
@@ -217,11 +254,15 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 			}
 			if found {
 				capturedTenant = rowTenant
+			} else if guardColumn != "" && len(updateColumns) > 0 {
+				// DO UPDATE returns no row only when the guard left another
+				// tenant's conflicting row untouched.
+				return nil, ErrNotFound
 			} else {
 				// A conflict target covering every inserted column leaves
 				// nothing to set, so the dialect emitted DO NOTHING — which
-				// returns no row. The PK is caller-known on this
-				// branch, so the conflicting row's tenant is read back by PK.
+				// returns no row. The PK is caller-known on this branch, so
+				// the conflicting row's tenant is read back by PK.
 				// One column, so there is no scan-order hazard to guard.
 				tenantQuery, tenantArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
 					Columns: []string{ {{- printf "%q" .Tenancy.Column -}} },
@@ -249,11 +290,28 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 			Values:              args,
 			UpsertConflictKeys:  conflictColumns,
 			UpsertUpdateColumns: updateColumns,
+{{- if and .Tenancy .Tenancy.Tenanted }}
+			UpsertGuardColumn:   guardColumn,
+{{- end }}
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
 			return nil, err
 		}
+{{- if and .Tenancy .Tenancy.Tenanted .Tenancy.InPrimaryKey (supportsReturning) }}
+
+		// The check before the statement cannot see a row another tenant
+		// inserts after it. The guard kept the statement off such a row.
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+{{- end }}
 {{- end }}
 {{- if and $captureTenant (not (supportsReturning)) }}
 
@@ -273,6 +331,13 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		capturedTenant := tenantByPK[{{ if .CompositePK }}{{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} }{{ else if eq .PKStrategy "app" }}pkValue{{ else }}input.{{ $pkCol.FieldName }}{{ end }}]
+{{- end }}
+{{- if $captureTenant }}
+
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
+		}
 {{- end }}
 {{- if .CompositePK }}
 
@@ -309,6 +374,37 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 	}
 	return result.(*{{ .StructName }}), nil
 }
+{{- if and .Tenancy .Tenancy.Tenanted (or .Tenancy.InPrimaryKey (not (supportsReturning))) }}
+
+// upsertForeignConflict reports whether a row in another tenant holds the
+// values the upsert supplies for every conflict column. An input that leaves
+// a conflict column unset cannot conflict on that target.
+func (c *{{ $structCamel }}Client) upsertForeignConflict(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string, tenant any) (bool, error) {
+	conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Neq(tenant)}
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			return false, nil
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{ {{- printf "%q" .Tenancy.Column -}} },
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return false, err
+	}
+	found := rows.Next()
+	err = rows.Err()
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	return found, err
+}
+{{- end }}
 {{- end }}
 {{- if and $needsInsertResolve .Operations.Upsert }}
 {{- if $captureTenant }}
@@ -318,7 +414,11 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *{{ $structCamel }}Client) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) ({{ $pkCol.GoType }}, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *{{ $structCamel }}Client) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) ({{ $pkCol.GoType }}, any, error) {
 {{- if supportsReturning }}
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
@@ -326,6 +426,7 @@ func (c *{{ $structCamel }}Client) insertUpsertAndResolveID(ctx context.Context,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: {{ printf "%q" $pkCol.Name }},
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{ {{- printf "%q" $pkCol.Name }}, {{ printf "%q" .Tenancy.Column -}} },
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -361,6 +462,7 @@ func (c *{{ $structCamel }}Client) insertUpsertAndResolveID(ctx context.Context,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: {{ printf "%q" $pkCol.Name }},
+		UpsertGuardColumn:     guardColumn,
 	})
 	execResult, err := conn.Exec(ctx, query, queryArgs...)
 	if err != nil {

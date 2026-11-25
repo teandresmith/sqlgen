@@ -76,6 +76,14 @@ func (d MySQLDialect) UpsertClause(opts UpsertClauseOptions) string {
 	}
 	for _, col := range opts.UpdateColumns {
 		q := d.QuoteIdentifier(col)
+		if opts.GuardColumn != "" {
+			// No WHERE on this clause, so each assignment keeps the existing
+			// value unless the guard matches. The guard column is never
+			// assigned here, so every IF reads the row's stored value.
+			g := d.QuoteIdentifier(opts.GuardColumn)
+			setClauses = append(setClauses, q+" = IF("+g+" = VALUES("+g+"), VALUES("+q+"), "+q+")")
+			continue
+		}
 		setClauses = append(setClauses, q+" = VALUES("+q+")")
 	}
 

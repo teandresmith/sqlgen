@@ -16,6 +16,7 @@ Features: cache, events, soft_delete, tenancy, views
 | Checkpoint | `checkpoints` | table | [checkpoint.md](checkpoint.md) |  |
 | Cycle | `cycles` | table | [cycle.md](cycle.md) |  |
 | Label | `labels` | table | [label.md](label.md) |  |
+| LedgerEntry | `ledger_entries` | table | [ledger_entry.md](ledger_entry.md) |  |
 | LineItem | `line_items` | table | [line_item.md](line_item.md) |  |
 | Milestone | `milestones` | table | [milestone.md](milestone.md) |  |
 | Moment | `moments` | table | [moment.md](moment.md) |  |

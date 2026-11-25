@@ -49,6 +49,11 @@ type InsertOptions struct {
 	// See [UpsertClauseOptions.ResolvePKColumn]; it is passed straight
 	// through, and only MySQL acts on it.
 	UpsertResolvePKColumn string
+
+	// UpsertGuardColumn limits the conflict branch to a row whose column of
+	// this name holds the value the statement inserts for it. See
+	// [UpsertClauseOptions.GuardColumn].
+	UpsertGuardColumn string
 }
 
 // MultiInsertOptions configures a multi-row INSERT statement.
@@ -75,6 +80,11 @@ type MultiInsertOptions struct {
 	// A batched caller must therefore take its PKs from the inputs, never
 	// from the statement (PRD 9.7).
 	UpsertResolvePKColumn string
+
+	// UpsertGuardColumn limits the conflict branch to a row whose column of
+	// this name holds the value its value row inserts for it. See
+	// [UpsertClauseOptions.GuardColumn].
+	UpsertGuardColumn string
 }
 
 // UpdateOptions configures an UPDATE statement.
@@ -215,6 +225,8 @@ func BuildInsert(d Dialect, t Table, opts InsertOptions) (string, []any) {
 			ConflictKeys:    opts.UpsertConflictKeys,
 			UpdateColumns:   opts.UpsertUpdateColumns,
 			ResolvePKColumn: opts.UpsertResolvePKColumn,
+			GuardColumn:     opts.UpsertGuardColumn,
+			Table:           t,
 		}))
 	}
 	writeReturning(&b, d, opts.ReturningColumns)
@@ -292,6 +304,8 @@ func BuildMultiInsert(d Dialect, t Table, opts MultiInsertOptions) (string, []an
 			ConflictKeys:    opts.UpsertConflictKeys,
 			UpdateColumns:   opts.UpsertUpdateColumns,
 			ResolvePKColumn: opts.UpsertResolvePKColumn,
+			GuardColumn:     opts.UpsertGuardColumn,
+			Table:           t,
 		}))
 	}
 	writeReturning(&b, d, opts.ReturningColumns)

@@ -24,18 +24,19 @@ const fingerprintArticle = "b2d3aadd"
 const fingerprintCycle = "f7a61ab9"
 const fingerprintLabel = "6f890159"
 const fingerprintLegacyWidget = "1a2e585c"
+const fingerprintLineItem = "32941f3c"
 const fingerprintMoment = "0c752a26"
 const fingerprintMomentOwner = "bb119962"
 const fingerprintMomentTag = "0aa0785d"
 const fingerprintMomentTagLink = "795dbc21"
-const fingerprintOrderItem = "878802b6"
+const fingerprintOrderItem = "cfbe2615"
 const fingerprintPost = "47717f0e"
 const fingerprintPostTag = "7f44a6c6"
 const fingerprintProduct = "3227ea63"
 const fingerprintStamp = "f0d9891e"
 const fingerprintTag = "51e17b38"
 const fingerprintTagLink = "d88dd2be"
-const fingerprintTask = "417aab44"
+const fingerprintTask = "4cf42bae"
 const fingerprintTemplate = "f5221610"
 const fingerprintTemplateLabel = "b1853705"
 const fingerprintTemplateStamp = "88f85085"
@@ -216,6 +217,22 @@ func (c *Cache) handleInvalidation(ctx context.Context, signal cache.Invalidatio
 		}
 		return c.invalidateAffectedTenanted(ctx, signal.Table, tenants, signal.PKs)
 	case TableLegacyWidgets:
+		// Rebuild the exact per-PK key from the signal's tenant stamp: the
+		// %v round-trip makes the string form byte-identical to the local
+		// key, and the fingerprint is this receiver's own
+		// codegen constant — a rolling deploy only ever evicts keys this
+		// instance itself wrote. A tenant-less signal (out-of-band or
+		// pre-stamp publisher) degrades to the full-table pattern instead
+		// of erroring or going stale.
+		if signal.Tenant == "" {
+			return c.invalidateTenantedFallback(ctx, signal.Table, "invalidation signal carries no tenant")
+		}
+		tenants := make([]any, len(signal.PKs))
+		for i := range tenants {
+			tenants[i] = signal.Tenant
+		}
+		return c.invalidateAffectedTenanted(ctx, signal.Table, tenants, signal.PKs)
+	case TableLineItems:
 		// Rebuild the exact per-PK key from the signal's tenant stamp: the
 		// %v round-trip makes the string form byte-identical to the local
 		// key, and the fingerprint is this receiver's own
@@ -1461,6 +1478,282 @@ func (c *Cache) hydrateLegacyWidget(tenant uuid.UUID, pk int64, next hook.QueryH
 	}()
 }
 
+// keyForLineItem builds the cache key for LineItem with composite PK.
+// The []any is constructed in DDL PRIMARY KEY column order inside this one
+// function — call sites never reorder (key-order invariant).
+// Tenanted form: tenant: segment is emitted before fingerprint:
+// so the per-tenant trailing-wildcard pattern (BuildTenantTablePattern)
+// matches every fingerprint generation in one pass.
+func (c *Cache) keyForLineItem(tenant uuid.UUID, pk LineItemPK) string {
+	return cache.BuildCompositeTenantKey(c.prefix, "", "line_items", fingerprintLineItem, tenant, []any{
+		pk.OrderID,
+		pk.ProductID,
+	})
+}
+
+// ttlForLineItem returns the resolved TTL for LineItem cache entries.
+func (c *Cache) ttlForLineItem() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipLineItem reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipLineItem(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*LineItemFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsLineItem returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsLineItem() *LineItemFieldOptions {
+	return &LineItemFieldOptions{
+		OrderID:     true,
+		ProductID:   true,
+		WorkspaceID: true,
+		Quantity:    true,
+		SKU:         true,
+	}
+}
+
+// readThroughLineItem implements the cache read-through path for LineItem:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+// Tenanted: tenant comes from q.Tenant — resolved once at the entity-method
+// boundary and reused here without re-invoking TenantResolver.
+func (c *Cache) readThroughLineItem(ctx context.Context, tenant uuid.UUID, pk LineItemPK, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForLineItem(tenant, pk)
+	schema := ""
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*LineItem](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableLineItems, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableLineItems, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableLineItems)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableLineItems)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableLineItems)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateLineItem(tenant, pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*LineItem](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*LineItem)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForLineItem())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableLineItems, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableLineItems, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableLineItems)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setLineItem caches a full LineItem entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+// Tenanted: tenant is supplied by the mutation hook from the row itself —
+// the PK struct when the tenant is part of the primary key, the structurally
+// captured m.AffectedTenants value otherwise — never the resolver, so
+// SkipTenancy creates write through under the correct key.
+func (c *Cache) setLineItem(ctx context.Context, tenant uuid.UUID, entity *LineItem) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForLineItem(tenant, LineItemPK{
+		OrderID:   entity.OrderID,
+		ProductID: entity.ProductID,
+	})
+	schema := ""
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForLineItem())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableLineItems, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableLineItems, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableLineItems)
+	}
+}
+
+// hydrateLineItem launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+// Tenanted: tenant comes from the readThrough caller — resolved once at the
+// entity-method boundary, threaded through both the cache key and the
+// hydration QueryContext.Tenant.
+func (c *Cache) hydrateLineItem(tenant uuid.UUID, pk LineItemPK, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForLineItem(tenant, pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := ""
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableLineItems)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableLineItems,
+			Schema: schema,
+			PK:     pk,
+			Tenant: tenant,
+			CallOptions: CallOptions[LineItemFieldOptions]{
+				FieldOptions: fullParentFieldOptionsLineItem(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableLineItems, err)
+			}
+			return
+		}
+		entity, ok := result.(*LineItem)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableLineItems, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableLineItems, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForLineItem())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableLineItems, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableLineItems, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableLineItems, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableLineItems)
+			c.metrics.HydrationComplete(schema, TableLineItems, nil)
+		}
+	}()
+}
+
 // keyForMoment builds the cache key for Moment by PK.
 func (c *Cache) keyForMoment(pk types.DateTime) string {
 	return cache.BuildKey(c.prefix, "", "moments", fingerprintMoment, pk)
@@ -2531,6 +2824,7 @@ func fullParentFieldOptionsOrderItem() *OrderItemFieldOptions {
 		ProductID:   true,
 		Quantity:    true,
 		UnitPrice:   true,
+		Ref:         true,
 	}
 }
 
@@ -4404,6 +4698,7 @@ func fullParentFieldOptionsTask() *TaskFieldOptions {
 		WorkspaceID: true,
 		CycleID:     true,
 		Title:       true,
+		Code:        true,
 	}
 }
 
@@ -6872,6 +7167,8 @@ func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableLegacyWidgets:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableLineItems:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableOrderItems:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TablePosts:
@@ -6968,6 +7265,25 @@ func (c *Cache) invalidateAffectedTenanted(ctx context.Context, table hook.Table
 				continue
 			}
 			keys = append(keys, cache.BuildTenantKey(c.prefix, "", "legacy_widgets", fingerprintLegacyWidget, tenants[i], pk))
+		}
+	case TableLineItems:
+		if len(tenants) < len(pks) {
+			return c.invalidateTenantedFallback(ctx, table, "captured tenant carrier missing")
+		}
+		for i, pk := range pks {
+			if tenants[i] == nil {
+				// Row not materialized by the mutation — nothing cached
+				// changed for this PK; skip (hook.AffectedTenants contract).
+				continue
+			}
+			compositePK, ok := pk.(LineItemPK)
+			if !ok {
+				return c.invalidateTenantedFallback(ctx, table, fmt.Sprintf("unexpected PK type %T", pk))
+			}
+			keys = append(keys, cache.BuildCompositeTenantKey(c.prefix, "", "line_items", fingerprintLineItem, tenants[i], []any{
+				compositePK.OrderID,
+				compositePK.ProductID,
+			}))
 		}
 	case TableOrderItems:
 		// Tenant lives inside the primary key — read it from each PK
@@ -7166,6 +7482,8 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "", "labels", true
 	case TableLegacyWidgets:
 		return "", "legacy_widgets", true
+	case TableLineItems:
+		return "", "line_items", true
 	case TableMoments:
 		return "", "moments", true
 	case TableMomentOwners:
@@ -7375,6 +7693,21 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughLegacyWidget(ctx, tenant, pk, q, next)
+			case TableLineItems:
+				pk, ok := q.PK.(LineItemPK)
+				if !ok {
+					return next(ctx, q)
+				}
+				// Tenanted table: tenant must be resolved by the entity
+				// method and threaded via q.Tenant. A nil/wrong-type
+				// Tenant means the caller bypassed tenant resolution
+				// (e.g. SkipTenancy = true) — fall through to the DB
+				// rather than risking a cross-tenant cache hit.
+				tenant, ok := q.Tenant.(uuid.UUID)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughLineItem(ctx, tenant, pk, q, next)
 			case TableMoments:
 				pk, ok := q.PK.(types.DateTime)
 				if !ok {
@@ -7710,6 +8043,20 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						}
 					}
 				}
+			case TableLineItems:
+				if entity, ok := result.(*LineItem); ok {
+					// Tenant sourced from the structural capture —
+					// never the resolver — so a
+					// SkipTenancy create writes through under the correct
+					// tenant-scoped key. A nil capture (no tenant value
+					// reached the INSERT) skips the write-through:
+					// safe-lossy, the next read hydrates the cache.
+					if len(affectedTenants) > 0 {
+						if tenant, ok := affectedTenants[0].(uuid.UUID); ok {
+							c.setLineItem(ctx, tenant, entity)
+						}
+					}
+				}
 			case TableMoments:
 				if entity, ok := result.(*Moment); ok {
 					c.setMoment(ctx, entity)
@@ -7977,6 +8324,27 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 					for _, entity := range entities {
 						if tenant, ok := tenantByPK[entity.ID].(uuid.UUID); ok {
 							c.setLegacyWidget(ctx, tenant, entity)
+						}
+					}
+				}
+			case TableLineItems:
+				if entities, ok := result.([]*LineItem); ok {
+					// GetMany result order is not guaranteed to match
+					// AffectedPKs, so the captured tenants are re-aligned to
+					// entities via their PK — the same reason setLineItem
+					// reads the PK off the entity.
+					tenantByPK := make(map[LineItemPK]any, len(affected))
+					for i, rawPK := range affected {
+						if i >= len(affectedTenants) {
+							break
+						}
+						if pk, ok := rawPK.(LineItemPK); ok {
+							tenantByPK[pk] = affectedTenants[i]
+						}
+					}
+					for _, entity := range entities {
+						if tenant, ok := tenantByPK[LineItemPK{OrderID: entity.OrderID, ProductID: entity.ProductID}].(uuid.UUID); ok {
+							c.setLineItem(ctx, tenant, entity)
 						}
 					}
 				}
@@ -8286,6 +8654,10 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
 				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
+			case TableLineItems:
+				// Tenanted tables rebuild each key from the row's own
+				// captured tenant — never a cross-tenant clear.
+				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
 			case TableOrderItems:
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
@@ -8434,6 +8806,8 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipLabel(fo)
 	case TableLegacyWidgets:
 		return hasAnyRelationshipLegacyWidget(fo)
+	case TableLineItems:
+		return hasAnyRelationshipLineItem(fo)
 	case TableMoments:
 		return hasAnyRelationshipMoment(fo)
 	case TableMomentOwners:

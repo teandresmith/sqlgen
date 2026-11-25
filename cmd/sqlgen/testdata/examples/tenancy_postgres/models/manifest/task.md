@@ -22,11 +22,13 @@
 | `sprint_id` | SprintID | `*int64` | `bigint` | yes |  |  |  | `comparator.NullableNumber[int64]` |  |
 | `project_code` | ProjectCode | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
 | `title` | Title | `string` | `text` |  |  |  |  | `comparator.String` |  |
+| `code` | Code | `*string` | `text` | yes |  | yes |  | `comparator.NullableString` |  |
 
 ## Indexes
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
+| `tasks_code_key` | code | yes | btree |  |
 | `tasks_pkey` | id | yes | btree |  |
 | `tasks_workspace_id_id_key` | workspace_id, id | yes | btree |  |
 
@@ -55,7 +57,7 @@ Generated SQL:
 postgres:
 
 ```sql
-SELECT "cycle_id", "id", "project_code", "sprint_id", "title", "workspace_id" FROM "public"."tasks" WHERE "id" = $1 LIMIT 1
+SELECT "code", "cycle_id", "id", "project_code", "sprint_id", "title", "workspace_id" FROM "public"."tasks" WHERE "id" = $1 LIMIT 1
 ```
 
 ### GetMany
@@ -69,7 +71,7 @@ Generated SQL:
 postgres:
 
 ```sql
-SELECT "cycle_id", "id", "project_code", "sprint_id", "title", "workspace_id" FROM "public"."tasks" WHERE <filter> ORDER BY <sort> LIMIT <limit>
+SELECT "code", "cycle_id", "id", "project_code", "sprint_id", "title", "workspace_id" FROM "public"."tasks" WHERE <filter> ORDER BY <sort> LIMIT <limit>
 ```
 
 ### Exists
@@ -140,7 +142,7 @@ Generated SQL:
 postgres:
 
 ```sql
-SELECT "cycle_id", "id", "project_code", "sprint_id", "title", "workspace_id" FROM "public"."tasks" WHERE <filter> ORDER BY <sort>
+SELECT "code", "cycle_id", "id", "project_code", "sprint_id", "title", "workspace_id" FROM "public"."tasks" WHERE <filter> ORDER BY <sort>
 ```
 
 ## Mutation methods
@@ -321,6 +323,7 @@ Type `TaskFilter`.
 
 | Field | Type |
 | --- | --- |
+| Code | `*comparator.NullableString` |
 | CycleID | `*comparator.NullableNumber[int64]` |
 | ID | `*comparator.Number[int64]` |
 | ProjectCode | `*comparator.NullableString` |
@@ -334,7 +337,7 @@ Type `TaskFilter`.
 
 Type `TaskSort`.
 
-Fields: CycleID, ID, ProjectCode, SprintID, Title, WorkspaceID
+Fields: Code, CycleID, ID, ProjectCode, SprintID, Title, WorkspaceID
 
 ## Read examples
 

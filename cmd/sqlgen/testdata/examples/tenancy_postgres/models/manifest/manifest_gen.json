@@ -217,6 +217,13 @@
       "file": "entities/label.json"
     },
     {
+      "name": "LedgerEntry",
+      "table": "ledger_entries",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/ledger_entry.json"
+    },
+    {
       "name": "LineItem",
       "table": "line_items",
       "schema": "public",

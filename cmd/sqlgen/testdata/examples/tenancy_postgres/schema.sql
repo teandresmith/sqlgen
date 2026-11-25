@@ -51,6 +51,9 @@ CREATE TABLE tasks (
     sprint_id BIGINT,
     project_code TEXT,
     title TEXT NOT NULL,
+    -- A UNIQUE without the tenant column: an upsert targeting it can conflict
+    -- with a row in another tenant.
+    code TEXT UNIQUE,
     UNIQUE (workspace_id, id),
     FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id),
     FOREIGN KEY (workspace_id, sprint_id) REFERENCES sprints (workspace_id, id),
@@ -269,4 +272,14 @@ CREATE TABLE moment_tag_links (
     tag_id BIGINT NOT NULL REFERENCES moment_tags (id),
     moment_at TIMESTAMPTZ NOT NULL REFERENCES moments (at),
     PRIMARY KEY (tag_id, moment_at)
+);
+
+-- ledger_entries: the tenant IS in the PK, and ref is a UNIQUE without it, so an
+-- upsert on ref can conflict with a row in another tenant.
+CREATE TABLE ledger_entries (
+    workspace_id UUID NOT NULL,
+    entry_id BIGINT NOT NULL,
+    amount BIGINT NOT NULL,
+    ref TEXT UNIQUE,
+    PRIMARY KEY (workspace_id, entry_id)
 );

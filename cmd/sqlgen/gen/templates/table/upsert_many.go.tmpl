@@ -163,6 +163,14 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		conflictColumns := {{ $structCamel }}ConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, {{ range $i, $col := .PKColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end }}{{ if and .Tenancy .Tenancy.Tenanted }}, {{ printf "%q" .Tenancy.Column }}{{ end }}{{ range .CreateInputFields }}{{ if .AutoIncrement }}, {{ printf "%q" .ColumnName }}{{ end }}{{ end }}))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+{{- if and .Tenancy .Tenancy.Tenanted }}
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = {{ printf "%q" .Tenancy.Column }}
+		}
+{{- end }}
 {{- if $mayReadBack }}
 
 		// Only a target covering every primary-key column leaves the written
@@ -341,6 +349,23 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		// with m.AffectedPKs: an event fanned out per affected row carries the
 		// input that actually wrote that row.
 		m.Input = rowInputs
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, {{ printf "%q" .Tenancy.Column }}) {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+{{- end }}
 
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
@@ -357,6 +382,9 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+{{- if and .Tenancy .Tenancy.Tenanted }}
+						UpsertGuardColumn:   guardColumn,
+{{- end }}
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -441,6 +469,19 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 {{- end }}
 {{- end }}
 		}
+{{- if $captureTenant }}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
+		}
+{{- end }}
 {{- if $mayReadBack }}
 
 		// Every sub-batch resolved its own keys, in batch order, so the
@@ -670,6 +711,50 @@ func {{ $structCamel }}ColumnValue({{ .VarName }} *{{ .StructName }}, column str
 {{- end }}
 	}
 	return nil
+}
+{{- end }}
+{{- if and .Tenancy .Tenancy.Tenanted }}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *{{ $structCamel }}Client) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant {{ .Tenancy.GoType }}) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{ {{- printf "%q" .Tenancy.Column -}} },
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 {{- end }}
 {{- end }}

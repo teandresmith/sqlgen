@@ -103,7 +103,7 @@ func resetDB(t *testing.T) {
 	for _, table := range []string{
 		"shared_kids", "shared_guardians", "shared_parents", "plots",
 		"moment_tag_links", "moment_tags", "moments", "moment_owners",
-		"articles", "line_items", "workspace_notes", "workspaces", "sites", "zones", "template_stamps", "stamps", "template_labels", "template_notes", "template_steps", "templates", "checkpoints", "milestones",
+		"articles", "line_items", "ledger_entries", "workspace_notes", "workspaces", "sites", "zones", "template_stamps", "stamps", "template_labels", "template_notes", "template_steps", "templates", "checkpoints", "milestones",
 		"task_reviewers", "reviewers", "task_labels", "labels", "task_badges", "badges", "tasks", "projects", "sprints", "cycles",
 	} {
 		if _, err := testPool.Exec(context.Background(), "DELETE FROM "+table); err != nil {

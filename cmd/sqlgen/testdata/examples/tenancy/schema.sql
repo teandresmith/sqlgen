@@ -51,7 +51,21 @@ CREATE TABLE order_items (
     product_id INTEGER NOT NULL,
     quantity INTEGER NOT NULL,
     unit_price REAL NOT NULL,
+    -- A UNIQUE without the tenant column, on a table whose PK holds it.
+    ref TEXT UNIQUE,
     PRIMARY KEY (workspace_id, order_id, product_id)
+);
+
+-- line_items: composite PK with the tenant OUTSIDE the PK, so an upsert on the
+-- PK can conflict with a row in another tenant.
+CREATE TABLE line_items (
+    order_id INTEGER NOT NULL,
+    product_id INTEGER NOT NULL,
+    workspace_id BLOB NOT NULL,
+    quantity INTEGER NOT NULL,
+    -- A UNIQUE beside the PK: its conflicting row need not hold the input PK.
+    sku TEXT UNIQUE,
+    PRIMARY KEY (order_id, product_id)
 );
 
 CREATE TABLE audit_logs (
@@ -148,6 +162,9 @@ CREATE TABLE tasks (
     workspace_id BLOB NOT NULL,
     cycle_id INTEGER,
     title TEXT NOT NULL,
+    -- A UNIQUE without the tenant column: an upsert targeting it can conflict
+    -- with a row in another tenant.
+    code TEXT UNIQUE,
     FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
 );
 

@@ -117,8 +117,13 @@ func (d PostgresDialect) UpsertClause(opts UpsertClauseOptions) string {
 		setClauses[i] = q + " = excluded." + q
 	}
 
-	return "ON CONFLICT (" + strings.Join(quotedKeys, ", ") +
+	clause := "ON CONFLICT (" + strings.Join(quotedKeys, ", ") +
 		") DO UPDATE SET " + strings.Join(setClauses, ", ")
+	if opts.GuardColumn != "" {
+		g := d.QuoteIdentifier(opts.GuardColumn)
+		clause += " WHERE " + d.FormatTable(opts.Table) + "." + g + " = excluded." + g
+	}
+	return clause
 }
 
 // SupportsArrayParams reports whether this dialect instance uses native array

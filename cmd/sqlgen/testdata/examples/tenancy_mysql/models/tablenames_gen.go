@@ -10,6 +10,7 @@ const (
 	TableCycles         hook.TableName = "cycles"
 	TableDocuments      hook.TableName = "documents"
 	TableLabels         hook.TableName = "labels"
+	TableLedgerEntries  hook.TableName = "ledger_entries"
 	TableLineItems      hook.TableName = "line_items"
 	TableMomentOwners   hook.TableName = "moment_owners"
 	TableMomentTagLinks hook.TableName = "moment_tag_links"

@@ -4150,3 +4150,73 @@ func TestTupleInSubquery(t *testing.T) {
 		})
 	}
 }
+
+// TestUpsertClause_GuardColumn pins the conflict-branch tenant guard per
+// dialect: the conflicting row is updated only when its guard column equals
+// the proposed row's, and the forms that write nothing carry no guard.
+func TestUpsertClause_GuardColumn(t *testing.T) {
+	table := sql.Table{Schema: "public", Name: "tasks"}
+	tests := []struct {
+		name    string
+		dialect sql.Dialect
+		opts    sql.UpsertClauseOptions
+		want    string
+	}{
+		{
+			name:    "postgres qualifies the existing row",
+			dialect: sql.NewPostgresDialect(),
+			opts:    sql.UpsertClauseOptions{ConflictKeys: []string{"code"}, UpdateColumns: []string{"title"}, GuardColumn: "workspace_id", Table: table},
+			want:    `ON CONFLICT ("code") DO UPDATE SET "title" = excluded."title" WHERE "public"."tasks"."workspace_id" = excluded."workspace_id"`,
+		},
+		{
+			name:    "postgres DO NOTHING carries no guard",
+			dialect: sql.NewPostgresDialect(),
+			opts:    sql.UpsertClauseOptions{ConflictKeys: []string{"code"}, GuardColumn: "workspace_id", Table: table},
+			want:    `ON CONFLICT ("code") DO NOTHING`,
+		},
+		{
+			name:    "sqlite",
+			dialect: sql.NewSQLiteDialect(),
+			opts:    sql.UpsertClauseOptions{ConflictKeys: []string{"code"}, UpdateColumns: []string{"title"}, GuardColumn: "workspace_id", Table: sql.Table{Name: "tasks"}},
+			want:    `ON CONFLICT ("code") DO UPDATE SET "title" = excluded."title" WHERE "tasks"."workspace_id" = excluded."workspace_id"`,
+		},
+		{
+			name:    "mysql guards each assignment and keeps the PK republish",
+			dialect: sql.NewMySQLDialect(),
+			opts:    sql.UpsertClauseOptions{ConflictKeys: []string{"code"}, UpdateColumns: []string{"title", "cycle_id"}, ResolvePKColumn: "id", GuardColumn: "workspace_id", Table: sql.Table{Name: "tasks"}},
+			want:    "ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`), `title` = IF(`workspace_id` = VALUES(`workspace_id`), VALUES(`title`), `title`), `cycle_id` = IF(`workspace_id` = VALUES(`workspace_id`), VALUES(`cycle_id`), `cycle_id`)",
+		},
+		{
+			name:    "mysql no-op form carries no guard",
+			dialect: sql.NewMySQLDialect(),
+			opts:    sql.UpsertClauseOptions{ConflictKeys: []string{"code"}, GuardColumn: "workspace_id"},
+			want:    "ON DUPLICATE KEY UPDATE `code` = `code`",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.dialect.UpsertClause(tt.opts); got != tt.want {
+				t.Errorf("UpsertClause() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildMultiInsert_UpsertGuardColumn: the builder passes the guard and its
+// table through, and binds no extra argument for it.
+func TestBuildMultiInsert_UpsertGuardColumn(t *testing.T) {
+	query, args := sql.BuildMultiInsert(sql.NewPostgresDialect(), sql.Table{Name: "tasks"}, sql.MultiInsertOptions{
+		Columns:             []string{"code", "title", "workspace_id"},
+		ValueRows:           [][]any{{"c1", "t1", "ws"}},
+		UpsertConflictKeys:  []string{"code"},
+		UpsertUpdateColumns: []string{"title"},
+		UpsertGuardColumn:   "workspace_id",
+	})
+	want := `INSERT INTO "tasks" ("code", "title", "workspace_id") VALUES ($1, $2, $3) ON CONFLICT ("code") DO UPDATE SET "title" = excluded."title" WHERE "tasks"."workspace_id" = excluded."workspace_id"`
+	if query != want {
+		t.Errorf("query = %q, want %q", query, want)
+	}
+	if diff := cmp.Diff([]any{"c1", "t1", "ws"}, args); diff != "" {
+		t.Errorf("args mismatch (-want +got):\n%s", diff)
+	}
+}

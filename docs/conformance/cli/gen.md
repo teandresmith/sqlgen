@@ -683,7 +683,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | artifacts.filter-struct.tenanted | The filter spells the tenant column through the same resolution as the row struct, CreateInput and PK struct | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter` | all | generated-artifacts: filter-struct × tenanted |
 
 ## §29.4 Generated Behavior
-<!-- prd: 29.4 sha256: 58fb198fde6c2c77 -->
+<!-- prd: 29.4 sha256: 16cd7e669bae06c4 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -23,6 +23,8 @@ CREATE TABLE line_items (
     product_id BIGINT NOT NULL,
     workspace_id CHAR(36) NOT NULL,
     quantity BIGINT NOT NULL,
+    -- A UNIQUE beside the PK: its conflicting row need not hold the input PK.
+    sku VARCHAR(64) UNIQUE,
     PRIMARY KEY (order_id, product_id)
 );
 
@@ -49,6 +51,9 @@ CREATE TABLE tasks (
     workspace_id CHAR(36) NOT NULL,
     cycle_id BIGINT,
     title VARCHAR(255) NOT NULL,
+    -- A UNIQUE without the tenant column: an upsert targeting it can conflict
+    -- with a row in another tenant.
+    code VARCHAR(64) UNIQUE,
     FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
 );
 
@@ -143,4 +148,14 @@ CREATE TABLE moment_tag_links (
     PRIMARY KEY (tag_id, moment_at),
     FOREIGN KEY (tag_id) REFERENCES moment_tags (id),
     FOREIGN KEY (moment_at) REFERENCES moments (at)
+);
+
+-- ledger_entries: the tenant IS in the PK, and ref is a UNIQUE without it, so an
+-- upsert on ref can conflict with a row in another tenant.
+CREATE TABLE ledger_entries (
+    workspace_id CHAR(36) NOT NULL,
+    entry_id BIGINT NOT NULL,
+    amount BIGINT NOT NULL,
+    ref VARCHAR(64) UNIQUE,
+    PRIMARY KEY (workspace_id, entry_id)
 );

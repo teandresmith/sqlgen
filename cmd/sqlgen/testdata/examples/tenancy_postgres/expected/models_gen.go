@@ -2318,6 +2318,12 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 
 		columns := []string{"title"}
 		args := []any{input.Title}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -2342,6 +2348,7 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -2364,10 +2371,18 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := articleConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -2413,13 +2428,18 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *articleClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *articleClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -2618,6 +2638,12 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 		conflictColumns := articleConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -2697,6 +2723,21 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -2712,6 +2753,7 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -2738,6 +2780,17 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -2904,6 +2957,48 @@ func articleColumnValue(a *Article, column string) any {
 		return a.DeletedAt
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *articleClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a article with the given primary key exists.
@@ -5473,6 +5568,12 @@ func (c *badgeClient) Upsert(ctx context.Context, input *CreateBadgeInput, targe
 
 		columns := []string{"code"}
 		args := []any{input.Code}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -5497,6 +5598,7 @@ func (c *badgeClient) Upsert(ctx context.Context, input *CreateBadgeInput, targe
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -5514,10 +5616,18 @@ func (c *badgeClient) Upsert(ctx context.Context, input *CreateBadgeInput, targe
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := badgeConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -5547,13 +5657,18 @@ func (c *badgeClient) Upsert(ctx context.Context, input *CreateBadgeInput, targe
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *badgeClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *badgeClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -5752,6 +5867,12 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 		conflictColumns := badgeConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -5826,6 +5947,21 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -5841,6 +5977,7 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -5867,6 +6004,17 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -6030,6 +6178,48 @@ func badgeColumnValue(b *Badge, column string) any {
 		return b.Code
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *badgeClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // CreateBadgeWithRelatedInput holds the fields for creating a badges record
@@ -8999,6 +9189,12 @@ func (c *checkpointClient) Upsert(ctx context.Context, input *CreateCheckpointIn
 
 		columns := []string{"title"}
 		args := []any{input.Title}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -9023,6 +9219,7 @@ func (c *checkpointClient) Upsert(ctx context.Context, input *CreateCheckpointIn
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -9050,10 +9247,18 @@ func (c *checkpointClient) Upsert(ctx context.Context, input *CreateCheckpointIn
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := checkpointConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -9083,13 +9288,18 @@ func (c *checkpointClient) Upsert(ctx context.Context, input *CreateCheckpointIn
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *checkpointClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *checkpointClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -9288,6 +9498,12 @@ func (c *checkpointClient) UpsertMany(ctx context.Context, inputs []*CreateCheck
 		conflictColumns := checkpointConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -9372,6 +9588,21 @@ func (c *checkpointClient) UpsertMany(ctx context.Context, inputs []*CreateCheck
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -9387,6 +9618,7 @@ func (c *checkpointClient) UpsertMany(ctx context.Context, inputs []*CreateCheck
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -9413,6 +9645,17 @@ func (c *checkpointClient) UpsertMany(ctx context.Context, inputs []*CreateCheck
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -9580,6 +9823,48 @@ func checkpointColumnValue(c *Checkpoint, column string) any {
 		return c.Title
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *checkpointClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a checkpoint with the given primary key exists.
@@ -12141,6 +12426,12 @@ func (c *cycleClient) Upsert(ctx context.Context, input *CreateCycleInput, targe
 
 		columns := []string{"name"}
 		args := []any{input.Name}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -12165,6 +12456,7 @@ func (c *cycleClient) Upsert(ctx context.Context, input *CreateCycleInput, targe
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -12182,10 +12474,18 @@ func (c *cycleClient) Upsert(ctx context.Context, input *CreateCycleInput, targe
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := cycleConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -12215,13 +12515,18 @@ func (c *cycleClient) Upsert(ctx context.Context, input *CreateCycleInput, targe
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *cycleClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *cycleClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -12420,6 +12725,12 @@ func (c *cycleClient) UpsertMany(ctx context.Context, inputs []*CreateCycleInput
 		conflictColumns := cycleConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -12494,6 +12805,21 @@ func (c *cycleClient) UpsertMany(ctx context.Context, inputs []*CreateCycleInput
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -12509,6 +12835,7 @@ func (c *cycleClient) UpsertMany(ctx context.Context, inputs []*CreateCycleInput
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -12535,6 +12862,17 @@ func (c *cycleClient) UpsertMany(ctx context.Context, inputs []*CreateCycleInput
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -12700,6 +13038,48 @@ func cycleColumnValue(c *Cycle, column string) any {
 	return nil
 }
 
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *cycleClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
+}
+
 // CreateCycleWithRelatedInput holds the fields for creating a cycles record
 // together with rows on its nested relationships.
 //
@@ -12782,6 +13162,7 @@ type CycleTasksCreateInput struct {
 	SprintID    omittable.Value[*int64]  `json:"sprint_id,omitzero"`
 	ProjectCode omittable.Value[*string] `json:"project_code,omitzero"`
 	Title       string                   `json:"title"`
+	Code        omittable.Value[*string] `json:"code,omitzero"`
 }
 
 // cycleTasksNestedFromCreate lifts the create-side block into the update-side one the
@@ -13148,6 +13529,7 @@ func (c *cycleClient) applyCycleTasksNested(ctx context.Context, parent *Cycle, 
 				SprintID:    n.SprintID,
 				ProjectCode: n.ProjectCode,
 				Title:       n.Title,
+				Code:        n.Code,
 			})
 		}
 		if _, err := c.taskClient.CreateMany(ctx, inputs, func(o *CallOptions[TaskFieldOptions]) {
@@ -16146,6 +16528,12 @@ func (c *labelClient) Upsert(ctx context.Context, input *CreateLabelInput, targe
 
 		columns := []string{"name"}
 		args := []any{input.Name}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -16170,6 +16558,7 @@ func (c *labelClient) Upsert(ctx context.Context, input *CreateLabelInput, targe
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -16187,10 +16576,18 @@ func (c *labelClient) Upsert(ctx context.Context, input *CreateLabelInput, targe
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := labelConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -16220,13 +16617,18 @@ func (c *labelClient) Upsert(ctx context.Context, input *CreateLabelInput, targe
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *labelClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *labelClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -16425,6 +16827,12 @@ func (c *labelClient) UpsertMany(ctx context.Context, inputs []*CreateLabelInput
 		conflictColumns := labelConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -16499,6 +16907,21 @@ func (c *labelClient) UpsertMany(ctx context.Context, inputs []*CreateLabelInput
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -16514,6 +16937,7 @@ func (c *labelClient) UpsertMany(ctx context.Context, inputs []*CreateLabelInput
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -16540,6 +16964,17 @@ func (c *labelClient) UpsertMany(ctx context.Context, inputs []*CreateLabelInput
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -16703,6 +17138,48 @@ func labelColumnValue(l *Label, column string) any {
 		return l.Name
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *labelClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // CreateLabelWithRelatedInput holds the fields for creating a labels record
@@ -18422,6 +18899,2787 @@ type GetLabelsInput struct {
 	requiredColumns []string
 }
 
+// LedgerEntryPK - composite primary key for the ledger_entries table.
+type LedgerEntryPK struct {
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	EntryID     int64     `db:"entry_id" json:"entry_id"`
+}
+type LedgerEntry struct {
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	EntryID     int64     `db:"entry_id" json:"entry_id"`
+	Amount      int64     `db:"amount" json:"amount"`
+	Ref         *string   `db:"ref" json:"ref"`
+}
+
+// LedgerEntryClient provides type-safe operations for the ledger_entries table.
+type LedgerEntryClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single ledgerEntry by primary key.
+	Get(ctx context.Context, pk LedgerEntryPK, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*LedgerEntry, error)
+
+	// GetMany returns ledger_entries matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetLedgerEntriesInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error)
+
+	// Exists returns true if a ledgerEntry with the given primary key exists.
+	Exists(ctx context.Context, pk LedgerEntryPK, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any ledgerEntry matches the given filter.
+	ExistsWhere(ctx context.Context, filter *LedgerEntryFilter, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (bool, error)
+
+	// Count returns the number of ledger_entries matching the given filter.
+	Count(ctx context.Context, filter *LedgerEntryFilter, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new ledgerEntry and returns the created entity.
+	Create(ctx context.Context, input *CreateLedgerEntryInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*LedgerEntry, error)
+
+	// CreateMany inserts multiple ledger_entries in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateLedgerEntryInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error)
+
+	// Update partially updates a ledgerEntry by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, pk LedgerEntryPK, input *UpdateLedgerEntryInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*LedgerEntry, error)
+
+	// UpdateMany updates multiple ledger_entries and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateLedgerEntryItem, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error)
+
+	// UpdateWhere updates all ledger_entries matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *LedgerEntryFilter, input *UpdateLedgerEntryInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error)
+
+	// Upsert inserts a ledgerEntry or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateLedgerEntryInput, target LedgerEntryConflictTarget, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*LedgerEntry, error)
+
+	// UpsertMany inserts or updates multiple ledger_entries in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateLedgerEntryInput, target LedgerEntryConflictTarget, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error)
+
+	// Increment atomically increments or decrements a numeric column on a ledgerEntry.
+	// Returns ErrNotFound if the primary key does not exist.
+	Increment(ctx context.Context, pk LedgerEntryPK, input IncrementInput[LedgerEntryIncrementColumn], opts ...func(*CallOptions[LedgerEntryFieldOptions])) error
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a ledgerEntry from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, pk LedgerEntryPK, opts ...func(*CallOptions[LedgerEntryFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple ledger_entries from the database.
+	HardDeleteMany(ctx context.Context, pks []LedgerEntryPK, opts ...func(*CallOptions[LedgerEntryFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all ledger_entries matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *LedgerEntryFilter, opts ...func(*CallOptions[LedgerEntryFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of ledger_entries with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[LedgerEntryFilter], opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*PaginateResult[LedgerEntry], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of ledger_entries.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[LedgerEntryFilter], opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*Connection[LedgerEntry], error)
+
+	// Stream returns an iterator over ledger_entries matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamLedgerEntriesInput, opts ...func(*CallOptions[StreamLedgerEntryFieldOptions])) iter.Seq2[*LedgerEntry, error]
+}
+
+// ledgerEntryClient implements the LedgerEntryClient interface.
+type ledgerEntryClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	strictUpdates  bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	tenantResolver tenancy.TenantResolver[uuid.UUID]
+}
+
+// newLedgerEntryClient creates a new ledgerEntryClient.
+func newLedgerEntryClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *ledgerEntryClient {
+	return &ledgerEntryClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "ledger_entries"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"workspace_id", "entry_id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *ledgerEntryClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *ledgerEntryClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *ledgerEntryClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *ledgerEntryClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// ledgerEntryAllColumns is the column list for full-entity reads, sorted for determinism.
+var ledgerEntryAllColumns = []string{"amount", "entry_id", "ref", "workspace_id"}
+
+// scanLedgerEntries scans rows into LedgerEntry entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanLedgerEntries(rows database.Rows, columns []string) ([]*LedgerEntry, error) {
+	var result []*LedgerEntry
+	for rows.Next() {
+		l := &LedgerEntry{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "workspace_id":
+				targets[idx] = &l.WorkspaceID
+			case "entry_id":
+				targets[idx] = &l.EntryID
+			case "amount":
+				targets[idx] = &l.Amount
+			case "ref":
+				targets[idx] = &l.Ref
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan ledger_entry: %w", err)
+		}
+
+		result = append(result, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ledger_entry rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single ledger_entry by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *ledgerEntryClient) Get(ctx context.Context, pk LedgerEntryPK, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*LedgerEntry, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get ledger_entry: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableLedgerEntries, Schema: "public",
+		PK: pk, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get ledger_entry: resolve tenant: %w", err)
+		}
+		if apply {
+			// Tenant-in-PK verify-match. The tenant column is part of
+			// the composite primary key, so the caller supplies it explicitly on
+			// LedgerEntryPK; the runtime verifies it matches the resolved tenant
+			// before any DB round-trip. No auto-fill — mismatch returns ErrMismatch.
+			if pk.WorkspaceID != resolvedTenant {
+				return nil, fmt.Errorf("get ledger_entry: %w", tenancy.ErrMismatch)
+			}
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[LedgerEntryFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LedgerEntryFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		ledgerEntries, err := c.GetMany(ctx, &GetLedgerEntriesInput{
+			Filter: &LedgerEntryFilter{
+				WorkspaceID: &comparator.ID{Eq: new(pk.WorkspaceID.String())},
+				EntryID:     &comparator.Number[int64]{Eq: new(pk.EntryID)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(ledgerEntries) == 0 {
+			return nil, ErrNotFound
+		}
+		return ledgerEntries[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get ledger_entry: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*LedgerEntry), nil
+}
+
+// GetMany returns ledger_entries matching the given filter, field selection, and sort criteria.
+func (c *ledgerEntryClient) GetMany(ctx context.Context, input *GetLedgerEntriesInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetLedgerEntriesInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many ledger_entries: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableLedgerEntries, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := ledgerEntryAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var ledgerEntries []*LedgerEntry
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		ledgerEntries, err = scanLedgerEntries(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return ledgerEntries, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many ledger_entries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*LedgerEntry), nil
+}
+
+// Create inserts a new ledger_entry and returns the created entity.
+func (c *ledgerEntryClient) Create(ctx context.Context, input *CreateLedgerEntryInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*LedgerEntry, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateLedgerEntryInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create ledger_entry: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableLedgerEntries, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"workspace_id", "entry_id", "amount"}
+		args := []any{input.WorkspaceID, input.EntryID, input.Amount}
+		// Tenant-in-PK verify-match. The tenant column is part of
+		// the composite primary key and is a required field on CreateInput, so
+		// it was already appended to columns/args via the required-fields head
+		// above. Here we only verify the caller-supplied value matches the
+		// resolved tenant; mismatch returns ErrMismatch before the DB round-trip.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// verify-match (cross-tenant write; caller-supplied value is used as-is).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal Get/GetMany (and any nested
+			// resolveTenant inside the chain) reuses this value instead of
+			// re-invoking the user resolver — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if input.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		if v, ok := input.Ref.Get(); ok {
+			columns = append(columns, "ref")
+			args = append(args, v)
+		}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{LedgerEntryPK{WorkspaceID: input.WorkspaceID, EntryID: input.EntryID}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, LedgerEntryPK{WorkspaceID: input.WorkspaceID, EntryID: input.EntryID}, func(o *CallOptions[LedgerEntryFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create ledger_entry: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*LedgerEntry), nil
+}
+
+// CreateMany inserts multiple ledger_entries in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *ledgerEntryClient) CreateMany(ctx context.Context, inputs []*CreateLedgerEntryInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many ledger_entries: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableLedgerEntries, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*LedgerEntry{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allPKs []LedgerEntryPK
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "entry_id", "amount", "ref"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenant-in-PK verify-match for each input in the batch.
+				// input.WorkspaceID is a required plain field, so no
+				// auto-fill happens; the caller supplied it and we verify it here.
+				// applyTenancy is false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is accepted as-is.
+				if applyTenancy && input.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				var ref any = sql.Default
+				if v, ok := input.Ref.Get(); ok {
+					ref = v
+				}
+
+				valueRows = append(valueRows, []any{
+					input.WorkspaceID,
+					input.EntryID,
+					input.Amount,
+					ref,
+				})
+			}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, err
+			}
+			for _, input := range batch {
+				allPKs = append(allPKs, LedgerEntryPK{WorkspaceID: input.WorkspaceID, EntryID: input.EntryID})
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return refetchInChunks(len(allPKs), c.batchSize, func(lo, hi int) ([]*LedgerEntry, error) {
+			return c.GetMany(ctx, &GetLedgerEntriesInput{
+				Filter: &LedgerEntryFilter{PKs: allPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[LedgerEntryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many ledger_entries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*LedgerEntry), nil
+}
+
+// Update partially updates a ledger_entry by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *ledgerEntryClient) Update(ctx context.Context, pk LedgerEntryPK, input *UpdateLedgerEntryInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*LedgerEntry, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update ledger_entry: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableLedgerEntries, Schema: "public",
+		PK: pk, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Tenant-in-PK verify-match. The tenant column is part of
+				// the composite primary key on LedgerEntryPK; the caller supplies
+				// it explicitly, and we reject any mismatch before the DB round-trip.
+				// No input-side check — tenant column is excluded from UpdateInput when
+				// it lives in the PK.
+				if pk.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Amount.Get(); ok {
+			setClauses["amount"] = v
+		}
+		if v, ok := input.Ref.Get(); ok {
+			setClauses["ref"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, pk, func(o *CallOptions[LedgerEntryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"workspace_id", "entry_id"},
+			[]any{pk.WorkspaceID, pk.EntryID})
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: updateConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{pk}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, pk, func(o *CallOptions[LedgerEntryFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update ledger_entry: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*LedgerEntry), nil
+}
+
+// UpdateLedgerEntryItem pairs a primary key with an update input for batch updates.
+type UpdateLedgerEntryItem struct {
+	PK    LedgerEntryPK           `json:"pk"`
+	Input *UpdateLedgerEntryInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple ledger_entries and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *ledgerEntryClient) UpdateMany(ctx context.Context, items []UpdateLedgerEntryItem, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error) {
+	// UpdateLedgerEntryItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many ledger_entries: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableLedgerEntries, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*LedgerEntry{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					// Tenant-in-PK verify-match per item in the batch.
+					// No input-side check — tenant column excluded from UpdateInput
+					// when it lives in the PK.
+					if item.PK.WorkspaceID != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allPKs []LedgerEntryPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateLedgerEntryItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateLedgerEntryItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.Amount.Get(); ok {
+					setClauses["amount"] = v
+				}
+				if v, ok := item.Input.Ref.Get(); ok {
+					setClauses["ref"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allPKs = append(allPKs, item.PK)
+					continue
+				}
+				itemConds := sql.BuildCompositePKConditions(c.dialect,
+					[]string{"workspace_id", "entry_id"},
+					[]any{item.PK.WorkspaceID, item.PK.EntryID})
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: itemConds,
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allPKs = append(allPKs, item.PK)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].PK, err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_ledger_entry", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].PK, err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("item %v rows affected: %w", queuedItems[i].PK, err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		readKeys := distinctKeys(allPKs, func(pk LedgerEntryPK) LedgerEntryPK { return pk })
+		return refetchInChunks(len(readKeys), c.batchSize, func(lo, hi int) ([]*LedgerEntry, error) {
+			return c.GetMany(ctx, &GetLedgerEntriesInput{
+				Filter: &LedgerEntryFilter{PKs: readKeys[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[LedgerEntryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many ledger_entries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*LedgerEntry), nil
+}
+
+// UpdateWhere updates all ledger_entries matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *ledgerEntryClient) UpdateWhere(ctx context.Context, filter *LedgerEntryFilter, input *UpdateLedgerEntryInput, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update ledger_entries where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableLedgerEntries, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Amount.Get(); ok {
+			setClauses["amount"] = v
+		}
+		if v, ok := input.Ref.Get(); ok {
+			setClauses["ref"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetLedgerEntriesInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[LedgerEntryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"workspace_id", "entry_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []LedgerEntryPK
+		for rows.Next() {
+			var pk LedgerEntryPK
+			if err := rows.Scan(&pk.WorkspaceID, &pk.EntryID); err != nil {
+				return nil, fmt.Errorf("scan updated ledger_entry pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return refetchInChunks(len(pks), c.batchSize, func(lo, hi int) ([]*LedgerEntry, error) {
+			return c.GetMany(ctx, &GetLedgerEntriesInput{
+				Filter: &LedgerEntryFilter{PKs: pks[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[LedgerEntryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update ledger_entries where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*LedgerEntry), nil
+}
+
+// HardDelete permanently removes a ledger_entry from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *ledgerEntryClient) HardDelete(ctx context.Context, pk LedgerEntryPK, opts ...func(*CallOptions[LedgerEntryFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableLedgerEntries, Schema: "public",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"workspace_id", "entry_id"},
+			[]any{pk.WorkspaceID, pk.EntryID})
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				// Tenant-in-PK verify-match.
+				if pk.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: hardConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete ledger_entry: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple ledger_entries from the database.
+func (c *ledgerEntryClient) HardDeleteMany(ctx context.Context, pks []LedgerEntryPK, opts ...func(*CallOptions[LedgerEntryFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableLedgerEntries, Schema: "public",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				// Tenant-in-PK verify-match per item in the batch.
+				for i := range pks {
+					if pks[i].WorkspaceID != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[LedgerEntryPK]struct{}, len(pks))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.WorkspaceID, pk.EntryID}
+			}
+			hardConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "entry_id"}, pkValues),
+			}
+			hardConds = append(hardConds, scopeConds...)
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"workspace_id", "entry_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[LedgerEntryPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK LedgerEntryPK
+				if err := rows.Scan(&rowPK.WorkspaceID, &rowPK.EntryID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted ledger_entry key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many ledger_entries: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all ledger_entries matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *ledgerEntryClient) HardDeleteWhere(ctx context.Context, filter *LedgerEntryFilter, opts ...func(*CallOptions[LedgerEntryFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableLedgerEntries, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"workspace_id", "entry_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []LedgerEntryPK
+		for rows.Next() {
+			var pk LedgerEntryPK
+			if err := rows.Scan(&pk.WorkspaceID, &pk.EntryID); err != nil {
+				return nil, fmt.Errorf("scan deleted ledger_entry pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(pks)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete ledger_entries where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *ledgerEntryClient) recordWrittenKeys(written map[LedgerEntryPK]struct{}, listed []LedgerEntryPK, rowKeys map[LedgerEntryPK]struct{}) {
+	found := make(map[LedgerEntryPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// LedgerEntryConflictTarget identifies a unique constraint for upsert conflict detection.
+type LedgerEntryConflictTarget int
+
+const (
+	LedgerEntryConflictPK  LedgerEntryConflictTarget = iota // PRIMARY KEY (workspace_id, entry_id)
+	LedgerEntryConflictRef                                  // UNIQUE (ref)
+)
+
+// ledgerEntryConflictColumns maps each conflict target to its column set.
+var ledgerEntryConflictColumns = map[LedgerEntryConflictTarget][]string{
+	LedgerEntryConflictPK:  {"workspace_id", "entry_id"},
+	LedgerEntryConflictRef: {"ref"},
+}
+
+// Upsert inserts a ledger_entry or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *ledgerEntryClient) Upsert(ctx context.Context, input *CreateLedgerEntryInput, target LedgerEntryConflictTarget, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*LedgerEntry, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateLedgerEntryInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert ledger_entry: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableLedgerEntries, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"workspace_id", "entry_id", "amount"}
+		args := []any{input.WorkspaceID, input.EntryID, input.Amount}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
+		// Tenant-in-PK verify-match. input.WorkspaceID
+		// is a required field (already appended to columns/args above).
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// verify-match (cross-tenant write; caller-supplied value used as-is).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve).
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if input.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				guardTenant = resolvedTenant
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		if v, ok := input.Ref.Get(); ok {
+			columns = append(columns, "ref")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := ledgerEntryConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "entry_id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
+
+		// A target without the tenant column can match another tenant's row,
+		// which the guard leaves untouched. On MySQL the statement may instead
+		// fire on another unique index, so the call is refused before it runs.
+		checkForeign := guardTenant != nil && !slices.Contains(conflictColumns, "workspace_id")
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+			UpsertGuardColumn:   guardColumn,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		// The check before the statement cannot see a row another tenant
+		// inserts after it. The guard kept the statement off such a row.
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
+		m.AffectedPKs = []any{LedgerEntryPK{WorkspaceID: input.WorkspaceID, EntryID: input.EntryID}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, LedgerEntryPK{WorkspaceID: input.WorkspaceID, EntryID: input.EntryID}, func(o *CallOptions[LedgerEntryFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert ledger_entry: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*LedgerEntry), nil
+}
+
+// upsertForeignConflict reports whether a row in another tenant holds the
+// values the upsert supplies for every conflict column. An input that leaves
+// a conflict column unset cannot conflict on that target.
+func (c *ledgerEntryClient) upsertForeignConflict(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string, tenant any) (bool, error) {
+	conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant)}
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			return false, nil
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return false, err
+	}
+	found := rows.Next()
+	err = rows.Err()
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	return found, err
+}
+
+// ledgerEntryConflictCoversPK reports, per conflict target, whether that target's
+// columns include every primary-key column of ledger_entries.
+//
+// Only such a target makes a batched upsert's written key caller-known: the
+// conflict fired on columns that include the key, so the row the statement
+// touched is the row carrying the key the input supplied. On any other target
+// the conflicting row keeps its own key, and UpsertMany reads the sub-batch
+// back rather than trusting the input.
+var ledgerEntryConflictCoversPK = map[LedgerEntryConflictTarget]bool{
+	LedgerEntryConflictPK:  true,
+	LedgerEntryConflictRef: false,
+}
+
+// UpsertMany inserts or updates multiple ledger_entries in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// The written keys come from the inputs only on a conflict target that covers
+// every primary-key column. LedgerEntry declares one that does not, and on such a
+// target the conflicting row keeps its own key — the key column is excluded
+// from the update half of the clause — so each sub-batch is read back by the
+// conflict columns it targeted instead, two statements rather than one.
+// Taking the key from the input there would name a row that does
+// not exist: AffectedPKs would be wrong and this method would return short.
+func (c *ledgerEntryClient) UpsertMany(ctx context.Context, inputs []*CreateLedgerEntryInput, target LedgerEntryConflictTarget, opts ...func(*CallOptions[LedgerEntryFieldOptions])) ([]*LedgerEntry, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many ledger_entries: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableLedgerEntries, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*LedgerEntry{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "entry_id", "amount", "ref"}
+		conflictColumns := ledgerEntryConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "entry_id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
+
+		// Only a target covering every primary-key column leaves the written
+		// key caller-known. On any other target the conflicting row
+		// keeps its own key, so it is read back after the write instead.
+		pkFromInput := ledgerEntryConflictCoversPK[target]
+		if !pkFromInput && !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateLedgerEntryInput, 0, len(inputs))
+		rowPKs := make([]LedgerEntryPK, 0, len(inputs))
+		// Filled by the read-back when the conflict target does not cover the
+		// key, and substituted for the input-sourced slice above once every
+		// sub-batch is written.
+		var resolvedPKs []LedgerEntryPK
+		for _, input := range inputs {
+			// Tenant-in-PK verify-match for each input in the batch.
+			// input.WorkspaceID is a required plain field, so no
+			// auto-fill happens; the caller supplied it and we verify it here.
+			// applyTenancy is false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is accepted as-is.
+			if applyTenancy && input.WorkspaceID != resolvedTenant {
+				return nil, tenancy.ErrMismatch
+			}
+			var ref any = sql.Default
+			if v, ok := input.Ref.Get(); ok {
+				ref = v
+			}
+
+			valueRows = append(valueRows, []any{
+				input.WorkspaceID,
+				input.EntryID,
+				input.Amount,
+				ref,
+			})
+			rowInputs = append(rowInputs, input)
+			rowPKs = append(rowPKs, LedgerEntryPK{WorkspaceID: input.WorkspaceID, EntryID: input.EntryID})
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateLedgerEntryInput, 0, len(rowInputs))
+			dedupedPKs := make([]LedgerEntryPK, 0, len(rowPKs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed && !pkFromInput {
+					// This target does not cover the key, so the row's key can
+					// only come from the read-back — which needs a definite
+					// conflict value to match on. Refused before anything is
+					// written rather than returned short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so the key of the row it writes cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedPKs[j] = rowPKs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedPKs = append(dedupedPKs, rowPKs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowPKs = dedupedPKs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			// One statement per set of update columns the rows set, so a
+			// conflict leaves a column the row left unset as the conflicting
+			// row has it, as the single-row Upsert does.
+			updateSets, groups := upsertUpdateGroups(columns, updateColumns, batch)
+			writeGroups := func(ctx context.Context, conn database.Querier) error {
+				for g, rows := range groups {
+					query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+						Columns:             columns,
+						ValueRows:           rows,
+						UpsertConflictKeys:  conflictColumns,
+						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
+					})
+					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if len(groups) > 1 {
+				// Several statements still write one sub-batch atomically: in a
+				// transaction of their own, or a savepoint when ctx already
+				// carries one. Sub-batches already committed stay applied.
+				if err := database.WithTransaction(ctx, c.querier, "upsert_many_ledger_entry", func(ctx context.Context) error {
+					return writeGroups(ctx, database.Conn(ctx, c.querier))
+				}); err != nil {
+					return nil, err
+				}
+			} else if err := writeGroups(ctx, conn); err != nil {
+				return nil, err
+			}
+
+			// This target does not cover the key, so the rows this sub-batch
+			// wrote are named by reading them back rather than taken from the
+			// inputs. The lookup carries the tenant in the
+			// same statement, which is why the capture below is the
+			// caller-known branch only.
+			if !pkFromInput {
+				batchKeys, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+				if err != nil {
+					return nil, err
+				}
+				resolvedPKs = append(resolvedPKs, batchKeys...)
+			}
+		}
+
+		// Every sub-batch resolved its own keys, in batch order, so the
+		// concatenation is index-aligned with the deduped value rows the
+		// input-sourced slice would have been.
+		if !pkFromInput {
+			rowPKs = resolvedPKs
+		}
+
+		m.AffectedPKs = toAnySlice(rowPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		written, err := refetchInChunks(len(rowPKs), c.batchSize, func(lo, hi int) ([]*LedgerEntry, error) {
+			return c.GetMany(ctx, &GetLedgerEntriesInput{
+				Filter: &LedgerEntryFilter{PKs: rowPKs[lo:hi]},
+				Limit:  new(0),
+			}, func(o *CallOptions[LedgerEntryFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many ledger_entries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*LedgerEntry), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// LedgerEntry's key is knowable before the write, so this runs only on a
+// conflict target that does not cover it — where the conflicting row keeps its
+// own key and the input's is not the row's.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *ledgerEntryClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]LedgerEntryPK, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level ledgerEntryConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanLedgerEntries
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"workspace_id", "entry_id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanLedgerEntries(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk LedgerEntryPK
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = ledgerEntryColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: LedgerEntryPK{WorkspaceID: entity.WorkspaceID, EntryID: entity.EntryID}}
+	}
+
+	pks := make([]LedgerEntryPK, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// ledgerEntryColumnValue returns one column's value off a scanned
+// LedgerEntry, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanLedgerEntries.
+func ledgerEntryColumnValue(l *LedgerEntry, column string) any {
+	switch column {
+	case "workspace_id":
+		return l.WorkspaceID
+	case "entry_id":
+		return l.EntryID
+	case "amount":
+		return l.Amount
+	case "ref":
+		return l.Ref
+	}
+	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *ledgerEntryClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
+}
+
+// LedgerEntryIncrementColumn identifies a numeric column eligible for atomic increment/decrement.
+type LedgerEntryIncrementColumn string
+
+const (
+	LedgerEntryIncrementAmount LedgerEntryIncrementColumn = "amount"
+)
+
+// Increment atomically increments or decrements a numeric column on a ledger_entry.
+// A negative amount performs a decrement.
+// Returns ErrNotFound if the primary key does not exist.
+func (c *ledgerEntryClient) Increment(ctx context.Context, pk LedgerEntryPK, input IncrementInput[LedgerEntryIncrementColumn], opts ...func(*CallOptions[LedgerEntryFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpIncrement, Table: TableLedgerEntries, Schema: "public",
+		PK: pk, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		incConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"workspace_id", "entry_id"},
+			[]any{pk.WorkspaceID, pk.EntryID})
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				// Tenant-in-PK verify-match.
+				if pk.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				incConds = append(incConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{pk}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("increment ledger_entry: %w", err)
+	}
+	return nil
+}
+
+// Exists returns true if a ledger_entry with the given primary key exists.
+func (c *ledgerEntryClient) Exists(ctx context.Context, pk LedgerEntryPK, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableLedgerEntries, Schema: "public",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"workspace_id", "entry_id"},
+			[]any{pk.WorkspaceID, pk.EntryID})
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				// Tenant-in-PK verify-match.
+				if pk.WorkspaceID != resolvedTenant {
+					return false, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists ledger_entry: %w", err)
+	}
+	if result == nil {
+		return false, nil
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any ledger_entry matches the given filter.
+func (c *ledgerEntryClient) ExistsWhere(ctx context.Context, filter *LedgerEntryFilter, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableLedgerEntries, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists ledger_entries where: %w", err)
+	}
+	if result == nil {
+		return false, nil
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of ledger_entries matching the given filter.
+// A nil filter counts all ledger_entries.
+func (c *ledgerEntryClient) Count(ctx context.Context, filter *LedgerEntryFilter, opts ...func(*CallOptions[LedgerEntryFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableLedgerEntries, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count ledger_entries: %w", err)
+	}
+	if result == nil {
+		return 0, nil
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of ledger_entries with total count for offset-based pagination.
+// A nil filter paginates all ledger_entries.
+func (c *ledgerEntryClient) Paginate(ctx context.Context, input PaginateInput[LedgerEntryFilter], opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*PaginateResult[LedgerEntry], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate ledger_entries: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableLedgerEntries, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LedgerEntryFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		ledgerEntries, err := c.GetMany(ctx, &GetLedgerEntriesInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[LedgerEntry]{
+			Items:      ledgerEntries,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate ledger_entries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*PaginateResult[LedgerEntry]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of ledger_entries.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *ledgerEntryClient) Connection(ctx context.Context, input ConnectionInput[LedgerEntryFilter], opts ...func(*CallOptions[LedgerEntryFieldOptions])) (*Connection[LedgerEntry], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection ledger_entries: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableLedgerEntries, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LedgerEntryFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeLedgerEntryCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeLedgerEntryCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		ledgerEntries, err := c.GetMany(ctx, &GetLedgerEntriesInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(ledgerEntries) > limit
+		if hasMore {
+			ledgerEntries = ledgerEntries[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(ledgerEntries)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[LedgerEntry], len(ledgerEntries))
+		for i, row := range ledgerEntries {
+			cursor, err := encodeLedgerEntryCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[LedgerEntry]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[LedgerEntry]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection ledger_entries: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Connection[LedgerEntry]), nil
+}
+
+// encodeLedgerEntryCursor encodes cursor key values as a base64 JSON string.
+func encodeLedgerEntryCursor(keys []string, l *LedgerEntry) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "workspace_id":
+			out["workspace_id"] = l.WorkspaceID
+		case "entry_id":
+			out["entry_id"] = l.EntryID
+		case "amount":
+			out["amount"] = l.Amount
+		case "ref":
+			out["ref"] = l.Ref
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode ledger_entry cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeLedgerEntryCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeLedgerEntryCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row LedgerEntry
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "workspace_id":
+			err = json.Unmarshal(raw[key], &row.WorkspaceID)
+			out[key] = row.WorkspaceID
+		case "entry_id":
+			err = json.Unmarshal(raw[key], &row.EntryID)
+			out[key] = row.EntryID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamLedgerEntriesInput holds query parameters for streaming ledger_entries records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamLedgerEntriesInput struct {
+	Filter *LedgerEntryFilter `json:"filter"`
+	Sorts  []sql.Sort         `json:"sorts"`
+}
+
+// StreamLedgerEntryFieldOptions controls scalar column selection for ledger_entries streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamLedgerEntryFieldOptions struct {
+	WorkspaceID bool `json:"workspace_id"`
+	EntryID     bool `json:"entry_id"`
+	Amount      bool `json:"amount"`
+	Ref         bool `json:"ref"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamLedgerEntryFieldOptions) Columns() []string {
+	var cols []string
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.EntryID {
+		cols = append(cols, "entry_id")
+	}
+	if fo.Amount {
+		cols = append(cols, "amount")
+	}
+	if fo.Ref {
+		cols = append(cols, "ref")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamLedgerEntryFieldOptions) HasSelectedColumns() bool {
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.EntryID {
+		return true
+	}
+	if fo.Amount {
+		return true
+	}
+	if fo.Ref {
+		return true
+	}
+	return false
+}
+
+// scanLedgerEntryRow scans a single row into a LedgerEntry entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanLedgerEntryRow(rows database.Rows, columns []string) (*LedgerEntry, error) {
+	l := &LedgerEntry{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "workspace_id":
+			targets[idx] = &l.WorkspaceID
+		case "entry_id":
+			targets[idx] = &l.EntryID
+		case "amount":
+			targets[idx] = &l.Amount
+		case "ref":
+			targets[idx] = &l.Ref
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan ledger_entry: %w", err)
+	}
+
+	return l, nil
+}
+
+// Stream returns an iterator over ledger_entries matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *ledgerEntryClient) Stream(ctx context.Context, input *StreamLedgerEntriesInput, opts ...func(*CallOptions[StreamLedgerEntryFieldOptions])) iter.Seq2[*LedgerEntry, error] {
+	return func(yield func(*LedgerEntry, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamLedgerEntriesInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream ledger_entries: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *LedgerEntry, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream ledger_entries: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableLedgerEntries, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := ledgerEntryAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				l, err := scanLedgerEntryRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(l, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate ledger_entry rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream ledger_entries: %w", err))
+		}
+	}
+}
+
+// LedgerEntryFilter provides type-safe filtering for the ledger_entries table.
+type LedgerEntryFilter struct {
+	Amount      *comparator.Number[int64]  `json:"amount"`
+	EntryID     *comparator.Number[int64]  `json:"entry_id"`
+	Ref         *comparator.NullableString `json:"ref"`
+	WorkspaceID *comparator.ID             `json:"workspace_id"`
+	PKs         []LedgerEntryPK            `json:"pks"`
+	And         []*LedgerEntryFilter       `json:"and"`
+	Or          []*LedgerEntryFilter       `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *LedgerEntryFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.Amount != nil {
+		conds = append(conds, f.Amount.Parse(dialect.QuoteIdentifier("amount"), dialect)...)
+	}
+
+	if f.EntryID != nil {
+		conds = append(conds, f.EntryID.Parse(dialect.QuoteIdentifier("entry_id"), dialect)...)
+	}
+
+	if f.Ref != nil {
+		conds = append(conds, f.Ref.Parse(dialect.QuoteIdentifier("ref"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	if len(f.PKs) > 0 {
+		var pkConds []sql.Condition
+		for _, pk := range f.PKs {
+			pkConds = append(pkConds, sql.And(
+				sql.Condition{Clause: dialect.QuoteIdentifier("workspace_id") + " = $", Value: pk.WorkspaceID},
+				sql.Condition{Clause: dialect.QuoteIdentifier("entry_id") + " = $", Value: pk.EntryID},
+			))
+		}
+		conds = append(conds, sql.Or(pkConds...))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// LedgerEntryFieldOptions controls column selection and relationship loading for ledger_entries queries.
+type LedgerEntryFieldOptions struct {
+	WorkspaceID bool `json:"workspace_id"`
+	EntryID     bool `json:"entry_id"`
+	Amount      bool `json:"amount"`
+	Ref         bool `json:"ref"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *LedgerEntryFieldOptions) Columns() []string {
+	var cols []string
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.EntryID {
+		cols = append(cols, "entry_id")
+	}
+	if fo.Amount {
+		cols = append(cols, "amount")
+	}
+	if fo.Ref {
+		cols = append(cols, "ref")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *LedgerEntryFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"WorkspaceID": "workspace_id",
+		"EntryID":     "entry_id",
+		"Amount":      "amount",
+		"Ref":         "ref",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *LedgerEntryFieldOptions) HasSelectedColumns() bool {
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.EntryID {
+		return true
+	}
+	if fo.Amount {
+		return true
+	}
+	if fo.Ref {
+		return true
+	}
+	return false
+}
+
+// CreateLedgerEntryInput holds the fields for creating a ledger_entries record.
+type CreateLedgerEntryInput struct {
+	WorkspaceID uuid.UUID                `json:"workspace_id"`
+	EntryID     int64                    `json:"entry_id"`
+	Amount      int64                    `json:"amount"`
+	Ref         omittable.Value[*string] `json:"ref,omitzero"`
+}
+
+// UpdateLedgerEntryInput holds the fields for updating a ledger_entries record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateLedgerEntryInput struct {
+	Amount omittable.Value[int64]   `json:"amount,omitzero"`
+	Ref    omittable.Value[*string] `json:"ref,omitzero"`
+}
+
+// GetLedgerEntriesInput holds query parameters for retrieving ledger_entries records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetLedgerEntriesInput struct {
+	Filter *LedgerEntryFilter `json:"filter"`
+	Limit  *int               `json:"limit"`
+	Offset *int               `json:"offset"`
+	Sorts  []sql.Sort         `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 // LineItemPK - composite primary key for the line_items table.
 type LineItemPK struct {
 	OrderID   int64 `db:"order_id" json:"order_id"`
@@ -19985,6 +23243,12 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 
 		columns := []string{"order_id", "product_id", "quantity"}
 		args := []any{input.OrderID, input.ProductID, input.Quantity}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -20009,6 +23273,7 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -20026,6 +23291,10 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := lineItemConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "order_id", "product_id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
 		// RETURNING the tenant column captures the row's own tenant — on the
 		// conflict-update path the existing row keeps its tenant, so the
@@ -20035,6 +23304,7 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 			Values:              args,
 			UpsertConflictKeys:  conflictColumns,
 			UpsertUpdateColumns: updateColumns,
+			UpsertGuardColumn:   guardColumn,
 			ReturningColumns:    []string{"workspace_id"},
 		})
 		var capturedTenant any
@@ -20062,11 +23332,15 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 			}
 			if found {
 				capturedTenant = rowTenant
+			} else if guardColumn != "" && len(updateColumns) > 0 {
+				// DO UPDATE returns no row only when the guard left another
+				// tenant's conflicting row untouched.
+				return nil, ErrNotFound
 			} else {
 				// A conflict target covering every inserted column leaves
 				// nothing to set, so the dialect emitted DO NOTHING — which
-				// returns no row. The PK is caller-known on this
-				// branch, so the conflicting row's tenant is read back by PK.
+				// returns no row. The PK is caller-known on this branch, so
+				// the conflicting row's tenant is read back by PK.
 				// One column, so there is no scan-order hazard to guard.
 				tenantQuery, tenantArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
 					Columns: []string{"workspace_id"},
@@ -20080,6 +23354,11 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 				}
 				capturedTenant = rowTenant
 			}
+		}
+
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 
 		m.AffectedPKs = []any{LineItemPK{OrderID: input.OrderID, ProductID: input.ProductID}}
@@ -20190,6 +23469,12 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 		conflictColumns := lineItemConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "order_id", "product_id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 
 		// One value row per input, built before any statement runs: the dedupe
 		// spans the whole call, not a sub-batch (ceil(M/batch_size)
@@ -20261,6 +23546,21 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -20276,6 +23576,7 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -20312,6 +23613,17 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 			}
 			for _, pk := range batchPKs {
 				rowTenants = append(rowTenants, tenantByPK[pk])
+			}
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
 			}
 		}
 
@@ -20353,6 +23665,48 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 		return nil, nil
 	}
 	return result.([]*LineItem), nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *lineItemClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // LineItemIncrementColumn identifies a numeric column eligible for atomic increment/decrement.
@@ -22897,6 +26251,12 @@ func (c *milestoneClient) Upsert(ctx context.Context, input *CreateMilestoneInpu
 
 		columns := []string{"code"}
 		args := []any{input.Code}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -22921,6 +26281,7 @@ func (c *milestoneClient) Upsert(ctx context.Context, input *CreateMilestoneInpu
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -22938,10 +26299,18 @@ func (c *milestoneClient) Upsert(ctx context.Context, input *CreateMilestoneInpu
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := milestoneConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -22971,13 +26340,18 @@ func (c *milestoneClient) Upsert(ctx context.Context, input *CreateMilestoneInpu
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *milestoneClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *milestoneClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -23176,6 +26550,12 @@ func (c *milestoneClient) UpsertMany(ctx context.Context, inputs []*CreateMilest
 		conflictColumns := milestoneConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -23250,6 +26630,21 @@ func (c *milestoneClient) UpsertMany(ctx context.Context, inputs []*CreateMilest
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -23265,6 +26660,7 @@ func (c *milestoneClient) UpsertMany(ctx context.Context, inputs []*CreateMilest
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -23291,6 +26687,17 @@ func (c *milestoneClient) UpsertMany(ctx context.Context, inputs []*CreateMilest
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -23454,6 +26861,48 @@ func milestoneColumnValue(m *Milestone, column string) any {
 		return m.Code
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *milestoneClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // CreateMilestoneWithRelatedInput holds the fields for creating a milestones record
@@ -37079,6 +40528,12 @@ func (c *plotClient) Upsert(ctx context.Context, input *CreatePlotInput, target 
 
 		columns := []string{}
 		args := []any{}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -37103,6 +40558,7 @@ func (c *plotClient) Upsert(ctx context.Context, input *CreatePlotInput, target 
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -37130,10 +40586,18 @@ func (c *plotClient) Upsert(ctx context.Context, input *CreatePlotInput, target 
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := plotConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -37163,13 +40627,18 @@ func (c *plotClient) Upsert(ctx context.Context, input *CreatePlotInput, target 
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *plotClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *plotClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -37368,6 +40837,12 @@ func (c *plotClient) UpsertMany(ctx context.Context, inputs []*CreatePlotInput, 
 		conflictColumns := plotConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -37451,6 +40926,21 @@ func (c *plotClient) UpsertMany(ctx context.Context, inputs []*CreatePlotInput, 
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -37466,6 +40956,7 @@ func (c *plotClient) UpsertMany(ctx context.Context, inputs []*CreatePlotInput, 
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -37492,6 +40983,17 @@ func (c *plotClient) UpsertMany(ctx context.Context, inputs []*CreatePlotInput, 
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -37657,6 +41159,48 @@ func plotColumnValue(p *Plot, column string) any {
 		return p.ZoneID
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *plotClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a plot with the given primary key exists.
@@ -40012,6 +43556,12 @@ func (c *projectClient) Upsert(ctx context.Context, input *CreateProjectInput, t
 
 		columns := []string{"workspace_id", "code", "name"}
 		args := []any{input.WorkspaceID, input.Code, input.Name}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenant-in-PK verify-match. input.WorkspaceID
 		// is a required field (already appended to columns/args above).
 		// apply=false under tenancy.required:false + zero resolver skips the
@@ -40034,6 +43584,7 @@ func (c *projectClient) Upsert(ctx context.Context, input *CreateProjectInput, t
 				if input.WorkspaceID != resolvedTenant {
 					return nil, tenancy.ErrMismatch
 				}
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
@@ -40044,16 +43595,47 @@ func (c *projectClient) Upsert(ctx context.Context, input *CreateProjectInput, t
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := projectConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "code", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
+
+		// A target without the tenant column can match another tenant's row,
+		// which the guard leaves untouched. On MySQL the statement may instead
+		// fire on another unique index, so the call is refused before it runs.
+		checkForeign := guardTenant != nil && !slices.Contains(conflictColumns, "workspace_id")
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
 
 		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 			Columns:             columns,
 			Values:              args,
 			UpsertConflictKeys:  conflictColumns,
 			UpsertUpdateColumns: updateColumns,
+			UpsertGuardColumn:   guardColumn,
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
 			return nil, err
+		}
+
+		// The check before the statement cannot see a row another tenant
+		// inserts after it. The guard kept the statement off such a row.
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
 		}
 
 		m.AffectedPKs = []any{ProjectPK{WorkspaceID: input.WorkspaceID, Code: input.Code}}
@@ -40076,6 +43658,35 @@ func (c *projectClient) Upsert(ctx context.Context, input *CreateProjectInput, t
 		return nil, nil
 	}
 	return result.(*Project), nil
+}
+
+// upsertForeignConflict reports whether a row in another tenant holds the
+// values the upsert supplies for every conflict column. An input that leaves
+// a conflict column unset cannot conflict on that target.
+func (c *projectClient) upsertForeignConflict(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string, tenant any) (bool, error) {
+	conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant)}
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			return false, nil
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return false, err
+	}
+	found := rows.Next()
+	err = rows.Err()
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	return found, err
 }
 
 // UpsertMany inserts or updates multiple projects in batches and returns all
@@ -40163,6 +43774,12 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 		conflictColumns := projectConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "code", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 
 		// One value row per input, built before any statement runs: the dedupe
 		// spans the whole call, not a sub-batch (ceil(M/batch_size)
@@ -40220,6 +43837,21 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -40235,6 +43867,7 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -40293,6 +43926,48 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 		return nil, nil
 	}
 	return result.([]*Project), nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *projectClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a project with the given primary key exists.
@@ -42943,6 +46618,12 @@ func (c *reviewerClient) Upsert(ctx context.Context, input *CreateReviewerInput,
 
 		columns := []string{"name"}
 		args := []any{input.Name}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -42967,6 +46648,7 @@ func (c *reviewerClient) Upsert(ctx context.Context, input *CreateReviewerInput,
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -42984,10 +46666,18 @@ func (c *reviewerClient) Upsert(ctx context.Context, input *CreateReviewerInput,
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := reviewerConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -43017,13 +46707,18 @@ func (c *reviewerClient) Upsert(ctx context.Context, input *CreateReviewerInput,
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *reviewerClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *reviewerClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -43222,6 +46917,12 @@ func (c *reviewerClient) UpsertMany(ctx context.Context, inputs []*CreateReviewe
 		conflictColumns := reviewerConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -43296,6 +46997,21 @@ func (c *reviewerClient) UpsertMany(ctx context.Context, inputs []*CreateReviewe
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -43311,6 +47027,7 @@ func (c *reviewerClient) UpsertMany(ctx context.Context, inputs []*CreateReviewe
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -43337,6 +47054,17 @@ func (c *reviewerClient) UpsertMany(ctx context.Context, inputs []*CreateReviewe
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -43500,6 +47228,48 @@ func reviewerColumnValue(r *Reviewer, column string) any {
 		return r.Name
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *reviewerClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // CreateReviewerWithRelatedInput holds the fields for creating a reviewers record
@@ -46553,6 +50323,12 @@ func (c *sharedGuardianClient) Upsert(ctx context.Context, input *CreateSharedGu
 
 		columns := []string{"org"}
 		args := []any{input.Org}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -46577,6 +50353,7 @@ func (c *sharedGuardianClient) Upsert(ctx context.Context, input *CreateSharedGu
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -46594,10 +50371,18 @@ func (c *sharedGuardianClient) Upsert(ctx context.Context, input *CreateSharedGu
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := sharedGuardianConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -46627,13 +50412,18 @@ func (c *sharedGuardianClient) Upsert(ctx context.Context, input *CreateSharedGu
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *sharedGuardianClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *sharedGuardianClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -46832,6 +50622,12 @@ func (c *sharedGuardianClient) UpsertMany(ctx context.Context, inputs []*CreateS
 		conflictColumns := sharedGuardianConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -46906,6 +50702,21 @@ func (c *sharedGuardianClient) UpsertMany(ctx context.Context, inputs []*CreateS
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -46921,6 +50732,7 @@ func (c *sharedGuardianClient) UpsertMany(ctx context.Context, inputs []*CreateS
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -46947,6 +50759,17 @@ func (c *sharedGuardianClient) UpsertMany(ctx context.Context, inputs []*CreateS
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -47110,6 +50933,48 @@ func sharedGuardianColumnValue(s *SharedGuardian, column string) any {
 		return s.Org
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *sharedGuardianClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // CreateSharedGuardianWithRelatedInput holds the fields for creating a shared_guardians record
@@ -50177,6 +54042,12 @@ func (c *sharedKidClient) Upsert(ctx context.Context, input *CreateSharedKidInpu
 
 		columns := []string{}
 		args := []any{}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -50201,6 +54072,7 @@ func (c *sharedKidClient) Upsert(ctx context.Context, input *CreateSharedKidInpu
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -50233,10 +54105,18 @@ func (c *sharedKidClient) Upsert(ctx context.Context, input *CreateSharedKidInpu
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := sharedKidConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -50266,13 +54146,18 @@ func (c *sharedKidClient) Upsert(ctx context.Context, input *CreateSharedKidInpu
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *sharedKidClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *sharedKidClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -50471,6 +54356,12 @@ func (c *sharedKidClient) UpsertMany(ctx context.Context, inputs []*CreateShared
 		conflictColumns := sharedKidConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -50559,6 +54450,21 @@ func (c *sharedKidClient) UpsertMany(ctx context.Context, inputs []*CreateShared
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -50574,6 +54480,7 @@ func (c *sharedKidClient) UpsertMany(ctx context.Context, inputs []*CreateShared
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -50600,6 +54507,17 @@ func (c *sharedKidClient) UpsertMany(ctx context.Context, inputs []*CreateShared
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -50767,6 +54685,48 @@ func sharedKidColumnValue(s *SharedKid, column string) any {
 		return s.GuardianID
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *sharedKidClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a shared_kid with the given primary key exists.
@@ -53357,6 +57317,12 @@ func (c *sharedParentClient) Upsert(ctx context.Context, input *CreateSharedPare
 
 		columns := []string{"org"}
 		args := []any{input.Org}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -53381,6 +57347,7 @@ func (c *sharedParentClient) Upsert(ctx context.Context, input *CreateSharedPare
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -53398,10 +57365,18 @@ func (c *sharedParentClient) Upsert(ctx context.Context, input *CreateSharedPare
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := sharedParentConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -53431,13 +57406,18 @@ func (c *sharedParentClient) Upsert(ctx context.Context, input *CreateSharedPare
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *sharedParentClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *sharedParentClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -53636,6 +57616,12 @@ func (c *sharedParentClient) UpsertMany(ctx context.Context, inputs []*CreateSha
 		conflictColumns := sharedParentConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -53710,6 +57696,21 @@ func (c *sharedParentClient) UpsertMany(ctx context.Context, inputs []*CreateSha
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -53725,6 +57726,7 @@ func (c *sharedParentClient) UpsertMany(ctx context.Context, inputs []*CreateSha
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -53751,6 +57753,17 @@ func (c *sharedParentClient) UpsertMany(ctx context.Context, inputs []*CreateSha
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -53914,6 +57927,48 @@ func sharedParentColumnValue(s *SharedParent, column string) any {
 		return s.Org
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *sharedParentClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // CreateSharedParentWithRelatedInput holds the fields for creating a shared_parents record
@@ -56951,6 +61006,12 @@ func (c *siteClient) Upsert(ctx context.Context, input *CreateSiteInput, target 
 
 		columns := []string{}
 		args := []any{}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -56975,6 +61036,7 @@ func (c *siteClient) Upsert(ctx context.Context, input *CreateSiteInput, target 
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -57002,10 +61064,18 @@ func (c *siteClient) Upsert(ctx context.Context, input *CreateSiteInput, target 
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := siteConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -57035,13 +61105,18 @@ func (c *siteClient) Upsert(ctx context.Context, input *CreateSiteInput, target 
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *siteClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *siteClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -57240,6 +61315,12 @@ func (c *siteClient) UpsertMany(ctx context.Context, inputs []*CreateSiteInput, 
 		conflictColumns := siteConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -57323,6 +61404,21 @@ func (c *siteClient) UpsertMany(ctx context.Context, inputs []*CreateSiteInput, 
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -57338,6 +61434,7 @@ func (c *siteClient) UpsertMany(ctx context.Context, inputs []*CreateSiteInput, 
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -57364,6 +61461,17 @@ func (c *siteClient) UpsertMany(ctx context.Context, inputs []*CreateSiteInput, 
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -57529,6 +61637,48 @@ func siteColumnValue(s *Site, column string) any {
 		return s.ZoneID
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *siteClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a site with the given primary key exists.
@@ -60062,6 +64212,12 @@ func (c *sprintClient) Upsert(ctx context.Context, input *CreateSprintInput, tar
 
 		columns := []string{"name"}
 		args := []any{input.Name}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -60086,6 +64242,7 @@ func (c *sprintClient) Upsert(ctx context.Context, input *CreateSprintInput, tar
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -60103,10 +64260,18 @@ func (c *sprintClient) Upsert(ctx context.Context, input *CreateSprintInput, tar
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := sprintConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -60136,13 +64301,18 @@ func (c *sprintClient) Upsert(ctx context.Context, input *CreateSprintInput, tar
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *sprintClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *sprintClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -60341,6 +64511,12 @@ func (c *sprintClient) UpsertMany(ctx context.Context, inputs []*CreateSprintInp
 		conflictColumns := sprintConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -60415,6 +64591,21 @@ func (c *sprintClient) UpsertMany(ctx context.Context, inputs []*CreateSprintInp
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -60430,6 +64621,7 @@ func (c *sprintClient) UpsertMany(ctx context.Context, inputs []*CreateSprintInp
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -60456,6 +64648,17 @@ func (c *sprintClient) UpsertMany(ctx context.Context, inputs []*CreateSprintInp
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -60621,6 +64824,48 @@ func sprintColumnValue(s *Sprint, column string) any {
 	return nil
 }
 
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *sprintClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
+}
+
 // CreateSprintWithRelatedInput holds the fields for creating a sprints record
 // together with rows on its nested relationships.
 //
@@ -60703,6 +64948,7 @@ type SprintTasksCreateInput struct {
 	CycleID     omittable.Value[*int64]  `json:"cycle_id,omitzero"`
 	ProjectCode omittable.Value[*string] `json:"project_code,omitzero"`
 	Title       string                   `json:"title"`
+	Code        omittable.Value[*string] `json:"code,omitzero"`
 }
 
 // sprintTasksNestedFromCreate lifts the create-side block into the update-side one the
@@ -61069,6 +65315,7 @@ func (c *sprintClient) applySprintTasksNested(ctx context.Context, parent *Sprin
 				CycleID:     n.CycleID,
 				ProjectCode: n.ProjectCode,
 				Title:       n.Title,
+				Code:        n.Code,
 			})
 		}
 		if _, err := c.taskClient.CreateMany(ctx, inputs, func(o *CallOptions[TaskFieldOptions]) {
@@ -68492,6 +72739,12 @@ func (c *taskLabelClient) Upsert(ctx context.Context, input *CreateTaskLabelInpu
 
 		columns := []string{"workspace_id", "task_id", "label_id"}
 		args := []any{input.WorkspaceID, input.TaskID, input.LabelID}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenant-in-PK verify-match. input.WorkspaceID
 		// is a required field (already appended to columns/args above).
 		// apply=false under tenancy.required:false + zero resolver skips the
@@ -68514,6 +72767,7 @@ func (c *taskLabelClient) Upsert(ctx context.Context, input *CreateTaskLabelInpu
 				if input.WorkspaceID != resolvedTenant {
 					return nil, tenancy.ErrMismatch
 				}
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
@@ -68524,16 +72778,47 @@ func (c *taskLabelClient) Upsert(ctx context.Context, input *CreateTaskLabelInpu
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := taskLabelConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "task_id", "label_id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
+
+		// A target without the tenant column can match another tenant's row,
+		// which the guard leaves untouched. On MySQL the statement may instead
+		// fire on another unique index, so the call is refused before it runs.
+		checkForeign := guardTenant != nil && !slices.Contains(conflictColumns, "workspace_id")
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
 
 		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 			Columns:             columns,
 			Values:              args,
 			UpsertConflictKeys:  conflictColumns,
 			UpsertUpdateColumns: updateColumns,
+			UpsertGuardColumn:   guardColumn,
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
 			return nil, err
+		}
+
+		// The check before the statement cannot see a row another tenant
+		// inserts after it. The guard kept the statement off such a row.
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
 		}
 
 		m.AffectedPKs = []any{TaskLabelPK{WorkspaceID: input.WorkspaceID, TaskID: input.TaskID, LabelID: input.LabelID}}
@@ -68556,6 +72841,35 @@ func (c *taskLabelClient) Upsert(ctx context.Context, input *CreateTaskLabelInpu
 		return nil, nil
 	}
 	return result.(*TaskLabel), nil
+}
+
+// upsertForeignConflict reports whether a row in another tenant holds the
+// values the upsert supplies for every conflict column. An input that leaves
+// a conflict column unset cannot conflict on that target.
+func (c *taskLabelClient) upsertForeignConflict(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string, tenant any) (bool, error) {
+	conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant)}
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			return false, nil
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return false, err
+	}
+	found := rows.Next()
+	err = rows.Err()
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	return found, err
 }
 
 // UpsertMany inserts or updates multiple task_labels in batches and returns all
@@ -68643,6 +72957,12 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 		conflictColumns := taskLabelConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "task_id", "label_id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 
 		// One value row per input, built before any statement runs: the dedupe
 		// spans the whole call, not a sub-batch (ceil(M/batch_size)
@@ -68700,6 +73020,21 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -68715,6 +73050,7 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -68773,6 +73109,48 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 		return nil, nil
 	}
 	return result.([]*TaskLabel), nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *taskLabelClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a task_label with the given primary key exists.
@@ -71011,6 +75389,12 @@ func (c *taskReviewerClient) Upsert(ctx context.Context, input *CreateTaskReview
 
 		columns := []string{"task_id", "reviewer_id"}
 		args := []any{input.TaskID, input.ReviewerID}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -71035,6 +75419,7 @@ func (c *taskReviewerClient) Upsert(ctx context.Context, input *CreateTaskReview
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -71052,10 +75437,18 @@ func (c *taskReviewerClient) Upsert(ctx context.Context, input *CreateTaskReview
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := taskReviewerConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -71085,13 +75478,18 @@ func (c *taskReviewerClient) Upsert(ctx context.Context, input *CreateTaskReview
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *taskReviewerClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *taskReviewerClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -71290,6 +75688,12 @@ func (c *taskReviewerClient) UpsertMany(ctx context.Context, inputs []*CreateTas
 		conflictColumns := taskReviewerConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -71365,6 +75769,21 @@ func (c *taskReviewerClient) UpsertMany(ctx context.Context, inputs []*CreateTas
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -71380,6 +75799,7 @@ func (c *taskReviewerClient) UpsertMany(ctx context.Context, inputs []*CreateTas
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -71406,6 +75826,17 @@ func (c *taskReviewerClient) UpsertMany(ctx context.Context, inputs []*CreateTas
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -71571,6 +76002,48 @@ func taskReviewerColumnValue(t *TaskReviewer, column string) any {
 		return t.ReviewerID
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *taskReviewerClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a task_reviewer with the given primary key exists.
@@ -72292,6 +76765,7 @@ type Task struct {
 	SprintID    *int64    `db:"sprint_id" json:"sprint_id"`
 	ProjectCode *string   `db:"project_code" json:"project_code"`
 	Title       string    `db:"title" json:"title"`
+	Code        *string   `db:"code" json:"code"`
 
 	// Badges - many-to-many relationship with the badges table.
 	Badges []*Badge `db:"-" json:"badges"`
@@ -72583,7 +77057,7 @@ func (c *taskClient) filterOptions(ctx context.Context, filter *TaskFilter, skip
 }
 
 // taskAllColumns is the column list for full-entity reads, sorted for determinism.
-var taskAllColumns = []string{"cycle_id", "id", "project_code", "sprint_id", "title", "workspace_id"}
+var taskAllColumns = []string{"code", "cycle_id", "id", "project_code", "sprint_id", "title", "workspace_id"}
 
 // scanTasks scans rows into Task entities using a column-name switch.
 // Handles both scan target shapes (direct, wrapped) without reflection.
@@ -72607,6 +77081,8 @@ func scanTasks(rows database.Rows, columns []string) ([]*Task, error) {
 				targets[idx] = &t.ProjectCode
 			case "title":
 				targets[idx] = &t.Title
+			case "code":
+				targets[idx] = &t.Code
 			}
 		}
 
@@ -73550,6 +78026,11 @@ func (c *taskClient) Create(ctx context.Context, input *CreateTaskInput, opts ..
 			args = append(args, v)
 		}
 
+		if v, ok := input.Code.Get(); ok {
+			columns = append(columns, "code")
+			args = append(args, v)
+		}
+
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
 			return nil, err
@@ -73642,7 +78123,7 @@ func (c *taskClient) CreateMany(ctx context.Context, inputs []*CreateTaskInput, 
 			end := min(start+c.batchSize, len(inputs))
 			batch := inputs[start:end]
 
-			columns := []string{"workspace_id", "cycle_id", "sprint_id", "project_code", "title"}
+			columns := []string{"workspace_id", "cycle_id", "sprint_id", "project_code", "title", "code"}
 			var valueRows [][]any
 			for _, input := range batch {
 				// Tenancy auto-set + mismatch check.
@@ -73677,6 +78158,10 @@ func (c *taskClient) CreateMany(ctx context.Context, inputs []*CreateTaskInput, 
 				if v, ok := input.ProjectCode.Get(); ok {
 					projectCode = v
 				}
+				var code any = sql.Default
+				if v, ok := input.Code.Get(); ok {
+					code = v
+				}
 
 				valueRows = append(valueRows, []any{
 					workspaceID,
@@ -73684,6 +78169,7 @@ func (c *taskClient) CreateMany(ctx context.Context, inputs []*CreateTaskInput, 
 					sprintID,
 					projectCode,
 					input.Title,
+					code,
 				})
 			}
 
@@ -73835,6 +78321,9 @@ func (c *taskClient) Update(ctx context.Context, id int64, input *UpdateTaskInpu
 		}
 		if v, ok := input.Title.Get(); ok {
 			setClauses["title"] = v
+		}
+		if v, ok := input.Code.Get(); ok {
+			setClauses["code"] = v
 		}
 
 		// Empty update — no fields set, return current entity unchanged
@@ -74016,6 +78505,9 @@ func (c *taskClient) UpdateMany(ctx context.Context, items []UpdateTaskItem, opt
 				}
 				if v, ok := item.Input.Title.Get(); ok {
 					setClauses["title"] = v
+				}
+				if v, ok := item.Input.Code.Get(); ok {
+					setClauses["code"] = v
 				}
 
 				// Skip no-op updates
@@ -74237,6 +78729,9 @@ func (c *taskClient) UpdateWhere(ctx context.Context, filter *TaskFilter, input 
 		}
 		if v, ok := input.Title.Get(); ok {
 			setClauses["title"] = v
+		}
+		if v, ok := input.Code.Get(); ok {
+			setClauses["code"] = v
 		}
 
 		// No fields set — return matching entities unchanged
@@ -74577,12 +79072,14 @@ func (c *taskClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int
 type TaskConflictTarget int
 
 const (
-	TaskConflictPK            TaskConflictTarget = iota // PRIMARY KEY (id)
+	TaskConflictCode          TaskConflictTarget = iota // UNIQUE (code)
+	TaskConflictPK                                      // PRIMARY KEY (id)
 	TaskConflictWorkspaceIDID                           // UNIQUE (workspace_id, id)
 )
 
 // taskConflictColumns maps each conflict target to its column set.
 var taskConflictColumns = map[TaskConflictTarget][]string{
+	TaskConflictCode:          {"code"},
 	TaskConflictPK:            {"id"},
 	TaskConflictWorkspaceIDID: {"workspace_id", "id"},
 }
@@ -74612,6 +79109,12 @@ func (c *taskClient) Upsert(ctx context.Context, input *CreateTaskInput, target 
 
 		columns := []string{"title"}
 		args := []any{input.Title}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -74636,6 +79139,7 @@ func (c *taskClient) Upsert(ctx context.Context, input *CreateTaskInput, target 
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -74663,15 +79167,28 @@ func (c *taskClient) Upsert(ctx context.Context, input *CreateTaskInput, target 
 			args = append(args, v)
 		}
 
+		if v, ok := input.Code.Get(); ok {
+			columns = append(columns, "code")
+			args = append(args, v)
+		}
+
 		// Resolve conflict target and update columns. Tenant column is excluded
 		// from the UPDATE-set half of the conflict clause — a
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := taskConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -74701,13 +79218,18 @@ func (c *taskClient) Upsert(ctx context.Context, input *CreateTaskInput, target 
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *taskClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *taskClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -74902,10 +79424,16 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 		// the OK packet, and after a batch that packet names at most one row.
 		// Nothing here reads LastInsertId, so requesting it would
 		// only add a misleading assignment to the SET list.
-		columns := []string{"workspace_id", "cycle_id", "sprint_id", "project_code", "title"}
+		columns := []string{"workspace_id", "cycle_id", "sprint_id", "project_code", "title", "code"}
 		conflictColumns := taskConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -74950,6 +79478,10 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 			if v, ok := input.ProjectCode.Get(); ok {
 				projectCode = v
 			}
+			var code any = sql.Default
+			if v, ok := input.Code.Get(); ok {
+				code = v
+			}
 
 			valueRows = append(valueRows, []any{
 				workspaceID,
@@ -74957,6 +79489,7 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 				sprintID,
 				projectCode,
 				input.Title,
+				code,
 			})
 			rowInputs = append(rowInputs, input)
 		}
@@ -74995,6 +79528,21 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -75010,6 +79558,7 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -75036,6 +79585,17 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -75203,8 +79763,52 @@ func taskColumnValue(t *Task, column string) any {
 		return t.ProjectCode
 	case "title":
 		return t.Title
+	case "code":
+		return t.Code
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *taskClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // CreateTaskWithRelatedInput holds the fields for creating a tasks record
@@ -76542,6 +81146,8 @@ func encodeTaskCursor(keys []string, t *Task) (string, error) {
 			out["project_code"] = t.ProjectCode
 		case "title":
 			out["title"] = t.Title
+		case "code":
+			out["code"] = t.Code
 		}
 	}
 	data, err := json.Marshal(out)
@@ -76593,6 +81199,7 @@ type StreamTaskFieldOptions struct {
 	SprintID    bool `json:"sprint_id"`
 	ProjectCode bool `json:"project_code"`
 	Title       bool `json:"title"`
+	Code        bool `json:"code"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -76616,6 +81223,9 @@ func (fo *StreamTaskFieldOptions) Columns() []string {
 	}
 	if fo.Title {
 		cols = append(cols, "title")
+	}
+	if fo.Code {
+		cols = append(cols, "code")
 	}
 	slices.Sort(cols)
 	return cols
@@ -76641,6 +81251,9 @@ func (fo *StreamTaskFieldOptions) HasSelectedColumns() bool {
 	if fo.Title {
 		return true
 	}
+	if fo.Code {
+		return true
+	}
 	return false
 }
 
@@ -76664,6 +81277,8 @@ func scanTaskRow(rows database.Rows, columns []string) (*Task, error) {
 			targets[idx] = &t.ProjectCode
 		case "title":
 			targets[idx] = &t.Title
+		case "code":
+			targets[idx] = &t.Code
 		}
 	}
 
@@ -76810,6 +81425,7 @@ func (c *taskClient) Stream(ctx context.Context, input *StreamTasksInput, opts .
 
 // TaskFilter provides type-safe filtering for the tasks table.
 type TaskFilter struct {
+	Code        *comparator.NullableString        `json:"code"`
 	CycleID     *comparator.NullableNumber[int64] `json:"cycle_id"`
 	ID          *comparator.Number[int64]         `json:"id"`
 	ProjectCode *comparator.NullableString        `json:"project_code"`
@@ -76837,6 +81453,10 @@ func (f *TaskFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []s
 	}
 
 	var conds []sql.Condition
+
+	if f.Code != nil {
+		conds = append(conds, f.Code.Parse(dialect.QuoteIdentifier("code"), dialect)...)
+	}
 
 	if f.CycleID != nil {
 		conds = append(conds, f.CycleID.Parse(dialect.QuoteIdentifier("cycle_id"), dialect)...)
@@ -77092,6 +81712,7 @@ type TaskFieldOptions struct {
 	SprintID    bool                         `json:"sprint_id"`
 	ProjectCode bool                         `json:"project_code"`
 	Title       bool                         `json:"title"`
+	Code        bool                         `json:"code"`
 	Badges      *BadgeRelationshipOptions    `json:"badges"`
 	Cycle       *CycleFieldOptions           `json:"cycle"`
 	Labels      *LabelRelationshipOptions    `json:"labels"`
@@ -77122,6 +81743,9 @@ func (fo *TaskFieldOptions) Columns() []string {
 	if fo.Title {
 		cols = append(cols, "title")
 	}
+	if fo.Code {
+		cols = append(cols, "code")
+	}
 	slices.Sort(cols)
 	return cols
 }
@@ -77135,6 +81759,7 @@ func (fo *TaskFieldOptions) ColumnMap() map[string]string {
 		"SprintID":    "sprint_id",
 		"ProjectCode": "project_code",
 		"Title":       "title",
+		"Code":        "code",
 	}
 }
 
@@ -77156,6 +81781,9 @@ func (fo *TaskFieldOptions) HasSelectedColumns() bool {
 		return true
 	}
 	if fo.Title {
+		return true
+	}
+	if fo.Code {
 		return true
 	}
 	if fo.Badges != nil {
@@ -77207,6 +81835,7 @@ type CreateTaskInput struct {
 	SprintID    omittable.Value[*int64]    `json:"sprint_id,omitzero"`
 	ProjectCode omittable.Value[*string]   `json:"project_code,omitzero"`
 	Title       string                     `json:"title"`
+	Code        omittable.Value[*string]   `json:"code,omitzero"`
 }
 
 // UpdateTaskInput holds the fields for updating a tasks record.
@@ -77217,6 +81846,7 @@ type UpdateTaskInput struct {
 	SprintID    omittable.Value[*int64]    `json:"sprint_id,omitzero"`
 	ProjectCode omittable.Value[*string]   `json:"project_code,omitzero"`
 	Title       omittable.Value[string]    `json:"title,omitzero"`
+	Code        omittable.Value[*string]   `json:"code,omitzero"`
 }
 
 // GetTasksInput holds query parameters for retrieving tasks records.
@@ -77307,6 +81937,8 @@ func scanTasksWithOneToOneJoins(rows database.Rows, columns []string) ([]*Task, 
 				targets[idx] = &t.ProjectCode
 			case "t.title":
 				targets[idx] = &t.Title
+			case "t.code":
+				targets[idx] = &t.Code
 			case "c.id":
 				targets[idx] = database.NullScan(&c.ID)
 				cHasData = true
@@ -78708,6 +83340,12 @@ func (c *templateLabelClient) Upsert(ctx context.Context, input *CreateTemplateL
 
 		columns := []string{"workspace_id", "template_id", "label_id"}
 		args := []any{input.WorkspaceID, input.TemplateID, input.LabelID}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenant-in-PK verify-match. input.WorkspaceID
 		// is a required field (already appended to columns/args above).
 		// apply=false under tenancy.required:false + zero resolver skips the
@@ -78730,6 +83368,7 @@ func (c *templateLabelClient) Upsert(ctx context.Context, input *CreateTemplateL
 				if input.WorkspaceID != resolvedTenant {
 					return nil, tenancy.ErrMismatch
 				}
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
@@ -78740,16 +83379,47 @@ func (c *templateLabelClient) Upsert(ctx context.Context, input *CreateTemplateL
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := templateLabelConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "template_id", "label_id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
+
+		// A target without the tenant column can match another tenant's row,
+		// which the guard leaves untouched. On MySQL the statement may instead
+		// fire on another unique index, so the call is refused before it runs.
+		checkForeign := guardTenant != nil && !slices.Contains(conflictColumns, "workspace_id")
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
 
 		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 			Columns:             columns,
 			Values:              args,
 			UpsertConflictKeys:  conflictColumns,
 			UpsertUpdateColumns: updateColumns,
+			UpsertGuardColumn:   guardColumn,
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
 			return nil, err
+		}
+
+		// The check before the statement cannot see a row another tenant
+		// inserts after it. The guard kept the statement off such a row.
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
 		}
 
 		m.AffectedPKs = []any{TemplateLabelPK{WorkspaceID: input.WorkspaceID, TemplateID: input.TemplateID, LabelID: input.LabelID}}
@@ -78772,6 +83442,35 @@ func (c *templateLabelClient) Upsert(ctx context.Context, input *CreateTemplateL
 		return nil, nil
 	}
 	return result.(*TemplateLabel), nil
+}
+
+// upsertForeignConflict reports whether a row in another tenant holds the
+// values the upsert supplies for every conflict column. An input that leaves
+// a conflict column unset cannot conflict on that target.
+func (c *templateLabelClient) upsertForeignConflict(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string, tenant any) (bool, error) {
+	conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant)}
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			return false, nil
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return false, err
+	}
+	found := rows.Next()
+	err = rows.Err()
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	return found, err
 }
 
 // UpsertMany inserts or updates multiple template_labels in batches and returns all
@@ -78859,6 +83558,12 @@ func (c *templateLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTe
 		conflictColumns := templateLabelConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "template_id", "label_id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 
 		// One value row per input, built before any statement runs: the dedupe
 		// spans the whole call, not a sub-batch (ceil(M/batch_size)
@@ -78916,6 +83621,21 @@ func (c *templateLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTe
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -78931,6 +83651,7 @@ func (c *templateLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTe
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -78989,6 +83710,48 @@ func (c *templateLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTe
 		return nil, nil
 	}
 	return result.([]*TemplateLabel), nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *templateLabelClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a template_label with the given primary key exists.
@@ -81270,6 +86033,12 @@ func (c *templateNoteClient) Upsert(ctx context.Context, input *CreateTemplateNo
 
 		columns := []string{"body"}
 		args := []any{input.Body}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -81294,6 +86063,7 @@ func (c *templateNoteClient) Upsert(ctx context.Context, input *CreateTemplateNo
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -81316,10 +86086,18 @@ func (c *templateNoteClient) Upsert(ctx context.Context, input *CreateTemplateNo
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := templateNoteConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -81349,13 +86127,18 @@ func (c *templateNoteClient) Upsert(ctx context.Context, input *CreateTemplateNo
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *templateNoteClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *templateNoteClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -81554,6 +86337,12 @@ func (c *templateNoteClient) UpsertMany(ctx context.Context, inputs []*CreateTem
 		conflictColumns := templateNoteConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -81633,6 +86422,21 @@ func (c *templateNoteClient) UpsertMany(ctx context.Context, inputs []*CreateTem
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -81648,6 +86452,7 @@ func (c *templateNoteClient) UpsertMany(ctx context.Context, inputs []*CreateTem
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -81674,6 +86479,17 @@ func (c *templateNoteClient) UpsertMany(ctx context.Context, inputs []*CreateTem
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -81839,6 +86655,48 @@ func templateNoteColumnValue(t *TemplateNote, column string) any {
 		return t.Body
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *templateNoteClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a template_note with the given primary key exists.
@@ -83976,6 +88834,12 @@ func (c *templateStampClient) Upsert(ctx context.Context, input *CreateTemplateS
 
 		columns := []string{"workspace_id", "template_id", "stamp_id"}
 		args := []any{input.WorkspaceID, input.TemplateID, input.StampID}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenant-in-PK verify-match. input.WorkspaceID
 		// is a required field (already appended to columns/args above).
 		// apply=false under tenancy.required:false + zero resolver skips the
@@ -83998,6 +88862,7 @@ func (c *templateStampClient) Upsert(ctx context.Context, input *CreateTemplateS
 				if input.WorkspaceID != resolvedTenant {
 					return nil, tenancy.ErrMismatch
 				}
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			}
@@ -84008,16 +88873,47 @@ func (c *templateStampClient) Upsert(ctx context.Context, input *CreateTemplateS
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := templateStampConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "template_id", "stamp_id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
+
+		// A target without the tenant column can match another tenant's row,
+		// which the guard leaves untouched. On MySQL the statement may instead
+		// fire on another unique index, so the call is refused before it runs.
+		checkForeign := guardTenant != nil && !slices.Contains(conflictColumns, "workspace_id")
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
 
 		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 			Columns:             columns,
 			Values:              args,
 			UpsertConflictKeys:  conflictColumns,
 			UpsertUpdateColumns: updateColumns,
+			UpsertGuardColumn:   guardColumn,
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
 			return nil, err
+		}
+
+		// The check before the statement cannot see a row another tenant
+		// inserts after it. The guard kept the statement off such a row.
+		if checkForeign {
+			foreign, err := c.upsertForeignConflict(ctx, conn, columns, args, conflictColumns, guardTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
 		}
 
 		m.AffectedPKs = []any{TemplateStampPK{WorkspaceID: input.WorkspaceID, TemplateID: input.TemplateID, StampID: input.StampID}}
@@ -84040,6 +88936,35 @@ func (c *templateStampClient) Upsert(ctx context.Context, input *CreateTemplateS
 		return nil, nil
 	}
 	return result.(*TemplateStamp), nil
+}
+
+// upsertForeignConflict reports whether a row in another tenant holds the
+// values the upsert supplies for every conflict column. An input that leaves
+// a conflict column unset cannot conflict on that target.
+func (c *templateStampClient) upsertForeignConflict(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string, tenant any) (bool, error) {
+	conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant)}
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			return false, nil
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return false, err
+	}
+	found := rows.Next()
+	err = rows.Err()
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	return found, err
 }
 
 // UpsertMany inserts or updates multiple template_stamps in batches and returns all
@@ -84127,6 +89052,12 @@ func (c *templateStampClient) UpsertMany(ctx context.Context, inputs []*CreateTe
 		conflictColumns := templateStampConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "template_id", "stamp_id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 
 		// One value row per input, built before any statement runs: the dedupe
 		// spans the whole call, not a sub-batch (ceil(M/batch_size)
@@ -84184,6 +89115,21 @@ func (c *templateStampClient) UpsertMany(ctx context.Context, inputs []*CreateTe
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -84199,6 +89145,7 @@ func (c *templateStampClient) UpsertMany(ctx context.Context, inputs []*CreateTe
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -84257,6 +89204,48 @@ func (c *templateStampClient) UpsertMany(ctx context.Context, inputs []*CreateTe
 		return nil, nil
 	}
 	return result.([]*TemplateStamp), nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *templateStampClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a template_stamp with the given primary key exists.
@@ -86529,6 +91518,12 @@ func (c *templateStepClient) Upsert(ctx context.Context, input *CreateTemplateSt
 
 		columns := []string{"template_id", "title"}
 		args := []any{input.TemplateID, input.Title}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -86553,6 +91548,7 @@ func (c *templateStepClient) Upsert(ctx context.Context, input *CreateTemplateSt
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -86570,10 +91566,18 @@ func (c *templateStepClient) Upsert(ctx context.Context, input *CreateTemplateSt
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := templateStepConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -86603,13 +91607,18 @@ func (c *templateStepClient) Upsert(ctx context.Context, input *CreateTemplateSt
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *templateStepClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *templateStepClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -86808,6 +91817,12 @@ func (c *templateStepClient) UpsertMany(ctx context.Context, inputs []*CreateTem
 		conflictColumns := templateStepConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -86883,6 +91898,21 @@ func (c *templateStepClient) UpsertMany(ctx context.Context, inputs []*CreateTem
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -86898,6 +91928,7 @@ func (c *templateStepClient) UpsertMany(ctx context.Context, inputs []*CreateTem
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -86924,6 +91955,17 @@ func (c *templateStepClient) UpsertMany(ctx context.Context, inputs []*CreateTem
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -87089,6 +92131,48 @@ func templateStepColumnValue(t *TemplateStep, column string) any {
 		return t.Title
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *templateStepClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a template_step with the given primary key exists.
@@ -93999,6 +99083,12 @@ func (c *workspaceNoteClient) Upsert(ctx context.Context, input *CreateWorkspace
 
 		columns := []string{"body"}
 		args := []any{input.Body}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -94023,6 +99113,7 @@ func (c *workspaceNoteClient) Upsert(ctx context.Context, input *CreateWorkspace
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -94040,10 +99131,18 @@ func (c *workspaceNoteClient) Upsert(ctx context.Context, input *CreateWorkspace
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := workspaceNoteConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -94073,13 +99172,18 @@ func (c *workspaceNoteClient) Upsert(ctx context.Context, input *CreateWorkspace
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *workspaceNoteClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *workspaceNoteClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -94278,6 +99382,12 @@ func (c *workspaceNoteClient) UpsertMany(ctx context.Context, inputs []*CreateWo
 		conflictColumns := workspaceNoteConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -94352,6 +99462,21 @@ func (c *workspaceNoteClient) UpsertMany(ctx context.Context, inputs []*CreateWo
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -94367,6 +99492,7 @@ func (c *workspaceNoteClient) UpsertMany(ctx context.Context, inputs []*CreateWo
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -94393,6 +99519,17 @@ func (c *workspaceNoteClient) UpsertMany(ctx context.Context, inputs []*CreateWo
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -94556,6 +99693,48 @@ func workspaceNoteColumnValue(w *WorkspaceNote, column string) any {
 		return w.Body
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *workspaceNoteClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // Exists returns true if a workspace_note with the given primary key exists.
@@ -99967,6 +105146,12 @@ func (c *zoneClient) Upsert(ctx context.Context, input *CreateZoneInput, target 
 
 		columns := []string{"region"}
 		args := []any{input.Region}
+
+		// Set when tenancy applies: the conflict branch then updates only a
+		// row in this tenant, since the conflict target need not include the
+		// tenant column. A conflict with another tenant's row writes nothing
+		// and reports ErrNotFound, as a read of that row would.
+		var guardTenant any
 		// Tenancy auto-set + mismatch check. apply=false under
 		// tenancy.required:false + zero resolver falls through to the
 		// caller-supplied value branch.
@@ -99991,6 +105176,7 @@ func (c *zoneClient) Upsert(ctx context.Context, input *CreateZoneInput, target 
 				}
 				columns = append(columns, "workspace_id")
 				args = append(args, resolvedTenant)
+				guardTenant = resolvedTenant
 				// Stash for cache hook (single-resolve per operation).
 				m.Tenant = resolvedTenant
 			} else if v, ok := input.WorkspaceID.Get(); ok {
@@ -100008,10 +105194,18 @@ func (c *zoneClient) Upsert(ctx context.Context, input *CreateZoneInput, target 
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := zoneConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		guardColumn := ""
+		if guardTenant != nil {
+			guardColumn = "workspace_id"
+		}
 
-		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)
 		if err != nil {
 			return nil, err
+		}
+		// The guard left another tenant's conflicting row untouched.
+		if guardTenant != nil && capturedTenant != guardTenant {
+			return nil, ErrNotFound
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -100041,13 +105235,18 @@ func (c *zoneClient) Upsert(ctx context.Context, input *CreateZoneInput, target 
 // invalidation and event stamping can rebuild the tenant-scoped key from the
 // row itself. On the conflict-update path the existing row keeps
 // its tenant, so the captured value (not the input) is authoritative.
-func (c *zoneClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+//
+// A non-empty guardColumn limits that path to a row in the inserted tenant.
+// Another tenant's conflicting row is left as it is and still resolved here,
+// so the caller sees its tenant and refuses it.
+func (c *zoneClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string, guardColumn string) (int64, any, error) {
 	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 		Columns:               columns,
 		Values:                args,
 		UpsertConflictKeys:    conflictColumns,
 		UpsertUpdateColumns:   updateColumns,
 		UpsertResolvePKColumn: "id",
+		UpsertGuardColumn:     guardColumn,
 		ReturningColumns:      []string{"id", "workspace_id"},
 	})
 	rows, err := conn.Query(ctx, query, queryArgs...)
@@ -100246,6 +105445,12 @@ func (c *zoneClient) UpsertMany(ctx context.Context, inputs []*CreateZoneInput, 
 		conflictColumns := zoneConflictColumns[target]
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		// Under applied tenancy the conflict branch updates only a row in the
+		// resolved tenant.
+		guardColumn := ""
+		if applyTenancy {
+			guardColumn = "workspace_id"
+		}
 		if !haveConflictKey {
 			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
@@ -100320,6 +105525,21 @@ func (c *zoneClient) UpsertMany(ctx context.Context, inputs []*CreateZoneInput, 
 		// input that actually wrote that row.
 		m.Input = rowInputs
 
+		// A conflict target without the tenant column can match another
+		// tenant's row. The statement's guard leaves such a row untouched, but
+		// it would still write the rows beside it, so the whole call is refused
+		// before any sub-batch runs, with the ErrNotFound a read of that row
+		// gives.
+		if applyTenancy && haveConflictKey && !slices.Contains(conflictColumns, "workspace_id") {
+			foreign, err := c.upsertManyForeignConflict(ctx, conn, conflictColumns, conflictPositions, valueRows, resolvedTenant)
+			if err != nil {
+				return nil, err
+			}
+			if foreign {
+				return nil, ErrNotFound
+			}
+		}
+
 		for start := 0; start < len(valueRows); start += c.batchSize {
 			end := min(start+c.batchSize, len(valueRows))
 			batch := valueRows[start:end]
@@ -100335,6 +105555,7 @@ func (c *zoneClient) UpsertMany(ctx context.Context, inputs []*CreateZoneInput, 
 						ValueRows:           rows,
 						UpsertConflictKeys:  conflictColumns,
 						UpsertUpdateColumns: updateSets[g],
+						UpsertGuardColumn:   guardColumn,
 					})
 					if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
 						return err
@@ -100361,6 +105582,17 @@ func (c *zoneClient) UpsertMany(ctx context.Context, inputs []*CreateZoneInput, 
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		// The check before the write cannot see a row another tenant inserts
+		// after it. The guard kept the statement off such a row, and its tenant
+		// is what the capture above read back.
+		if applyTenancy {
+			for _, rowTenant := range rowTenants {
+				if rowTenant != resolvedTenant {
+					return nil, ErrNotFound
+				}
+			}
 		}
 
 		m.AffectedPKs = toAnySlice(rowIDs)
@@ -100524,6 +105756,48 @@ func zoneColumnValue(z *Zone, column string) any {
 		return z.Region
 	}
 	return nil
+}
+
+// upsertManyForeignConflict reports whether a row in another tenant holds the
+// conflict-target value of any of valueRows, so UpsertMany can refuse the call
+// before it writes anything. A row with no definite value for every conflict
+// column cannot conflict, and is skipped.
+func (c *zoneClient) upsertManyForeignConflict(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, valueRows [][]any, tenant uuid.UUID) (bool, error) {
+	keySets := make([][]any, 0, len(valueRows))
+	for _, row := range valueRows {
+		if _, ok := upsertDedupeKey(row, positions); !ok {
+			continue
+		}
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets = append(keySets, vals)
+	}
+	for start := 0; start < len(keySets); start += c.batchSize {
+		end := min(start+c.batchSize, len(keySets))
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns: []string{"workspace_id"},
+			Conditions: []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets[start:end]),
+				sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Neq(tenant),
+			},
+			Limit: new(1),
+		})
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		found := rows.Next()
+		err = rows.Err()
+		if cerr := rows.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // CreateZoneWithRelatedInput holds the fields for creating a zones record

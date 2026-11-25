@@ -11,6 +11,7 @@ const (
 	TableCheckpoints         hook.TableName = "public.checkpoints"
 	TableCycles              hook.TableName = "public.cycles"
 	TableLabels              hook.TableName = "public.labels"
+	TableLedgerEntries       hook.TableName = "public.ledger_entries"
 	TableLineItems           hook.TableName = "public.line_items"
 	TableMilestones          hook.TableName = "public.milestones"
 	TableMomentOwners        hook.TableName = "public.moment_owners"
