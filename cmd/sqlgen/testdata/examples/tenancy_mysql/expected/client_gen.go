@@ -153,6 +153,7 @@ type Client struct {
 	cycle         *cycleClient
 	document      *documentClient
 	label         *labelClient
+	ledgerEntry   *ledgerEntryClient
 	lineItem      *lineItemClient
 	moment        *momentClient
 	momentOwner   *momentOwnerClient
@@ -201,6 +202,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		cycle:         newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		label:         newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		ledgerEntry:   newLedgerEntryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		lineItem:      newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		moment:        newMomentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		momentOwner:   newMomentOwnerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -244,6 +246,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.cycle.tenantResolver = options.tenantResolver
 	c.document.tenantResolver = options.tenantResolver
 	c.label.tenantResolver = options.tenantResolver
+	c.ledgerEntry.tenantResolver = options.tenantResolver
 	c.lineItem.tenantResolver = options.tenantResolver
 	c.stamp.tenantResolver = options.tenantResolver
 	c.task.tenantResolver = options.tenantResolver
@@ -313,6 +316,11 @@ func (c *Client) Documents() DocumentClient {
 // Labels returns the LabelClient for Label operations.
 func (c *Client) Labels() LabelClient {
 	return c.label
+}
+
+// LedgerEntries returns the LedgerEntryClient for LedgerEntry operations.
+func (c *Client) LedgerEntries() LedgerEntryClient {
+	return c.ledgerEntry
 }
 
 // LineItems returns the LineItemClient for LineItem operations.

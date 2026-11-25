@@ -130,6 +130,33 @@ func (s LabelSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 
+// LedgerEntrySorter provides type-safe sort helpers for the LedgerEntry entity.
+// Each method returns a sql.Sort for the corresponding column.
+type LedgerEntrySorter struct{}
+
+// NewLedgerEntrySorter returns a new LedgerEntrySorter.
+func NewLedgerEntrySorter() LedgerEntrySorter { return LedgerEntrySorter{} }
+
+// Amount returns a sort for the amount column in the given direction.
+func (s LedgerEntrySorter) Amount(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "amount", Direction: direction}
+}
+
+// EntryID returns a sort for the entry_id column in the given direction.
+func (s LedgerEntrySorter) EntryID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "entry_id", Direction: direction}
+}
+
+// Ref returns a sort for the ref column in the given direction.
+func (s LedgerEntrySorter) Ref(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "ref", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s LedgerEntrySorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
 // LineItemSorter provides type-safe sort helpers for the LineItem entity.
 // Each method returns a sql.Sort for the corresponding column.
 type LineItemSorter struct{}
@@ -476,6 +503,11 @@ type TaskSorter struct{}
 
 // NewTaskSorter returns a new TaskSorter.
 func NewTaskSorter() TaskSorter { return TaskSorter{} }
+
+// Code returns a sort for the code column in the given direction.
+func (s TaskSorter) Code(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "code", Direction: direction}
+}
 
 // CycleID returns a sort for the cycle_id column in the given direction.
 func (s TaskSorter) CycleID(direction sql.SortDirection) sql.Sort {

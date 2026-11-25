@@ -135,6 +135,38 @@ func (s LegacyWidgetSorter) OrgID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "org_id", Direction: direction}
 }
 
+// LineItemSorter provides type-safe sort helpers for the LineItem entity.
+// Each method returns a sql.Sort for the corresponding column.
+type LineItemSorter struct{}
+
+// NewLineItemSorter returns a new LineItemSorter.
+func NewLineItemSorter() LineItemSorter { return LineItemSorter{} }
+
+// OrderID returns a sort for the order_id column in the given direction.
+func (s LineItemSorter) OrderID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "order_id", Direction: direction}
+}
+
+// ProductID returns a sort for the product_id column in the given direction.
+func (s LineItemSorter) ProductID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "product_id", Direction: direction}
+}
+
+// Quantity returns a sort for the quantity column in the given direction.
+func (s LineItemSorter) Quantity(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "quantity", Direction: direction}
+}
+
+// SKU returns a sort for the sku column in the given direction.
+func (s LineItemSorter) SKU(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "sku", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s LineItemSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
 // MomentSorter provides type-safe sort helpers for the Moment entity.
 // Each method returns a sql.Sort for the corresponding column.
 type MomentSorter struct{}
@@ -228,6 +260,11 @@ func (s OrderItemSorter) ProductID(direction sql.SortDirection) sql.Sort {
 // Quantity returns a sort for the quantity column in the given direction.
 func (s OrderItemSorter) Quantity(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "quantity", Direction: direction}
+}
+
+// Ref returns a sort for the ref column in the given direction.
+func (s OrderItemSorter) Ref(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "ref", Direction: direction}
 }
 
 // UnitPrice returns a sort for the unit_price column in the given direction.
@@ -393,6 +430,11 @@ type TaskSorter struct{}
 
 // NewTaskSorter returns a new TaskSorter.
 func NewTaskSorter() TaskSorter { return TaskSorter{} }
+
+// Code returns a sort for the code column in the given direction.
+func (s TaskSorter) Code(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "code", Direction: direction}
+}
 
 // CycleID returns a sort for the cycle_id column in the given direction.
 func (s TaskSorter) CycleID(direction sql.SortDirection) sql.Sort {

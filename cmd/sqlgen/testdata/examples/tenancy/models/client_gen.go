@@ -90,6 +90,7 @@ type Client struct {
 	cycle            *cycleClient
 	label            *labelClient
 	legacyWidget     *legacyWidgetClient
+	lineItem         *lineItemClient
 	moment           *momentClient
 	momentOwner      *momentOwnerClient
 	momentTag        *momentTagClient
@@ -145,6 +146,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		cycle:            newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		label:            newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		legacyWidget:     newLegacyWidgetClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		lineItem:         newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		moment:           newMomentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		momentOwner:      newMomentOwnerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		momentTag:        newMomentTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -196,6 +198,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.cycle.tenantResolver = options.tenantResolver
 	c.label.tenantResolver = options.tenantResolver
 	c.legacyWidget.tenantResolver = options.tenantResolver
+	c.lineItem.tenantResolver = options.tenantResolver
 	c.orderItem.tenantResolver = options.tenantResolver
 	c.post.tenantResolver = options.tenantResolver
 	c.product.tenantResolver = options.tenantResolver
@@ -285,6 +288,11 @@ func (c *Client) Labels() LabelClient {
 // LegacyWidgets returns the LegacyWidgetClient for LegacyWidget operations.
 func (c *Client) LegacyWidgets() LegacyWidgetClient {
 	return c.legacyWidget
+}
+
+// LineItems returns the LineItemClient for LineItem operations.
+func (c *Client) LineItems() LineItemClient {
+	return c.lineItem
 }
 
 // Moments returns the MomentClient for Moment operations.

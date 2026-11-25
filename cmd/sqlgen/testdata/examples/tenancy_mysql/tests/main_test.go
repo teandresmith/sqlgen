@@ -179,7 +179,7 @@ func hasPrefix(s, p string) bool { return len(s) >= len(p) && s[:len(p)] == p }
 func resetDB(t *testing.T) {
 	t.Helper()
 	for _, table := range []string{
-		"articles", "line_items", "documents",
+		"articles", "line_items", "ledger_entries", "documents",
 		"template_stamps", "stamps", "template_labels", "template_steps", "templates", "tasks", "cycles", "labels",
 		"moment_tag_links", "moment_tags", "moments", "moment_owners",
 		"workspace_notes", "workspaces",

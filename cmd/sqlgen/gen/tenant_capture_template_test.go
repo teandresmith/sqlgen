@@ -213,7 +213,7 @@ func TestTenantCapture_upsert_capturesRowTenant(t *testing.T) {
 		tc := tenantedProductUpsertContext()
 		out := renderTenantCapture(t, tc, "table/upsert", sql.NewPostgresDialect())
 		wants := []string{
-			"id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)",
+			"id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns, guardColumn)",
 			"m.AffectedTenants = []any{capturedTenant}",
 			") (uuid.UUID, any, error) {",
 			`"id", "workspace_id"`,

@@ -140,7 +140,7 @@ func resetDB(t *testing.T) {
 	// FK to users, so users has to be deleted after them.
 	tables := []string{
 		"post_tags", "tag_links", "tags", "posts", "user_profiles", "articles", "users",
-		"products", "order_items",
+		"products", "order_items", "line_items",
 		"template_stamps", "stamps", "template_labels", "template_steps", "templates", "tasks", "cycles", "labels",
 		"workspace_notes",
 		"moment_tag_links", "moment_tags", "moments", "moment_owners",

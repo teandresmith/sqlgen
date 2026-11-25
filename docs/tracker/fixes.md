@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-406
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** blocking
 - **Origin:** phase 13, cmd/sqlgen/gen/templates/table
 - **Surfaced by:** user report, from a probe for the `docs/design/TENANT_SCOPED_REFERENCES.md` redesign (2026-11-25)
@@ -161,6 +169,9 @@ check at `:61-127` covers only the input's tenant field.
   - (b) MySQL uses the per-assignment `IF` guard.
   - (c) A guarded conflict returns plain `ErrNotFound`, and §29.4.2 gains a
     sentence stating the guard and the error.
+- The user ruled on 2026-11-25: the regenerated conformance features_{mysql,postgres,postgres_stdlib,sqlite} models are part of this fix (same upsert template surface; the vet did not run conformance-fresh).
+- The user ruled on 2026-11-25: on a tenant-in-PK table whose conflict target lacks the tenant column, `Upsert` runs the foreign-tenant conflict check before the statement on every dialect, as `UpsertMany` does. Nothing is written and `ErrNotFound` is returned. PostgreSQL and SQLite keep the post-write check as a race backstop.
+- The user ruled on 2026-11-25: (1) the pre-statement foreign-conflict check also runs on MySQL for tables whose tenant is outside the PK, so a UNIQUE target holding another tenant's value is refused with nothing written even when the input PK names the caller's own row, as on PostgreSQL and SQLite; (2) no race backstop for MySQL tenant-in-PK `Upsert` or for tenant-in-PK `UpsertMany` for now, logged to the backlog.
 - The questions as asked:
   - (a) **What `UpsertMany` does when one input conflicts with another tenant's
     row.**
@@ -191,13 +202,7 @@ check at `:61-127` covers only the input's tenant field.
 - `docs/design/TENANT_SCOPED_REFERENCES.md`: derived-tenancy tables need the
   same conflict-branch guard, so the `sql` option added here is reused there.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Resolved 2026-11-25 from the vetted prototype (fresh at `ae558c03`, source applied clean, generated files regenerated). `sql.UpsertClauseOptions` gains `GuardColumn` / `Table`, and `InsertOptions` / `MultiInsertOptions` gain `UpsertGuardColumn`. PostgreSQL and SQLite append `WHERE <table>.<tenant> = excluded.<tenant>` to `DO UPDATE`. MySQL writes each assignment as `col = IF(<tenant> = VALUES(<tenant>), VALUES(col), col)`. `Upsert` sets the guard only when tenancy applies, and returns plain `ErrNotFound` when the captured tenant differs from the resolved one. `UpsertMany` runs a pre-write `upsertManyForeignConflict` read per `batch_size` chunk when the conflict target lacks the tenant column, refuses the whole call with `ErrNotFound`, and keeps a post-write captured-tenant check as a race backstop. PRD §29.4.2 gains the sentence stating the guard, the error and the `UpsertMany` refusal. Inline: removed a PRD reference from an `upsert_many.go.tmpl` comment (refs-check). Added conformance rows `tenancy.upsert-conflict-guard`, `tenancy.upsert-many-foreign-conflict`, `tenancy.upsert-skip-tenancy-no-guard` (`client.md`) and `dialect.upsert.guard-column` (`runtime/sql.md`), then ran `make req-rehash` for §29.4 and §29.4.2. Verify-pass inline fixes (reviewer, measured on SQLite): (1) composite PK with the tenant outside it plus a non-PK UNIQUE target: a guarded-away DO UPDATE returned no row, and the fallback read the tenant by the input PK. That gave `capture tenant: … no rows in result set`, or `nil` when the input PK named one of A's rows. A missing RETURNING row on a guarded DO UPDATE now returns `ErrNotFound`. (2) Tenant in the PK plus a non-PK UNIQUE target: there was no post-statement check, so empty `FieldOptions` returned `nil` after writing nothing. When the target lacks the tenant column, the Exec path now looks for a row in another tenant holding the target's values when the input supplies every target column, and returns `ErrNotFound` if one exists. A second reviewer pass found that dropping an unsupplied column turned that check into `tenant <> A`; the check is now skipped in that case, pinned by `TestUpsertTenantGuard_TenantInPKUnsetTargetColumnInserts`. On MySQL that post-write check still wrote A's row before failing: `ON DUPLICATE KEY` fired on A's own PK while B held the input's ref. Per the ruling, the check (`upsertForeignConflict`) now runs before the statement on every dialect, and PostgreSQL/SQLite re-run it after the statement as a race backstop. `tenancy_mysql` and `tenancy_postgres` gain `ledger_entries` (tenant in the PK, `ref UNIQUE`) and two tests; `tenancy` gains `TestUpsertTenantGuard_TenantInPKOwnKeyForeignRefWritesNothing`. Fail-first, pre-statement check removed, on MySQL: "err = <nil>, want ErrNotFound" and "A entry = {amount 99, …}, want {1, a-ref}: the refused call wrote it". Per ruling (1), MySQL also runs the check before the statement on tables whose tenant is outside the PK. `tenancy_mysql.line_items` gains `sku UNIQUE`, with `TestUpsertTenantGuard_UniqueBesidePKConflictWithForeignRow`. Fail-first: "err = <nil>, want ErrNotFound" and "A's line item quantity = 99, want 1 (unchanged)". (3) The SkipTenancy test passed B's tenant, which the guard lets through anyway, so it now passes A's. `tenancy` gains `line_items.sku` and `order_items.ref` UNIQUE columns, plus `TestUpsertTenantGuard_UniqueBesidePKConflictWithForeignRow` and `TestUpsertTenantGuard_TenantInPKUniqueConflictWithForeignRow`. Fail-first: with (1) and (2) reverted, the tests fail with "capture tenant: stdlib scan: sql: no rows in result set, want ErrNotFound" and "err = <nil>, want ErrNotFound". Golden churn: 54 example files. These are the vet's 30, plus `ledger_entries` in `tenancy_mysql` (6) and `tenancy_postgres` (18, including the manifest `ledger_entry.*`, `_index.md`, `manifest_gen.json`, `AGENTS.md` and `CLAUDE.md`), plus the removed PRD reference in the `UpsertMany` guard comment and the verify-pass template and `tenancy` schema changes. The four tenanted conformance `features_*` models were also regenerated, per the user's ruling. Gates: `make check` ok. `make check-examples` ok; `test-conformance` passes on every dialect.
 
 ### FIX-405
 

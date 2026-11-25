@@ -121,6 +121,23 @@ type UpsertClauseOptions struct {
 	// PostgreSQL and SQLite the field is ignored and the generated caller
 	// resolves the PK with a follow-up SELECT.
 	ResolvePKColumn string
+
+	// GuardColumn, when set, limits the conflict branch to an existing row
+	// whose GuardColumn equals the value the statement proposed for it: a
+	// conflicting row holding any other value is left untouched. It carries
+	// tenancy into the clause, since a conflict target need not include the
+	// tenant column (PRD 29.4.2). The comparison reads the proposed row, so it
+	// binds no argument. PostgreSQL / SQLite: a WHERE on DO UPDATE, which
+	// returns no RETURNING row for the guarded-away conflict. MySQL, whose
+	// ON DUPLICATE KEY UPDATE takes no WHERE: each assignment becomes
+	// col = IF(guard = VALUES(guard), VALUES(col), col). The DO NOTHING and
+	// MySQL no-op forms write nothing and carry no guard.
+	GuardColumn string
+
+	// Table qualifies GuardColumn on PostgreSQL and SQLite, where the
+	// conflicting row and the excluded row share column names: PostgreSQL
+	// rejects the unqualified reference as ambiguous.
+	Table Table
 }
 
 // Condition represents a single SQL condition with a clause containing "$"

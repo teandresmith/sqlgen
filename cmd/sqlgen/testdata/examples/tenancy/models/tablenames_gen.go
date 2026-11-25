@@ -11,6 +11,7 @@ const (
 	TableCycles             hook.TableName = "cycles"
 	TableLabels             hook.TableName = "labels"
 	TableLegacyWidgets      hook.TableName = "legacy_widgets"
+	TableLineItems          hook.TableName = "line_items"
 	TableMomentOwners       hook.TableName = "moment_owners"
 	TableMomentTagLinks     hook.TableName = "moment_tag_links"
 	TableMomentTags         hook.TableName = "moment_tags"

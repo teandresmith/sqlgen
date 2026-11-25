@@ -18,6 +18,7 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 - **Checkpoint** (`checkpoints`, table) — [./manifest/checkpoint.md](./manifest/checkpoint.md)
 - **Cycle** (`cycles`, table) — [./manifest/cycle.md](./manifest/cycle.md)
 - **Label** (`labels`, table) — [./manifest/label.md](./manifest/label.md)
+- **LedgerEntry** (`ledger_entries`, table) — [./manifest/ledger_entry.md](./manifest/ledger_entry.md)
 - **LineItem** (`line_items`, table) — [./manifest/line_item.md](./manifest/line_item.md)
 - **Milestone** (`milestones`, table) — [./manifest/milestone.md](./manifest/milestone.md)
 - **Moment** (`moments`, table) — [./manifest/moment.md](./manifest/moment.md)

@@ -10,6 +10,14 @@
   "comment": "",
   "indexes": [
     {
+      "name": "tasks_code_key",
+      "columns": [
+        "code"
+      ],
+      "unique": true,
+      "method": "btree"
+    },
+    {
       "name": "tasks_pkey",
       "columns": [
         "id"
@@ -136,6 +144,17 @@
       "pk": false,
       "unique": false,
       "comparator": "comparator.String",
+      "comment": ""
+    },
+    {
+      "name": "code",
+      "go_field": "Code",
+      "go_type": "*string",
+      "db_type": "text",
+      "nullable": true,
+      "pk": false,
+      "unique": true,
+      "comparator": "comparator.NullableString",
       "comment": ""
     }
   ],
@@ -301,7 +320,7 @@
         ],
         "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
         "sql_bodies": {
-          "postgres": "SELECT \"cycle_id\", \"id\", \"project_code\", \"sprint_id\", \"title\", \"workspace_id\" FROM \"public\".\"tasks\" WHERE \"id\" = $1 LIMIT 1"
+          "postgres": "SELECT \"code\", \"cycle_id\", \"id\", \"project_code\", \"sprint_id\", \"title\", \"workspace_id\" FROM \"public\".\"tasks\" WHERE \"id\" = $1 LIMIT 1"
         }
       },
       {
@@ -317,7 +336,7 @@
           "tenancy.ErrMissing"
         ],
         "sql_bodies": {
-          "postgres": "SELECT \"cycle_id\", \"id\", \"project_code\", \"sprint_id\", \"title\", \"workspace_id\" FROM \"public\".\"tasks\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+          "postgres": "SELECT \"code\", \"cycle_id\", \"id\", \"project_code\", \"sprint_id\", \"title\", \"workspace_id\" FROM \"public\".\"tasks\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
         }
       },
       {
@@ -411,7 +430,7 @@
         ],
         "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
         "sql_bodies": {
-          "postgres": "SELECT \"cycle_id\", \"id\", \"project_code\", \"sprint_id\", \"title\", \"workspace_id\" FROM \"public\".\"tasks\" WHERE <filter> ORDER BY <sort>"
+          "postgres": "SELECT \"code\", \"cycle_id\", \"id\", \"project_code\", \"sprint_id\", \"title\", \"workspace_id\" FROM \"public\".\"tasks\" WHERE <filter> ORDER BY <sort>"
         }
       }
     ],
@@ -696,6 +715,10 @@
     "type": "TaskFilter",
     "fields": [
       {
+        "name": "Code",
+        "type": "*comparator.NullableString"
+      },
+      {
         "name": "CycleID",
         "type": "*comparator.NullableNumber[int64]"
       },
@@ -732,6 +755,7 @@
   "sort": {
     "type": "TaskSort",
     "fields": [
+      "Code",
       "CycleID",
       "ID",
       "ProjectCode",

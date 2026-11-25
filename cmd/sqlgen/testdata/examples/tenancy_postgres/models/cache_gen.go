@@ -24,6 +24,7 @@ const fingerprintBadge = "8b2f54a7"
 const fingerprintCheckpoint = "9fa1dd68"
 const fingerprintCycle = "d1b4c4d3"
 const fingerprintLabel = "958199e0"
+const fingerprintLedgerEntry = "c4f8ed5a"
 const fingerprintLineItem = "f12802fa"
 const fingerprintMilestone = "8b2d619d"
 const fingerprintMoment = "fe3db608"
@@ -39,7 +40,7 @@ const fingerprintSharedParent = "bad47a79"
 const fingerprintSite = "ea1427e2"
 const fingerprintSprint = "4bd9698d"
 const fingerprintStamp = "44954920"
-const fingerprintTask = "0edb5138"
+const fingerprintTask = "01fb6caa"
 const fingerprintTaskBadge = "cc6db23f"
 const fingerprintTaskLabel = "28070e57"
 const fingerprintTaskReviewer = "8754cce4"
@@ -255,6 +256,10 @@ func (c *Cache) handleInvalidation(ctx context.Context, signal cache.Invalidatio
 			tenants[i] = signal.Tenant
 		}
 		return c.invalidateAffectedTenanted(ctx, signal.Table, tenants, signal.PKs)
+	case TableLedgerEntries:
+		// Tenant lives inside the primary key — each signal PK carries it,
+		// so the receive side is precise even without a tenant stamp.
+		return c.invalidateAffectedTenanted(ctx, signal.Table, nil, signal.PKs)
 	case TableLineItems:
 		// Rebuild the exact per-PK key from the signal's tenant stamp: the
 		// %v round-trip makes the string form byte-identical to the local
@@ -1850,6 +1855,281 @@ func (c *Cache) hydrateLabel(tenant uuid.UUID, pk int64, next hook.QueryHandler)
 		if c.metrics != nil {
 			c.metrics.Set(schema, TableLabels)
 			c.metrics.HydrationComplete(schema, TableLabels, nil)
+		}
+	}()
+}
+
+// keyForLedgerEntry builds the cache key for LedgerEntry with composite PK.
+// The []any is constructed in DDL PRIMARY KEY column order inside this one
+// function — call sites never reorder (key-order invariant).
+// Tenanted form: tenant: segment is emitted before fingerprint:
+// so the per-tenant trailing-wildcard pattern (BuildTenantTablePattern)
+// matches every fingerprint generation in one pass.
+func (c *Cache) keyForLedgerEntry(tenant uuid.UUID, pk LedgerEntryPK) string {
+	return cache.BuildCompositeTenantKey(c.prefix, "public", "ledger_entries", fingerprintLedgerEntry, tenant, []any{
+		pk.WorkspaceID,
+		pk.EntryID,
+	})
+}
+
+// ttlForLedgerEntry returns the resolved TTL for LedgerEntry cache entries.
+func (c *Cache) ttlForLedgerEntry() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipLedgerEntry reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipLedgerEntry(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*LedgerEntryFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsLedgerEntry returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsLedgerEntry() *LedgerEntryFieldOptions {
+	return &LedgerEntryFieldOptions{
+		WorkspaceID: true,
+		EntryID:     true,
+		Amount:      true,
+		Ref:         true,
+	}
+}
+
+// readThroughLedgerEntry implements the cache read-through path for LedgerEntry:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+// Tenanted: tenant comes from q.Tenant — resolved once at the entity-method
+// boundary and reused here without re-invoking TenantResolver.
+func (c *Cache) readThroughLedgerEntry(ctx context.Context, tenant uuid.UUID, pk LedgerEntryPK, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForLedgerEntry(tenant, pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*LedgerEntry](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableLedgerEntries, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableLedgerEntries, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableLedgerEntries)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableLedgerEntries)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableLedgerEntries)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateLedgerEntry(tenant, pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*LedgerEntry](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*LedgerEntry)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForLedgerEntry())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableLedgerEntries, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableLedgerEntries, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableLedgerEntries)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setLedgerEntry caches a full LedgerEntry entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+// Tenanted: tenant is supplied by the mutation hook from the row itself —
+// the PK struct when the tenant is part of the primary key, the structurally
+// captured m.AffectedTenants value otherwise — never the resolver, so
+// SkipTenancy creates write through under the correct key.
+func (c *Cache) setLedgerEntry(ctx context.Context, tenant uuid.UUID, entity *LedgerEntry) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForLedgerEntry(tenant, LedgerEntryPK{
+		WorkspaceID: entity.WorkspaceID,
+		EntryID:     entity.EntryID,
+	})
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForLedgerEntry())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableLedgerEntries, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableLedgerEntries, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableLedgerEntries)
+	}
+}
+
+// hydrateLedgerEntry launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+// Tenanted: tenant comes from the readThrough caller — resolved once at the
+// entity-method boundary, threaded through both the cache key and the
+// hydration QueryContext.Tenant.
+func (c *Cache) hydrateLedgerEntry(tenant uuid.UUID, pk LedgerEntryPK, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForLedgerEntry(tenant, pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableLedgerEntries)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableLedgerEntries,
+			Schema: schema,
+			PK:     pk,
+			Tenant: tenant,
+			CallOptions: CallOptions[LedgerEntryFieldOptions]{
+				FieldOptions: fullParentFieldOptionsLedgerEntry(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableLedgerEntries, err)
+			}
+			return
+		}
+		entity, ok := result.(*LedgerEntry)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableLedgerEntries, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableLedgerEntries, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForLedgerEntry())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableLedgerEntries, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableLedgerEntries, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableLedgerEntries, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableLedgerEntries)
+			c.metrics.HydrationComplete(schema, TableLedgerEntries, nil)
 		}
 	}()
 }
@@ -5884,6 +6164,7 @@ func fullParentFieldOptionsTask() *TaskFieldOptions {
 		SprintID:    true,
 		ProjectCode: true,
 		Title:       true,
+		Code:        true,
 	}
 }
 
@@ -9156,6 +9437,8 @@ func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableLabels:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableLedgerEntries:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableLineItems:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableMilestones:
@@ -9278,6 +9561,16 @@ func (c *Cache) invalidateAffectedTenanted(ctx context.Context, table hook.Table
 				continue
 			}
 			keys = append(keys, cache.BuildTenantKey(c.prefix, "public", "labels", fingerprintLabel, tenants[i], pk))
+		}
+	case TableLedgerEntries:
+		// Tenant lives inside the primary key — read it from each PK
+		// value; no parallel carrier is written for this shape.
+		for _, rawPK := range pks {
+			pk, ok := rawPK.(LedgerEntryPK)
+			if !ok {
+				return c.invalidateTenantedFallback(ctx, table, fmt.Sprintf("unexpected PK type %T", rawPK))
+			}
+			keys = append(keys, c.keyForLedgerEntry(pk.WorkspaceID, pk))
 		}
 	case TableLineItems:
 		if len(tenants) < len(pks) {
@@ -9560,6 +9853,8 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "cycles", true
 	case TableLabels:
 		return "public", "labels", true
+	case TableLedgerEntries:
+		return "public", "ledger_entries", true
 	case TableLineItems:
 		return "public", "line_items", true
 	case TableMilestones:
@@ -9800,6 +10095,21 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughLabel(ctx, tenant, pk, q, next)
+			case TableLedgerEntries:
+				pk, ok := q.PK.(LedgerEntryPK)
+				if !ok {
+					return next(ctx, q)
+				}
+				// Tenanted table: tenant must be resolved by the entity
+				// method and threaded via q.Tenant. A nil/wrong-type
+				// Tenant means the caller bypassed tenant resolution
+				// (e.g. SkipTenancy = true) — fall through to the DB
+				// rather than risking a cross-tenant cache hit.
+				tenant, ok := q.Tenant.(uuid.UUID)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughLedgerEntry(ctx, tenant, pk, q, next)
 			case TableLineItems:
 				pk, ok := q.PK.(LineItemPK)
 				if !ok {
@@ -10254,6 +10564,13 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						}
 					}
 				}
+			case TableLedgerEntries:
+				if entity, ok := result.(*LedgerEntry); ok {
+					// Tenant lives in the primary key — read it from the
+					// (full) entity's PK field; partial results are gated
+					// by fieldOptsSet above.
+					c.setLedgerEntry(ctx, entity.WorkspaceID, entity)
+				}
 			case TableLineItems:
 				if entity, ok := result.(*LineItem); ok {
 					// Tenant sourced from the structural capture —
@@ -10634,6 +10951,14 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						if tenant, ok := tenantByPK[entity.ID].(uuid.UUID); ok {
 							c.setLabel(ctx, tenant, entity)
 						}
+					}
+				}
+			case TableLedgerEntries:
+				if entities, ok := result.([]*LedgerEntry); ok {
+					for _, entity := range entities {
+						// Tenant lives in the primary key — read it from
+						// each (full) entity's PK field.
+						c.setLedgerEntry(ctx, entity.WorkspaceID, entity)
 					}
 				}
 			case TableLineItems:
@@ -11080,6 +11405,10 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
 				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
+			case TableLedgerEntries:
+				// Tenanted tables rebuild each key from the row's own
+				// captured tenant — never a cross-tenant clear.
+				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
 			case TableLineItems:
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
@@ -11262,6 +11591,8 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipCycle(fo)
 	case TableLabels:
 		return hasAnyRelationshipLabel(fo)
+	case TableLedgerEntries:
+		return hasAnyRelationshipLedgerEntry(fo)
 	case TableLineItems:
 		return hasAnyRelationshipLineItem(fo)
 	case TableMilestones:

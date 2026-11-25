@@ -91,6 +91,7 @@ type Client struct {
 	checkpoint         *checkpointClient
 	cycle              *cycleClient
 	label              *labelClient
+	ledgerEntry        *ledgerEntryClient
 	lineItem           *lineItemClient
 	milestone          *milestoneClient
 	moment             *momentClient
@@ -153,6 +154,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		checkpoint:         newCheckpointClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		cycle:              newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		label:              newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		ledgerEntry:        newLedgerEntryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		lineItem:           newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		milestone:          newMilestoneClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		moment:             newMomentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -212,6 +214,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.checkpoint.tenantResolver = options.tenantResolver
 	c.cycle.tenantResolver = options.tenantResolver
 	c.label.tenantResolver = options.tenantResolver
+	c.ledgerEntry.tenantResolver = options.tenantResolver
 	c.lineItem.tenantResolver = options.tenantResolver
 	c.milestone.tenantResolver = options.tenantResolver
 	c.plot.tenantResolver = options.tenantResolver
@@ -328,6 +331,11 @@ func (c *Client) Cycles() CycleClient {
 // Labels returns the LabelClient for Label operations.
 func (c *Client) Labels() LabelClient {
 	return c.label
+}
+
+// LedgerEntries returns the LedgerEntryClient for LedgerEntry operations.
+func (c *Client) LedgerEntries() LedgerEntryClient {
+	return c.ledgerEntry
 }
 
 // LineItems returns the LineItemClient for LineItem operations.
