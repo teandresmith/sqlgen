@@ -69,6 +69,10 @@ func isDownMigration(name string) bool {
 // or modifies tables, DROP TABLE removes tables, and so on. Duplicate CREATE
 // statements (table, enum, composite type, domain type) are validation errors
 // — each schema element must be defined exactly once.
+//
+// A Parse error is returned unwrapped: every dialect's Parse already names
+// the file ("parsing <file>: ..."), so wrapping it again would print the
+// path twice.
 func ParseFiles(p Parser, files []string) error {
 	for _, file := range files {
 		sql, err := os.ReadFile(filepath.Clean(file))
@@ -76,7 +80,7 @@ func ParseFiles(p Parser, files []string) error {
 			return fmt.Errorf("reading %s: %w", file, err)
 		}
 		if err := p.Parse(file, sql); err != nil {
-			return fmt.Errorf("parsing %s: %w", file, err)
+			return err //nolint:wrapcheck // every dialect's Parse already wraps "parsing <file>:"
 		}
 	}
 	return nil

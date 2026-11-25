@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-405
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** nit
 - **Origin:** phase 4, parser/multifile.go; phase 9, cmd/sqlgen/cli
 - **Surfaced by:** backlog sweep 2026-11-24 (backlog lines "A schema parse error names the file twice", "`source: both` parse errors repeat the file prefix", "PG parse errors under Merge name the file twice", "print joined pre-parse and post-parse config errors with one prefix", "carries the `Error: gqlgen wrapper:` label on its first line only")
@@ -51,13 +59,7 @@
 - PRD §23.9 (exit codes / error classes), §26.5.6 failure mode, §6.1 (`source: both`).
 - FIX-251, FIX-304, FIX-326, FIX-354 (where each line was measured).
 
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
+**Resolution notes.** Prototype applied clean with `git apply --3way` onto `0ae2dcf6`. `parser.ParseFiles` returns the dialect's Parse error unwrapped (keeping the `reading %s` wrap), so a parse error names the file once under `files` and `source: both`; a new `printErrorLines` in `cli/pipeline.go` gives every `splitJoinedErrors` line its prefix at the config-validation, post-parse and generation sites of `generate`, `loadAndValidate` and `diff`; `cli/graphql.go` labels every line of a multi-line wrapper error and ends the last with the artifacts suffix. PRD §26.5.6 failure mode gains the multi-line sentence. Beyond the prototype: checked FIX-401's new errors (psql meta-command, a foreign table over a taken name) go through Parse's own `parsing %s:` wrap, and added both as postgres cases of `TestParseFiles_ErrorNamesFileOnce`; removed the FIX ID from three test comments (`refs-check`); added conformance claims the prototype lacked (`api.wrapper.failure-multi-line` row in `docs/conformance/cli/api.md`, `TestJoinedErrorsPrefixEveryLine` on `cmd.exit.prints-error`, `TestParseFiles_ErrorNamesFileOnce` listed unclaimed in `docs/conformance/parser/schema.md`) and ran `make req-rehash SECTIONS=26`, `26.5`, `26.5.6`. /verify inline correction: shortened the `TestParseFiles_ErrorNamesFileOnce` doc comment. Gates: `make check` ok, `make check-examples` ok, `go test -run TestMerge ./introspect/` (Docker) ok; no golden churn (matches the vet). Fail-first: with the `ParseFiles` wrap restored, all 8 `TestParseFiles_ErrorNamesFileOnce` cases fail ("names … 2 times, want once").
 
 ### FIX-404
 

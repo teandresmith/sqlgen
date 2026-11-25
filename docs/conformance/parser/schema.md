@@ -465,6 +465,7 @@ Tests in `parser` that back no PRD behavior. Every other top-level test in the p
 | parser: TestParseFiles_AlterNonexistentTable | The `not found` error comes from the test's own parser double; ParseFiles only forwards it |
 | parser: TestParseFiles_DuplicateCreateEnum | The duplicate error comes from the test's own parser double; see parser.multifile.duplicate-create-type |
 | parser: TestParseFiles_DuplicateCreateTable | The duplicate error comes from the test's own regex parser double, so it tests the double; the real-parser rows are parser.multifile.duplicate-create-* |
+| parser: TestParseFiles_ErrorNamesFileOnce | Pins the error text: a dialect's parse error comes back through ParseFiles naming the file once; no PRD clause states the message's shape |
 | parser: TestParseFiles_DuplicateWithSchemaQualification | The qualified duplicate error comes from the test's own parser double |
 | parser: TestPostgresIndexColumnNames | Helper giving the <cols> part of a derived PostgreSQL index name; the derived index name is proven by parser.pg.index.unnamed-name (TestDerivedConstraintNames/index columns from expressions and repeats) |
 | parser: TestRelationshipTypeStrings | RelationshipType.String helper; no PRD behavior |

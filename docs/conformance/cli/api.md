@@ -62,7 +62,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.relationship-filter-member.view | A view's `<V>Filter` carries no relationship member | `unit: cmd/sqlgen/gen: TestAPIFilterRelationships_ViewsCarryNone` | all | api-generation: relationship-filter-member × view |
 
 ## §26.5 GraphQL Resolver Generation
-<!-- prd: 26.5 sha256: dac8c424e6ab2acf -->
+<!-- prd: 26.5 sha256: 2e7d3c8322ec43ea -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -565,7 +565,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.errors.edge-not-parsed-from-message | The edge is read off the structured error, never substring-matched out of the message | `unit: cmd/sqlgen/gen: TestMapErrorToGQL_NestedFailureNamesItsEdge` | all | |
 
 ## §26.5.6 Module Boundary & Wrapper Subcommand
-<!-- prd: 26.5.6 sha256: 1e8ca3ae0b182acc -->
+<!-- prd: 26.5.6 sha256: 98075582f4267284 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -587,6 +587,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.wrapper.failure-no-rollback | When the gqlgen subprocess fails, the sqlgen-side files emitted earlier in the run stay on disk | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_SubprocessFailureKeepsArtifacts` | all | |
 | api.wrapper.failure-subprocess-message | A gqlgen subprocess failure prints `Error: gqlgen subprocess failed: <details>; sqlgen-side artifacts emitted at <output.dir>` | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_WrapperErrorLabel/gqlgen binary fails` | all | |
 | api.wrapper.failure-wrapper-label | A failure in the wrapper's own steps keeps the artifacts-emitted suffix but carries the `gqlgen wrapper` label | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_WrapperErrorLabel/single-file resolver block without filename` | all | |
+| api.wrapper.failure-multi-line | When the wrapper or subprocess error spans several lines, such as YAML unmarshal errors in `gqlgen.yml`, each line carries the `Error: <label>:` prefix and the artifacts-emitted suffix ends the last one | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_MultiLineWrapperError` | all | |
 | api.wrapper.failure-unbound-own-error | An unbound root resolver name prints its own error rather than the subprocess or wrapper label | `unit: cmd/sqlgen/cli: TestGenerate_ChainedGraphQL_UnboundRootFieldOwnError/prints its own error` | all | |
 | api.wrapper.step2-reads-layout | The wrapper reads the consumer `gqlgen.yml`, including `resolver.layout` | `unit: cmd/sqlgen/wrapper: TestParseResolverLayout` | all | |
 | api.wrapper.step3-models-tables | Step 3 merges `models:` bindings for managed tables | `unit: cmd/sqlgen/cli: TestBuildMergeInput_SignatureParity_RowStructsAndScalars`; `unit: cmd/sqlgen/wrapper: TestMerge_LayeredOnExistingMergesSqlgenEntries` | all | |

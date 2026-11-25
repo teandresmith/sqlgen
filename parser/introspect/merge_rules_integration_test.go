@@ -143,7 +143,7 @@ func TestMerge_OnlyIntrospectedTables(t *testing.T) {
 
 			filtered := tt.base(t, []string{tt.users})
 			err := introspect.Merge(filtered, tt.parser(t), []string{migration})
-			want := fmt.Sprintf("merge both mode: parsing %[1]s: parsing %[1]s: %s", migration, tt.wantErr)
+			want := fmt.Sprintf("merge both mode: parsing %s: %s", migration, tt.wantErr)
 			if err == nil || err.Error() != want {
 				t.Errorf("Merge() with %s left out: error = %v, want %q", tt.posts, err, want)
 			}

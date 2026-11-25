@@ -5,7 +5,7 @@
 The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's GraphQL rows), emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. The `api-generation` matrix and its rows for these sections are in [`api.md`](api.md).
 
 ## §26 API Generation
-<!-- prd: 26 sha256: a305277107b14af1 -->
+<!-- prd: 26 sha256: e6fe5213d2e88de5 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

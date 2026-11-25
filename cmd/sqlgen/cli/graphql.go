@@ -219,7 +219,16 @@ func runGraphQLGen(ctx context.Context, cfg *config.RootConfig, schema *parser.S
 		if _, ok := errors.AsType[*wrapper.SubprocessError](err); ok {
 			label = "gqlgen subprocess failed"
 		}
-		_, _ = fmt.Fprintf(errOut, "Error: %s: %v; sqlgen-side artifacts emitted at %s\n", label, err, cfg.Output.Dir)
+		// A multi-line error, such as yaml.v3's unmarshal errors, carries the
+		// label on every line; the artifacts suffix ends the last one.
+		lines := splitJoinedErrors(err)
+		for i, line := range lines {
+			suffix := ""
+			if i == len(lines)-1 {
+				suffix = "; sqlgen-side artifacts emitted at " + cfg.Output.Dir
+			}
+			_, _ = fmt.Fprintf(errOut, "Error: %s: %s%s\n", label, strings.TrimSpace(line), suffix)
+		}
 		return nil, &exitError{code: ExitGeneration, err: err}
 	}
 	return res, nil

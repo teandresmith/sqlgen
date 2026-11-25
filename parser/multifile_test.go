@@ -11,6 +11,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/teandresmith/sqlgen/parser"
+	"github.com/teandresmith/sqlgen/parser/mysql"
+	"github.com/teandresmith/sqlgen/parser/postgres"
+	"github.com/teandresmith/sqlgen/parser/sqlite"
 )
 
 // --- Minimal test parser ---
@@ -552,5 +555,63 @@ func TestParseFiles_AlterNonexistentTable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("error should mention 'not found', got: %v", err)
+	}
+}
+
+// --- ParseFiles: the error names the file once ---
+
+// TestParseFiles_ErrorNamesFileOnce pins that a dialect's Parse error comes
+// back through ParseFiles naming the file exactly once.
+func TestParseFiles_ErrorNamesFileOnce(t *testing.T) {
+	dialects := []struct {
+		name string
+		new  func(t *testing.T) parser.Parser
+	}{
+		{"postgres", func(*testing.T) parser.Parser { return postgres.New("public") }},
+		{"mysql", func(t *testing.T) parser.Parser {
+			p, err := mysql.New()
+			if err != nil {
+				t.Fatalf("mysql.New() error: %v", err)
+			}
+			return p
+		}},
+		{"sqlite", func(*testing.T) parser.Parser { return sqlite.New() }},
+	}
+	inputs := []struct {
+		name   string
+		sql    string
+		pgOnly bool
+	}{
+		{name: "syntax error", sql: "CREATE TABLE ( ;"},
+		{name: "statement error", sql: "ALTER TABLE missing ADD COLUMN name TEXT;"},
+		{name: "psql meta-command", sql: "\\connect other\nCREATE TABLE t (id INT);", pgOnly: true},
+		{
+			name:   "foreign table name taken",
+			sql:    "CREATE TABLE f (id INT);\nCREATE FOREIGN TABLE f (id INT) SERVER s;",
+			pgOnly: true,
+		},
+	}
+	for _, d := range dialects {
+		for _, in := range inputs {
+			if in.pgOnly && d.name != "postgres" {
+				continue
+			}
+			t.Run(d.name+"/"+in.name, func(t *testing.T) {
+				dir := t.TempDir()
+				good := writeFile(t, dir, "001_init.sql", "CREATE TABLE users (id INT PRIMARY KEY);")
+				bad := writeFile(t, dir, "002_bad.sql", in.sql)
+
+				err := parser.ParseFiles(d.new(t), []string{good, bad})
+				if err == nil {
+					t.Fatalf("ParseFiles() with %q: error = nil, want one", in.sql)
+				}
+				if want := "parsing " + bad + ": "; !strings.HasPrefix(err.Error(), want) {
+					t.Errorf("ParseFiles() error = %q, want it to start %q", err, want)
+				}
+				if got := strings.Count(err.Error(), bad); got != 1 {
+					t.Errorf("ParseFiles() error = %q names %s %d times, want once", err, bad, got)
+				}
+			})
+		}
 	}
 }
