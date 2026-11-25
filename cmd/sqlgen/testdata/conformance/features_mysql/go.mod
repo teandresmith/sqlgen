@@ -13,6 +13,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/teandresmith/sqlgen v0.0.0
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/features_suite v0.0.0
+	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip v0.0.0
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.41.0
 )
 
@@ -83,3 +84,5 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip => ../roundtrip

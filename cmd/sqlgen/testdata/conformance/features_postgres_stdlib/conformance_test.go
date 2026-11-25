@@ -14,6 +14,7 @@ import (
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 
 	featuressuite "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/features_suite"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip"
 )
 
 func TestConformance(t *testing.T) {
@@ -54,6 +55,11 @@ func TestConformance(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SHOW server_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
+	reset := func(t *testing.T) {
+		if _, err := db.ExecContext(ctx, "TRUNCATE template_tags, template_notes, templates, board_tags, cards, tags, boards, tasks, memberships, notes, bulletins, regions RESTART IDENTITY"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	q := &featuressuite.CountingQuerier{Inner: dbstdlib.New(db)}
 	featuressuite.Run(t, &featuressuite.Harness{
 		Dialect:  "postgres",
@@ -62,10 +68,32 @@ func TestConformance(t *testing.T) {
 		Querier:  q,
 		Base:     q,
 		Caps:     featuressuite.Capabilities{RowLocks: true, KeySchema: "public"},
-		Reset: func(t *testing.T) {
-			if _, err := db.ExecContext(ctx, "TRUNCATE template_tags, template_notes, templates, board_tags, cards, tags, boards, tasks, memberships, notes, bulletins, regions RESTART IDENTITY"); err != nil {
-				t.Fatal(err)
-			}
-		},
+		Reset:    reset,
+	})
+
+	t.Run("RoundTrips", func(t *testing.T) {
+		rec, err := roundtrip.NewRecorder()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The same database, through a pool whose driver reports every
+		// statement to rec.
+		rtdb, err := roundtrip.OpenDB(rec, "postgres", dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { rtdb.Close() })
+		if err := roundtrip.Warm(ctx, rtdb, 8); err != nil {
+			t.Fatal(err)
+		}
+		rq := &featuressuite.CountingQuerier{Inner: dbstdlib.New(rtdb)}
+		featuressuite.RunRoundTrips(t, &featuressuite.Harness{
+			Dialect: "postgres",
+			Driver:  "stdlib",
+			Querier: rq,
+			Base:    rq.Inner,
+			Caps:    featuressuite.Capabilities{RowLocks: true, KeySchema: "public"},
+			Reset:   reset,
+		}, rec)
 	})
 }

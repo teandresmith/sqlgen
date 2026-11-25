@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/teandresmith/sqlgen v0.0.0
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models v0.0.0
+	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip v0.0.0
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/suite v0.0.0
 	modernc.org/sqlite v1.48.1
 )
@@ -31,3 +32,5 @@ replace (
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models => ./models
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/suite => ../suite
 )
+
+replace github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip => ../roundtrip

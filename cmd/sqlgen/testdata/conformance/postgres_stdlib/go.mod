@@ -12,6 +12,7 @@ require (
 	github.com/lib/pq v1.12.3
 	github.com/teandresmith/sqlgen v0.0.0
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models v0.0.0
+	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip v0.0.0
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/suite v0.0.0
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.41.0
@@ -81,3 +82,5 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip => ../roundtrip

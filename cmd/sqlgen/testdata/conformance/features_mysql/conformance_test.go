@@ -13,6 +13,7 @@ import (
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 
 	featuressuite "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/features_suite"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip"
 )
 
 func TestConformance(t *testing.T) {
@@ -62,6 +63,13 @@ func TestConformance(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
+	reset := func(t *testing.T) {
+		// TRUNCATE refuses a table another table's foreign key references.
+		exec(t, "DELETE FROM template_tags", "DELETE FROM template_notes", "DELETE FROM templates",
+			"DELETE FROM board_tags", "DELETE FROM cards", "DELETE FROM tags", "DELETE FROM boards",
+			"DELETE FROM tasks", "DELETE FROM memberships", "DELETE FROM notes", "DELETE FROM bulletins",
+			"DELETE FROM regions")
+	}
 	q := &featuressuite.CountingQuerier{Inner: dbstdlib.New(db)}
 	featuressuite.Run(t, &featuressuite.Harness{
 		Dialect:  "mysql",
@@ -70,13 +78,33 @@ func TestConformance(t *testing.T) {
 		Querier:  q,
 		Base:     q,
 		Caps:     featuressuite.Capabilities{RowLocks: true, CaseInsensitiveText: true},
-		Reset: func(t *testing.T) {
-			// TRUNCATE refuses a table another table's foreign key references.
-			exec(t, "DELETE FROM template_tags", "DELETE FROM template_notes", "DELETE FROM templates",
-				"DELETE FROM board_tags", "DELETE FROM cards", "DELETE FROM tags", "DELETE FROM boards",
-				"DELETE FROM tasks", "DELETE FROM memberships", "DELETE FROM notes", "DELETE FROM bulletins",
-				"DELETE FROM regions")
-		},
+		Reset:    reset,
+	})
+
+	t.Run("RoundTrips", func(t *testing.T) {
+		rec, err := roundtrip.NewRecorder()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The same database, through a pool whose driver reports every
+		// statement to rec.
+		rtdb, err := roundtrip.OpenDB(rec, "mysql", dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { rtdb.Close() })
+		if err := roundtrip.Warm(ctx, rtdb, 8); err != nil {
+			t.Fatal(err)
+		}
+		rq := &featuressuite.CountingQuerier{Inner: dbstdlib.New(rtdb)}
+		featuressuite.RunRoundTrips(t, &featuressuite.Harness{
+			Dialect: "mysql",
+			Driver:  "stdlib",
+			Querier: rq,
+			Base:    rq.Inner,
+			Caps:    featuressuite.Capabilities{RowLocks: true, CaseInsensitiveText: true},
+			Reset:   reset,
+		}, rec)
 	})
 }
 

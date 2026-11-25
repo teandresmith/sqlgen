@@ -150,6 +150,8 @@ without a conflict target gets no upsert. You choose what the generated API expo
 - [Configuration](./configuration.md): the full `sqlgen.yml` reference, including GraphQL, MCP,
   caching, events and multi-tenancy.
 - [Dialect support](./dialects.md): how PostgreSQL, MySQL and SQLite differ.
+- [Database round trips](./round-trips.md): how many statements each client method sends, and
+  how many of them wait on each other, measured on every dialect.
 - [sqlgen-example](https://github.com/teandresmith/sqlgen-example): a multi-tenant GraphQL API
   wired the recommended way, with cache, events, hooks and metrics.
 - [Per-feature test projects](../cmd/sqlgen/testdata/examples/): complete, tested projects for

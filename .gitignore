@@ -7,3 +7,6 @@ coverage.out
 
 # make conformance: go test -json results the report is built from
 .conformance-results/
+
+# make round-trips: the dialect modules' measurements docs/round-trips.md is built from
+.round-trips-results/
