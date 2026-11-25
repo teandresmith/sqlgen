@@ -29,6 +29,7 @@
 - **Severity:** blocking
 - **Origin:** phase 13, cmd/sqlgen/gen/templates/table
 - **Surfaced by:** user report, from a probe for the `docs/design/TENANT_SCOPED_REFERENCES.md` redesign (2026-11-25)
+- **Vetted:** ready at `ae558c03` (2026-11-25)
 
 **Issue.** **`Upsert` / `UpsertMany` on a tenanted table can overwrite
 another tenant's row when the conflict target matches it.** This was measured on
@@ -46,7 +47,9 @@ row that belongs to tenant B:
 - An upsert on `TaskConflictCode` with B's `code` overwrote B's row the same way.
 
 Every error comes from the tenant-filtered read-back after the statement. By
-then the write has committed. A caller can therefore modify any tenant's row
+then the write has committed. With empty `FieldOptions` the read-back is
+skipped. `Upsert` / `UpsertMany` then return `nil` (success) after writing the
+other tenant's row. The vet measured this on all three dialects. A caller can therefore modify any tenant's row
 whose primary key or unique value it knows, with no `SkipTenancy`. This breaks
 §29's "structurally incapable of crossing tenant boundaries" guarantee.
 
@@ -57,11 +60,11 @@ conflict branch updates. `sql.UpsertClauseOptions`
 (`sql/dialect.go:99`) has no field for a conflict-branch predicate, so the
 rendered SQL is unconditional:
 - PostgreSQL: `ON CONFLICT ("id") DO UPDATE SET "project_id" = excluded."project_id", "title" = excluded."title" RETURNING "id", "workspace_id"`
-- MySQL: `ON DUPLICATE KEY UPDATE ... "title" = VALUES("title")`
+- MySQL: ``ON DUPLICATE KEY UPDATE ... `title` = VALUES(`title`)``
 
 The comment on `insertUpsertAndResolveID` ("On the conflict-update path the
 existing row keeps its tenant") describes this behavior as intended. The tenant
-check at `:61-116` covers only the input's tenant field.
+check at `:61-127` covers only the input's tenant field.
 
 **Suggested fix.**
 - Add a conflict-branch guard to `sql.UpsertClauseOptions`, rendered per dialect:
@@ -85,6 +88,100 @@ check at `:61-116` covers only the input's tenant field.
     another tenant's row leave that row unchanged and return `ErrNotFound`;
   - `UpsertMany` writes no part of a batch that hits such a conflict;
   - the same call under `SkipTenancy` still updates the row.
+- Vet corrections (2026-11-25):
+  - The guard compares against the proposed row and binds no argument:
+    `WHERE <table>.<tenant> = excluded.<tenant>` on PostgreSQL / SQLite, and
+    `col = IF(<tenant> = VALUES(<tenant>), VALUES(col), col)` on MySQL. The
+    table qualifier is required on PostgreSQL. Unqualified, it fails with
+    `column reference "ws" is ambiguous`.
+  - The guard alone is not enough. `Upsert` also needs an explicit
+    post-statement check that the captured tenant equals the resolved one.
+    Without it, a guarded-away conflict with empty `FieldOptions` writes nothing
+    but returns `nil`.
+  - `UpsertMany` needs a pre-write foreign-conflict read to fail the whole batch,
+    because the guard alone still commits the sibling rows.
+  - None of the three examples had the needed shapes. The prototype adds a
+    nullable `code … UNIQUE` column on `tasks` in all three, and a `line_items`
+    table (composite PK, tenant outside it) to `tenancy`.
+- Prototype results, run at `ae558c03` on 2026-11-25:
+  - **Reproduction.** `GOWORK=off go test -count=1 -run TenantGuard ./tests/`
+    in `tenancy`, `tenancy_postgres` and `tenancy_mysql`, without the fix.
+    All three dialects fail the same ways:
+    - "Upsert onto B's key as A: err = <nil>, want ErrNotFound" (no fields
+      selected);
+    - "B line item = {workspace bbbb…, quantity 99}, want {bbbb…, 7}: another
+      tenant's upsert wrote it";
+    - "task rows = 2, want 1 (the failed batch wrote A's new row)".
+  - **Not affected.** `UpsertWithRelated` on PostgreSQL does not reproduce: the
+    parent's read-back always runs, so `ErrNotFound` rolls the transaction
+    back. Its test is kept as a regression guard.
+  - **Prototype.**
+    - `sql`: `UpsertClauseOptions.GuardColumn` / `.Table`, plus
+      `InsertOptions.UpsertGuardColumn` and
+      `MultiInsertOptions.UpsertGuardColumn`. DO NOTHING and the MySQL no-op
+      form get no guard.
+    - `upsert.go.tmpl`: the guard applies only when tenancy applies, and a
+      captured tenant that differs from the resolved one returns plain
+      `ErrNotFound`.
+    - `upsert_many.go.tmpl`: a pre-write `upsertManyForeignConflict` read, one
+      per `batch_size` chunk, is skipped when the conflict target holds the
+      tenant. A post-write check on the captured tenants is a race backstop.
+  - **Gates.**
+    - `go test -race ./sql/...`, lint and gofumpt are clean.
+    - `make update-golden` and `make update-golden-e2e` pass, as does
+      `TestE2EGoldenFiles`. One pattern-test edit was needed, in
+      `gen/tenant_capture_template_test.go`.
+    - `tenancy`, `tenancy_postgres`, `tenancy_mysql` and `graphql` pass
+      `go test -race ./...` and golangci-lint.
+  - **Fail-first.**
+    - Builder guard removed → the PK and UNIQUE conflict tests fail on all
+      three dialects ("another tenant's upsert wrote it").
+    - `Upsert` post-statement check removed → the `no_fields_selected`
+      subtests fail ("err = <nil>, want ErrNotFound").
+    - `UpsertMany` pre-write check removed → "the failed batch wrote A's new
+      row".
+    - The race backstop has no deterministic test.
+    - The pre-existing suites pass without the fix.
+  - **Golden churn.**
+    - `graphql`: `models_gen.go` +637/~10, from the template change.
+    - With the schema and template changes, in `models/` and `expected/`:
+      - `tenancy`: 6 files, about +4873/~66;
+      - `tenancy_postgres`: 5 files, about +2354/~51, including manifest
+        `task.json` and `task.md`;
+      - `tenancy_mysql`: 3 files, about +1007/~29.
+    - Untenanted examples do not change.
+  - **Patch:** `.claude/prototypes/FIX-406.patch` (46 files; the code, schema
+    and tests are 16 files, +928/-7).
+  - **Public surface.** The patch adds four exported `sql` fields, which blocks
+    auto-accept.
+- The user ruled on 2026-11-25. Every ruling picked the option the prototype
+  already implements, so its gates and fail-first results stand, and the verdict
+  is `ready`:
+  - (a) `UpsertMany` fails the whole call before writing anything.
+  - (b) MySQL uses the per-assignment `IF` guard.
+  - (c) A guarded conflict returns plain `ErrNotFound`, and §29.4.2 gains a
+    sentence stating the guard and the error.
+- The questions as asked:
+  - (a) **What `UpsertMany` does when one input conflicts with another tenant's
+    row.**
+    - Recommended: fail the whole call before writing anything. This costs one
+      pre-write read per chunk, only when the target lacks the tenant column.
+    - Alternative: write the others and skip that row. Measured, this commits
+      A's other rows and returns `ErrNotFound`, a partial write unless the
+      caller's own transaction wraps it. Returning success with a short slice
+      would contradict PRD §9.2.
+  - (b) **The MySQL mechanism.**
+    - Recommended: the per-assignment `IF` guard. Measured: a conflict on B's
+      row gives `ROW_COUNT` 0, B is unchanged, and `LAST_INSERT_ID` is B's id,
+      so the capture returns `ErrNotFound`.
+    - Alternative: a pre-read alone. Measured as insufficient, because
+      `ON DUPLICATE KEY UPDATE` fires on *any* unique index, not only the named
+      target. It is also racy.
+  - (c) **The error for a guarded conflict.**
+    - Recommended: plain `ErrNotFound`, consistent with §29.4.2a. A PRD
+      sentence in §29.4.2 states the guard and the error.
+    - Alternative: a unique-violation error, consistent with `Create` on the
+      same key.
 
 **References.**
 - PRD §29.4.2 (Upsert excludes the tenant column from the conflict update set;
