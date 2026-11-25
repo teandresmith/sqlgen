@@ -2,10 +2,12 @@ MODULES = . parser cmd/sqlgen event/natsbus cache/memory cache/redis cache/msgpa
 EXAMPLE_MODULES = $(wildcard cmd/sqlgen/testdata/examples/*/go.mod)
 EXAMPLE_DIRS = $(dir $(EXAMPLE_MODULES))
 # The cross-dialect conformance suites (docs/design/CONFORMANCE.md §4.2): the core
-# and Features suite library modules, plus one module per dialect and suite, each
-# generating its own models/.
+# and Features suite library modules, the round-trip measurement module, plus one
+# module per dialect and suite, each generating its own models/.
 CONFORMANCE_DIRS = $(dir $(wildcard cmd/sqlgen/testdata/conformance/*/go.mod))
-CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/ %/features_suite/,$(CONFORMANCE_DIRS))
+CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/ %/features_suite/ %/roundtrip/,$(CONFORMANCE_DIRS))
+# Measures each client method's database round trips for docs/round-trips.md.
+ROUND_TRIP_DIR = cmd/sqlgen/testdata/conformance/roundtrip
 
 # Timeout for the slow suites. Deliberately generous: a test timeout exists to
 # catch a hang, not to bound a normal run. It was sized when `cmd/sqlgen/cli`
@@ -16,7 +18,7 @@ CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/ %/features_suite/,$(CONFORMANCE
 # detector, not a budget. The example suites keep their own tighter bound.
 TEST_TIMEOUT ?= 30m
 
-.PHONY: refs-check req-check req-rehash report-delta test test-integration test-examples build-generated test-conformance conformance-fresh conformance check-conformance lint-conformance static-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
+.PHONY: refs-check req-check req-rehash report-delta test test-integration test-examples build-generated test-conformance conformance-fresh conformance round-trips check-conformance lint-conformance static-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
 
 ## Testing
 
@@ -38,7 +40,9 @@ test-examples: ## Run E2E example tests against real databases (requires Docker)
 		(cd $$dir && GOWORK=off go test -race -count=1 -timeout=5m ./...) || exit 1; \
 	done
 
-test-conformance: conformance-fresh ## Run the cross-dialect conformance suite on every dialect (requires Docker)
+test-conformance: conformance-fresh ## Run the cross-dialect conformance suite on every dialect, round-trip report check included (requires Docker)
+	@echo "==> test-conformance $(ROUND_TRIP_DIR)"
+	@cd $(ROUND_TRIP_DIR) && GOWORK=off go test -race -count=1 ./...
 	@for dir in $(CONFORMANCE_DIALECT_DIRS); do \
 		echo "==> test-conformance $$dir"; \
 		(cd $$dir && GOWORK=off go test -race -count=1 -timeout=5m ./...) || exit 1; \
@@ -75,6 +79,21 @@ conformance: conformance-fresh ## Run every registered test home and write docs/
 	commit=$$(git rev-parse --short=12 HEAD)$$(git diff --quiet HEAD -- . ':!docs/conformance/REPORT.md' || echo -dirty); \
 	(cd cmd/sqlgen && go run ./internal/cmd/reqcheck -root ../.. -report $(CONFORMANCE_OUT) -commit $$commit) || status=1; \
 	exit $$status
+
+# Each dialect module's TestConformance/RoundTrips measures the suites' round-trip
+# cases and, with SQLGEN_ROUND_TRIPS_OUT set, writes them to ROUND_TRIPS_RESULTS
+# instead of checking docs/round-trips.md; roundtripdoc then assembles the report.
+# test-conformance runs the same subtests as a check against the committed report.
+ROUND_TRIPS_RESULTS ?= .round-trips-results
+ROUND_TRIPS_OUT = $(abspath $(ROUND_TRIPS_RESULTS))
+
+round-trips: conformance-fresh ## Measure every client method's database round trips on every dialect and write docs/round-trips.md (requires Docker)
+	@rm -rf $(ROUND_TRIPS_OUT) && mkdir -p $(ROUND_TRIPS_OUT)
+	@for dir in $(CONFORMANCE_DIALECT_DIRS); do \
+		echo "==> round-trips $$dir"; \
+		(cd $$dir && GOWORK=off SQLGEN_ROUND_TRIPS_OUT=$(ROUND_TRIPS_OUT) go test -count=1 -timeout=10m -run 'TestConformance/RoundTrips' ./...) || exit 1; \
+	done
+	@cd $(ROUND_TRIP_DIR) && GOWORK=off go run ./cmd/roundtripdoc -in $(ROUND_TRIPS_OUT) -out $(abspath docs/round-trips.md)
 
 ## Code Quality
 

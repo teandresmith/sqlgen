@@ -50,8 +50,9 @@ Pull request / push to main
     │       ▼
     ├── Test (Integration) ← go test -race × 8 modules (testcontainers), once every unit job passes
     │
-    └── Examples          ← lint + test × every example module
-                            (skips docs-only changes)
+    └── Examples          ← lint + test × every example module, and the conformance
+                            suites × every dialect module, round-trip check included
+                            (skips docs-only changes, except docs/round-trips.md)
 ```
 
 **Module matrices (`lint.yml`, `test.yml`)** match `MODULES` in the `Makefile` and the `use` list in `go.work`. A new sub-module goes in all four places together.
@@ -67,7 +68,7 @@ The YAML lives in `.github/workflows/`; read it there rather than copying it her
 | `repo-checks.yml` | `repo-checks` | Runs `make refs-check`, `make tracker-check` and `make req-check` (the PRD requirement registry, `docs/conformance/`). No path filter: these checks validate docs. |
 | `lint.yml` | `golangci-lint` per module | golangci-lint also runs the gofumpt and goimports formatters. `paths-ignore` for docs-only changes. |
 | `test.yml` | `unit`, then `integration`, per module | `integration` has `needs: unit`. A `paths` filter skips docs-only changes but keeps `docs/PRD.md` and `docs/conformance/`, which tests read. |
-| `examples.yml` | `discover`, then `lint` and `test` per example | `GOWORK: off`, and `paths-ignore` for docs-only changes. |
+| `examples.yml` | `discover`, then `lint` and `test` per example, `conformance` per conformance dialect module, and `roundtrip` | `GOWORK: off`. A `paths` filter skips docs-only changes but keeps `docs/round-trips.md`, which each conformance module's `TestConformance/RoundTrips` checks against its measurements (`make round-trips` regenerates it). |
 | `release-please.yml` | `release-please`, `tag-modules`, then `release` | Calls `release.yml` when a release is created. See [Section 11](#11-automated-release-management). |
 | `release.yml` | `build` per target, then `publish` | Native cgo builds on five runners. Runs when `release-please.yml` calls it, or by hand. |
 | `probe.yml` | `probe` per target | Runs by hand, and on a push to `main` that changes `probe.yml` or `release.yml`. Builds the CLI and runs the parser tests on the five release runners; see [Native Builds](#native-builds). |

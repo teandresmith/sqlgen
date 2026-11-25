@@ -6,6 +6,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/teandresmith/sqlgen v0.0.0
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models v0.0.0
+	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip v0.0.0
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/suite v0.0.0
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.41.0
@@ -83,3 +84,5 @@ replace (
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models => ./models
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/suite => ../suite
 )
+
+replace github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip => ../roundtrip

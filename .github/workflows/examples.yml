@@ -1,18 +1,22 @@
 name: Examples
 on:
+  # Skip docs-only changes, except docs/round-trips.md, which the conformance
+  # jobs check (a later pattern overrides an earlier one). Root-level Markdown
+  # only: the manifest goldens under cmd/sqlgen/testdata are .md files the
+  # example runs check.
   pull_request:
-    # Skip docs-only changes. Root-level Markdown only: the manifest goldens
-    # under cmd/sqlgen/testdata are .md files the example runs check.
-    paths-ignore: &docs-only
-      - '*.md'
-      - 'docs/**'
-      - 'guidelines/**'
-      - '.claude/**'
-      - '.gitignore'
-      - 'LICENSE'
+    paths: &code
+      - '**'
+      - '!*.md'
+      - '!docs/**'
+      - '!guidelines/**'
+      - '!.claude/**'
+      - '!.gitignore'
+      - '!LICENSE'
+      - 'docs/round-trips.md'
   push:
     branches: [main]
-    paths-ignore: *docs-only
+    paths: *code
 
 permissions:
   contents: read
@@ -38,12 +42,13 @@ jobs:
           examples=$(find cmd/sqlgen/testdata/examples -mindepth 2 -maxdepth 2 -name go.mod \
             | xargs -n1 dirname | xargs -n1 basename | sort | jq -R . | jq -sc .)
           echo "examples=$examples" >> "$GITHUB_OUTPUT"
-      # The conformance dialect modules: every module beside the two suites,
-      # the same set as the Makefile's CONFORMANCE_DIALECT_DIRS.
+      # The conformance dialect modules: every module beside the two suites
+      # and the round-trip module, the same set as the Makefile's
+      # CONFORMANCE_DIALECT_DIRS.
       - id: dialects
         run: |
           dialects=$(find cmd/sqlgen/testdata/conformance -mindepth 2 -maxdepth 2 -name go.mod \
-            | xargs -n1 dirname | xargs -n1 basename | grep -vxE 'suite|features_suite' | sort | jq -R . | jq -sc .)
+            | xargs -n1 dirname | xargs -n1 basename | grep -vxE 'suite|features_suite|roundtrip' | sort | jq -R . | jq -sc .)
           echo "dialects=$dialects" >> "$GITHUB_OUTPUT"
 
   lint:
@@ -91,7 +96,9 @@ jobs:
         working-directory: cmd/sqlgen/testdata/examples/${{ matrix.example }}
 
   # The cross-dialect conformance suite (docs/design/CONFORMANCE.md §4). It
-  # checks that each dialect's committed models/ is fresh, then runs the suite.
+  # checks that each dialect's committed models/ is fresh, then runs the suite,
+  # whose TestConformance/RoundTrips subtest fails when the measured round
+  # trips differ from docs/round-trips.md (`make round-trips` regenerates it).
   # docs/conformance/REPORT.md is not regenerated here: /close-phase and
   # deliberate `make conformance` runs rewrite it.
   conformance:
@@ -118,3 +125,19 @@ jobs:
         env:
           GOWORK: off
         working-directory: cmd/sqlgen/testdata/conformance/${{ matrix.dialect }}
+
+  # The round-trip measurement module's own tests: wave counting, and the
+  # report's rendering and parsing.
+  roundtrip:
+    name: conformance (roundtrip tooling)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: cmd/sqlgen/testdata/conformance/roundtrip/go.sum
+      - run: go test -race -count=1 ./...
+        env:
+          GOWORK: off
+        working-directory: cmd/sqlgen/testdata/conformance/roundtrip

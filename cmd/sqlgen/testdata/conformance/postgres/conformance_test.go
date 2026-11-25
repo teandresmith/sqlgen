@@ -14,6 +14,8 @@ import (
 	dbpgx "github.com/teandresmith/sqlgen/database/pgx"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip/pgxtrace"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/suite"
 )
 
@@ -54,6 +56,14 @@ func TestConformance(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SHOW server_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
+	reset := func(t *testing.T) {
+		if _, err := pool.Exec(ctx, "TRUNCATE crate_seals, seals, crate_items, crates, item_stations, stations, parcels, shelves, item_receipts, item_notes, order_items, products, documents, revisions, labels, counters, author_tags, posts, author_profiles, tags, authors RESTART IDENTITY"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, "TRUNCATE van_permits, van_tools, permits, tools, slots, lockers, bays, vans, routes, depots"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	adapter := dbpgx.New(pool)
 	q := &suite.CountingQuerier{Inner: adapter}
 	base := batchingQuerier{CountingQuerier: q, batcher: adapter.(batcher)}
@@ -65,14 +75,31 @@ func TestConformance(t *testing.T) {
 		Querier:  q,
 		Base:     base,
 		Caps:     suite.Capabilities{RowLocks: true, CompositeLoadChunk: 4000},
-		Reset: func(t *testing.T) {
-			if _, err := pool.Exec(ctx, "TRUNCATE crate_seals, seals, crate_items, crates, item_stations, stations, parcels, shelves, item_receipts, item_notes, order_items, products, documents, revisions, labels, counters, author_tags, posts, author_profiles, tags, authors RESTART IDENTITY"); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := pool.Exec(ctx, "TRUNCATE van_permits, van_tools, permits, tools, slots, lockers, bays, vans, routes, depots"); err != nil {
-				t.Fatal(err)
-			}
-		},
+		Reset:    reset,
+	})
+
+	t.Run("RoundTrips", func(t *testing.T) {
+		rec, err := roundtrip.NewRecorder()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The same database, through a pool whose tracer reports every
+		// statement and batch to rec.
+		rtpool, err := pgxtrace.NewPool(ctx, rec, dsn, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(rtpool.Close)
+		rtadapter := dbpgx.New(rtpool)
+		suite.RunRoundTrips(t, &suite.Harness{
+			Dialect: "postgres",
+			Driver:  "pgx",
+			Client:  models.New(rtadapter),
+			Querier: &suite.CountingQuerier{Inner: rtadapter},
+			Base:    rtadapter,
+			Caps:    suite.Capabilities{RowLocks: true, CompositeLoadChunk: 4000},
+			Reset:   reset,
+		}, rec)
 	})
 }
 

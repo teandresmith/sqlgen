@@ -14,6 +14,8 @@ import (
 	dbpgx "github.com/teandresmith/sqlgen/database/pgx"
 
 	featuressuite "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/features_suite"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip/pgxtrace"
 )
 
 func TestConformance(t *testing.T) {
@@ -53,6 +55,11 @@ func TestConformance(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SHOW server_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
+	reset := func(t *testing.T) {
+		if _, err := pool.Exec(ctx, "TRUNCATE template_tags, template_notes, templates, board_tags, cards, tags, boards, tasks, memberships, notes, bulletins, regions RESTART IDENTITY"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	adapter := dbpgx.New(pool)
 	q := &featuressuite.CountingQuerier{Inner: adapter}
 	featuressuite.Run(t, &featuressuite.Harness{
@@ -62,11 +69,30 @@ func TestConformance(t *testing.T) {
 		Querier:  q,
 		Base:     batchingQuerier{CountingQuerier: q, batcher: adapter.(batcher)},
 		Caps:     featuressuite.Capabilities{RowLocks: true, KeySchema: "public"},
-		Reset: func(t *testing.T) {
-			if _, err := pool.Exec(ctx, "TRUNCATE template_tags, template_notes, templates, board_tags, cards, tags, boards, tasks, memberships, notes, bulletins, regions RESTART IDENTITY"); err != nil {
-				t.Fatal(err)
-			}
-		},
+		Reset:    reset,
+	})
+
+	t.Run("RoundTrips", func(t *testing.T) {
+		rec, err := roundtrip.NewRecorder()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The same database, through a pool whose tracer reports every
+		// statement and batch to rec.
+		rtpool, err := pgxtrace.NewPool(ctx, rec, dsn, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(rtpool.Close)
+		rtadapter := dbpgx.New(rtpool)
+		featuressuite.RunRoundTrips(t, &featuressuite.Harness{
+			Dialect: "postgres",
+			Driver:  "pgx",
+			Querier: &featuressuite.CountingQuerier{Inner: rtadapter},
+			Base:    rtadapter,
+			Caps:    featuressuite.Capabilities{RowLocks: true, KeySchema: "public"},
+			Reset:   reset,
+		}, rec)
 	})
 }
 

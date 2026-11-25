@@ -13,6 +13,7 @@ import (
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/suite"
 )
 
@@ -63,6 +64,17 @@ func TestConformance(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
+	reset := func(t *testing.T) {
+		// TRUNCATE refuses a table another table's foreign key references.
+		exec(t, "DELETE FROM crate_seals", "DELETE FROM seals", "DELETE FROM crate_items", "DELETE FROM crates", "DELETE FROM item_stations", "DELETE FROM stations", "DELETE FROM parcels",
+			"DELETE FROM shelves", "DELETE FROM item_receipts", "DELETE FROM item_notes",
+			"DELETE FROM order_items", "DELETE FROM products", "DELETE FROM documents",
+			"DELETE FROM revisions", "DELETE FROM labels", "DELETE FROM counters",
+			"DELETE FROM author_tags", "DELETE FROM posts", "DELETE FROM author_profiles",
+			"DELETE FROM tags", "DELETE FROM authors")
+		exec(t, "DELETE FROM van_permits", "DELETE FROM van_tools", "DELETE FROM permits", "DELETE FROM tools",
+			"DELETE FROM slots", "DELETE FROM lockers", "DELETE FROM bays", "DELETE FROM vans", "DELETE FROM routes", "DELETE FROM depots")
+	}
 	q := &suite.CountingQuerier{Inner: dbstdlib.New(db)}
 	suite.Run(t, &suite.Harness{
 		Dialect:  "mysql",
@@ -72,17 +84,34 @@ func TestConformance(t *testing.T) {
 		Querier:  q,
 		Base:     q,
 		Caps:     suite.Capabilities{RowLocks: true, CompositeLoadChunk: 16383, CaseInsensitiveText: true},
-		Reset: func(t *testing.T) {
-			// TRUNCATE refuses a table another table's foreign key references.
-			exec(t, "DELETE FROM crate_seals", "DELETE FROM seals", "DELETE FROM crate_items", "DELETE FROM crates", "DELETE FROM item_stations", "DELETE FROM stations", "DELETE FROM parcels",
-				"DELETE FROM shelves", "DELETE FROM item_receipts", "DELETE FROM item_notes",
-				"DELETE FROM order_items", "DELETE FROM products", "DELETE FROM documents",
-				"DELETE FROM revisions", "DELETE FROM labels", "DELETE FROM counters",
-				"DELETE FROM author_tags", "DELETE FROM posts", "DELETE FROM author_profiles",
-				"DELETE FROM tags", "DELETE FROM authors")
-			exec(t, "DELETE FROM van_permits", "DELETE FROM van_tools", "DELETE FROM permits", "DELETE FROM tools",
-				"DELETE FROM slots", "DELETE FROM lockers", "DELETE FROM bays", "DELETE FROM vans", "DELETE FROM routes", "DELETE FROM depots")
-		},
+		Reset:    reset,
+	})
+
+	t.Run("RoundTrips", func(t *testing.T) {
+		rec, err := roundtrip.NewRecorder()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The same database, through a pool whose driver reports every
+		// statement to rec.
+		rtdb, err := roundtrip.OpenDB(rec, "mysql", dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { rtdb.Close() })
+		if err := roundtrip.Warm(ctx, rtdb, 8); err != nil {
+			t.Fatal(err)
+		}
+		rq := &suite.CountingQuerier{Inner: dbstdlib.New(rtdb)}
+		suite.RunRoundTrips(t, &suite.Harness{
+			Dialect: "mysql",
+			Driver:  "stdlib",
+			Client:  models.New(rq.Inner),
+			Querier: rq,
+			Base:    rq.Inner,
+			Caps:    suite.Capabilities{RowLocks: true, CompositeLoadChunk: 16383, CaseInsensitiveText: true},
+			Reset:   reset,
+		}, rec)
 	})
 }
 

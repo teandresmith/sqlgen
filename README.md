@@ -45,6 +45,7 @@ sqlgen diff        # verify generated code is up to date (CI-friendly)
 | [Getting started](./docs/getting-started.md) | From a schema to a generated client, with usage examples |
 | [Configuration](./docs/configuration.md) | Full `sqlgen.yml` reference, including editor/IDE setup |
 | [Dialect support](./docs/dialects.md) | How PostgreSQL, MySQL and SQLite differ |
+| [Database round trips](./docs/round-trips.md) | How many statements, and sequential rounds of them, each client method sends, measured on every dialect |
 | [`sqlgen manifest` CLI](./docs/cli-manifest.md) | Manifest validate / diff tooling |
 | [sqlgen-example](https://github.com/teandresmith/sqlgen-example) | Reference application: a multi-tenant GraphQL API built on a generated client |
 | [Per-feature test projects](./cmd/sqlgen/testdata/examples/) | Complete, tested projects for every dialect and feature |

@@ -6,6 +6,7 @@ require (
 	github.com/teandresmith/sqlgen v0.0.0
 	github.com/teandresmith/sqlgen/cache/memory v0.0.0
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/features/models v0.0.0
+	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip v0.0.0
 )
 
 require (
@@ -22,3 +23,5 @@ replace (
 	github.com/teandresmith/sqlgen/cache/memory => ../../../../../cache/memory
 	github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/features/models => ../features_sqlite/models
 )
+
+replace github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/roundtrip => ../roundtrip

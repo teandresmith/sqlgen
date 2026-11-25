@@ -92,6 +92,10 @@ Each test home stays where it is best placed:
 | `conformance` | Generated-client behavior on every dialect (§4) | seconds, Docker |
 | `example: <example>` | Dialect- or variant-specific behavior with no cross-dialect contract | seconds, Docker |
 
+Database round-trip counts are measured beside the suites rather than registered: each dialect
+module's `TestConformance/RoundTrips` checks them against [`docs/round-trips.md`](../round-trips.md),
+which `make round-trips` regenerates (§4.2).
+
 **Out of scope:**
 
 - **Behavior over time** (concurrency §18.5 / §20.5, watch mode §23.10, event transport delivery
@@ -280,6 +284,16 @@ is the shared module `features_suite/` plus one module per target (`features_pos
 `features_postgres_stdlib`, `features_mysql`, `features_sqlite`), each declaring
 `…/conformance/features/models`. Its `Run` wraps its tree in `t.Run("Features", …)`, so every
 Features subtest path starts with the `Features` root segment.
+
+**Round-trip module.** `roundtrip/` measures how many statements, and how many sequential rounds of
+them, each client method sends, for [`docs/round-trips.md`](../round-trips.md). Each dialect module
+opens a second pool on its database whose driver reports every statement to a
+`roundtrip.Recorder` (a `database/sql` driver wrapper, or a pgx tracer), so statements inside a
+transaction are counted and `BEGIN`, `COMMIT`, `ROLLBACK` and savepoint statements are not. The
+recorder holds each statement for a fixed delay, so statements that overlap ran concurrently.
+`suite.RunRoundTrips` and `featuressuite.RunRoundTrips` hold the cases; they sit outside `Run`, so
+their subtests are not registry rows. A module's `TestConformance/RoundTrips` fails when a
+measurement differs from the committed report, and `make round-trips` rewrites it.
 
 ### 4.3 Harness
 
