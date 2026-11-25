@@ -20,7 +20,7 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 §29.5, `BuildTablePattern` and `BuildTenantTablePattern`) with the table shapes that change them.
 
 ## §27 Caching
-<!-- prd: 27 sha256: fc68a7cb5ed5bfd1 -->
+<!-- prd: 27 sha256: 8541cc08c925b241 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -190,7 +190,7 @@ Proven on one target: the code below has no dialect branch (`docs/design/CONFORM
 | cache.serializer.msgpack-new | `msgpack.New()` returns a `cache.Serializer` that writes exactly the msgpack library's encoding and reads entities back, generated column types included | `unit: cache/msgpack: TestNewEncodesMsgpack`; `unit: cache/msgpack: TestRoundTripTaggedEntity/default`; `unit: cache/msgpack: TestRoundTripFullShapedEntity` | all |  |
 
 ## §27.11 View Cache Invalidation
-<!-- prd: 27.11 sha256: fed6e214001c8167 -->
+<!-- prd: 27.11 sha256: d706cc42727b0dd6 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

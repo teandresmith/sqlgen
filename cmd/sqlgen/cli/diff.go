@@ -53,7 +53,7 @@ func makeDiffRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 
 		result, err := gen.GenerateInto(schema, cfg, Version, tmpDir)
 		if err != nil {
-			_, _ = fmt.Fprintf(errOut, "Generation error: %v\n", err)
+			printErrorLines(errOut, "Generation error", err)
 			return &exitError{code: ExitGeneration, err: err}
 		}
 

@@ -3,6 +3,7 @@ package introspect_test
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -929,6 +930,47 @@ CREATE UNIQUE INDEX u ON pgi_include.e (c) INCLUDE (d)`
 	assertSchemaParity(t, "postgres", parsed, introspected)
 }
 
+// TestPostgresIntrospect_ConstraintUsingIndex checks the parser against the
+// introspector for ADD … UNIQUE | PRIMARY KEY USING INDEX: PostgreSQL renames
+// the index to the constraint's name, an unnamed constraint keeps the index's
+// name, and a PRIMARY KEY makes its columns NOT NULL.
+func TestPostgresIntrospect_ConstraintUsingIndex(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_using;
+CREATE TABLE pgi_using.u (a int, b int, c int);
+CREATE UNIQUE INDEX CONCURRENTLY ui_a_idx ON pgi_using.u (a);
+ALTER TABLE pgi_using.u ADD CONSTRAINT ui_a_key UNIQUE USING INDEX ui_a_idx;
+CREATE UNIQUE INDEX u_bc ON pgi_using.u (b, c);
+ALTER TABLE pgi_using.u ADD UNIQUE USING INDEX u_bc;
+CREATE INDEX ON pgi_using.u (a);
+CREATE TABLE pgi_using.p (a int, b int, c int);
+CREATE UNIQUE INDEX p_idx ON pgi_using.p (a, b) INCLUDE (c);
+ALTER TABLE pgi_using.p ADD CONSTRAINT p_pk PRIMARY KEY USING INDEX p_idx;
+CREATE TABLE pgi_using.q (a int, b int);
+CREATE UNIQUE INDEX q_idx ON pgi_using.q (a);
+ALTER TABLE pgi_using.q ADD PRIMARY KEY USING INDEX q_idx;
+ALTER INDEX pgi_using.q_idx RENAME TO q_key`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_using CASCADE", ddl, "pgi_using")
+
+	want := map[string][]string{
+		"u": {"INDEX u_a_idx", "UNIQUE u_bc", "UNIQUE ui_a_key"},
+		"p": {"PRIMARY KEY p_pk"},
+		"q": {"PRIMARY KEY q_key"},
+	}
+	got := make(map[string][]string, len(want))
+	for _, tbl := range introspected.Tables {
+		for _, c := range tbl.Constraints {
+			got[tbl.Name] = append(got[tbl.Name], c.Type.String()+" "+c.Name)
+		}
+		slices.Sort(got[tbl.Name])
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
 func TestPostgresIntrospect_Partitioning(t *testing.T) {
 	requireDatabases(t)
 	ddl := `
@@ -1117,6 +1159,51 @@ ALTER TABLE pgi_state.g ADD UNIQUE (a)`
 	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
 }
 
+// TestPostgresIntrospect_DropTypeCascade checks the parser against
+// PostgreSQL for DROP TYPE … CASCADE and DROP DOMAIN … CASCADE.
+func TestPostgresIntrospect_DropTypeCascade(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_dtc;
+CREATE TYPE pgi_dtc.e AS ENUM ('a');
+CREATE TYPE pgi_dtc.stays AS ENUM ('b');
+CREATE DOMAIN pgi_dtc.de AS pgi_dtc.e;
+CREATE DOMAIN pgi_dtc.de2 AS pgi_dtc.de CHECK (VALUE IS NOT NULL);
+CREATE DOMAIN pgi_dtc.dea AS pgi_dtc.e[];
+CREATE DOMAIN pgi_dtc.keep AS int;
+CREATE TYPE pgi_dtc.comp AS (x pgi_dtc.e, y int);
+CREATE TABLE pgi_dtc.p (id int PRIMARY KEY, c pgi_dtc.e UNIQUE, arr pgi_dtc.e[], d pgi_dtc.de2, da pgi_dtc.dea, k pgi_dtc.keep, cc pgi_dtc.comp,
+	CONSTRAINT p_c_check CHECK (c <> 'a'), CONSTRAINT p_k_check CHECK (k > 0));
+CREATE INDEX p_c_expr ON pgi_dtc.p ((c IS NULL));
+CREATE INDEX p_k_part ON pgi_dtc.p (k) WHERE c = 'a';
+CREATE INDEX p_k_idx ON pgi_dtc.p (k);
+CREATE TABLE pgi_dtc.r (id int PRIMARY KEY, pc pgi_dtc.e REFERENCES pgi_dtc.p (c), z int);
+CREATE TABLE pgi_dtc.only1 (x pgi_dtc.e);
+CREATE TABLE pgi_dtc.os (id int PRIMARY KEY, c pgi_dtc.de);
+CREATE SEQUENCE pgi_dtc.os_seq OWNED BY pgi_dtc.os.c;
+DROP TYPE pgi_dtc.e CASCADE;
+CREATE SEQUENCE pgi_dtc.os_seq;
+CREATE DOMAIN pgi_dtc.dint AS int;
+CREATE TABLE pgi_dtc.q (id int PRIMARY KEY, c pgi_dtc.dint UNIQUE);
+CREATE TABLE pgi_dtc.qr (id int PRIMARY KEY, x int REFERENCES pgi_dtc.q (c), y int REFERENCES pgi_dtc.q (id));
+CREATE INDEX qr_x_idx ON pgi_dtc.qr (x);
+DROP DOMAIN pgi_dtc.dint CASCADE`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_dtc CASCADE", ddl, "pgi_dtc")
+	// The parser leaves a table it dropped the last column of an empty column
+	// slice; the introspector reads none. Both are a table with no columns.
+	if tbl := findTable(t, parsed, "only1"); len(tbl.Columns) == 0 {
+		tbl.Columns = nil
+	}
+
+	if got := findTable(t, introspected, "only1").Columns; len(got) != 0 {
+		t.Errorf("introspected only1 columns = %v, want none", got)
+	}
+	if got := len(findTable(t, introspected, "p").Columns); got != 3 {
+		t.Errorf("introspected p has %d columns, want 3 (id, k, cc)", got)
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
+}
+
 // TestPostgresIntrospect_CommentOnViewColumn checks the parser against the
 // introspector for the COMMENT ON COLUMN pg_dump writes on a view, materialized
 // view or composite type column: the introspector reads no comment for any of
@@ -1284,11 +1371,49 @@ ALTER TYPE pgi_attr.ordered ADD ATTRIBUTE b numeric, ADD ATTRIBUTE z int, ALTER 
 	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
 }
 
+// TestPostgresIntrospect_ForeignTables pins that both sources skip a foreign
+// table, a foreign partition included: neither models it or lists it as a
+// partition.
+func TestPostgresIntrospect_ForeignTables(t *testing.T) {
+	requireDatabases(t)
+	const ddl = `
+CREATE FOREIGN DATA WRAPPER pgi_ft_w;
+CREATE SERVER pgi_ft_s FOREIGN DATA WRAPPER pgi_ft_w;
+CREATE SCHEMA pgi_ft;
+CREATE TABLE pgi_ft.t (id int PRIMARY KEY);
+CREATE FOREIGN TABLE pgi_ft.ft (a int NOT NULL) SERVER pgi_ft_s;
+COMMENT ON COLUMN pgi_ft.ft.a IS 'x';
+CREATE TABLE pgi_ft.p (k int NOT NULL) PARTITION BY RANGE (k);
+CREATE FOREIGN TABLE pgi_ft.fp PARTITION OF pgi_ft.p FOR VALUES FROM (0) TO (10) SERVER pgi_ft_s`
+	parsed, introspected := pgParityCase(t,
+		"DROP SCHEMA IF EXISTS pgi_ft CASCADE; DROP SERVER IF EXISTS pgi_ft_s CASCADE; DROP FOREIGN DATA WRAPPER IF EXISTS pgi_ft_w CASCADE",
+		ddl, "pgi_ft")
+
+	for _, s := range []struct {
+		source string
+		schema *parser.Schema
+	}{{"files", parsed}, {"database", introspected}} {
+		var names []string
+		for _, tbl := range s.schema.Tables {
+			names = append(names, tbl.Name)
+		}
+		slices.Sort(names)
+		if diff := cmp.Diff([]string{"p", "t"}, names); diff != "" {
+			t.Errorf("%s tables mismatch (-want +got):\n%s", s.source, diff)
+		}
+		if len(s.schema.Partitions) != 0 {
+			t.Errorf("%s partitions = %+v, want none", s.source, s.schema.Partitions)
+		}
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
+}
+
 // TestPostgresIntrospect_PgDumpOutput parses the statements PostgreSQL 17's
 // pg_dump -s writes for a partitioned table with a serial column, its indexes,
 // a sequence, a view and a materialized view, owner statements included (the
-// owner is the role the test connects as). pg_dump's comments, SET lines and
-// \restrict lines are left out.
+// owner is the role the test connects as). pg_dump's comments and SET lines
+// are left out. The parser reads it wrapped in the \restrict and \unrestrict
+// lines pg_dump 17.6+ writes; the database is sent it without them.
 func TestPostgresIntrospect_PgDumpOutput(t *testing.T) {
 	requireDatabases(t)
 	ddl := `
@@ -1350,7 +1475,10 @@ CREATE INDEX events_1_k_idx ON pgi_dump.events_1 USING btree (k);
 ALTER INDEX pgi_dump.events_expr_idx ATTACH PARTITION pgi_dump.events_1_expr_idx;
 ALTER INDEX pgi_dump.events_k_idx ATTACH PARTITION pgi_dump.events_1_k_idx;
 ALTER INDEX pgi_dump.events_pkey ATTACH PARTITION pgi_dump.events_1_pkey`
-	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_dump CASCADE", ddl, "pgi_dump")
+	applyParityFixture(t, "pgx", pgConnStr, "DROP SCHEMA IF EXISTS pgi_dump CASCADE", ddl)
+	const key = "emU4lCDX1VuMswxwAIguQGn7uadov5AkOQQaqIgTczD36cajIqRpGg8htvVQb6D"
+	parsed := parsePG(t, "\\restrict "+key+"\n\n"+ddl+";\n\n\\unrestrict "+key+"\n")
+	introspected := introspectPG(t, "", "pgi_dump")
 
 	autoIncrement := func(c parser.Column) string { return strconv.FormatBool(c.AutoIncrement) + " " + c.Default }
 	if diff := cmp.Diff(map[string]string{"id": "true ", "k": "false ", "note": "false "},

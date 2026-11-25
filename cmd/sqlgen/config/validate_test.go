@@ -887,8 +887,8 @@ func TestValidatePostParse_SoftDeleteTimestampNullability(t *testing.T) {
 // without it (PRD §4.6, §17.2).
 func TestValidatePostParse_SoftDeleteFlagNullability(t *testing.T) {
 	const (
-		boolErr = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE`
-		intErr  = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "integer" marks a live row with 0`
+		boolErr = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "bool" marks a live row with FALSE, so a row created without it is hidden (declare it NOT NULL DEFAULT FALSE, or give it DEFAULT FALSE)`
+		intErr  = `soft_delete_columns: column "soft_col" in table public.items is nullable with no DEFAULT, but soft delete type "integer" marks a live row with 0, so a row created without it is hidden (declare it NOT NULL DEFAULT 0, or give it DEFAULT 0)`
 	)
 	tests := []struct {
 		name    string
@@ -925,6 +925,8 @@ func TestValidatePostParse_SoftDeleteFlagNullability(t *testing.T) {
 			columns: []config.SchemaColumn{{Name: "soft_col", Type: "integer", Nullable: true, HasDefault: true}},
 		},
 		{
+			// Valid: a create that omits the flag fails loudly with the
+			// NOT NULL violation instead of hiding the row (PRD §10.3).
 			name:    "NOT NULL bool, no DEFAULT",
 			sdCols:  []config.SoftDeleteConfig{{Name: "soft_col", Type: config.SoftDeleteBool}},
 			columns: []config.SchemaColumn{{Name: "soft_col", Type: "boolean"}},
@@ -1831,7 +1833,7 @@ func TestValidatePostParse_ViewInvalidateOn(t *testing.T) {
 			Name:   "products",
 			Schema: "public",
 			Columns: []config.SchemaColumn{
-				{Name: "id", Type: "uuid"},
+				{Name: "id", Type: "uuid", PrimaryKey: true},
 				{Name: "name", Type: "text"},
 			},
 		},
@@ -1839,15 +1841,37 @@ func TestValidatePostParse_ViewInvalidateOn(t *testing.T) {
 			Name:   "reviews",
 			Schema: "public",
 			Columns: []config.SchemaColumn{
-				{Name: "id", Type: "uuid"},
+				{Name: "id", Type: "uuid", PrimaryKey: true},
 				{Name: "body", Type: "text"},
 			},
 		},
+		{
+			Name:   "audit_log",
+			Schema: "public",
+			Columns: []config.SchemaColumn{
+				{Name: "event", Type: "text"},
+			},
+		},
+	}
+	// MySQL and SQLite tables carry no schema, so the lookup map holds only
+	// the bare spelling.
+	unqualifiedTables := []config.SchemaTable{
+		{
+			Name: "cycles",
+			Columns: []config.SchemaColumn{
+				{Name: "name", Type: "text"},
+			},
+		},
+	}
+	sqlite := func(c *config.RootConfig) {
+		c.Input.Dialect = "sqlite"
+		c.Output.Driver = "stdlib"
 	}
 
 	tests := []struct {
 		name       string
 		view       config.ViewConfig
+		tables     []config.SchemaTable // nil uses schemaTables
 		mutate     func(c *config.RootConfig)
 		wantErr    bool
 		wantSubstr string
@@ -1896,6 +1920,58 @@ func TestValidatePostParse_ViewInvalidateOn(t *testing.T) {
 			wantSubstr: "excluded from generation",
 		},
 		{
+			name: "no-PK source (PG, qualified) is hard error",
+			view: config.ViewConfig{
+				StructName:   "ProductSummary",
+				Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+				InvalidateOn: []string{"public.audit_log"},
+			},
+			wantErr:    true,
+			wantSubstr: `table "public.audit_log" has no primary key and is skipped from generation (PRD §9.4b)`,
+		},
+		{
+			name: "no-PK source with primary_key.columns override (PG) passes",
+			view: config.ViewConfig{
+				StructName:   "ProductSummary",
+				Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+				InvalidateOn: []string{"public.audit_log"},
+			},
+			mutate: func(c *config.RootConfig) {
+				c.Tables["audit_log"] = config.TableConfig{
+					PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"event"}},
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "no-PK source (unqualified) is hard error",
+			view: config.ViewConfig{
+				StructName:   "CycleNames",
+				Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+				InvalidateOn: []string{"cycles"},
+			},
+			tables:     unqualifiedTables,
+			mutate:     sqlite,
+			wantErr:    true,
+			wantSubstr: `table "cycles" has no primary key and is skipped from generation (PRD §9.4b)`,
+		},
+		{
+			name: "no-PK source with primary_key.columns override (unqualified) passes",
+			view: config.ViewConfig{
+				StructName:   "CycleNames",
+				Cache:        &config.ViewCacheConfig{Enabled: new(true)},
+				InvalidateOn: []string{"cycles"},
+			},
+			tables: unqualifiedTables,
+			mutate: func(c *config.RootConfig) {
+				sqlite(c)
+				c.Tables["cycles"] = config.TableConfig{
+					PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"name"}},
+				}
+			},
+			wantErr: false,
+		},
+		{
 			name: "cache disabled skips invalidate_on validation",
 			view: config.ViewConfig{
 				StructName:   "ProductSummary",
@@ -1914,7 +1990,11 @@ func TestValidatePostParse_ViewInvalidateOn(t *testing.T) {
 				tt.mutate(cfg)
 			}
 
-			_, err := config.ValidatePostParse(cfg, schemaTables, nil)
+			tables := tt.tables
+			if tables == nil {
+				tables = schemaTables
+			}
+			_, err := config.ValidatePostParse(cfg, tables, nil)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("ValidatePostParse() error = nil, want error containing %q", tt.wantSubstr)

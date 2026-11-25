@@ -2657,8 +2657,9 @@ func resolveDialect(name config.Dialect) sql.Dialect {
 	}
 }
 
-// registerSchemaTypes registers schema enums, sets, and domains with the resolver
-// so columns using these types resolve without explicit type_map overrides.
+// registerSchemaTypes registers schema enums, sets, domains and composite
+// types with the resolver so columns using these types resolve without
+// explicit type_map overrides.
 //
 // Enums resolve through EnumGoTypeName rather than StructName so an
 // `enums.<name>.struct_name` override reaches the COLUMN as well as the
@@ -2674,6 +2675,12 @@ func registerSchemaTypes(resolver *gotype.Resolver, schema *parser.Schema, cfg *
 	}
 	for _, d := range schema.DomainTypes {
 		resolver.RegisterDomain(d.Schema, d.Name, d.BaseType)
+	}
+	// A composite column still resolves to string (PRD §8.3); registering
+	// the type is what lets its warning name the generated struct, and what
+	// keeps a bare composite name from resolving to another schema's enum.
+	for _, c := range schema.CompositeTypes {
+		resolver.RegisterComposite(c.Schema, c.Name, toPascalCase(c.Name))
 	}
 }
 

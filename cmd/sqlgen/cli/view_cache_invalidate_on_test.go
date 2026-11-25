@@ -76,3 +76,62 @@ views:
 		})
 	}
 }
+
+// TestValidate_CachedViewInvalidateOnNoPKSource pins PRD §27.11 for a source
+// table skipped by §9.4b: a no-PK table generates no mutation hook, so naming
+// it in invalidate_on fails validate. The same project with a
+// tables.<name>.primary_key.columns override validates, so the missing PK is
+// the only thing the failing run trips on.
+func TestValidate_CachedViewInvalidateOnNoPKSource(t *testing.T) {
+	dir := t.TempDir()
+	sqlDir := filepath.Join(dir, "migrations")
+	if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+		t.Fatalf("creating migrations dir: %v", err)
+	}
+	writeSQLFile(t, sqlDir, "CREATE TABLE cycles (name text NOT NULL);")
+	viewPath := filepath.Join(dir, "cycle_names.sql")
+	if err := os.WriteFile(viewPath, []byte("-- @pk: name\nCREATE VIEW cycle_names AS SELECT name FROM cycles;\n"), 0o600); err != nil {
+		t.Fatalf("writing view file: %v", err)
+	}
+	cfgPath := filepath.Join(dir, "sqlgen.yml")
+	writeConfig := func(tables string) {
+		t.Helper()
+		content := `input:
+  dialect: postgres
+  paths:
+    - "` + sqlDir + `"
+  views:
+    - "` + viewPath + `"
+output:
+  driver: pgx
+  dir: ` + filepath.Join(dir, "output") + `
+  package: models
+cache:
+  enabled: true
+  key_prefix: app
+` + tables + `views:
+  cycle_names:
+    invalidate_on: [cycles]
+    cache:
+      enabled: true
+`
+		if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("writing config: %v", err)
+		}
+	}
+
+	writeConfig("tables:\n  cycles:\n    primary_key:\n      columns: [name]\n")
+	if _, stderr, err := executeCommand("validate", "--config", cfgPath); err != nil {
+		t.Fatalf("validate with a primary_key.columns override = %v, want nil (stderr: %q)", err, stderr)
+	}
+
+	writeConfig("")
+	_, stderr, err := executeCommand("validate", "--config", cfgPath)
+	if err == nil {
+		t.Fatal("validate with a no-PK invalidate_on source = nil, want an error")
+	}
+	const want = `views.cycle_names.invalidate_on: table "cycles" has no primary key and is skipped from generation (PRD §9.4b)`
+	if !strings.Contains(stderr, want) {
+		t.Errorf("validate stderr = %q, want it to contain %q", stderr, want)
+	}
+}

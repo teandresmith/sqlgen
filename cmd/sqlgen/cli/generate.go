@@ -39,7 +39,7 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		// 2. Validate phase 1 (pre-parse).
 		warnings, err := config.ValidatePreParse(cfg)
 		if err != nil {
-			_, _ = fmt.Fprintf(errOut, "Config validation error: %v\n", err)
+			printErrorLines(errOut, "Config validation error", err)
 			return &exitError{code: ExitConfig, err: err}
 		}
 		printWarnings(errOut, warnings, flags.quiet)
@@ -59,7 +59,7 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		schemaViews := toSchemaViews(schema)
 		postWarnings, err := config.ValidatePostParse(cfg, schemaTables, schemaViews)
 		if err != nil {
-			_, _ = fmt.Fprintf(errOut, "Post-parse validation error: %v\n", err)
+			printErrorLines(errOut, "Post-parse validation error", err)
 			return &exitError{code: ExitConfig, err: err}
 		}
 		printWarnings(errOut, postWarnings, flags.quiet)
@@ -71,7 +71,7 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		// 6. Generate.
 		result, err := gen.Generate(schema, cfg, Version)
 		if err != nil {
-			_, _ = fmt.Fprintf(errOut, "Generation error: %v\n", err)
+			printErrorLines(errOut, "Generation error", err)
 			return &exitError{code: ExitGeneration, err: err}
 		}
 		printManifestWarnings(errOut, result.Warnings, flags.quiet)

@@ -21,9 +21,9 @@ type Parser struct {
 	defaultSchema string
 	tableIndex    map[string]int // qualified "schema.name" → index in schema.Tables
 	// skipped holds the qualified names of the relations the parser skips:
-	// views, materialized views and partitions. Each still takes its name.
-	// The value reports whether PostgreSQL can index the relation: false
-	// for a view, true for the rest.
+	// views, materialized views, partitions and foreign tables. Each still
+	// takes its name. The value reports whether PostgreSQL can index the
+	// relation: false for a view or a foreign table, true for the rest.
 	skipped map[string]bool
 	// sequences holds the sequences the DDL creates, in creation order.
 	sequences []*pgSequence
@@ -80,8 +80,13 @@ func (p *Parser) Seed(base *parser.Schema) {
 // statements before it left, so a table moved or renamed mid-file no longer
 // answers to its old name, and the old name is free for a later CREATE.
 // It can be called multiple times with different files; results accumulate.
+// The `\restrict` and `\unrestrict` lines pg_dump writes are left out.
 func (p *Parser) Parse(filename string, sql []byte) error {
-	result, err := pg_query.Parse(string(sql))
+	src, err := stripRestrictLines(string(sql))
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", filename, err)
+	}
+	result, err := pg_query.Parse(src)
 	if err != nil {
 		return fmt.Errorf("parsing %s: %w", filename, err)
 	}
@@ -93,6 +98,51 @@ func (p *Parser) Parse(filename string, sql []byte) error {
 	}
 
 	return nil
+}
+
+// stripRestrictLines blanks the `\restrict <key>` and `\unrestrict <key>`
+// psql meta-commands pg_dump writes first and last since PostgreSQL 17.6.
+// They change nothing in the schema, and pg_query cannot parse them. A line
+// counts when its first token is the backslash, so one inside a string
+// literal or a dollar-quoted body is left alone. Any other psql meta-command
+// at the start of a line is an error that names it, since dropping one such
+// as `\connect` or `\i` would change what the file means. The line is
+// blanked with spaces, so pg_query's error positions still point into sql.
+func stripRestrictLines(sql string) (string, error) {
+	if !strings.Contains(sql, `\`) {
+		return sql, nil
+	}
+	scan, err := pg_query.Scan(sql)
+	if err != nil {
+		return sql, nil //nolint:nilerr // pg_query.Parse reports the same input's error with its position
+	}
+	out := []byte(sql)
+	for _, tok := range scan.Tokens {
+		start := int(tok.Start)
+		if tok.Token != pg_query.Token_ASCII_92 {
+			continue
+		}
+		lineStart := strings.LastIndexByte(sql[:start], '\n') + 1
+		if strings.TrimSpace(sql[lineStart:start]) != "" {
+			continue // mid-line: pg_query reports it as a syntax error
+		}
+		end := len(sql)
+		if i := strings.IndexByte(sql[start:], '\n'); i >= 0 {
+			end = start + i
+		}
+		var cmd string
+		if fields := strings.Fields(sql[start+1 : end]); len(fields) > 0 {
+			cmd = fields[0]
+		}
+		if cmd != "restrict" && cmd != "unrestrict" {
+			return "", fmt.Errorf("psql meta-command \\%s at line %d: the file parser reads SQL statements, not psql commands; remove the line",
+				cmd, strings.Count(sql[:start], "\n")+1)
+		}
+		for i := start; i < end; i++ {
+			out[i] = ' '
+		}
+	}
+	return string(out), nil
 }
 
 // Schema returns the accumulated schema model.
@@ -144,10 +194,11 @@ func (p *Parser) processAlterStmt(node *pg_query.Node) error {
 	}
 }
 
-// skipRelation records the relation a view or materialized view creates. The
-// parser does not model it, but it takes its name, and only a view cannot be
-// indexed. A table CREATE TABLE AS or SELECT … INTO creates is an error, since
-// its columns come from a query.
+// skipRelation records the relation a view, materialized view or foreign
+// table creates. The parser does not model it, but it takes its name, and a
+// view or foreign table cannot be indexed. The introspector reads only base
+// tables, so it skips a foreign table too. A table CREATE TABLE AS or SELECT …
+// INTO creates is an error, since its columns come from a query.
 func (p *Parser) skipRelation(node *pg_query.Node) error {
 	switch n := node.Node.(type) {
 	case *pg_query.Node_ViewStmt:
@@ -171,6 +222,8 @@ func (p *Parser) skipRelation(node *pg_query.Node) error {
 		p.schema.Warnings = append(p.schema.Warnings,
 			fmt.Sprintf("CREATE MATERIALIZED VIEW %s skipped in DDL file — use introspection or define the view in input.views",
 				n.CreateTableAsStmt.Into.Rel.Relname))
+	case *pg_query.Node_CreateForeignTableStmt:
+		return p.skipForeignTable(n.CreateForeignTableStmt.GetBaseStmt())
 	case *pg_query.Node_SelectStmt:
 		// In a UNION, INTERSECT or EXCEPT the INTO sits on the leftmost SELECT.
 		sel := n.SelectStmt
@@ -181,6 +234,24 @@ func (p *Parser) skipRelation(node *pg_query.Node) error {
 			return fmt.Errorf("create table %s: SELECT … INTO %s", p.relationKey(into.Rel), parser.UnreadColumns)
 		}
 	}
+	return nil
+}
+
+// skipForeignTable records the relation CREATE FOREIGN TABLE creates. A name
+// a relation already has is refused, as PostgreSQL refuses it, unless the
+// statement says IF NOT EXISTS.
+func (p *Parser) skipForeignTable(stmt *pg_query.CreateStmt) error {
+	key := p.relationKey(stmt.GetRelation())
+	_, isTable := p.tableIndex[key]
+	if _, isSkipped := p.skipped[key]; isTable || isSkipped {
+		if stmt.GetIfNotExists() {
+			return nil
+		}
+		return fmt.Errorf("relation %s already exists", key)
+	}
+	p.skipped[key] = false
+	p.schema.Warnings = append(p.schema.Warnings,
+		fmt.Sprintf("CREATE FOREIGN TABLE %s skipped in DDL file — foreign tables are not modelled", stmt.GetRelation().GetRelname()))
 	return nil
 }
 
@@ -837,7 +908,7 @@ func (p *Parser) indexElemColumn(table *parser.Table, e *pg_query.IndexElem) str
 
 func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 	switch stmt.RenameType { //nolint:exhaustive // only renames of what the model or the namespace holds are relevant
-	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
+	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
 		if stmt.Relation != nil {
 			return p.moveSkippedRelation(stmt.Relation, cmp.Or(stmt.Relation.Schemaname, p.defaultSchema), stmt.Newname)
 		}
@@ -1016,13 +1087,14 @@ func (p *Parser) renameIndex(rv *pg_query.RangeVar, newName string) {
 
 // parseAlterObjectSchema applies ALTER TABLE … SET SCHEMA, which pg_query
 // parses as an AlterObjectSchemaStmt, not an AlterTableStmt. A moved table is
-// rekeyed and a moved view, materialized view or partition keeps its name
-// reserved; moving any other object is ignored.
+// rekeyed and a moved view, materialized view, partition or foreign table
+// keeps its name reserved; moving any other object is ignored.
 func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) error {
 	if stmt.Relation == nil {
 		return nil
 	}
-	if stmt.ObjectType == pg_query.ObjectType_OBJECT_VIEW || stmt.ObjectType == pg_query.ObjectType_OBJECT_MATVIEW {
+	switch stmt.ObjectType { //nolint:exhaustive // a table is moved below; every other object is ignored
+	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
 		return p.moveSkippedRelation(stmt.Relation, stmt.Newschema, stmt.Relation.Relname)
 	}
 	if stmt.ObjectType != pg_query.ObjectType_OBJECT_TABLE {
@@ -1072,17 +1144,19 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 	if stmt.RemoveType == pg_query.ObjectType_OBJECT_TABLE {
 		return p.dropTables(stmt)
 	}
+	cascade := stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE
 	if stmt.RemoveType == pg_query.ObjectType_OBJECT_TYPE {
-		return p.dropTypes(p.dropTypeRefs(stmt), "type")
+		return p.dropTypes(p.dropTypeRefs(stmt), "type", cascade)
 	}
 	if stmt.RemoveType == pg_query.ObjectType_OBJECT_DOMAIN {
-		return p.dropTypes(p.dropTypeRefs(stmt), "domain")
+		return p.dropTypes(p.dropTypeRefs(stmt), "domain", cascade)
 	}
 	for _, obj := range stmt.Objects {
 		names := extractDropObjectNames(obj)
 		switch stmt.RemoveType {
-		case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
-			// A view is not modeled; only the relation name it takes is.
+		case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
+			// A view or foreign table is not modeled; only the relation name
+			// it takes is.
 			schema, name := p.splitQualifiedName(names)
 			delete(p.skipped, schema+"."+name)
 		case pg_query.ObjectType_OBJECT_INDEX:
@@ -1090,7 +1164,7 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 			p.dropIndex(schema, name)
 		case pg_query.ObjectType_OBJECT_SEQUENCE:
 			schema, name := p.splitQualifiedName(names)
-			p.dropSequence(schema, name, stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE)
+			p.dropSequence(schema, name, cascade)
 		default:
 			// Other object types are not handled.
 		}
@@ -1213,8 +1287,8 @@ func (p *Parser) skippedTable(names []string) bool {
 }
 
 // skippedRelation reports whether rv names a relation the parser skips: a
-// plain view, a materialized view or a partition. A rename or move of one
-// rekeys it; every other ALTER action on it is skipped.
+// plain view, a materialized view, a partition or a foreign table. A rename
+// or move of one rekeys it; every other ALTER action on it is skipped.
 func (p *Parser) skippedRelation(rv *pg_query.RangeVar) bool {
 	_, skipped := p.skipped[p.relationKey(rv)]
 	return skipped
@@ -1309,8 +1383,10 @@ func (p *Parser) dropIndex(schema, name string) {
 // dropTypes drops the objects of one DROP TYPE (kind "type") or DROP DOMAIN
 // (kind "domain") statement. PostgreSQL drops them together, so a reference
 // from one to another does not block the drop. DROP TYPE drops a domain too;
-// DROP DOMAIN refuses an enum or composite type.
-func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
+// DROP DOMAIN refuses an enum or composite type. A type something uses
+// blocks the drop, unless the statement says CASCADE, which drops what uses
+// it too (dropTypeDependents).
+func (p *Parser) dropTypes(refs []parser.TypeRef, kind string, cascade bool) error {
 	if kind == "domain" {
 		for _, ref := range refs {
 			if p.findEnumByName(ref.Schema, ref.Name) != nil || p.findCompositeTypeByName(ref.Schema, ref.Name) != nil {
@@ -1318,13 +1394,23 @@ func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
 			}
 		}
 	}
-	if err := parser.CheckTypeDropRefs(p.schema, refs); err != nil {
+	var dropDependents func()
+	if cascade {
+		refs = p.typeDropClosure(refs)
+		var err error
+		if dropDependents, err = p.dropTypeDependents(refs); err != nil {
+			return fmt.Errorf("drop %s: %w", kind, err)
+		}
+	} else if err := parser.CheckTypeDropRefs(p.schema, refs); err != nil {
 		return fmt.Errorf("drop %s: %w", kind, err)
 	}
 	for _, ref := range refs {
 		if err := parser.CheckViewDependents(p.schema, "drop", parser.DependencyObject{Kind: parser.TypeDependency, Schema: ref.Schema, Name: ref.Name}); err != nil {
 			return fmt.Errorf("drop %s: %w", kind, err)
 		}
+	}
+	if dropDependents != nil {
+		dropDependents()
 	}
 	for _, ref := range refs {
 		p.schema.DomainTypes = slices.DeleteFunc(p.schema.DomainTypes, func(dt parser.DomainType) bool {
@@ -1339,6 +1425,108 @@ func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
 		p.shadowTypeReferences(ref.Schema, ref.Name, false)
 	}
 	return nil
+}
+
+// typeDropClosure returns refs with every domain whose base type is one of
+// them, or an array of one, at any depth, as DROP TYPE … CASCADE and DROP
+// DOMAIN … CASCADE drop such a domain too.
+func (p *Parser) typeDropClosure(refs []parser.TypeRef) []parser.TypeRef {
+	drop := slices.Clone(refs)
+	for grown := true; grown; {
+		grown = false
+		for _, dt := range p.schema.DomainTypes {
+			self := parser.TypeRef{Schema: dt.Schema, Name: dt.Name}
+			if slices.Contains(drop, self) {
+				continue
+			}
+			if base, _ := parser.ResolveTypeRef(dt.BaseType, dt.Schema); slices.Contains(drop, base) {
+				drop = append(drop, self)
+				grown = true
+			}
+		}
+	}
+	return drop
+}
+
+// typeColumn names a table column a dropped type takes with it.
+type typeColumn struct {
+	schema, table, column string
+}
+
+// dropTypeDependents checks what DROP … CASCADE of drop (with its domains)
+// takes and returns the function that drops it. A database view stands
+// under source: both (PRD §6.1), so a view column of one of the types, or a
+// view on a column or attribute the drop takes, refuses it.
+func (p *Parser) dropTypeDependents(drop []parser.TypeRef) (func(), error) {
+	uses := func(typ, owner string) bool {
+		ref, _ := parser.ResolveTypeRef(typ, owner)
+		return slices.Contains(drop, ref)
+	}
+	if err := parser.CheckTypeDropRefs(&parser.Schema{Views: p.schema.Views}, drop); err != nil {
+		return nil, err //nolint:wrapcheck // the caller names the statement
+	}
+	var cols []typeColumn
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		for _, c := range t.Columns {
+			if !uses(c.Type, t.Schema) {
+				continue
+			}
+			if err := p.checkViewDependents("drop", parser.DependencyObject{Kind: parser.ColumnDependency, Schema: t.Schema, Name: t.Name, Part: c.Name}); err != nil {
+				return nil, err
+			}
+			cols = append(cols, typeColumn{schema: t.Schema, table: t.Name, column: c.Name})
+		}
+	}
+	for _, ct := range p.schema.CompositeTypes {
+		if slices.Contains(drop, parser.TypeRef{Schema: ct.Schema, Name: ct.Name}) {
+			continue
+		}
+		for _, attr := range ct.Attributes {
+			if !uses(attr.Type, ct.Schema) {
+				continue
+			}
+			if err := parser.CheckViewDependents(p.schema, "drop", parser.DependencyObject{Kind: parser.AttributeDependency, Schema: ct.Schema, Name: ct.Name, Part: attr.Name}); err != nil {
+				return nil, err //nolint:wrapcheck // the caller names the statement
+			}
+		}
+	}
+	return func() {
+		p.dropColumnReferencingKeys(cols)
+		for _, c := range cols {
+			key := c.schema + "." + c.table
+			dropColumn(&p.schema.Tables[p.tableIndex[key]], c.column)
+			p.dropOwnedSequences(key, c.column)
+		}
+		for i := range p.schema.CompositeTypes {
+			ct := &p.schema.CompositeTypes[i]
+			if slices.Contains(drop, parser.TypeRef{Schema: ct.Schema, Name: ct.Name}) {
+				continue
+			}
+			ct.Attributes = slices.DeleteFunc(ct.Attributes, func(attr parser.Attribute) bool {
+				return uses(attr.Type, ct.Schema)
+			})
+		}
+	}, nil
+}
+
+// dropColumnReferencingKeys drops every foreign key that references one of
+// cols, as PostgreSQL drops it with the column it references. The
+// referencing columns stay.
+func (p *Parser) dropColumnReferencingKeys(cols []typeColumn) {
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		for _, c := range slices.Clone(t.Constraints) {
+			if c.Type != parser.ForeignKey {
+				continue
+			}
+			if slices.ContainsFunc(cols, func(col typeColumn) bool {
+				return col.schema == c.ReferenceSchema && col.table == c.ReferenceTable && slices.Contains(c.ReferenceColumns, col.column)
+			}) {
+				removeConstraintFromColumns(t, c.Name)
+			}
+		}
+	}
 }
 
 func (p *Parser) parseComment(stmt *pg_query.CommentStmt) error {
@@ -1427,8 +1615,9 @@ func (p *Parser) parseAlterTable(stmt *pg_query.AlterTableStmt) error {
 	case pg_query.ObjectType_OBJECT_SEQUENCE, pg_query.ObjectType_OBJECT_INDEX, pg_query.ObjectType_OBJECT_FOREIGN_TABLE:
 		// No subcommand here changes the model (OWNED BY and RENAME TO are
 		// statements of their own), and the parser tracks no partition's index
-		// and no foreign table, so an unknown name is not an error. pg_dump
-		// writes ALTER SEQUENCE … OWNER TO and ALTER INDEX … ATTACH PARTITION.
+		// and no foreign table's columns, so an unknown name is not an error.
+		// pg_dump writes ALTER SEQUENCE … OWNER TO and ALTER INDEX … ATTACH
+		// PARTITION.
 		return nil
 	}
 	table, err := p.lookupTable(stmt.Relation)
@@ -1494,7 +1683,7 @@ func (p *Parser) applyAlterCmd(table *parser.Table, cmd *pg_query.AlterTableCmd)
 		alterDropColumn(table, cmd)
 		p.dropOwnedSequences(table.Schema+"."+table.Name, cmd.Name)
 	case pg_query.AlterTableType_AT_AddConstraint:
-		p.alterAddConstraint(table, cmd)
+		return p.alterAddConstraint(table, cmd)
 	case pg_query.AlterTableType_AT_DropConstraint:
 		alterDropConstraint(table, cmd)
 	case pg_query.AlterTableType_AT_SetNotNull:
@@ -1634,33 +1823,103 @@ func alterDropColumn(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 	if cmd.MissingOk && parser.ColumnByName(table, cmd.Name) == nil {
 		return // DROP COLUMN IF EXISTS — column doesn't exist, skip
 	}
+	dropColumn(table, cmd.Name)
+}
+
+// dropColumn drops the column name, with every index and constraint of the
+// table that reads it.
+func dropColumn(table *parser.Table, name string) {
 	for _, c := range slices.Clone(table.Constraints) {
-		if slices.Contains(c.Columns, cmd.Name) ||
-			slices.Contains(parser.CheckColumns(c.Where, table.Columns, "postgres"), cmd.Name) {
+		if slices.Contains(c.Columns, name) ||
+			slices.Contains(parser.CheckColumns(c.Where, table.Columns, "postgres"), name) {
 			removeConstraintFromColumns(table, c.Name)
 		}
 	}
 	var kept []parser.ExpressionIndex
 	for _, ix := range table.ExpressionIndexes {
-		if !slices.Contains(ix.Columns, cmd.Name) {
+		if !slices.Contains(ix.Columns, name) {
 			kept = append(kept, ix)
 		}
 	}
 	table.ExpressionIndexes = kept
 	table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
-		return c.Name == cmd.Name
+		return c.Name == name
 	})
 }
 
-func (p *Parser) alterAddConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) {
+func (p *Parser) alterAddConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) error {
 	if cmd.Def == nil {
-		return
+		return nil
 	}
 	cn, ok := cmd.Def.Node.(*pg_query.Node_Constraint)
 	if !ok {
-		return
+		return nil
+	}
+	if cn.Constraint.Indexname != "" {
+		return p.addConstraintUsingIndex(table, cn.Constraint)
 	}
 	p.addConstraints(table, []parser.Constraint{p.parseConstraintNode(cn.Constraint)})
+	return nil
+}
+
+// addConstraintUsingIndex applies ADD … PRIMARY KEY | UNIQUE USING INDEX. The
+// table's unique index becomes the constraint's index: it is renamed to the
+// constraint's name (an unnamed constraint keeps the index's name), and a
+// PRIMARY KEY makes its columns NOT NULL. It errors as PostgreSQL does for an
+// index it cannot use or a name already taken.
+func (p *Parser) addConstraintUsingIndex(table *parser.Table, c *pg_query.Constraint) error {
+	kind := parser.Unique
+	if c.Contype == pg_query.ConstrType_CONSTR_PRIMARY {
+		kind = parser.PrimaryKey
+	}
+	ix, err := usingIndex(table, c.Indexname)
+	if err != nil {
+		return fmt.Errorf("alter table %s.%s: %w", table.Schema, table.Name, err)
+	}
+	name := cmp.Or(c.Conname, ix.Name)
+	if name != ix.Name && p.namespace(table.Schema).taken(kind)(name) {
+		return fmt.Errorf("alter table %s.%s: relation %s already exists", table.Schema, table.Name, name)
+	}
+	parser.RenameDependencies(p.schema,
+		parser.DependencyObject{Kind: parser.ConstraintDependency, Schema: table.Schema, Name: table.Name, Part: ix.Name},
+		parser.DependencyObject{Kind: parser.ConstraintDependency, Schema: table.Schema, Name: table.Name, Part: name})
+	ix.Name = name
+	ix.Type = kind
+	if kind == parser.PrimaryKey {
+		// A PRIMARY KEY keeps no method, as one declared with its columns.
+		// CanonicalizeConstraints makes its columns NOT NULL.
+		ix.Method = ""
+		if len(ix.Columns) == 1 {
+			// The index no longer makes its column UNIQUE.
+			parser.RecomputeColumnUnique(table, ix.Columns[0])
+		}
+	}
+	parser.CanonicalizeConstraints(table, "postgres")
+	return nil
+}
+
+// usingIndex returns the unique index of table that ADD … USING INDEX names,
+// or the error PostgreSQL gives for an index it cannot use.
+func usingIndex(table *parser.Table, name string) (*parser.Constraint, error) {
+	if slices.ContainsFunc(table.ExpressionIndexes, func(ix parser.ExpressionIndex) bool { return ix.Name == name }) {
+		return nil, fmt.Errorf("index %s contains expressions", name)
+	}
+	i := slices.IndexFunc(table.Constraints, func(ix parser.Constraint) bool {
+		return ix.Name == name && (ix.Type == parser.Index || ix.Type == parser.Unique || ix.Type == parser.PrimaryKey)
+	})
+	if i < 0 {
+		return nil, fmt.Errorf("index %s does not exist on the table", name)
+	}
+	ix := &table.Constraints[i]
+	switch {
+	case ix.Type == parser.PrimaryKey:
+		return nil, fmt.Errorf("index %s is already associated with a constraint", name)
+	case ix.Type == parser.Index:
+		return nil, fmt.Errorf("index %s is not a unique index", name)
+	case ix.Where != "":
+		return nil, fmt.Errorf("index %s is a partial index", name)
+	}
+	return ix, nil
 }
 
 func alterDropConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) {

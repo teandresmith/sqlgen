@@ -29,6 +29,11 @@ type GoType struct {
 	// and without modifiers (the element type for an array, the base for a
 	// domain): the `overrides.types` key that would map it. Empty otherwise.
 	UnmappedSQLType string
+	// UnmappedComposite is the Go type name of the PostgreSQL composite type
+	// UnmappedSQLType names, when it names one. The column still resolves to
+	// string: the generated composite struct reads and writes JSON (PRD §8.3),
+	// not the tuple text a composite column holds. Empty otherwise.
+	UnmappedComposite string
 }
 
 // FKStringMethod indicates how to convert a value to string for FK comparisons.
@@ -194,7 +199,8 @@ type Resolver struct {
 	enums           map[string]string     // SQL enum name → PascalCase Go type name
 	sets            map[string]string     // SQL set name → PascalCase Go set type name
 	domains         map[string]domainBase // SQL domain name → base SQL type
-	// bareOwners maps each bare enum, SET or domain name to the schema that
+	composites      map[string]string     // SQL composite type name → PascalCase Go struct name
+	// bareOwners maps each bare enum, SET, domain or composite name to the schema that
 	// registered it, and sharedBare holds the names more than one schema
 	// registered. A shared name answers only to its qualified keys.
 	bareOwners map[string]string
@@ -243,6 +249,7 @@ func NewResolver(dialect config.Dialect, usePointers bool, globalOverrides map[s
 		enums:           make(map[string]string),
 		sets:            make(map[string]string),
 		domains:         make(map[string]domainBase),
+		composites:      make(map[string]string),
 		bareOwners:      make(map[string]string),
 		sharedBare:      make(map[string]bool),
 	}
@@ -433,7 +440,7 @@ func (r *Resolver) RegisterIntegration(sqlType string, override config.TypeOverr
 // RegisterEnum registers the enum schema.sqlName so that columns using it
 // resolve to the generated Go type instead of falling through to string. The
 // enum answers to schema.sqlName, and to sqlName alone while no other schema
-// registers an enum, SET or domain by that name (PRD §7.1). An empty schema
+// registers an enum, SET, domain or composite by that name (PRD §7.1). An empty schema
 // registers the bare name only.
 func (r *Resolver) RegisterEnum(schema, sqlName, goTypeName string) {
 	registerSchemaType(r, r.enums, schema, sqlName, goTypeName)
@@ -463,6 +470,7 @@ func registerSchemaType[V any](r *Resolver, m map[string]V, schema, name string,
 		delete(r.enums, name)
 		delete(r.sets, name)
 		delete(r.domains, name)
+		delete(r.composites, name)
 		return
 	}
 	r.bareOwners[name] = schema
@@ -524,9 +532,9 @@ func (r *Resolver) ForSchema(schema string) *Resolver {
 	return &scoped
 }
 
-// schemaTypeKey returns the key the enum, SET and domain maps hold a bare
-// sqlType under for the owner schema: ownerSchema.sqlType when that is
-// registered, sqlType otherwise. A qualified sqlType, or any sqlType for a
+// schemaTypeKey returns the key the enum, SET, domain and composite maps
+// hold a bare sqlType under for the owner schema: ownerSchema.sqlType when
+// that is registered, sqlType otherwise. A qualified sqlType, or any sqlType for a
 // resolver with no owner schema, is returned as given. It reports false when
 // sqlType must not be looked up in those maps at all: a bare name the
 // dialect's built-in mapping knows never falls back to another schema's type
@@ -540,7 +548,8 @@ func (r *Resolver) schemaTypeKey(sqlType string) (string, bool) {
 	_, isEnum := r.enums[qualified]
 	_, isSet := r.sets[qualified]
 	_, isDomain := r.domains[qualified]
-	if isEnum || isSet || isDomain {
+	_, isComposite := r.composites[qualified]
+	if isEnum || isSet || isDomain || isComposite {
 		return qualified, true
 	}
 	if owner, ok := r.bareOwners[sqlType]; ok && owner != r.ownerSchema && r.isBuiltin(sqlType) {
@@ -569,6 +578,17 @@ func (r *Resolver) RegisterDomain(schema, sqlName, baseSQLType string) {
 		base:   strings.ToLower(baseSQLType),
 		schema: strings.ToLower(schema),
 	})
+}
+
+// RegisterComposite registers the PostgreSQL composite type schema.sqlName,
+// whose generated struct is goTypeName. It answers to the same names as an
+// enum (see RegisterEnum), and it takes part in the same type namespace, so a
+// bare name is never read as another schema's enum, SET or domain of that
+// name. A column of the composite still resolves to string: the struct reads
+// and writes JSON (PRD §8.3), and the column holds tuple text. The resolved
+// GoType names the struct in UnmappedComposite, so the caller can say so.
+func (r *Resolver) RegisterComposite(schema, sqlName, goTypeName string) {
+	registerSchemaType(r, r.composites, schema, sqlName, goTypeName)
 }
 
 // domainBaseType returns the base SQL type of the registered domain sqlType.
@@ -866,7 +886,7 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 		return FromOverride(override, nullable, r.usePointers), overrideSource{}
 	}
 
-	// Step 4.5: Schema enums, sets, and domains, owner schema first
+	// Step 4.5: Schema enums, sets, domains and composites, owner schema first
 	if gt, source, ok := r.resolveSchemaType(sqlType, nullable, tableOverrides); ok {
 		return gt, source
 	}
@@ -897,6 +917,8 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 				IsSlice:         true,
 				FKConvert:       FKStringSprint,
 				UnmappedSQLType: base.UnmappedSQLType,
+				// An array of a composite is tuple text per element as well.
+				UnmappedComposite: base.UnmappedComposite,
 			}, source
 		}
 	}
@@ -925,8 +947,8 @@ func (r *Resolver) ArrayElemGoType(elemSQLType string, tableOverrides map[string
 	return base.Name
 }
 
-// resolveSchemaType resolves sqlType as a registered enum, SET or domain,
-// owner schema first. It reports false when sqlType names none.
+// resolveSchemaType resolves sqlType as a registered enum, SET, domain or
+// composite, owner schema first. It reports false when sqlType names none.
 func (r *Resolver) resolveSchemaType(sqlType string, nullable bool, tableOverrides map[string]config.TypeOverride) (GoType, overrideSource, bool) {
 	key, ok := r.schemaTypeKey(sqlType)
 	if !ok {
@@ -969,6 +991,12 @@ func (r *Resolver) resolveSchemaType(sqlType string, nullable bool, tableOverrid
 		}
 		gt, source := scope.resolveByTypeSource(d.base, nullable, tableOverrides)
 		return gt, source, true
+	}
+	if goTypeName, ok := r.composites[key]; ok {
+		gt := r.goTypeFromInfo(goString, nullable)
+		gt.UnmappedSQLType = stripModifiers(sqlType)
+		gt.UnmappedComposite = goTypeName
+		return gt, overrideSource{}, true
 	}
 	return GoType{}, overrideSource{}, false
 }

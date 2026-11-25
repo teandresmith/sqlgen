@@ -294,7 +294,7 @@ the format.
 | qualification: unqualified-fk-target × sqlite | §5.5: SQLite tables have no schema, so an unqualified REFERENCES target has no schema to resolve to | |
 
 ## §5.6 Multi-File Parsing Order
-<!-- prd: 5.6 sha256: cc6be88f503cbab1 -->
+<!-- prd: 5.6 sha256: cb0de0773e093fe2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -365,6 +365,9 @@ the format.
 | parser.multifile.drop-cascade-drops-fks | On PostgreSQL, `DROP TABLE … CASCADE` drops the foreign keys that reference the dropped tables instead of failing | `unit: parser/postgres: TestDropTableCascade/one referencing table`; `unit: parser/postgres: TestDropTableCascade/two tables, a third references the second` | postgres |  |
 | parser.multifile.drop-cascade-keeps-columns | After `DROP TABLE … CASCADE` the referencing columns stay, with their unique constraints and indexes | `unit: parser/postgres: TestDropTableCascade/table constraint, unique constraint and index stay` | postgres |  |
 | parser.multifile.drop-cascade-mysql-ignored | MySQL ignores `CASCADE` on `DROP TABLE`, so a referenced table still cannot be dropped | `unit: parser/mysql: TestDropTableCascadeIgnored` | mysql |  |
+| parser.multifile.drop-type-cascade-drops-users | On PostgreSQL, `DROP TYPE … CASCADE` and `DROP DOMAIN … CASCADE` drop each table column of the type or an array of it, a table's last column too, each domain over it at any depth with its columns, and each composite type's attribute of it, instead of failing | `unit: parser/postgres: TestDropTypeCascade/a column and an array column`; `unit: parser/postgres: TestDropTypeCascade/a table's last column`; `unit: parser/postgres: TestDropTypeCascade/a domain chain with its columns`; `unit: parser/postgres: TestDropTypeCascade/a composite attribute`; `unit: parser/postgres: TestDropTypeCascade/DROP DOMAIN drops the domains over it`; `integration: parser/introspect: TestPostgresIntrospect_DropTypeCascade` | postgres |  |
+| parser.multifile.drop-type-cascade-column-dependents | A column `DROP TYPE … CASCADE` drops takes the constraints and indexes that read it, the foreign keys that reference it and the sequence it owns | `unit: parser/postgres: TestDropTypeCascade/the constraints and indexes on a dropped column`; `unit: parser/postgres: TestDropTypeCascade/a foreign key that references a dropped column`; `unit: parser/postgres: TestDropTypeCascade/the names the drop frees`; `integration: parser/introspect: TestPostgresIntrospect_DropTypeCascade` | postgres |  |
+| parser.multifile.drop-type-cascade-view-refuses | Under `source: both`, `DROP TYPE … CASCADE` is still refused when a database view depends on the type, a domain over it, or a column or attribute the drop takes, or has a column of it | `unit: parser/postgres: TestViewDependents/drop a type under CASCADE`; `unit: parser/postgres: TestViewDependents/drop a type under CASCADE, a view on a domain over it`; `unit: parser/postgres: TestViewDependents/drop a type under CASCADE, a view on a column of it`; `unit: parser/postgres: TestViewDependents/drop a type under CASCADE, a view on an attribute of it`; `unit: parser/postgres: TestDropTypeCascadeCatalogView` | postgres |  |
 | parser.multifile.type-use.table-column | On PostgreSQL a type is used by a table column that names it or an array of it | `unit: parser/postgres: TestDropTypeReferences/array column`; `unit: parser: TestCheckTypeDropRefs/qualified name`; `unit: parser: TestCheckTypeDropRefs/array column` | postgres |  |
 | parser.multifile.type-use.view-column | On PostgreSQL a type is used by a view column that names it | `unit: parser: TestCheckTypeDropRefs/view column` | postgres |  |
 | parser.multifile.type-use.domain-base | On PostgreSQL a type is used by a domain whose base type names it | `unit: parser/postgres: TestDropTypeReferences/domain base type`; `unit: parser/postgres: TestDropTypeReferences/domain over a domain`; `unit: parser: TestCheckTypeDropRefs/domain base type` | postgres |  |
@@ -462,6 +465,7 @@ Tests in `parser` that back no PRD behavior. Every other top-level test in the p
 | parser: TestParseFiles_AlterNonexistentTable | The `not found` error comes from the test's own parser double; ParseFiles only forwards it |
 | parser: TestParseFiles_DuplicateCreateEnum | The duplicate error comes from the test's own parser double; see parser.multifile.duplicate-create-type |
 | parser: TestParseFiles_DuplicateCreateTable | The duplicate error comes from the test's own regex parser double, so it tests the double; the real-parser rows are parser.multifile.duplicate-create-* |
+| parser: TestParseFiles_ErrorNamesFileOnce | Pins the error text: a dialect's parse error comes back through ParseFiles naming the file once; no PRD clause states the message's shape |
 | parser: TestParseFiles_DuplicateWithSchemaQualification | The qualified duplicate error comes from the test's own parser double |
 | parser: TestPostgresIndexColumnNames | Helper giving the <cols> part of a derived PostgreSQL index name; the derived index name is proven by parser.pg.index.unnamed-name (TestDerivedConstraintNames/index columns from expressions and repeats) |
 | parser: TestRelationshipTypeStrings | RelationshipType.String helper; no PRD behavior |

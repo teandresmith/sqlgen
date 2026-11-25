@@ -9,7 +9,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 §4.13 validation rules and the package's unclaimed tests stay in [`config.md`](config.md).
 
 ## §4 Configuration System
-<!-- prd: 4 sha256: 74b444002256fa5d -->
+<!-- prd: 4 sha256: d4f8b340c5d71ecb -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -169,7 +169,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config.output.client.always-generated | The unified client is always generated, even for a schema with no tables | `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInClientPackageDoc/single_file with zero tables`; `golden: postgres` | all |  |
 
 ## §4.6 GenerationConfig
-<!-- prd: 4.6 sha256: 7449bd9a87f6c510 -->
+<!-- prd: 4.6 sha256: a7437c7b9ee3844d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -324,7 +324,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config-resolution: overrides.use-pointers × view-inherits | §4.9: ViewConfig has no `overrides` block | |
 
 ## §4.8 TableConfig (per-table)
-<!-- prd: 4.8 sha256: cadbbcc1c2f49336 -->
+<!-- prd: 4.8 sha256: 8207c885c657b2bc -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -374,6 +374,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config.tables.relationships.table.schema | `v1.json` requires a relationship's `table` | `unit: cmd/sqlgen/config: TestSchemaV1_rejectsKnownMistakes/relationship missing table` | all | |
 | config.tables.relationships.junction.inferred-keys | Without `junction_local_fk` / `junction_reference_fk`, an M2M entry's junction columns are inferred from the linked table names (`product_id`, `tag_id`) | `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeysInferred` | all |  |
 | config.tables.relationships.junction.composite-needs-override | A linked table with a composite primary key and no `junction_local_fk` / `junction_reference_fk` override for its side is a generation error naming the relationship and the key to declare | `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeyInferenceNeedsSingleColumnPK/this table composite, no override`; `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeyInferenceNeedsSingleColumnPK/related table composite, no override` | all |  |
+| config.tables.relationships.junction.self-referential-declares-a-key | A self-referential `m2m` entry, whose `table:` is this table, infers the same column for both sides, so it declares at least one of `junction_local_fk` and `junction_reference_fk`, and the two keys must name different columns | `unit: cmd/sqlgen/gen: TestBuildTableContexts_M2MJunctionKeysMustDiffer/both keys inferred`; `unit: cmd/sqlgen/gen: TestBuildTableContexts_M2MJunctionKeysMustDiffer/both keys declared and distinct`; `unit: cmd/sqlgen/gen: TestBuildTableContexts_M2MJunctionKeysMustDiffer/one key declared distinct from the other's inferred column` | all |  |
 | config.tables.relationships.junction.inferred-is-link-column | An inferred junction column is a link column the `exclude_columns` link-column rule checks | `unit: cmd/sqlgen/gen: TestGenerate_M2MInferredJunctionKeyIsALinkColumn` | all |  |
 | config.tables.relationships.junction.local-fk-override | `junction_local_fk` names the junction column for this table in place of the inferred one | `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeyOverrides` | all |  |
 | config.tables.relationships.junction.reference-fk-override | `junction_reference_fk` names the junction column for the related table in place of the inferred one | `unit: cmd/sqlgen/gen: TestGenerate_M2MJunctionKeyOverrides` | all |  |
@@ -408,6 +409,7 @@ The §4 field tables: each field's default, the value it keeps when set, and its
 | config.views.invalidate-on.required-when-cached | A view with `cache.enabled: true` and an empty `invalidate_on` is a hard validation error | `unit: cmd/sqlgen/config: TestValidatePreParse_CacheConfig/view cache enabled without invalidate_on`; `unit: cmd/sqlgen/config: TestValidatePreParse_CacheConfig/view cache enabled false skips invalidate_on requirement` | all | |
 | config.views.invalidate-on.resolves | Every `invalidate_on` name must resolve to a parsed table, bare or schema-qualified; an unknown name is a hard error | `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOn/unknown table name is hard error`; `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOn/invalidate_on resolves to parsed tables`; `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOn/invalidate_on resolves via schema-qualified name` | all | |
 | config.views.invalidate-on.excluded | An `invalidate_on` name that resolves to a table excluded from generation is a hard error | `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOn/excluded table (all columns filtered) is hard error`; `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOnExcludeTablesPatterns/bare pattern match`; `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOnExcludeTablesPatterns` | all |  |
+| config.views.invalidate-on.no-primary-key | An `invalidate_on` name that resolves to a table with no primary key after override resolution (skipped from generation, §9.4b) is a hard error; a `tables.<name>.primary_key.columns` override makes it valid | `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOn/no-PK source (PG, qualified) is hard error`; `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOn/no-PK source with primary_key.columns override (PG) passes`; `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOn/no-PK source (unqualified) is hard error`; `unit: cmd/sqlgen/config: TestValidatePostParse_ViewInvalidateOn/no-PK source with primary_key.columns override (unqualified) passes`; `unit: cmd/sqlgen/cli: TestValidate_CachedViewInvalidateOnNoPKSource` | all |  |
 | config.views.matview.invalidate-on-required | A cached materialized view requires a non-empty `invalidate_on`, exactly as a view does | `unit: cmd/sqlgen/cli: TestValidate_CachedViewRequiresInvalidateOn/materialized view`; `unit: cmd/sqlgen/cli: TestValidate_CachedViewRequiresInvalidateOn/regular view`; `unit: cmd/sqlgen/config: TestValidatePreParse_CachedViewRequiresInvalidateOn` | postgres |  |
 | config.views.no-materialized-key | `ViewConfig` has no `materialized:` or `refresh:` key | `unit: cmd/sqlgen/config: TestViewConfig_NoMaterializedOrRefreshKey/materialized key`; `unit: cmd/sqlgen/config: TestViewConfig_NoMaterializedOrRefreshKey/refresh key` | postgres |  |
 | config.views.overrides-types.view-inherits | A view's columns resolve under the global `overrides.types` binding (stated in §4.13's UUID-library rule, which cites §4.9) | `unit: cmd/sqlgen/gen: TestGenerate_ViewColumnsInheritGlobalTypeOverrides` | all | config-resolution: overrides.types × view-inherits |

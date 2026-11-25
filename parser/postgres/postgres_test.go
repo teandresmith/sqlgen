@@ -519,6 +519,137 @@ func TestAlterTableAddDropConstraint(t *testing.T) {
 	}
 }
 
+// ADD … UNIQUE | PRIMARY KEY USING INDEX turns the unique index into the
+// constraint's index, renamed to the constraint's name, so the table is the
+// one the same constraint declared over the index's columns gives.
+func TestAddConstraintUsingIndex(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want string // the same table, built without USING INDEX
+	}{
+		{
+			name: "named UNIQUE takes the index and renames it",
+			sql: `CREATE TABLE t (a int, b int);
+				CREATE UNIQUE INDEX CONCURRENTLY ui_a_idx ON t (a);
+				ALTER TABLE t ADD CONSTRAINT ui_a_key UNIQUE USING INDEX ui_a_idx;`,
+			want: `CREATE TABLE t (a int, b int);
+				ALTER TABLE t ADD CONSTRAINT ui_a_key UNIQUE (a);`,
+		},
+		{
+			name: "unnamed UNIQUE keeps the index's name",
+			sql: `CREATE TABLE t (a int, b int);
+				CREATE UNIQUE INDEX ui_ab ON t (a, b);
+				ALTER TABLE t ADD UNIQUE USING INDEX ui_ab;`,
+			want: `CREATE TABLE t (a int, b int);
+				ALTER TABLE t ADD CONSTRAINT ui_ab UNIQUE (a, b);`,
+		},
+		{
+			name: "PRIMARY KEY sets the key columns and NOT NULL",
+			sql: `CREATE TABLE t (a int, b int, c int);
+				CREATE UNIQUE INDEX t_idx ON t (a, b);
+				ALTER TABLE t ADD CONSTRAINT t_pk PRIMARY KEY USING INDEX t_idx;`,
+			want: `CREATE TABLE t (a int, b int, c int);
+				ALTER TABLE t ADD CONSTRAINT t_pk PRIMARY KEY (a, b);`,
+		},
+		{
+			name: "single-column PRIMARY KEY",
+			sql: `CREATE TABLE t (a int, b int);
+				CREATE UNIQUE INDEX t_idx ON t (a);
+				ALTER TABLE t ADD PRIMARY KEY USING INDEX t_idx;`,
+			want: `CREATE TABLE t (a int, b int);
+				ALTER TABLE t ADD CONSTRAINT t_idx PRIMARY KEY (a);`,
+		},
+		{
+			name: "the index's old name is free and ALTER INDEX answers to the new one",
+			sql: `CREATE TABLE t (a int, b int);
+				CREATE UNIQUE INDEX t_a_idx ON t (a);
+				ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_a_idx;
+				DROP INDEX IF EXISTS t_a_idx;
+				ALTER INDEX k RENAME TO k2;
+				CREATE INDEX ON t (a);`,
+			want: `CREATE TABLE t (a int, b int);
+				ALTER TABLE t ADD CONSTRAINT k2 UNIQUE (a);
+				CREATE INDEX t_a_idx ON t (a);`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, want := postgres.New(""), postgres.New("")
+			if err := got.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if err := want.Parse("want.sql", []byte(tt.want)); err != nil {
+				t.Fatalf("Parse(want) error: %v", err)
+			}
+			if diff := cmp.Diff(want.Schema().Tables, got.Schema().Tables); diff != "" {
+				t.Errorf("tables mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// ADD … USING INDEX is an error wherever PostgreSQL refuses it.
+func TestAddConstraintUsingIndexErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+	}{
+		{
+			name:    "a missing index",
+			sql:     `CREATE TABLE t (a int); ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX nope;`,
+			wantErr: "index nope does not exist on the table",
+		},
+		{
+			name: "another table's index",
+			sql: `CREATE TABLE t (a int); CREATE TABLE u (a int); CREATE UNIQUE INDEX u_idx ON u (a);
+				ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX u_idx;`,
+			wantErr: "index u_idx does not exist on the table",
+		},
+		{
+			name:    "a non-unique index",
+			sql:     `CREATE TABLE t (a int); CREATE INDEX t_idx ON t (a); ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_idx;`,
+			wantErr: "index t_idx is not a unique index",
+		},
+		{
+			name:    "a partial index",
+			sql:     `CREATE TABLE t (a int); CREATE UNIQUE INDEX t_idx ON t (a) WHERE a > 0; ALTER TABLE t ADD CONSTRAINT k PRIMARY KEY USING INDEX t_idx;`,
+			wantErr: "index t_idx is a partial index",
+		},
+		{
+			name:    "an expression index",
+			sql:     `CREATE TABLE t (a int); CREATE UNIQUE INDEX t_idx ON t ((a + 1)); ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_idx;`,
+			wantErr: "index t_idx contains expressions",
+		},
+		{
+			name:    "a primary key's index",
+			sql:     `CREATE TABLE t (a int PRIMARY KEY); ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_pkey;`,
+			wantErr: "index t_pkey is already associated with a constraint",
+		},
+		{
+			name: "a name another index has",
+			sql: `CREATE TABLE t (a int); CREATE INDEX k ON t (a); CREATE UNIQUE INDEX t_idx ON t (a);
+				ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_idx;`,
+			wantErr: "relation k already exists",
+		},
+		{
+			name: "a name a foreign table has",
+			sql: `CREATE TABLE t (a int); CREATE FOREIGN TABLE k (a int) SERVER s; CREATE UNIQUE INDEX t_idx ON t (a);
+				ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_idx;`,
+			wantErr: "relation k already exists",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := postgres.New("").Parse("test.sql", []byte(tt.sql))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestSchemaQualification(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1565,6 +1696,133 @@ func TestDropTypeReferences(t *testing.T) {
 			}
 			if got != tt.wantErr {
 				t.Fatalf("Parse() error = %q, want %q", got, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestDropTypeCascade checks that DROP TYPE … CASCADE and DROP DOMAIN …
+// CASCADE drop what uses the type, as PostgreSQL 17 does.
+func TestDropTypeCascade(t *testing.T) {
+	const e = `CREATE TYPE e AS ENUM ('a');`
+	tests := []struct {
+		name string
+		sql  string
+		want []string // each table's constraints, then columns; then expression indexes, domains, composite types
+	}{
+		{
+			name: "a column and an array column",
+			sql:  e + `CREATE TABLE t (id int PRIMARY KEY, c e, arr e[]); DROP TYPE e CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id"},
+		},
+		{
+			name: "a table's last column",
+			sql:  e + `CREATE TABLE t (c e); DROP TYPE e CASCADE;`,
+			want: []string{"public.t: "},
+		},
+		{
+			name: "a domain chain with its columns",
+			sql: e + `CREATE DOMAIN d1 AS e; CREATE DOMAIN d2 AS d1; CREATE DOMAIN da AS e[]; CREATE DOMAIN keep AS int;
+				CREATE TABLE t (id int PRIMARY KEY, a d1, b d2[], c da, k keep); DROP TYPE e CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id", "k", "domain public.keep"},
+		},
+		{
+			name: "DROP DOMAIN drops the domains over it",
+			sql: `CREATE DOMAIN d1 AS int; CREATE DOMAIN d2 AS d1;
+				CREATE TABLE t (id int PRIMARY KEY, a d2); DROP DOMAIN d1 CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id"},
+		},
+		{
+			name: "a composite attribute",
+			sql: e + `CREATE TYPE comp AS (x e, y int); CREATE TYPE comp1 AS (x e[]);
+				CREATE TABLE t (id int PRIMARY KEY, cc comp); DROP TYPE e CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id", "cc", "type public.comp: y", "type public.comp1: "},
+		},
+		{
+			name: "a composite type's columns",
+			sql:  `CREATE TYPE comp AS (x int); CREATE TABLE t (id int PRIMARY KEY, cc comp, ca comp[]); DROP TYPE comp CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id"},
+		},
+		{
+			name: "the constraints and indexes on a dropped column",
+			sql: e + `CREATE TABLE t (id int PRIMARY KEY, c e UNIQUE, k int, CHECK (c <> 'a'), CONSTRAINT keep CHECK (k > 0));
+				CREATE INDEX t_c_idx ON t (c); CREATE INDEX t_part ON t (k) WHERE c = 'a';
+				CREATE INDEX t_expr ON t ((c IS NULL)); CREATE INDEX t_k_expr ON t ((k + 1));
+				DROP TYPE e CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY, keep CHECK", "id", "k", "index public.t.t_k_expr"},
+		},
+		{
+			name: "a foreign key that references a dropped column",
+			sql: `CREATE DOMAIN dint AS int; CREATE TABLE p (id int PRIMARY KEY, c dint UNIQUE);
+				CREATE TABLE r (id int PRIMARY KEY, x int REFERENCES p(c), y int REFERENCES p(id));
+				DROP DOMAIN dint CASCADE;`,
+			want: []string{
+				"public.p: p_pkey PRIMARY KEY", "id",
+				"public.r: r_pkey PRIMARY KEY, r_y_fkey FOREIGN KEY", "id", "x", "y -> public.p.id",
+			},
+		},
+		{
+			name: "a foreign key from a dropped column",
+			sql: e + `CREATE TABLE p (id int PRIMARY KEY, c e UNIQUE);
+				CREATE TABLE r (id int PRIMARY KEY, pc e REFERENCES p(c)); DROP TYPE e CASCADE;`,
+			want: []string{"public.p: p_pkey PRIMARY KEY", "id", "public.r: r_pkey PRIMARY KEY", "id"},
+		},
+		{
+			name: "the names the drop frees",
+			sql: e + `CREATE DOMAIN d AS e; CREATE TABLE t (id int PRIMARY KEY, c d);
+				CREATE SEQUENCE s OWNED BY t.c; DROP TYPE e CASCADE;
+				CREATE TYPE e AS ENUM ('b'); CREATE DOMAIN d AS int; CREATE SEQUENCE s; ALTER TABLE t ADD COLUMN c d;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id", "c", "domain public.d", "enum public.e"},
+		},
+		{
+			name: "a same-named type in another schema",
+			sql: `CREATE TYPE s1.st AS ENUM ('a'); CREATE TYPE s2.st AS ENUM ('a');
+				CREATE TABLE s1.t (id int PRIMARY KEY, s st, q s2.st); DROP TYPE s2.st CASCADE;`,
+			want: []string{"s1.t: t_pkey PRIMARY KEY", "id", "s", "enum s1.st"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			s := p.Schema()
+			var got []string
+			for _, tbl := range s.Tables {
+				cons := make([]string, 0, len(tbl.Constraints))
+				for _, c := range tbl.Constraints {
+					cons = append(cons, c.Name+" "+c.Type.String())
+				}
+				got = append(got, tbl.Schema+"."+tbl.Name+": "+strings.Join(cons, ", "))
+				for _, col := range tbl.Columns {
+					line := col.Name
+					if ref := col.FKReference; ref != nil {
+						line += " -> " + ref.Schema + "." + ref.Table + "." + ref.Column
+					}
+					got = append(got, line)
+				}
+			}
+			for _, tbl := range s.Tables {
+				for _, ix := range tbl.ExpressionIndexes {
+					got = append(got, "index "+tbl.Schema+"."+tbl.Name+"."+ix.Name)
+				}
+			}
+			for _, dt := range s.DomainTypes {
+				got = append(got, "domain "+dt.Schema+"."+dt.Name)
+			}
+			for _, ct := range s.CompositeTypes {
+				attrs := make([]string, 0, len(ct.Attributes))
+				for _, a := range ct.Attributes {
+					attrs = append(attrs, a.Name)
+				}
+				got = append(got, "type "+ct.Schema+"."+ct.Name+": "+strings.Join(attrs, ", "))
+			}
+			for _, en := range s.Enums {
+				got = append(got, "enum "+en.Schema+"."+en.Name)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("schema mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

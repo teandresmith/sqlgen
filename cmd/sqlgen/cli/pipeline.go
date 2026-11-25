@@ -35,7 +35,7 @@ func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*c
 
 	warnings, err := config.ValidatePreParse(cfg)
 	if err != nil {
-		_, _ = fmt.Fprintf(errOut, "Config validation error: %v\n", err)
+		printErrorLines(errOut, "Config validation error", err)
 		return nil, nil, &exitError{code: ExitConfig, err: err}
 	}
 	printWarnings(errOut, warnings, flags.quiet)
@@ -52,7 +52,7 @@ func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*c
 	schemaViews := toSchemaViews(schema)
 	postWarnings, err := config.ValidatePostParse(cfg, schemaTables, schemaViews)
 	if err != nil {
-		_, _ = fmt.Fprintf(errOut, "Post-parse validation error: %v\n", err)
+		printErrorLines(errOut, "Post-parse validation error", err)
 		return nil, nil, &exitError{code: ExitConfig, err: err}
 	}
 	printWarnings(errOut, postWarnings, flags.quiet)
@@ -166,6 +166,12 @@ func printParseError(w io.Writer, err error) {
 	if parseExitCode(err) == ExitConnection {
 		prefix = "Connection error"
 	}
+	printErrorLines(w, prefix, err)
+}
+
+// printErrorLines writes err with prefix on every line, so each error of an
+// errors.Join carries it rather than only the first.
+func printErrorLines(w io.Writer, prefix string, err error) {
 	for _, line := range splitJoinedErrors(err) {
 		_, _ = fmt.Fprintf(w, "%s: %s\n", prefix, line)
 	}

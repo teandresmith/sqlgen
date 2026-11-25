@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
 	"github.com/teandresmith/sqlgen/parser"
@@ -185,6 +187,156 @@ func TestGenerate_ChainedGraphQL_WrapperErrorLabel(t *testing.T) {
 			wantSuffix := "; sqlgen-side artifacts emitted at " + outDir + "\n"
 			if !strings.HasSuffix(line, wantSuffix) {
 				t.Errorf("generate stderr = %q, want it to end %q", stderr, wantSuffix)
+			}
+		})
+	}
+}
+
+// TestGenerate_ChainedGraphQL_MultiLineWrapperError pins that a wrapper error
+// spanning several lines, here yaml.v3's unmarshal errors for a resolver
+// block of the wrong shape, carries the "gqlgen wrapper" label on every line
+// and ends with the artifacts-emitted suffix once.
+func TestGenerate_ChainedGraphQL_MultiLineWrapperError(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "sqlgen.yml")
+	sqlDir := filepath.Join(dir, "migrations")
+	if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+		t.Fatalf("creating migrations dir: %v", err)
+	}
+	outDir := filepath.Join(dir, "output")
+	gqlgenPath := filepath.Join(dir, "gqlgen.yml")
+	gqlgenYML := "schema:\n  - graph/*.graphqls\nresolver:\n  layout: [a]\n  dir: [b]\n"
+	if err := os.WriteFile(gqlgenPath, []byte(gqlgenYML), 0o600); err != nil {
+		t.Fatalf("writing gqlgen.yml: %v", err)
+	}
+	t.Chdir(dir)
+	writeAPIGraphQLConfig(t, cfgPath, sqlDir, outDir, gqlgenPath)
+	appendConfig(t, cfgPath, "    gqlgen_bin: no-such-gqlgen-binary\n")
+	writeSQLFile(t, sqlDir, "CREATE TABLE products (id uuid PRIMARY KEY, name text NOT NULL);")
+
+	_, stderr, err := executeCommand("--config", cfgPath)
+	if err == nil {
+		t.Fatalf("generate with a malformed gqlgen.yml resolver block returned nil error")
+	}
+	_, after, found := strings.Cut(stderr, "Error: ")
+	if !found {
+		t.Fatalf("generate stderr = %q, want an \"Error: \" line", stderr)
+	}
+	want := "Error: gqlgen wrapper: parsing gqlgen.yml resolver block: unmarshalling resolver block: yaml: unmarshal errors:\n" +
+		"Error: gqlgen wrapper: line 4: cannot unmarshal !!seq into string\n" +
+		"Error: gqlgen wrapper: line 5: cannot unmarshal !!seq into string; sqlgen-side artifacts emitted at " + outDir + "\n"
+	if diff := cmp.Diff(want, "Error: "+after); diff != "" {
+		t.Errorf("generate stderr (-want +got):\n%s", diff)
+	}
+}
+
+// TestJoinedErrorsPrefixEveryLine pins that each error of a joined
+// config-validation or generation error carries the phase prefix, not only
+// the first, under generate and under the commands that share
+// loadAndValidate.
+func TestJoinedErrorsPrefixEveryLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialect string
+		graphql bool
+		schema  string
+		extra   string
+		args    []string
+		want    []string
+	}{
+		{
+			name:    "pre-parse pair under generate",
+			dialect: "mysql",
+			schema:  "CREATE TABLE a (id bigint PRIMARY KEY);",
+			extra:   "generation:\n  manifest:\n    enabled: false\n    embed_in_client: true\n",
+			want: []string{
+				`Config validation error: output.driver: pgx is only compatible with input.dialect: postgres (got "mysql")`,
+				"Config validation error: manifest.embed_in_client: cannot be true when manifest.enabled is false (PRD §30.2 / §4.13)",
+			},
+		},
+		{
+			name:    "pre-parse pair under lint",
+			dialect: "mysql",
+			schema:  "CREATE TABLE a (id bigint PRIMARY KEY);",
+			extra:   "generation:\n  manifest:\n    enabled: false\n    embed_in_client: true\n",
+			args:    []string{"lint"},
+			want: []string{
+				`Config validation error: output.driver: pgx is only compatible with input.dialect: postgres (got "mysql")`,
+				"Config validation error: manifest.embed_in_client: cannot be true when manifest.enabled is false (PRD §30.2 / §4.13)",
+			},
+		},
+		{
+			name:    "post-parse cursor_keys pair under generate",
+			dialect: "postgres",
+			schema:  "CREATE TABLE a (id bigint PRIMARY KEY); CREATE TABLE b (id bigint PRIMARY KEY);",
+			extra:   "tables:\n  a:\n    cursor_keys: [nope]\n  b:\n    cursor_keys: [nope]\n",
+			want: []string{
+				`Post-parse validation error: cursor_keys: column "nope" does not exist in table public.a`,
+				`Post-parse validation error: cursor_keys: column "nope" does not exist in table public.b`,
+			},
+		},
+		{
+			name:    "post-parse cursor_keys pair under lint",
+			dialect: "postgres",
+			schema:  "CREATE TABLE a (id bigint PRIMARY KEY); CREATE TABLE b (id bigint PRIMARY KEY);",
+			extra:   "tables:\n  a:\n    cursor_keys: [nope]\n  b:\n    cursor_keys: [nope]\n",
+			args:    []string{"lint"},
+			want: []string{
+				`Post-parse validation error: cursor_keys: column "nope" does not exist in table public.a`,
+				`Post-parse validation error: cursor_keys: column "nope" does not exist in table public.b`,
+			},
+		},
+		{
+			name:    "generation pair under generate",
+			dialect: "postgres",
+			graphql: true,
+			schema:  "CREATE TABLE query (id uuid PRIMARY KEY); CREATE TABLE mutation (id uuid PRIMARY KEY);",
+			args:    []string{"--no-graphql"},
+			want: []string{
+				`Generation error: building api context: api: table public.mutation resolves to the GraphQL type name "Mutation", which the generated shared_gen.graphqls already declares — set tables.public.mutation.struct_name to a different Go identifier (PRD §26.4)`,
+				`Generation error: api: table public.query resolves to the GraphQL type name "Query", which the generated shared_gen.graphqls already declares — set tables.public.query.struct_name to a different Go identifier (PRD §26.4)`,
+			},
+		},
+		{
+			name:    "generation pair under diff",
+			dialect: "postgres",
+			graphql: true,
+			schema:  "CREATE TABLE query (id uuid PRIMARY KEY); CREATE TABLE mutation (id uuid PRIMARY KEY);",
+			args:    []string{"diff"},
+			want: []string{
+				`Generation error: building api context: api: table public.mutation resolves to the GraphQL type name "Mutation", which the generated shared_gen.graphqls already declares — set tables.public.mutation.struct_name to a different Go identifier (PRD §26.4)`,
+				`Generation error: api: table public.query resolves to the GraphQL type name "Query", which the generated shared_gen.graphqls already declares — set tables.public.query.struct_name to a different Go identifier (PRD §26.4)`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "sqlgen.yml")
+			sqlDir := filepath.Join(dir, "migrations")
+			if err := os.MkdirAll(sqlDir, 0o750); err != nil {
+				t.Fatalf("creating migrations dir: %v", err)
+			}
+			outDir := filepath.Join(dir, "output")
+			t.Chdir(dir)
+			if tt.graphql {
+				writeAPIGraphQLConfig(t, cfgPath, sqlDir, outDir, "")
+			} else {
+				writeTestConfigWithLayout(t, cfgPath, tt.dialect, sqlDir, outDir, "file_per_table")
+			}
+			if tt.extra != "" {
+				appendConfig(t, cfgPath, tt.extra)
+			}
+			writeSQLFile(t, sqlDir, tt.schema)
+
+			args := append(slices.Clone(tt.args), "--config", cfgPath)
+			_, stderr, err := executeCommand(args...)
+			if err == nil {
+				t.Fatalf("%v returned nil error", args)
+			}
+			got := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("%v stderr lines (-want +got):\n%s", args, diff)
 			}
 		})
 	}
