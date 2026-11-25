@@ -1570,6 +1570,133 @@ func TestDropTypeReferences(t *testing.T) {
 	}
 }
 
+// TestDropTypeCascade checks that DROP TYPE … CASCADE and DROP DOMAIN …
+// CASCADE drop what uses the type, as PostgreSQL 17 does.
+func TestDropTypeCascade(t *testing.T) {
+	const e = `CREATE TYPE e AS ENUM ('a');`
+	tests := []struct {
+		name string
+		sql  string
+		want []string // each table's constraints, then columns; then expression indexes, domains, composite types
+	}{
+		{
+			name: "a column and an array column",
+			sql:  e + `CREATE TABLE t (id int PRIMARY KEY, c e, arr e[]); DROP TYPE e CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id"},
+		},
+		{
+			name: "a table's last column",
+			sql:  e + `CREATE TABLE t (c e); DROP TYPE e CASCADE;`,
+			want: []string{"public.t: "},
+		},
+		{
+			name: "a domain chain with its columns",
+			sql: e + `CREATE DOMAIN d1 AS e; CREATE DOMAIN d2 AS d1; CREATE DOMAIN da AS e[]; CREATE DOMAIN keep AS int;
+				CREATE TABLE t (id int PRIMARY KEY, a d1, b d2[], c da, k keep); DROP TYPE e CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id", "k", "domain public.keep"},
+		},
+		{
+			name: "DROP DOMAIN drops the domains over it",
+			sql: `CREATE DOMAIN d1 AS int; CREATE DOMAIN d2 AS d1;
+				CREATE TABLE t (id int PRIMARY KEY, a d2); DROP DOMAIN d1 CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id"},
+		},
+		{
+			name: "a composite attribute",
+			sql: e + `CREATE TYPE comp AS (x e, y int); CREATE TYPE comp1 AS (x e[]);
+				CREATE TABLE t (id int PRIMARY KEY, cc comp); DROP TYPE e CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id", "cc", "type public.comp: y", "type public.comp1: "},
+		},
+		{
+			name: "a composite type's columns",
+			sql:  `CREATE TYPE comp AS (x int); CREATE TABLE t (id int PRIMARY KEY, cc comp, ca comp[]); DROP TYPE comp CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id"},
+		},
+		{
+			name: "the constraints and indexes on a dropped column",
+			sql: e + `CREATE TABLE t (id int PRIMARY KEY, c e UNIQUE, k int, CHECK (c <> 'a'), CONSTRAINT keep CHECK (k > 0));
+				CREATE INDEX t_c_idx ON t (c); CREATE INDEX t_part ON t (k) WHERE c = 'a';
+				CREATE INDEX t_expr ON t ((c IS NULL)); CREATE INDEX t_k_expr ON t ((k + 1));
+				DROP TYPE e CASCADE;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY, keep CHECK", "id", "k", "index public.t.t_k_expr"},
+		},
+		{
+			name: "a foreign key that references a dropped column",
+			sql: `CREATE DOMAIN dint AS int; CREATE TABLE p (id int PRIMARY KEY, c dint UNIQUE);
+				CREATE TABLE r (id int PRIMARY KEY, x int REFERENCES p(c), y int REFERENCES p(id));
+				DROP DOMAIN dint CASCADE;`,
+			want: []string{
+				"public.p: p_pkey PRIMARY KEY", "id",
+				"public.r: r_pkey PRIMARY KEY, r_y_fkey FOREIGN KEY", "id", "x", "y -> public.p.id",
+			},
+		},
+		{
+			name: "a foreign key from a dropped column",
+			sql: e + `CREATE TABLE p (id int PRIMARY KEY, c e UNIQUE);
+				CREATE TABLE r (id int PRIMARY KEY, pc e REFERENCES p(c)); DROP TYPE e CASCADE;`,
+			want: []string{"public.p: p_pkey PRIMARY KEY", "id", "public.r: r_pkey PRIMARY KEY", "id"},
+		},
+		{
+			name: "the names the drop frees",
+			sql: e + `CREATE DOMAIN d AS e; CREATE TABLE t (id int PRIMARY KEY, c d);
+				CREATE SEQUENCE s OWNED BY t.c; DROP TYPE e CASCADE;
+				CREATE TYPE e AS ENUM ('b'); CREATE DOMAIN d AS int; CREATE SEQUENCE s; ALTER TABLE t ADD COLUMN c d;`,
+			want: []string{"public.t: t_pkey PRIMARY KEY", "id", "c", "domain public.d", "enum public.e"},
+		},
+		{
+			name: "a same-named type in another schema",
+			sql: `CREATE TYPE s1.st AS ENUM ('a'); CREATE TYPE s2.st AS ENUM ('a');
+				CREATE TABLE s1.t (id int PRIMARY KEY, s st, q s2.st); DROP TYPE s2.st CASCADE;`,
+			want: []string{"s1.t: t_pkey PRIMARY KEY", "id", "s", "enum s1.st"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := postgres.New("")
+			if err := p.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			s := p.Schema()
+			var got []string
+			for _, tbl := range s.Tables {
+				cons := make([]string, 0, len(tbl.Constraints))
+				for _, c := range tbl.Constraints {
+					cons = append(cons, c.Name+" "+c.Type.String())
+				}
+				got = append(got, tbl.Schema+"."+tbl.Name+": "+strings.Join(cons, ", "))
+				for _, col := range tbl.Columns {
+					line := col.Name
+					if ref := col.FKReference; ref != nil {
+						line += " -> " + ref.Schema + "." + ref.Table + "." + ref.Column
+					}
+					got = append(got, line)
+				}
+			}
+			for _, tbl := range s.Tables {
+				for _, ix := range tbl.ExpressionIndexes {
+					got = append(got, "index "+tbl.Schema+"."+tbl.Name+"."+ix.Name)
+				}
+			}
+			for _, dt := range s.DomainTypes {
+				got = append(got, "domain "+dt.Schema+"."+dt.Name)
+			}
+			for _, ct := range s.CompositeTypes {
+				attrs := make([]string, 0, len(ct.Attributes))
+				for _, a := range ct.Attributes {
+					attrs = append(attrs, a.Name)
+				}
+				got = append(got, "type "+ct.Schema+"."+ct.Name+": "+strings.Join(attrs, ", "))
+			}
+			for _, en := range s.Enums {
+				got = append(got, "enum "+en.Schema+"."+en.Name)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("schema mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAlterTableIfExists(t *testing.T) {
 	p := postgres.New("")
 	if err := p.Parse("test.sql", []byte(`CREATE TABLE users (id integer PRIMARY KEY);`)); err != nil {

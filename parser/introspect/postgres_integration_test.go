@@ -1118,6 +1118,51 @@ ALTER TABLE pgi_state.g ADD UNIQUE (a)`
 	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
 }
 
+// TestPostgresIntrospect_DropTypeCascade checks the parser against
+// PostgreSQL for DROP TYPE … CASCADE and DROP DOMAIN … CASCADE.
+func TestPostgresIntrospect_DropTypeCascade(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_dtc;
+CREATE TYPE pgi_dtc.e AS ENUM ('a');
+CREATE TYPE pgi_dtc.stays AS ENUM ('b');
+CREATE DOMAIN pgi_dtc.de AS pgi_dtc.e;
+CREATE DOMAIN pgi_dtc.de2 AS pgi_dtc.de CHECK (VALUE IS NOT NULL);
+CREATE DOMAIN pgi_dtc.dea AS pgi_dtc.e[];
+CREATE DOMAIN pgi_dtc.keep AS int;
+CREATE TYPE pgi_dtc.comp AS (x pgi_dtc.e, y int);
+CREATE TABLE pgi_dtc.p (id int PRIMARY KEY, c pgi_dtc.e UNIQUE, arr pgi_dtc.e[], d pgi_dtc.de2, da pgi_dtc.dea, k pgi_dtc.keep, cc pgi_dtc.comp,
+	CONSTRAINT p_c_check CHECK (c <> 'a'), CONSTRAINT p_k_check CHECK (k > 0));
+CREATE INDEX p_c_expr ON pgi_dtc.p ((c IS NULL));
+CREATE INDEX p_k_part ON pgi_dtc.p (k) WHERE c = 'a';
+CREATE INDEX p_k_idx ON pgi_dtc.p (k);
+CREATE TABLE pgi_dtc.r (id int PRIMARY KEY, pc pgi_dtc.e REFERENCES pgi_dtc.p (c), z int);
+CREATE TABLE pgi_dtc.only1 (x pgi_dtc.e);
+CREATE TABLE pgi_dtc.os (id int PRIMARY KEY, c pgi_dtc.de);
+CREATE SEQUENCE pgi_dtc.os_seq OWNED BY pgi_dtc.os.c;
+DROP TYPE pgi_dtc.e CASCADE;
+CREATE SEQUENCE pgi_dtc.os_seq;
+CREATE DOMAIN pgi_dtc.dint AS int;
+CREATE TABLE pgi_dtc.q (id int PRIMARY KEY, c pgi_dtc.dint UNIQUE);
+CREATE TABLE pgi_dtc.qr (id int PRIMARY KEY, x int REFERENCES pgi_dtc.q (c), y int REFERENCES pgi_dtc.q (id));
+CREATE INDEX qr_x_idx ON pgi_dtc.qr (x);
+DROP DOMAIN pgi_dtc.dint CASCADE`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_dtc CASCADE", ddl, "pgi_dtc")
+	// The parser leaves a table it dropped the last column of an empty column
+	// slice; the introspector reads none. Both are a table with no columns.
+	if tbl := findTable(t, parsed, "only1"); len(tbl.Columns) == 0 {
+		tbl.Columns = nil
+	}
+
+	if got := findTable(t, introspected, "only1").Columns; len(got) != 0 {
+		t.Errorf("introspected only1 columns = %v, want none", got)
+	}
+	if got := len(findTable(t, introspected, "p").Columns); got != 3 {
+		t.Errorf("introspected p has %d columns, want 3 (id, k, cc)", got)
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected, pgSkippedStatementExceptions...)
+}
+
 // TestPostgresIntrospect_CommentOnViewColumn checks the parser against the
 // introspector for the COMMENT ON COLUMN pg_dump writes on a view, materialized
 // view or composite type column: the introspector reads no comment for any of

@@ -1144,11 +1144,12 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 	if stmt.RemoveType == pg_query.ObjectType_OBJECT_TABLE {
 		return p.dropTables(stmt)
 	}
+	cascade := stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE
 	if stmt.RemoveType == pg_query.ObjectType_OBJECT_TYPE {
-		return p.dropTypes(p.dropTypeRefs(stmt), "type")
+		return p.dropTypes(p.dropTypeRefs(stmt), "type", cascade)
 	}
 	if stmt.RemoveType == pg_query.ObjectType_OBJECT_DOMAIN {
-		return p.dropTypes(p.dropTypeRefs(stmt), "domain")
+		return p.dropTypes(p.dropTypeRefs(stmt), "domain", cascade)
 	}
 	for _, obj := range stmt.Objects {
 		names := extractDropObjectNames(obj)
@@ -1163,7 +1164,7 @@ func (p *Parser) parseDrop(stmt *pg_query.DropStmt) error {
 			p.dropIndex(schema, name)
 		case pg_query.ObjectType_OBJECT_SEQUENCE:
 			schema, name := p.splitQualifiedName(names)
-			p.dropSequence(schema, name, stmt.Behavior == pg_query.DropBehavior_DROP_CASCADE)
+			p.dropSequence(schema, name, cascade)
 		default:
 			// Other object types are not handled.
 		}
@@ -1382,8 +1383,10 @@ func (p *Parser) dropIndex(schema, name string) {
 // dropTypes drops the objects of one DROP TYPE (kind "type") or DROP DOMAIN
 // (kind "domain") statement. PostgreSQL drops them together, so a reference
 // from one to another does not block the drop. DROP TYPE drops a domain too;
-// DROP DOMAIN refuses an enum or composite type.
-func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
+// DROP DOMAIN refuses an enum or composite type. A type something uses
+// blocks the drop, unless the statement says CASCADE, which drops what uses
+// it too (dropTypeDependents).
+func (p *Parser) dropTypes(refs []parser.TypeRef, kind string, cascade bool) error {
 	if kind == "domain" {
 		for _, ref := range refs {
 			if p.findEnumByName(ref.Schema, ref.Name) != nil || p.findCompositeTypeByName(ref.Schema, ref.Name) != nil {
@@ -1391,13 +1394,23 @@ func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
 			}
 		}
 	}
-	if err := parser.CheckTypeDropRefs(p.schema, refs); err != nil {
+	var dropDependents func()
+	if cascade {
+		refs = p.typeDropClosure(refs)
+		var err error
+		if dropDependents, err = p.dropTypeDependents(refs); err != nil {
+			return fmt.Errorf("drop %s: %w", kind, err)
+		}
+	} else if err := parser.CheckTypeDropRefs(p.schema, refs); err != nil {
 		return fmt.Errorf("drop %s: %w", kind, err)
 	}
 	for _, ref := range refs {
 		if err := parser.CheckViewDependents(p.schema, "drop", parser.DependencyObject{Kind: parser.TypeDependency, Schema: ref.Schema, Name: ref.Name}); err != nil {
 			return fmt.Errorf("drop %s: %w", kind, err)
 		}
+	}
+	if dropDependents != nil {
+		dropDependents()
 	}
 	for _, ref := range refs {
 		p.schema.DomainTypes = slices.DeleteFunc(p.schema.DomainTypes, func(dt parser.DomainType) bool {
@@ -1412,6 +1425,108 @@ func (p *Parser) dropTypes(refs []parser.TypeRef, kind string) error {
 		p.shadowTypeReferences(ref.Schema, ref.Name, false)
 	}
 	return nil
+}
+
+// typeDropClosure returns refs with every domain whose base type is one of
+// them, or an array of one, at any depth, as DROP TYPE … CASCADE and DROP
+// DOMAIN … CASCADE drop such a domain too.
+func (p *Parser) typeDropClosure(refs []parser.TypeRef) []parser.TypeRef {
+	drop := slices.Clone(refs)
+	for grown := true; grown; {
+		grown = false
+		for _, dt := range p.schema.DomainTypes {
+			self := parser.TypeRef{Schema: dt.Schema, Name: dt.Name}
+			if slices.Contains(drop, self) {
+				continue
+			}
+			if base, _ := parser.ResolveTypeRef(dt.BaseType, dt.Schema); slices.Contains(drop, base) {
+				drop = append(drop, self)
+				grown = true
+			}
+		}
+	}
+	return drop
+}
+
+// typeColumn names a table column a dropped type takes with it.
+type typeColumn struct {
+	schema, table, column string
+}
+
+// dropTypeDependents checks what DROP … CASCADE of drop (with its domains)
+// takes and returns the function that drops it. A database view stands
+// under source: both (PRD §6.1), so a view column of one of the types, or a
+// view on a column or attribute the drop takes, refuses it.
+func (p *Parser) dropTypeDependents(drop []parser.TypeRef) (func(), error) {
+	uses := func(typ, owner string) bool {
+		ref, _ := parser.ResolveTypeRef(typ, owner)
+		return slices.Contains(drop, ref)
+	}
+	if err := parser.CheckTypeDropRefs(&parser.Schema{Views: p.schema.Views}, drop); err != nil {
+		return nil, err //nolint:wrapcheck // the caller names the statement
+	}
+	var cols []typeColumn
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		for _, c := range t.Columns {
+			if !uses(c.Type, t.Schema) {
+				continue
+			}
+			if err := p.checkViewDependents("drop", parser.DependencyObject{Kind: parser.ColumnDependency, Schema: t.Schema, Name: t.Name, Part: c.Name}); err != nil {
+				return nil, err
+			}
+			cols = append(cols, typeColumn{schema: t.Schema, table: t.Name, column: c.Name})
+		}
+	}
+	for _, ct := range p.schema.CompositeTypes {
+		if slices.Contains(drop, parser.TypeRef{Schema: ct.Schema, Name: ct.Name}) {
+			continue
+		}
+		for _, attr := range ct.Attributes {
+			if !uses(attr.Type, ct.Schema) {
+				continue
+			}
+			if err := parser.CheckViewDependents(p.schema, "drop", parser.DependencyObject{Kind: parser.AttributeDependency, Schema: ct.Schema, Name: ct.Name, Part: attr.Name}); err != nil {
+				return nil, err //nolint:wrapcheck // the caller names the statement
+			}
+		}
+	}
+	return func() {
+		p.dropColumnReferencingKeys(cols)
+		for _, c := range cols {
+			key := c.schema + "." + c.table
+			dropColumn(&p.schema.Tables[p.tableIndex[key]], c.column)
+			p.dropOwnedSequences(key, c.column)
+		}
+		for i := range p.schema.CompositeTypes {
+			ct := &p.schema.CompositeTypes[i]
+			if slices.Contains(drop, parser.TypeRef{Schema: ct.Schema, Name: ct.Name}) {
+				continue
+			}
+			ct.Attributes = slices.DeleteFunc(ct.Attributes, func(attr parser.Attribute) bool {
+				return uses(attr.Type, ct.Schema)
+			})
+		}
+	}, nil
+}
+
+// dropColumnReferencingKeys drops every foreign key that references one of
+// cols, as PostgreSQL drops it with the column it references. The
+// referencing columns stay.
+func (p *Parser) dropColumnReferencingKeys(cols []typeColumn) {
+	for i := range p.schema.Tables {
+		t := &p.schema.Tables[i]
+		for _, c := range slices.Clone(t.Constraints) {
+			if c.Type != parser.ForeignKey {
+				continue
+			}
+			if slices.ContainsFunc(cols, func(col typeColumn) bool {
+				return col.schema == c.ReferenceSchema && col.table == c.ReferenceTable && slices.Contains(c.ReferenceColumns, col.column)
+			}) {
+				removeConstraintFromColumns(t, c.Name)
+			}
+		}
+	}
 }
 
 func (p *Parser) parseComment(stmt *pg_query.CommentStmt) error {
@@ -1708,21 +1823,27 @@ func alterDropColumn(table *parser.Table, cmd *pg_query.AlterTableCmd) {
 	if cmd.MissingOk && parser.ColumnByName(table, cmd.Name) == nil {
 		return // DROP COLUMN IF EXISTS — column doesn't exist, skip
 	}
+	dropColumn(table, cmd.Name)
+}
+
+// dropColumn drops the column name, with every index and constraint of the
+// table that reads it.
+func dropColumn(table *parser.Table, name string) {
 	for _, c := range slices.Clone(table.Constraints) {
-		if slices.Contains(c.Columns, cmd.Name) ||
-			slices.Contains(parser.CheckColumns(c.Where, table.Columns, "postgres"), cmd.Name) {
+		if slices.Contains(c.Columns, name) ||
+			slices.Contains(parser.CheckColumns(c.Where, table.Columns, "postgres"), name) {
 			removeConstraintFromColumns(table, c.Name)
 		}
 	}
 	var kept []parser.ExpressionIndex
 	for _, ix := range table.ExpressionIndexes {
-		if !slices.Contains(ix.Columns, cmd.Name) {
+		if !slices.Contains(ix.Columns, name) {
 			kept = append(kept, ix)
 		}
 	}
 	table.ExpressionIndexes = kept
 	table.Columns = slices.DeleteFunc(table.Columns, func(c parser.Column) bool {
-		return c.Name == cmd.Name
+		return c.Name == name
 	})
 }
 
