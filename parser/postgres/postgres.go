@@ -1683,7 +1683,7 @@ func (p *Parser) applyAlterCmd(table *parser.Table, cmd *pg_query.AlterTableCmd)
 		alterDropColumn(table, cmd)
 		p.dropOwnedSequences(table.Schema+"."+table.Name, cmd.Name)
 	case pg_query.AlterTableType_AT_AddConstraint:
-		p.alterAddConstraint(table, cmd)
+		return p.alterAddConstraint(table, cmd)
 	case pg_query.AlterTableType_AT_DropConstraint:
 		alterDropConstraint(table, cmd)
 	case pg_query.AlterTableType_AT_SetNotNull:
@@ -1847,15 +1847,79 @@ func dropColumn(table *parser.Table, name string) {
 	})
 }
 
-func (p *Parser) alterAddConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) {
+func (p *Parser) alterAddConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) error {
 	if cmd.Def == nil {
-		return
+		return nil
 	}
 	cn, ok := cmd.Def.Node.(*pg_query.Node_Constraint)
 	if !ok {
-		return
+		return nil
+	}
+	if cn.Constraint.Indexname != "" {
+		return p.addConstraintUsingIndex(table, cn.Constraint)
 	}
 	p.addConstraints(table, []parser.Constraint{p.parseConstraintNode(cn.Constraint)})
+	return nil
+}
+
+// addConstraintUsingIndex applies ADD … PRIMARY KEY | UNIQUE USING INDEX. The
+// table's unique index becomes the constraint's index: it is renamed to the
+// constraint's name (an unnamed constraint keeps the index's name), and a
+// PRIMARY KEY makes its columns NOT NULL. It errors as PostgreSQL does for an
+// index it cannot use or a name already taken.
+func (p *Parser) addConstraintUsingIndex(table *parser.Table, c *pg_query.Constraint) error {
+	kind := parser.Unique
+	if c.Contype == pg_query.ConstrType_CONSTR_PRIMARY {
+		kind = parser.PrimaryKey
+	}
+	ix, err := usingIndex(table, c.Indexname)
+	if err != nil {
+		return fmt.Errorf("alter table %s.%s: %w", table.Schema, table.Name, err)
+	}
+	name := cmp.Or(c.Conname, ix.Name)
+	if name != ix.Name && p.namespace(table.Schema).taken(kind)(name) {
+		return fmt.Errorf("alter table %s.%s: relation %s already exists", table.Schema, table.Name, name)
+	}
+	parser.RenameDependencies(p.schema,
+		parser.DependencyObject{Kind: parser.ConstraintDependency, Schema: table.Schema, Name: table.Name, Part: ix.Name},
+		parser.DependencyObject{Kind: parser.ConstraintDependency, Schema: table.Schema, Name: table.Name, Part: name})
+	ix.Name = name
+	ix.Type = kind
+	if kind == parser.PrimaryKey {
+		// A PRIMARY KEY keeps no method, as one declared with its columns.
+		// CanonicalizeConstraints makes its columns NOT NULL.
+		ix.Method = ""
+		if len(ix.Columns) == 1 {
+			// The index no longer makes its column UNIQUE.
+			parser.RecomputeColumnUnique(table, ix.Columns[0])
+		}
+	}
+	parser.CanonicalizeConstraints(table, "postgres")
+	return nil
+}
+
+// usingIndex returns the unique index of table that ADD … USING INDEX names,
+// or the error PostgreSQL gives for an index it cannot use.
+func usingIndex(table *parser.Table, name string) (*parser.Constraint, error) {
+	if slices.ContainsFunc(table.ExpressionIndexes, func(ix parser.ExpressionIndex) bool { return ix.Name == name }) {
+		return nil, fmt.Errorf("index %s contains expressions", name)
+	}
+	i := slices.IndexFunc(table.Constraints, func(ix parser.Constraint) bool {
+		return ix.Name == name && (ix.Type == parser.Index || ix.Type == parser.Unique || ix.Type == parser.PrimaryKey)
+	})
+	if i < 0 {
+		return nil, fmt.Errorf("index %s does not exist on the table", name)
+	}
+	ix := &table.Constraints[i]
+	switch {
+	case ix.Type == parser.PrimaryKey:
+		return nil, fmt.Errorf("index %s is already associated with a constraint", name)
+	case ix.Type == parser.Index:
+		return nil, fmt.Errorf("index %s is not a unique index", name)
+	case ix.Where != "":
+		return nil, fmt.Errorf("index %s is a partial index", name)
+	}
+	return ix, nil
 }
 
 func alterDropConstraint(table *parser.Table, cmd *pg_query.AlterTableCmd) {

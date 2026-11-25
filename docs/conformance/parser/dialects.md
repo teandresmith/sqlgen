@@ -157,7 +157,7 @@ so its model is the database's with the files applied; its merge rules are rows 
 | schema-model: set × postgres-database | §5.1: PostgreSQL has no SET type (Sets: No) | |
 
 ## §5.2 Dialect Parsers
-<!-- prd: 5.2 sha256: dd5a37722e9c52b5 -->
+<!-- prd: 5.2 sha256: 1e8640e99c2706f1 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -170,6 +170,8 @@ so its model is the database's with the files applied; its merge rules are rows 
 | parser.pg.alter-table.add-column | `ALTER TABLE … ADD COLUMN` adds the column to the table | `unit: parser/postgres: TestAlterTableAddDropColumn` | postgres |  |
 | parser.pg.alter-table.drop-column | `ALTER TABLE … DROP COLUMN` removes the column from the table | `unit: parser/postgres: TestAlterTableAddDropColumn` | postgres |  |
 | parser.pg.alter-table.add-constraint | `ALTER TABLE … ADD CONSTRAINT` adds the constraint to the table | `unit: parser/postgres: TestDerivedConstraintNames/constraints added by ALTER TABLE` | postgres |  |
+| parser.pg.alter-table.add-constraint-using-index | `ALTER TABLE … ADD … UNIQUE USING INDEX` or `ADD … PRIMARY KEY USING INDEX` makes the unique index the constraint's index, under the constraint's name | `unit: parser/postgres: TestAddConstraintUsingIndex`; `integration: parser/introspect: TestPostgresIntrospect_ConstraintUsingIndex` | postgres |  |
+| parser.pg.alter-table.add-constraint-using-index-errors | `ADD … USING INDEX` is an error for a missing, non-unique, partial or expression index, a PRIMARY KEY's index, or a new name another relation has | `unit: parser/postgres: TestAddConstraintUsingIndexErrors` | postgres |  |
 | parser.pg.alter-table.drop-constraint | `ALTER TABLE … DROP CONSTRAINT` removes the constraint from the table | `unit: parser/postgres: TestDropConstraintByDerivedName/named inline primary key`; `unit: parser/postgres: TestDropConstraintByDerivedName/named inline unique` | postgres |  |
 | parser.pg.alter-table.rename-column | `ALTER TABLE … RENAME COLUMN` renames the column | `unit: parser/postgres: TestRenameColumn` | postgres |  |
 | parser.pg.alter-table.rename-table | `ALTER TABLE … RENAME TO` renames the table | `unit: parser/postgres: TestRenameTable` | postgres |  |

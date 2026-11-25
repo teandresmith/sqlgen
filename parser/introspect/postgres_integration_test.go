@@ -930,6 +930,47 @@ CREATE UNIQUE INDEX u ON pgi_include.e (c) INCLUDE (d)`
 	assertSchemaParity(t, "postgres", parsed, introspected)
 }
 
+// TestPostgresIntrospect_ConstraintUsingIndex checks the parser against the
+// introspector for ADD … UNIQUE | PRIMARY KEY USING INDEX: PostgreSQL renames
+// the index to the constraint's name, an unnamed constraint keeps the index's
+// name, and a PRIMARY KEY makes its columns NOT NULL.
+func TestPostgresIntrospect_ConstraintUsingIndex(t *testing.T) {
+	requireDatabases(t)
+	ddl := `
+CREATE SCHEMA pgi_using;
+CREATE TABLE pgi_using.u (a int, b int, c int);
+CREATE UNIQUE INDEX CONCURRENTLY ui_a_idx ON pgi_using.u (a);
+ALTER TABLE pgi_using.u ADD CONSTRAINT ui_a_key UNIQUE USING INDEX ui_a_idx;
+CREATE UNIQUE INDEX u_bc ON pgi_using.u (b, c);
+ALTER TABLE pgi_using.u ADD UNIQUE USING INDEX u_bc;
+CREATE INDEX ON pgi_using.u (a);
+CREATE TABLE pgi_using.p (a int, b int, c int);
+CREATE UNIQUE INDEX p_idx ON pgi_using.p (a, b) INCLUDE (c);
+ALTER TABLE pgi_using.p ADD CONSTRAINT p_pk PRIMARY KEY USING INDEX p_idx;
+CREATE TABLE pgi_using.q (a int, b int);
+CREATE UNIQUE INDEX q_idx ON pgi_using.q (a);
+ALTER TABLE pgi_using.q ADD PRIMARY KEY USING INDEX q_idx;
+ALTER INDEX pgi_using.q_idx RENAME TO q_key`
+	parsed, introspected := pgParityCase(t, "DROP SCHEMA IF EXISTS pgi_using CASCADE", ddl, "pgi_using")
+
+	want := map[string][]string{
+		"u": {"INDEX u_a_idx", "UNIQUE u_bc", "UNIQUE ui_a_key"},
+		"p": {"PRIMARY KEY p_pk"},
+		"q": {"PRIMARY KEY q_key"},
+	}
+	got := make(map[string][]string, len(want))
+	for _, tbl := range introspected.Tables {
+		for _, c := range tbl.Constraints {
+			got[tbl.Name] = append(got[tbl.Name], c.Type.String()+" "+c.Name)
+		}
+		slices.Sort(got[tbl.Name])
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("introspected constraints mismatch (-want +got):\n%s", diff)
+	}
+	assertSchemaParity(t, "postgres", parsed, introspected)
+}
+
 func TestPostgresIntrospect_Partitioning(t *testing.T) {
 	requireDatabases(t)
 	ddl := `

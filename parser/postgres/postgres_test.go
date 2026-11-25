@@ -519,6 +519,137 @@ func TestAlterTableAddDropConstraint(t *testing.T) {
 	}
 }
 
+// ADD … UNIQUE | PRIMARY KEY USING INDEX turns the unique index into the
+// constraint's index, renamed to the constraint's name, so the table is the
+// one the same constraint declared over the index's columns gives.
+func TestAddConstraintUsingIndex(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want string // the same table, built without USING INDEX
+	}{
+		{
+			name: "named UNIQUE takes the index and renames it",
+			sql: `CREATE TABLE t (a int, b int);
+				CREATE UNIQUE INDEX CONCURRENTLY ui_a_idx ON t (a);
+				ALTER TABLE t ADD CONSTRAINT ui_a_key UNIQUE USING INDEX ui_a_idx;`,
+			want: `CREATE TABLE t (a int, b int);
+				ALTER TABLE t ADD CONSTRAINT ui_a_key UNIQUE (a);`,
+		},
+		{
+			name: "unnamed UNIQUE keeps the index's name",
+			sql: `CREATE TABLE t (a int, b int);
+				CREATE UNIQUE INDEX ui_ab ON t (a, b);
+				ALTER TABLE t ADD UNIQUE USING INDEX ui_ab;`,
+			want: `CREATE TABLE t (a int, b int);
+				ALTER TABLE t ADD CONSTRAINT ui_ab UNIQUE (a, b);`,
+		},
+		{
+			name: "PRIMARY KEY sets the key columns and NOT NULL",
+			sql: `CREATE TABLE t (a int, b int, c int);
+				CREATE UNIQUE INDEX t_idx ON t (a, b);
+				ALTER TABLE t ADD CONSTRAINT t_pk PRIMARY KEY USING INDEX t_idx;`,
+			want: `CREATE TABLE t (a int, b int, c int);
+				ALTER TABLE t ADD CONSTRAINT t_pk PRIMARY KEY (a, b);`,
+		},
+		{
+			name: "single-column PRIMARY KEY",
+			sql: `CREATE TABLE t (a int, b int);
+				CREATE UNIQUE INDEX t_idx ON t (a);
+				ALTER TABLE t ADD PRIMARY KEY USING INDEX t_idx;`,
+			want: `CREATE TABLE t (a int, b int);
+				ALTER TABLE t ADD CONSTRAINT t_idx PRIMARY KEY (a);`,
+		},
+		{
+			name: "the index's old name is free and ALTER INDEX answers to the new one",
+			sql: `CREATE TABLE t (a int, b int);
+				CREATE UNIQUE INDEX t_a_idx ON t (a);
+				ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_a_idx;
+				DROP INDEX IF EXISTS t_a_idx;
+				ALTER INDEX k RENAME TO k2;
+				CREATE INDEX ON t (a);`,
+			want: `CREATE TABLE t (a int, b int);
+				ALTER TABLE t ADD CONSTRAINT k2 UNIQUE (a);
+				CREATE INDEX t_a_idx ON t (a);`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, want := postgres.New(""), postgres.New("")
+			if err := got.Parse("test.sql", []byte(tt.sql)); err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if err := want.Parse("want.sql", []byte(tt.want)); err != nil {
+				t.Fatalf("Parse(want) error: %v", err)
+			}
+			if diff := cmp.Diff(want.Schema().Tables, got.Schema().Tables); diff != "" {
+				t.Errorf("tables mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// ADD … USING INDEX is an error wherever PostgreSQL refuses it.
+func TestAddConstraintUsingIndexErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		wantErr string
+	}{
+		{
+			name:    "a missing index",
+			sql:     `CREATE TABLE t (a int); ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX nope;`,
+			wantErr: "index nope does not exist on the table",
+		},
+		{
+			name: "another table's index",
+			sql: `CREATE TABLE t (a int); CREATE TABLE u (a int); CREATE UNIQUE INDEX u_idx ON u (a);
+				ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX u_idx;`,
+			wantErr: "index u_idx does not exist on the table",
+		},
+		{
+			name:    "a non-unique index",
+			sql:     `CREATE TABLE t (a int); CREATE INDEX t_idx ON t (a); ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_idx;`,
+			wantErr: "index t_idx is not a unique index",
+		},
+		{
+			name:    "a partial index",
+			sql:     `CREATE TABLE t (a int); CREATE UNIQUE INDEX t_idx ON t (a) WHERE a > 0; ALTER TABLE t ADD CONSTRAINT k PRIMARY KEY USING INDEX t_idx;`,
+			wantErr: "index t_idx is a partial index",
+		},
+		{
+			name:    "an expression index",
+			sql:     `CREATE TABLE t (a int); CREATE UNIQUE INDEX t_idx ON t ((a + 1)); ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_idx;`,
+			wantErr: "index t_idx contains expressions",
+		},
+		{
+			name:    "a primary key's index",
+			sql:     `CREATE TABLE t (a int PRIMARY KEY); ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_pkey;`,
+			wantErr: "index t_pkey is already associated with a constraint",
+		},
+		{
+			name: "a name another index has",
+			sql: `CREATE TABLE t (a int); CREATE INDEX k ON t (a); CREATE UNIQUE INDEX t_idx ON t (a);
+				ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_idx;`,
+			wantErr: "relation k already exists",
+		},
+		{
+			name: "a name a foreign table has",
+			sql: `CREATE TABLE t (a int); CREATE FOREIGN TABLE k (a int) SERVER s; CREATE UNIQUE INDEX t_idx ON t (a);
+				ALTER TABLE t ADD CONSTRAINT k UNIQUE USING INDEX t_idx;`,
+			wantErr: "relation k already exists",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := postgres.New("").Parse("test.sql", []byte(tt.sql))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestSchemaQualification(t *testing.T) {
 	tests := []struct {
 		name       string
